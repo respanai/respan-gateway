@@ -1,0 +1,38 @@
+name: Bug report
+description: Something doesn't work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The smallest request and `gateway.toml` that show it. Remove your keys.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Gateway output
+      description: The gateway's log lines for the request, or the error the client saw.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `respan-gateway --version`.
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Client and provider
+      description: The SDK or tool you called from, and the provider or model it went to.
+      placeholder: Anthropic SDK (Python) → gpt-6-luna on openai

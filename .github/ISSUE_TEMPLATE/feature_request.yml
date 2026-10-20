@@ -1,0 +1,24 @@
+name: Feature request
+description: Something the gateway should do but doesn't.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you're trying to do, and what gets in the way today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: How it could work. A config snippet or request is welcome.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you build it?
+      options:
+        - Yes, with some guidance
+        - Maybe
+        - No

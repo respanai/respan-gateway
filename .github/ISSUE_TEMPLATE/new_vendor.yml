@@ -1,0 +1,41 @@
+name: New vendor or tool vendor
+description: Ask for a model provider or a tool API to be built in.
+labels: [new vendor]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Model vendor (an LLM, image, speech or video API)
+        - Tool vendor (an HTTP API served as MCP tools)
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Vendor
+      placeholder: Cohere
+    validations:
+      required: true
+  - type: input
+    id: docs
+    attributes:
+      label: API docs
+      description: A link to the API reference.
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: What you'd use it for
+      description: For a model vendor, which formats it speaks (OpenAI-compatible, its own). For a tool vendor, which endpoints should become tools.
+  - type: dropdown
+    id: help
+    attributes:
+      label: Would you build it?
+      description: "Most vendors are one file: see [docs/vendors.md](https://github.com/respanai/respan-gateway/blob/main/docs/vendors.md) and [docs/tool-vendors.md](https://github.com/respanai/respan-gateway/blob/main/docs/tool-vendors.md)."
+      options:
+        - Yes, with some guidance
+        - Maybe
+        - No

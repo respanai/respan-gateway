@@ -128,6 +128,29 @@ format's README, for [chat](crates/formats/conversation-http/README.md),
 [media](crates/formats/media-http/README.md) and
 [realtime](crates/formats/realtime-ws/README.md).
 
+## Plugins
+
+Everything above is a plugin built on one public Rust API. The binary
+ships these:
+
+| Plugin | What it does |
+|---|---|
+| [`routing`](crates/plugins/routing/README.md) | Picks the provider for each request: routes, globs, fallback, retries, hedged races |
+| [`tool-loop`](crates/plugins/tool-loop/README.md) | Runs MCP tools inside chat requests, for any client and any model |
+| [`mcp-router`](crates/plugins/mcp-router/README.md) | Fronts MCP servers at `/mcp/{name}`, and all of them as one at `/mcp` |
+| [`respan`](crates/plugins/respan/README.md) | Sends each request to [Respan](https://respan.ai) as a trace |
+| [`pricing`](crates/plugins/pricing/README.md) | Prices each call from its usage |
+| [`responses`](crates/plugins/responses/README.md) | Keeps Responses API conversation state with any provider |
+| [`credentials`](crates/plugins/credentials/README.md) | Forwards a client's own key to providers that have none |
+
+**Tool vendors** turn an HTTP API into MCP tools with one key: Apify,
+Browserbase, Cloudinary, Context7, Daytona, E2B, ElevenLabs, Linkup,
+Reducto, Tavily, TinyFish and Zep. See [Tool vendors](docs/tool-vendors.md).
+
+To write your own, start with the [plugin guide](docs/plugins.md). The
+[`examples/`](examples/README.md) show guardrails, PII masking, billing,
+an LLM judge that picks the model, and more, one file each.
+
 ## As a library
 
 The binary is a library, `respan_gateway`: `App::new(config)?.router()`
@@ -136,8 +159,17 @@ with the [plugin guide](docs/plugins.md) and the [`examples/`](examples/README.m
 
 ## Contributing
 
-[CONTRIBUTING.md](CONTRIBUTING.md) covers the architecture, building, tests
-and releases.
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+architecture, building, tests and releases. A new vendor or tool vendor is
+usually one file; issues labeled
+[good first issue](https://github.com/respanai/respan-gateway/labels/good%20first%20issue)
+are a place to start.
+
+- Bugs and feature requests: [Issues](https://github.com/respanai/respan-gateway/issues/new/choose)
+- Questions and ideas: [Discussions](https://github.com/respanai/respan-gateway/discussions)
+- Security issues: see [SECURITY.md](SECURITY.md)
+
+This project follows a [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
