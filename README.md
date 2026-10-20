@@ -1,4 +1,4 @@
-![Respan Gateway](docs/assets/respan-gateway-banner.png)
+[![Watch the Respan Gateway demo on YouTube](docs/assets/respan-gateway-demo-cover.png)](https://www.youtube.com/watch?v=pVv2ibXiTXM)
 
 # Respan Gateway
 
