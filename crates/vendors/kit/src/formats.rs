@@ -32,7 +32,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiEmbeddings,
     &OpenAiVideos,
     &GeminiVeo,
-    &Decisions::SPEC,
+    &Decisions,
     &Passthrough,
 ];
 

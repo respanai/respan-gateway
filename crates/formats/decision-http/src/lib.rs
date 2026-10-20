@@ -1,8 +1,7 @@
 #![warn(missing_docs)]
 //! The decision kind over HTTP ([`Decisions`]): a `POST` to a path ending
 //! in `/decisions` or `/systemone`, answered whole in JSON. A provider is
-//! called at `/decisions`, unless its vendor serves the contract at another
-//! path ([`Decisions::at`]).
+//! called at `/decisions`, unless its vendor's [`dialect`] says otherwise.
 //!
 //! A request is `{"model", "state", "questions": {id: question}}`, each
 //! question `{"type", "instructions", "criteria"}`: `noul` with criteria
@@ -30,40 +29,22 @@ use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 
+pub mod dialect;
+
 const NAME: &str = "decisions";
 const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
 const SYSTEM_ONE_PATH: &str = "/systemone";
 
-/// The decisions contract: a client's `POST` to a path ending in
-/// `/decisions` or `/systemone`, and a provider called at its [`path`]
-/// (`/decisions` unless its vendor says otherwise).
-///
-/// [`path`]: Decisions::at
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Decisions {
-    path: &'static str,
-}
+/// The decisions contract, as Respan or a compatible vendor serves it: a
+/// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
+/// provider called at `/decisions`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Decisions;
 
 impl Decisions {
     /// The format's name, `decisions`, which tags its native fields.
     pub const NAME: &'static str = NAME;
-
-    /// The format as its spec has it: a provider called at `/decisions`.
-    pub const SPEC: Self = Self::at(PATH);
-
-    /// A provider called at `path`, relative to its base URL, as a vendor
-    /// that serves the contract elsewhere writes it (TypeSafe at
-    /// `/systemone`).
-    pub const fn at(path: &'static str) -> Self {
-        Self { path }
-    }
-}
-
-impl Default for Decisions {
-    fn default() -> Self {
-        Self::SPEC
-    }
 }
 
 impl Format<ClientIo, Input, Output> for Decisions {
@@ -112,25 +93,28 @@ impl Format<ProviderIo, Output, Input> for Decisions {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let path = self.path;
-        Ok(io.with_refusal(read_provider_error).bind(
-            move |head, input: Option<&Input>| {
-                let input = input.ok_or_else(|| {
-                    Fault::config(format!("{NAME} does not accept streaming inputs"))
-                })?;
-                head.method = Method::POST;
-                set_path(head, path)?;
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                let body = to_bytes(&encode_request(input)?)?;
-                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                    out.push(body.clone());
-                    Ok(())
-                }) as Box<dyn Encoder<Input>>)
-            },
-            |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
-        ))
+        bind_provider(io, PATH)
     }
+}
+
+/// A call: a `POST` of the whole request to `path`.
+fn bind_provider(io: ProviderIo, path: &'static str) -> Result<Connection<Output, Input>, Fault> {
+    Ok(io.with_refusal(read_provider_error).bind(
+        move |head, input: Option<&Input>| {
+            let input = input
+                .ok_or_else(|| Fault::config(format!("{NAME} does not accept streaming inputs")))?;
+            head.method = Method::POST;
+            set_path(head, path)?;
+            let json = HeaderValue::from_static("application/json");
+            head.headers.insert(CONTENT_TYPE, json);
+            let body = to_bytes(&encode_request(input)?)?;
+            Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
+                out.push(body.clone());
+                Ok(())
+            }) as Box<dyn Encoder<Input>>)
+        },
+        |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
+    ))
 }
 
 /// A client's request.

@@ -228,7 +228,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
             .job_ids("veo_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
-        KnownFormat::of(kind::DECISION, endpoints::DECISIONS, Decisions::SPEC).model(Model::of(
+        KnownFormat::of(kind::DECISION, endpoints::DECISIONS, Decisions).model(Model::of(
             decision::Input::model,
             decision::Input::set_model,
         )),

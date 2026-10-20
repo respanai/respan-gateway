@@ -42,7 +42,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiResponses, Some(BASE_URL)),
         (&AnthropicMessages, Some(ANTHROPIC)),
         (&GeminiGenerate, Some(GEMINI)),
-        (&Decisions::SPEC, Some(DECISIONS)),
+        (&Decisions, Some(DECISIONS)),
     ],
     models: list_models,
     format_for: Some(format_for),
