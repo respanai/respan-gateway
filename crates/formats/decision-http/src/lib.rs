@@ -72,11 +72,26 @@ impl Format<ClientIo, Input, Output> for Decisions {
     }
 
     fn matches(&self, io: &ClientIo) -> bool {
-        is_post_to(io, PATH) || is_post_to(io, SYSTEM_ONE_PATH)
+        let request = io.request();
+        let path = |p| path_ends_with(request.uri(), p);
+        request.method() == Method::POST && (path(PATH) || path(SYSTEM_ONE_PATH))
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        bind_client(io)
+        Ok(io.with_error(refusal).bind(
+            |_| {
+                Box::new(|raw: Bytes, out: &mut Vec<Input>| {
+                    out.push(decode_request(&raw)?);
+                    Ok(())
+                })
+            },
+            |reply| {
+                let mut head = reply.head();
+                let json = HeaderValue::from_static("application/json");
+                head.headers.insert(CONTENT_TYPE, json);
+                Ok(reply.write(head, Box::new(All::new(|e: &[Output]| encode_response(e)))))
+            },
+        ))
     }
 }
 
@@ -97,52 +112,25 @@ impl Format<ProviderIo, Output, Input> for Decisions {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        bind_provider(io, self.path)
+        let path = self.path;
+        Ok(io.with_refusal(read_provider_error).bind(
+            move |head, input: Option<&Input>| {
+                let input = input.ok_or_else(|| {
+                    Fault::config(format!("{NAME} does not accept streaming inputs"))
+                })?;
+                head.method = Method::POST;
+                set_path(head, path)?;
+                let json = HeaderValue::from_static("application/json");
+                head.headers.insert(CONTENT_TYPE, json);
+                let body = to_bytes(&encode_request(input)?)?;
+                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
+                    out.push(body.clone());
+                    Ok(())
+                }) as Box<dyn Encoder<Input>>)
+            },
+            |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
+        ))
     }
-}
-
-/// Whether the client's request is a `POST` to a path ending in `path`.
-fn is_post_to(io: &ClientIo, path: &str) -> bool {
-    let request = io.request();
-    request.method() == Method::POST && path_ends_with(request.uri(), path)
-}
-
-/// A client: its request read whole, its answer written whole in JSON.
-fn bind_client(io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-    Ok(io.with_error(refusal).bind(
-        |_| {
-            Box::new(|raw: Bytes, out: &mut Vec<Input>| {
-                out.push(decode_request(&raw)?);
-                Ok(())
-            })
-        },
-        |reply| {
-            let mut head = reply.head();
-            let json = HeaderValue::from_static("application/json");
-            head.headers.insert(CONTENT_TYPE, json);
-            Ok(reply.write(head, Box::new(All::new(|e: &[Output]| encode_response(e)))))
-        },
-    ))
-}
-
-/// A call: a `POST` of the whole request to `path`.
-fn bind_provider(io: ProviderIo, path: &'static str) -> Result<Connection<Output, Input>, Fault> {
-    Ok(io.with_refusal(read_provider_error).bind(
-        move |head, input: Option<&Input>| {
-            let input = input
-                .ok_or_else(|| Fault::config(format!("{NAME} does not accept streaming inputs")))?;
-            head.method = Method::POST;
-            set_path(head, path)?;
-            let json = HeaderValue::from_static("application/json");
-            head.headers.insert(CONTENT_TYPE, json);
-            let body = to_bytes(&encode_request(input)?)?;
-            Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                out.push(body.clone());
-                Ok(())
-            }) as Box<dyn Encoder<Input>>)
-        },
-        |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
-    ))
 }
 
 /// A client's request.
