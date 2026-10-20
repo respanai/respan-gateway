@@ -141,6 +141,37 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
+async fn decisions_are_served_at_either_path_and_called_where_the_vendor_says() {
+    let plain = FakeOpenAi::start().await;
+    let typesafe = FakeOpenAi::start().await;
+    let text = format!(
+        "providers = {{ plain = {{ formats = \"decisions\", base_url = \"{}\", auth = {{ type = \"bearer\", key = \"sk-test\" }} }}, typesafe = {{ vendor = \"typesafe\", base_url = \"{}\", key = \"sk-test\" }} }}\nformats = [\"decisions\"]\n",
+        plain.base_url(),
+        typesafe.base_url()
+    );
+    let gateway = resolve(&text).unwrap_or_else(|e| panic!("gateway: {e}"));
+    for (path, model) in [
+        ("/v1/systemone", "plain/jev"),
+        ("/v1/decisions", "typesafe/jev"),
+    ] {
+        let body =
+            serde_json::json!({"model": model, "state": "s", "questions": {"q": {"type": "noul"}}});
+        // The fake serves no decisions: what counts is where it was called.
+        let (response, _) = serve(&gateway, post(path, body.to_string())).await;
+        let _ = read_whole(response).await;
+    }
+    gateway.idle().await;
+    let paths = |mock: &FakeOpenAi| {
+        mock.requests()
+            .iter()
+            .map(|r| r.path.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(paths(&plain), ["/v1/decisions"]);
+    assert_eq!(paths(&typesafe), ["/v1/systemone"]);
+}
+
+#[tokio::test]
 async fn the_example_config_routes_by_model_both_ways() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;
@@ -612,7 +643,7 @@ fn an_unknown_format_names_the_compiled_in_ones() {
     assert_eq!(
         resolve(text).err().as_deref(),
         Some(
-            "formats: unknown format 'nope'; compiled-in formats: [openai-chat, openai-responses, openai-realtime, responses-ws, openai-images, openai-transcriptions, openai-speech, openai-videos, openai-embeddings, anthropic-messages, gemini-generate, gemini-live, gemini-veo, typesafe-systemone, passthrough]"
+            "formats: unknown format 'nope'; compiled-in formats: [openai-chat, openai-responses, openai-realtime, responses-ws, openai-images, openai-transcriptions, openai-speech, openai-videos, openai-embeddings, anthropic-messages, gemini-generate, gemini-live, gemini-veo, decisions, passthrough]"
         )
     );
 }

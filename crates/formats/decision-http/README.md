@@ -4,7 +4,11 @@
 
 | Format | Endpoint | Served by |
 | --- | --- | --- |
-| `typesafe-systemone` (`SystemOne`) | `POST /v1/systemone` | TypeSafe (`vendor = "typesafe"`), or any compatible base URL |
+| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), at `/systemone`; or any compatible base URL |
+
+A provider is called at `/decisions` (`Decisions::SPEC`); a vendor that serves
+the contract at another path says so with `Decisions::at`, as TypeSafe does
+at `/systemone`.
 
 A request is `{"model", "state", "questions": {id: question}}`, each question
 `{"type", "instructions", "criteria"}`: `noul` with criteria

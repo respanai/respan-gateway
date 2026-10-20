@@ -1,6 +1,6 @@
 //! TypeSafe: System One, its decision models' API.
 
-use respan_gateway_decision_http::SystemOne;
+use respan_gateway_decision_http::Decisions;
 
 use serde_json::Value;
 
@@ -10,12 +10,14 @@ use respan_gateway_vendor_kit::{
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.typesafe.ai/v1";
+/// Where it serves decisions: System One.
+const DECISIONS: Decisions = Decisions::at("/systemone");
 
 /// TypeSafe.
 pub const VENDOR: Vendor = Vendor {
     id: "typesafe",
     key_env: &["TYPESAFE_API_KEY"],
-    formats: &[(&SystemOne, Some(BASE_URL))],
+    formats: &[(&DECISIONS, Some(BASE_URL))],
     models: list_models,
     ..Vendor::DEFAULT
 };
