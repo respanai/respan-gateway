@@ -2126,9 +2126,12 @@ dependencies = [
 name = "respan-gateway-vendors-yellow"
 version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
+ "respan-gateway-http",
+ "respan-gateway-media",
  "respan-gateway-media-http",
  "respan-gateway-vendor-kit",
  "serde_json",

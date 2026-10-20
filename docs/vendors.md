@@ -38,7 +38,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images` |
-| <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings` |
+| <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |

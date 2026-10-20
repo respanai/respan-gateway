@@ -52,6 +52,14 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 `steps`) stay native, so a relay in the same format keeps them.
 
+`dialect::{Spec, Dialect, Dialected}`: a format as a vendor speaks it.
+`OpenAiSpeech` is a `Spec`, its provider edge in parts, and so far the only
+one; a vendor's `Dialect` says what it takes and answers beyond the spec
+(its input before the spec writes it, how its answer is read, whether it
+streams, where its key goes), and `Dialected::new(spec, dialect)` is a
+provider format of the spec's name, so a client of the spec is still
+relayed to it.
+
 `gemini::GeminiVeo`, named `gemini-veo`: Google's Veo as the Gemini API serves it, to clients and providers,
 at `https://generativelanguage.googleapis.com/v1beta` with the key in
 `x-goog-api-key`.

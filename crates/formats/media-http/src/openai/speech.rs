@@ -2,10 +2,11 @@
 //! audio's bytes or, if asked (`stream_format: "sse"`), a stream of events.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, event_json, foreign, invalid,
-    json_bytes, kept, merge_missing, missing, native_of, post_to, read_usage, sends, set,
-    sse_event, streams, take_number, take_string, unb64, unreadable, usage_extras, write_usage,
+    Fields, Form, as_usage_extras, b64, bind_client, event_json, foreign, invalid, json_bytes,
+    kept, merge_missing, missing, native_of, post_to, read_usage, sends, set, sse_event, streams,
+    take_number, take_string, unb64, unreadable, usage_extras, write_usage,
 };
+use crate::dialect::{self, Spec};
 use crate::edge::ended_events;
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
@@ -72,13 +73,35 @@ impl Format<ProviderIo, Output, Input> for OpenAiSpeech {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let stream = streams(&io, &[SPEECH], asks_events);
-        Ok(bind_provider(
-            io,
-            NAME,
-            move |head, input| post(head, input, stream),
-            |head, _| Some(read_response(head)),
-        ))
+        Ok(dialect::bind(*self, io))
+    }
+}
+
+/// Its spec's parts, which a vendor's dialect runs around.
+impl Spec for OpenAiSpeech {
+    type Input = Input;
+    type Output = Output;
+    const NAME: &'static str = NAME;
+
+    fn streams(&self, io: &ProviderIo) -> bool {
+        streams(io, &[SPEECH], asks_events)
+    }
+
+    fn post(
+        &self,
+        head: &mut RequestHead,
+        input: &Input,
+        stream: bool,
+    ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+        post(head, input, stream)
+    }
+
+    fn read_response(
+        &self,
+        head: &http::response::Parts,
+        _: &http::Request<Bytes>,
+    ) -> Option<Box<dyn Decoder<Output>>> {
+        Some(read_response(head))
     }
 }
 
