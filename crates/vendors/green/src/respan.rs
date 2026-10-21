@@ -1,6 +1,6 @@
 //! Respan: its gateway, one key for many vendors' models, in each spec it
 //! serves: Chat Completions, Responses, Anthropic Messages and Gemini's
-//! `generateContent`.
+//! `generateContent`; and decisions, for its own decision models.
 
 use respan_gateway_conversation::Output;
 use respan_gateway_conversation_http::Schema;
@@ -10,6 +10,7 @@ use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::Filter;
+use respan_gateway_decision_http::Decisions;
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
@@ -24,6 +25,8 @@ use crate::openai::responses_only;
 const BASE_URL: &str = "https://api.respan.ai/api";
 const ANTHROPIC: &str = "https://api.respan.ai/api/anthropic";
 const GEMINI: &str = "https://api.respan.ai/api/google/gemini/v1beta";
+/// Decisions, at `/v1/decisions`, are under the version.
+const DECISIONS: &str = "https://api.respan.ai/api/v1";
 
 /// Its public catalog of the models its gateway serves, beside its API:
 /// `GET {CATALOG}/list`.
@@ -39,6 +42,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiResponses, Some(BASE_URL)),
         (&AnthropicMessages, Some(ANTHROPIC)),
         (&GeminiGenerate, Some(GEMINI)),
+        (&Decisions, Some(DECISIONS)),
     ],
     models: list_models,
     format_for: Some(format_for),

@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-decision-http"
-description = "The decision kind over HTTP: TypeSafe's System One."
+description = "The decision kind over HTTP: the decisions contract."
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true

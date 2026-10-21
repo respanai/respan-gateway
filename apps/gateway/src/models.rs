@@ -276,7 +276,7 @@ fn kind_of(id: &str) -> &'static str {
         _ if has(&["tts"]) => kind::SPEECH,
         _ if has(&["sora", "veo"]) => kind::VIDEO,
         _ if has(&["realtime", "-live", "live-", "native-audio"]) => kind::REALTIME,
-        _ if has(&["jev", "clef", "systemone"]) => kind::DECISION,
+        _ if has(&["jev", "clef", "span-02", "decision", "systemone"]) => kind::DECISION,
         _ => kind::CHAT,
     }
 }
@@ -419,5 +419,7 @@ mod tests {
         assert_eq!(kind("text-embedding-3-small"), "embedding");
         assert_eq!(kind("gemini-embedding-001"), "embedding");
         assert_eq!(kind("jev-latest"), "decision");
+        assert_eq!(kind("span-02"), "decision");
+        assert_eq!(kind("gpt-6-luna-decisions"), "decision");
     }
 }

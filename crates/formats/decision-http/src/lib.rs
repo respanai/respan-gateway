@@ -1,6 +1,7 @@
 #![warn(missing_docs)]
-//! The decision kind over HTTP: TypeSafe's System One ([`SystemOne`]), a
-//! `POST` to a path ending in `/systemone`, answered whole in JSON.
+//! The decision kind over HTTP ([`Decisions`]): a `POST` to a path ending
+//! in `/decisions` or `/systemone`, answered whole in JSON. A provider is
+//! called at `/decisions`, unless its vendor's [`dialect`] says otherwise.
 //!
 //! A request is `{"model", "state", "questions": {id: question}}`, each
 //! question `{"type", "instructions", "criteria"}`: `noul` with criteria
@@ -28,27 +29,33 @@ use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 
-const NAME: &str = "typesafe-systemone";
-const PATH: &str = "/systemone";
+pub mod dialect;
 
-/// TypeSafe's System One, as TypeSafe or a compatible vendor serves it: a
-/// `POST` to a path ending in `/systemone`.
+const NAME: &str = "decisions";
+const PATH: &str = "/decisions";
+/// TypeSafe's name for the endpoint, which its clients call.
+const SYSTEM_ONE_PATH: &str = "/systemone";
+
+/// The decisions contract, as Respan or a compatible vendor serves it: a
+/// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
+/// provider called at `/decisions`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct SystemOne;
+pub struct Decisions;
 
-impl SystemOne {
-    /// The format's name, `typesafe-systemone`, which tags its native fields.
+impl Decisions {
+    /// The format's name, `decisions`, which tags its native fields.
     pub const NAME: &'static str = NAME;
 }
 
-impl Format<ClientIo, Input, Output> for SystemOne {
+impl Format<ClientIo, Input, Output> for Decisions {
     fn name(&self) -> &str {
         NAME
     }
 
     fn matches(&self, io: &ClientIo) -> bool {
         let request = io.request();
-        request.method() == Method::POST && path_ends_with(request.uri(), PATH)
+        let path = |p| path_ends_with(request.uri(), p);
+        request.method() == Method::POST && (path(PATH) || path(SYSTEM_ONE_PATH))
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
@@ -70,7 +77,7 @@ impl Format<ClientIo, Input, Output> for SystemOne {
 }
 
 /// Its spec's: a bearer key, over HTTP, beside its base URL.
-impl Upstream for SystemOne {
+impl Upstream for Decisions {
     fn name(&self) -> &str {
         NAME
     }
@@ -80,30 +87,34 @@ impl Upstream for SystemOne {
     }
 }
 
-impl Format<ProviderIo, Output, Input> for SystemOne {
+impl Format<ProviderIo, Output, Input> for Decisions {
     fn name(&self) -> &str {
         NAME
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(io.with_refusal(read_provider_error).bind(
-            |head, input: Option<&Input>| {
-                let input = input.ok_or_else(|| {
-                    Fault::config(format!("{NAME} does not accept streaming inputs"))
-                })?;
-                head.method = Method::POST;
-                set_path(head, PATH)?;
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                let body = to_bytes(&encode_request(input)?)?;
-                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                    out.push(body.clone());
-                    Ok(())
-                }) as Box<dyn Encoder<Input>>)
-            },
-            |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
-        ))
+        bind_provider(io, PATH)
     }
+}
+
+/// A call: a `POST` of the whole request to `path`.
+fn bind_provider(io: ProviderIo, path: &'static str) -> Result<Connection<Output, Input>, Fault> {
+    Ok(io.with_refusal(read_provider_error).bind(
+        move |head, input: Option<&Input>| {
+            let input = input
+                .ok_or_else(|| Fault::config(format!("{NAME} does not accept streaming inputs")))?;
+            head.method = Method::POST;
+            set_path(head, path)?;
+            let json = HeaderValue::from_static("application/json");
+            head.headers.insert(CONTENT_TYPE, json);
+            let body = to_bytes(&encode_request(input)?)?;
+            Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
+                out.push(body.clone());
+                Ok(())
+            }) as Box<dyn Encoder<Input>>)
+        },
+        |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
+    ))
 }
 
 /// A client's request.
@@ -347,7 +358,7 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
     to_bytes(&body)
 }
 
-/// An answer as System One writes it.
+/// An answer as the contract writes it.
 fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
     let mut v = Map::new();
     match &answer.verdict {

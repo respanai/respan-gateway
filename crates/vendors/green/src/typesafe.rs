@@ -1,6 +1,7 @@
 //! TypeSafe: System One, its decision models' API.
 
-use respan_gateway_decision_http::SystemOne;
+use respan_gateway_decision_http::Decisions;
+use respan_gateway_decision_http::dialect::{Dialect, Dialected};
 
 use serde_json::Value;
 
@@ -15,10 +16,20 @@ const BASE_URL: &str = "https://api.typesafe.ai/v1";
 pub const VENDOR: Vendor = Vendor {
     id: "typesafe",
     key_env: &["TYPESAFE_API_KEY"],
-    formats: &[(&SystemOne, Some(BASE_URL))],
+    formats: &[(&Dialected::new(Decisions, TypeSafe), Some(BASE_URL))],
     models: list_models,
     ..Vendor::DEFAULT
 };
+
+/// TypeSafe's decisions: it serves them as System One, at `/systemone`.
+#[derive(Debug, Clone, Copy)]
+pub struct TypeSafe;
+
+impl Dialect for TypeSafe {
+    fn path(&self) -> Option<&'static str> {
+        Some("/systemone")
+    }
+}
 
 /// Its models: `{"models": [{"name", ..}]}`, each model or alias by the
 /// name a call takes.

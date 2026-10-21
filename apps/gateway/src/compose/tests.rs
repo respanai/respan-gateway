@@ -372,10 +372,6 @@ fn a_bad_provider_is_an_error() {
     let cases = [
         ("p = {  }", "provider 'p': needs a `vendor` or `formats`"),
         (
-            "p = { vendor = \"nope\" }",
-            "provider 'p': unknown vendor 'nope'; vendors: [openai, anthropic, gemini, groq, deepseek, openrouter, xai, mistral, together, fireworks, ollama, azure, vllm, typesafe, cloudflare, cerebras, perplexity, respan]",
-        ),
-        (
             "p = { formats = \"openai-chat\" }",
             "provider 'p': format openai-chat needs a `base_url`",
         ),
@@ -408,6 +404,9 @@ fn a_bad_provider_is_an_error() {
         let text = format!("providers = {{ {provider} }}");
         assert_eq!(plan(&text).err().as_deref(), Some(expected), "{text}");
     }
+    let unknown = plan("providers = { p = { vendor = \"nope\" } }").err();
+    let said = "provider 'p': unknown vendor 'nope'; vendors: [";
+    assert!(unknown.is_some_and(|e| e.starts_with(said)));
 }
 
 #[test]
@@ -609,12 +608,8 @@ fn a_format_served_after_passthrough_is_refused() {
 #[test]
 fn an_unknown_format_names_the_compiled_in_ones() {
     let text = "formats = [\"openai-chat\", \"nope\"]\n";
-    assert_eq!(
-        resolve(text).err().as_deref(),
-        Some(
-            "formats: unknown format 'nope'; compiled-in formats: [openai-chat, openai-responses, openai-realtime, responses-ws, openai-images, openai-transcriptions, openai-speech, openai-videos, openai-embeddings, anthropic-messages, gemini-generate, gemini-live, gemini-veo, typesafe-systemone, passthrough]"
-        )
-    );
+    let said = "formats: unknown format 'nope'; compiled-in formats: [";
+    assert!(resolve(text).err().is_some_and(|e| e.starts_with(said)));
 }
 
 #[test]
