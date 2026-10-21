@@ -373,7 +373,7 @@ fn a_bad_provider_is_an_error() {
         ("p = {  }", "provider 'p': needs a `vendor` or `formats`"),
         (
             "p = { vendor = \"nope\" }",
-            "provider 'p': unknown vendor 'nope'; vendors: [openai, anthropic, gemini, groq, deepseek, openrouter, xai, mistral, together, fireworks, ollama, azure, vllm, typesafe, cloudflare, cerebras, respan]",
+            "provider 'p': unknown vendor 'nope'; vendors: [openai, anthropic, gemini, groq, deepseek, openrouter, xai, mistral, together, fireworks, ollama, azure, vllm, typesafe, cloudflare, cerebras, perplexity, respan]",
         ),
         (
             "p = { formats = \"openai-chat\" }",

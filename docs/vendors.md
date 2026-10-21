@@ -46,6 +46,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
+| <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -68,6 +69,9 @@ base URL as `openai-chat`. Gemini's own formats, `gemini-generate`
 the key in `x-goog-api-key`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` and
 `responses-ws`, `wss://generativelanguage.googleapis.com` for `gemini-live`.
+Perplexity's Agent API speaks `openai-responses` alone, at
+`https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
+such as `openai/gpt-5.6-sol`.
 
 Respan's formats sit under one API, `https://api.respan.ai/api`:
 `openai-chat` and `openai-responses` at it, `anthropic-messages` at
