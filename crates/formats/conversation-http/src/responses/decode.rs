@@ -552,6 +552,22 @@ impl ResponsesDecoder {
 
     fn delta(&mut self, v: &Value, out: &mut Vec<Output>) {
         let (index, content_index) = (index_of(v), v["content_index"].as_u64().unwrap_or(0));
+        // A message's text streamed without its part's added event, as some
+        // vendors send it: its first delta opens the part.
+        let message = matches!(
+            self.item(index),
+            Some(Item {
+                what: What::Message { .. },
+                ..
+            })
+        );
+        if message && self.part(index, content_index).is_none() {
+            let added = json!({
+                "type": "response.content_part.added", "output_index": index,
+                "content_index": content_index, "part": { "type": "output_text", "text": "" },
+            });
+            self.part_added(&added, out);
+        }
         let text = v["delta"].as_str();
         match (self.text_block(v), text) {
             (Some(block), Some(text)) => {

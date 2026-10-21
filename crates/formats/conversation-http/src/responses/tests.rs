@@ -447,6 +447,19 @@ fn a_stream_decodes_to_the_kinds_events() {
 }
 
 #[test]
+fn a_message_streamed_without_its_parts_events_decodes_alike() {
+    let part = |e: &Value| {
+        e["type"]
+            .as_str()
+            .is_some_and(|t| t.starts_with("response.content_part."))
+    };
+    let unparted: Vec<_> = text_stream().into_iter().filter(|e| !part(e)).collect();
+    let (out, end) = decode_stream(&unparted);
+    end.expect("a whole stream");
+    assert_eq!(out, decode_stream(&text_stream()).0);
+}
+
+#[test]
 fn a_whole_body_decodes_to_the_same_events() {
     let done = text_stream().pop().expect("completed");
     let (streamed, _) = decode_stream(&text_stream());

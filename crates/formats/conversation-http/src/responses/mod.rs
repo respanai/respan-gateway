@@ -41,7 +41,9 @@
 //! - A message's output text is a [`Block::Text`](respan_gateway_conversation::Block::Text) (one per content part), a
 //!   `function_call` a [`Block::ToolCall`](respan_gateway_conversation::Block::ToolCall) named by its `call_id`, and a
 //!   `reasoning` item a [`Block::Reasoning`](respan_gateway_conversation::Block::Reasoning) of its summary, whose parts are
-//!   joined as paragraphs. Blocks are numbered in the order they open;
+//!   joined as paragraphs. A message's text streamed without its part's
+//!   `response.content_part.added`, as some vendors send it, opens the part
+//!   at its first delta. Blocks are numbered in the order they open;
 //!   `output_index`, `content_index`, `summary_index` and `sequence_number`
 //!   are not the kind's, and are written anew.
 //! - The terminal event gives the usage ([`Output::Usage`]), and the status
