@@ -20,12 +20,6 @@ web search and MCP tools for any model, and traffic control (format
 translation, fallback, retries and hedged requests), with a live log of
 every call.
 
-**Observability is built in.** Respan Gateway is native to
-[Respan](https://respan.ai). Turn on one plugin and every request is logged
-and traced, with its cost, latency and tokens. Respan's span-02, a frontier
-decision model trained specifically to analyze agent behavior, reviews each
-agent run so you can see how your agents behave and where they go wrong.
-
 <br>
 <div align="center">
   <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-dock.png" width="900">
