@@ -1,0 +1,12 @@
+# Only the sources: no build output, which a checkout's target/ can make
+# huge, and no local config or keys.
+.git
+target
+**/node_modules
+apps/ui/dist
+# build.rs would embed a stale copy here over the UI built in the image.
+apps/gateway/ui-dist
+.env
+gateway.toml
+**/*.sqlite3
+.venv
