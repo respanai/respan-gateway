@@ -54,9 +54,13 @@ pub(crate) struct Harmless {
 
 /// What `format` says of its natives, if it is one of this crate's.
 fn harmless(format: &str) -> Option<&'static Harmless> {
-    [&crate::openai::HARMLESS, &crate::gemini::HARMLESS]
-        .into_iter()
-        .find(|h| h.format == format)
+    [
+        &crate::openai::HARMLESS,
+        &crate::gemini::HARMLESS,
+        &crate::mistral::HARMLESS,
+    ]
+    .into_iter()
+    .find(|h| h.format == format)
 }
 
 /// `event` for `writer`'s provider with other formats' native fields

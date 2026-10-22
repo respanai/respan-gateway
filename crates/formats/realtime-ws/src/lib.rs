@@ -4,6 +4,7 @@
 //!
 //! - [`OpenAiRealtime`]: OpenAI Realtime, `openai-realtime`.
 //! - [`GeminiLive`]: Gemini Live, `gemini-live`.
+//! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
 //! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
 //!   which is not realtime: it streams Responses over a socket, and uses the
 //!   kind's types only as native events.
@@ -25,11 +26,13 @@ mod audio;
 mod foreign;
 mod gemini;
 mod json;
+mod mistral;
 mod openai;
 mod responses;
 mod session;
 
 pub use gemini::GeminiLive;
+pub use mistral::MistralRealtime;
 pub use openai::OpenAiRealtime;
 pub use responses::ResponsesWs;
 
@@ -56,7 +59,10 @@ pub fn requested_model(wire: &Original) -> Option<String> {
 
 /// What a session's handshake asks it to be for, whose provider must know
 /// it at connect: a transcription at `?intent=transcription`, as OpenAI
-/// Realtime's client asks.
+/// Realtime's client asks, or at Mistral's path, whose sessions transcribe
+/// alone.
 pub fn requested_purpose(wire: &Original) -> Option<Purpose> {
-    session::purpose_at(wire.get()?.uri())
+    let uri = wire.get()?.uri();
+    let mistral = respan_gateway_http::path::path_ends_with(uri, MistralRealtime::PATH);
+    session::purpose_at(uri).or(mistral.then_some(Purpose::Transcription))
 }

@@ -30,6 +30,15 @@ pub(crate) fn say() -> (Say, Said) {
     mpsc::unbounded()
 }
 
+/// Every spec of the crate, which a client's request is matched against
+/// together.
+const SPECS: [&Spec; 4] = [
+    &crate::openai::SPEC,
+    &crate::gemini::SPEC,
+    &crate::mistral::SPEC,
+    &crate::responses::SPEC,
+];
+
 /// What a spec says of its session.
 #[derive(Debug)]
 pub(crate) struct Spec {
@@ -44,13 +53,20 @@ pub(crate) struct Spec {
 }
 
 impl Spec {
-    /// Whether a client's request is an upgrade to this session.
+    /// Whether a client's request is an upgrade to this session: at a path
+    /// ending in its own, but not in another spec's that ends in it, as
+    /// Mistral's `/audio/transcriptions/realtime` does in OpenAI's
+    /// `/realtime`, whatever order they are served in.
     pub(crate) fn matches(&self, io: &ClientIo) -> bool {
         let head = io.request();
+        let at = |path| respan_gateway_http::path::path_ends_with(head.uri(), path);
+        let longer =
+            |other: &Spec| other.path.len() > self.path.len() && other.path.ends_with(self.path);
         head.method() == Method::GET
             && respan_gateway_http::rules::header_tokens(head.headers(), UPGRADE)
                 .any(|v| v.eq_ignore_ascii_case("websocket"))
-            && respan_gateway_http::path::path_ends_with(head.uri(), self.path)
+            && at(self.path)
+            && !SPECS.iter().any(|other| longer(other) && at(other.path))
     }
 
     /// A transport to its provider at `base_url`, taking binary text if the

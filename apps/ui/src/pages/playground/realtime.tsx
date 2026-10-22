@@ -267,8 +267,8 @@ export function RealtimeTab() {
       <Card className="py-0">
         <EmptyState icon={AudioLines} title="No realtime provider" className="border-none">
           <p>
-            No provider here serves realtime voice. Add one that speaks OpenAI Realtime or Gemini Live
-            (kind <code>realtime</code>) to the gateway's config, and it shows up here.
+            No provider here serves realtime voice. Add one that speaks OpenAI Realtime, Gemini Live or
+            Mistral Realtime (kind <code>realtime</code>) to the gateway's config, and it shows up here.
           </p>
         </EmptyState>
       </Card>

@@ -272,10 +272,11 @@ fn kind_of(id: &str) -> &'static str {
     match () {
         _ if has(&["embed"]) => kind::EMBEDDING,
         _ if has(&["dall-e", "gpt-image", "imagen", "grok-2-image", "flux"]) => kind::IMAGE,
+        // Before transcription: a realtime transcriber is a session.
+        _ if has(&["realtime", "-live", "live-", "native-audio"]) => kind::REALTIME,
         _ if has(&["whisper", "transcribe"]) => kind::TRANSCRIPTION,
         _ if has(&["tts"]) => kind::SPEECH,
         _ if has(&["sora", "veo"]) => kind::VIDEO,
-        _ if has(&["realtime", "-live", "live-", "native-audio"]) => kind::REALTIME,
         _ if has(&["jev", "clef", "span-02", "decision", "systemone"]) => kind::DECISION,
         _ => kind::CHAT,
     }
@@ -409,6 +410,7 @@ mod tests {
         assert_eq!(kind("sora-2"), "video");
         assert_eq!(kind("veo-3.0-generate-001"), "video");
         assert_eq!(kind("gpt-realtime"), "realtime");
+        assert_eq!(kind("voxtral-mini-transcribe-realtime-2602"), "realtime");
         assert_eq!(kind("gemini-live-2.5-flash-preview"), "realtime");
         assert_eq!(kind("gemini-2.0-flash-live-001"), "realtime");
         assert_eq!(

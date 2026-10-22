@@ -1,5 +1,6 @@
 //! Mistral: Chat Completions, embeddings, transcriptions and speech, as
-//! OpenAI serves them, speech in its dialect.
+//! OpenAI serves them, speech in its dialect, and its own realtime
+//! transcription.
 
 use std::borrow::Cow;
 
@@ -14,12 +15,16 @@ use respan_gateway_http::{Decoder, Whole};
 use respan_gateway_media::speech;
 use respan_gateway_media_http::dialect::{Dialect, Dialected};
 use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTranscriptions};
+use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::Vendor;
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.mistral.ai/v1";
+
+/// Where its realtime transcription is.
+const REALTIME_URL: &str = "wss://api.mistral.ai/v1";
 
 /// Mistral.
 pub const VENDOR: Vendor = Vendor {
@@ -30,6 +35,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiEmbeddings, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
         (&Dialected::new(OpenAiSpeech, Mistral), Some(BASE_URL)),
+        (&MistralRealtime, Some(REALTIME_URL)),
     ],
     ..Vendor::DEFAULT
 };

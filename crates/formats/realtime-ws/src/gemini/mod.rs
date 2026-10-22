@@ -78,7 +78,7 @@ type Shared = Arc<Mutex<State>>;
 /// Whether a client is being answered: its writer says, its reader reads.
 type Answering = Arc<AtomicBool>;
 
-const SPEC: Spec = Spec {
+pub(crate) const SPEC: Spec = Spec {
     name: "gemini-live",
     path: "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
     protocol: None,

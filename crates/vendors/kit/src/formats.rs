@@ -12,7 +12,7 @@ use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_passthrough_http::Passthrough;
-use respan_gateway_realtime_ws::{GeminiLive, OpenAiRealtime, ResponsesWs};
+use respan_gateway_realtime_ws::{GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs};
 
 use crate::{Upstream, Vendor};
 
@@ -26,6 +26,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiRealtime,
     &ResponsesWs,
     &GeminiLive,
+    &MistralRealtime,
     &OpenAiImages,
     &OpenAiTranscriptions,
     &OpenAiSpeech,

@@ -319,6 +319,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "openai-embeddings",
             "gemini-generate",
             "gemini-live",
+            "mistral-realtime",
             "gemini-veo",
             "responses-ws"
         ]

@@ -2133,6 +2133,7 @@ dependencies = [
  "respan-gateway-http",
  "respan-gateway-media",
  "respan-gateway-media-http",
+ "respan-gateway-realtime-ws",
  "respan-gateway-vendor-kit",
  "serde_json",
 ]

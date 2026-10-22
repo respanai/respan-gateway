@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialRealtime, realtimeReducer, type RealtimeState } from "./realtime";
 import type { ServedFormat } from "./api";
 import { servedApis } from "./playground-apis";
-import { geminiLive, realtimeApis } from "./realtime-apis";
+import { geminiLive, mistralRealtime, realtimeApis } from "./realtime-apis";
 
 /** The state a session reaches from Gemini Live's `messages`, as the page reads them. */
 function geminiSession(...messages: unknown[]): RealtimeState {
@@ -111,5 +111,40 @@ describe("servedApis for realtime", () => {
     );
     expect(ids([{ format: "gemini-live", kind: "realtime" }])).toEqual(["gemini-live"]);
     expect(ids(undefined)).toEqual(["openai-realtime"]);
+  });
+});
+
+describe("Mistral Realtime", () => {
+  it("transcribes alone, at its path, its model and key in its query", () => {
+    expect(mistralRealtime.modes).toEqual(["transcription"]);
+    const url = new URL(mistralRealtime.url("voxtral", "sk-1", { protocol: "https:", host: "gw.test" }, "transcription"));
+    expect(url.pathname).toBe("/v1/audio/transcriptions/realtime");
+    expect(url.searchParams.get("model")).toBe("voxtral");
+    expect(url.searchParams.get("key")).toBe("sk-1");
+    expect(mistralRealtime.opening("voxtral", "transcription")).toEqual([
+      { type: "session.update", session: { audio_format: { encoding: "pcm_s16le", sample_rate: 24000 } } },
+    ]);
+    expect(mistralRealtime.cancel).toBeUndefined();
+  });
+
+  it("reads each whole transcript as a line of its own", () => {
+    const read = mistralRealtime.reader();
+    const live: RealtimeState = { ...initialRealtime, phase: "live" };
+    const state = [
+      { type: "session.created", session: {} },
+      { type: "transcription.text.delta", text: "Hel" },
+      { type: "transcription.text.delta", text: "lo" },
+      { type: "transcription.done", text: "Hello" },
+      { type: "transcription.text.delta", text: "Again" },
+    ]
+      .flatMap((m) => read(m))
+      .reduce<RealtimeState>((st, event) => realtimeReducer(st, { type: "event", event }), live);
+    expect(lines(state)).toEqual([
+      { role: "user", text: "Hello", done: true, interrupted: false },
+      { role: "user", text: "Again", done: false, interrupted: false },
+    ]);
+    expect(read({ type: "error", error: { message: "bad audio", code: 422 } })).toEqual([
+      { type: "error", error: { message: "bad audio" } },
+    ]);
   });
 });

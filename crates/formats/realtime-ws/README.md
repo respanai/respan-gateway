@@ -11,18 +11,21 @@ a format per spec:
   `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
   after `wss://generativelanguage.googleapis.com`. Its server sends JSON in
   binary frames, which its transport takes as text.
+- `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
+  `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
 - `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native
   events.
 
-Each is served at a path ending in its own, and sends to it;
-`format.transport(base_url)` is a `WsTransport` to its provider, set as its
-frames need. The key is the transport's (`with_headers`: OpenAI's
-`Authorization: Bearer`, Gemini's `x-goog-api-key`) or the client's. A
-format that speaks a subprotocol offers it to the provider beside the
-client's own offers, and gives it back to a client that offered it. They
-share their session's handshake, and differ in their spec and their codec.
+Each is served at a path ending in its own, but not in another's that ends
+in it (Mistral's in OpenAI's `/realtime`), and sends to it; `format.transport(base_url)` is a `WsTransport` to its provider,
+set as its frames need. The key is the transport's (`with_headers`: OpenAI's
+and Mistral's `Authorization: Bearer`, Gemini's `x-goog-api-key`) or the
+client's. A format that speaks a subprotocol offers it to the provider
+beside the client's own offers, and gives it back to a client that offered
+it. They share their session's handshake, and differ in their spec and
+their codec.
 
 `OpenAiRealtime` decodes each frame into the kind's events: a session's
 configuration, audio (its bytes, in the session's format), messages, tools'
@@ -84,8 +87,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   tool choice other than `auto` and `create_response: false` are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
-  its answers dropped: the user's transcript streams, and its turn's end,
-  or a transcriber's end of its generation, completes it.
+  its answers dropped: the user's transcript streams, and its turn's end
+  completes it.
 - To OpenAI: Gemini's client routes by `?model=` on its URL (OpenAI takes
   its model at connect), and its `activityStart` while the model speaks is
   `response.cancel` (one that reaches OpenAI as the response ends is refused
@@ -98,6 +101,39 @@ What one spec has and the other has not is emulated, dropped or refused:
   Search, non-blocking functions and video are refused. An error closes a
   Gemini client, which knows a refusal only as a close: 1007 if its cause
   is `Invalid`, and none if `NothingToCancel`.
+
+`MistralRealtime` transcribes and says nothing else, so it is the provider of
+an OpenAI Realtime transcription session (`type: "transcription"`), and a
+conversation (`type: "realtime"`) is refused. It has no voice detection: its
+transcript streams as the audio comes, and is whole at a commit. It decodes
+`session.created` and `session.updated` (a transcription, its model and the
+audio format, PCM 16-bit or G.711),
+`transcription.text.delta` as an input transcript's delta,
+`transcription.done` as its whole text with the session's usage (prompt tokens
+as audio input tokens, completion tokens as output), and `error`. Its
+`transcription.language` and `transcription.segment` stay native, so an
+OpenAI client is not told of them. It writes a session's audio format
+(`session.update`), the user's audio in appends of at most 256 KiB
+(`input_audio.append`, converted to the session's format, 16 kHz until a
+session says another), a commit as `input_audio.flush`, and, when the
+client's events end, `input_audio.end`, which makes it send the whole
+transcript. Turn settings (server VAD or manual), ids and transcription
+settings are dropped, as the text is the same; a message, a tool's answer, a
+response to make or cancel, instructions, a voice, tools, an output modality
+and a change of model are refused. Its model is taken at connect, as
+OpenAI's is. Its own `target_streaming_delay_ms` is a native field of a
+session (`session.target_streaming_delay_ms`) that a plugin sets, and
+another format's provider may drop.
+
+Its client's session is a transcription from its connect, of the model at
+its `?model=`, its turns the client's: an append is the user's audio (16 kHz
+PCM until its session says another format), and a flush or the end of its
+audio a commit, which makes the transcript whole. It is told the session
+(`session.created` and `session.updated`: the model and audio format), the
+transcript's deltas and its end, with the usage reported since the last in
+`usage`, and errors with their code; what tells of an answer, which a
+transcription has none of, is not written. So a Mistral client transcribes
+with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
 A refused input is `bad_request`, closing the client 1008; a refused
 output `upstream`. Another format's events and fields a provider sends are
@@ -115,10 +151,11 @@ cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 A session's first input arrives only once it is routed, so routing reads
 its model from the handshake: `requested_model(&Original)` is `?model=`,
 OpenAI's and, by the gateway's convention, a Gemini client's. The model
-routing chose goes in the call as `SessionModel`, which OpenAI's provider
-dials (else the client's `?model=`; with neither the session is refused),
-and into the opening `Session` by `realtime::set_model`, which Gemini's
-setup names. Each provider writes its own query, never the client's.
+routing chose goes in the call as `SessionModel`, which OpenAI's and
+Mistral's providers dial (else the client's `?model=`; with neither the
+session is refused), and into the opening `Session` by
+`realtime::set_model`, which Gemini's setup names. Each provider writes its
+own query, never the client's.
 
 A transcription is one from its connect, as OpenAI's is: its client asks
 for it at `?intent=transcription` (`requested_purpose`), beside the `?model=`

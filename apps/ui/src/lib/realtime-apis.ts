@@ -8,7 +8,7 @@ import type { Json } from "@/lib/playground-apis";
 import type { ServerEvent } from "@/lib/realtime";
 import { REALTIME_RATE } from "@/lib/realtime-audio";
 
-export type RealtimeApiId = "openai-realtime" | "gemini-live";
+export type RealtimeApiId = "openai-realtime" | "gemini-live" | "mistral-realtime";
 
 /** A message a client sends, as the API has it. */
 export type ClientMessage = Record<string, unknown>;
@@ -210,4 +210,50 @@ export const geminiLive: RealtimeApi = {
   },
 };
 
-export const realtimeApis: RealtimeApi[] = [openaiRealtime, geminiLive];
+const MISTRAL_PATH = "/v1/audio/transcriptions/realtime";
+
+/**
+ * Mistral's realtime transcription, at its own path, its model on `?model=`
+ * and the gateway key on `?key=`. It transcribes alone, with no voice
+ * detection: the user's line grows until its audio ends.
+ */
+export const mistralRealtime: RealtimeApi = {
+  id: "mistral-realtime",
+  label: "Mistral Realtime",
+  path: MISTRAL_PATH,
+  endpoint: MISTRAL_PATH,
+  url: (model, key, location) => {
+    const query = new URLSearchParams({ model });
+    if (key) query.set("key", key);
+    return socketUrl(location, `${MISTRAL_PATH}?${query}`);
+  },
+  protocols: () => [],
+  modes: ["transcription"],
+  opening: () => [
+    {
+      type: "session.update",
+      session: { audio_format: { encoding: "pcm_s16le", sample_rate: REALTIME_RATE } },
+    },
+  ],
+  audio: (audio) => ({ type: "input_audio.append", audio }),
+  reader: () => {
+    let turn = 0;
+    return (message) => {
+      const m = message as Json;
+      const user = `user-${turn}`;
+      switch (m.type) {
+        case "transcription.text.delta":
+          return [{ type: "conversation.item.input_audio_transcription.delta", item_id: user, delta: m.text }];
+        case "transcription.done":
+          turn += 1;
+          return [{ type: "conversation.item.input_audio_transcription.completed", item_id: user, transcript: m.text }];
+        case "error":
+          return [{ type: "error", error: { message: String(m.error?.message ?? "") } }];
+        default:
+          return [];
+      }
+    };
+  },
+};
+
+export const realtimeApis: RealtimeApi[] = [openaiRealtime, geminiLive, mistralRealtime];

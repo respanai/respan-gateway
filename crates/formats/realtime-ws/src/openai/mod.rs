@@ -60,7 +60,7 @@ pub(crate) const HARMLESS: Harmless = Harmless {
     said: |event| event["type"].as_str().is_some_and(|t| t.contains("mcp")),
 };
 
-const SPEC: Spec = Spec {
+pub(crate) const SPEC: Spec = Spec {
     name: "openai-realtime",
     path: "/realtime",
     protocol: Some("realtime"),
