@@ -77,11 +77,10 @@ every call.
 **1. Install**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/respanai/respan-gateway/main/install.sh | sh
+pip install respan-gateway
 ```
 
-Or `cargo install respan-gateway`, `pip install respan-gateway`, the
-[Windows installer](install.ps1), or a
+Or `cargo install respan-gateway`, or a
 [GitHub release](https://github.com/respanai/respan-gateway/releases).
 
 **2. Run it with your keys**
