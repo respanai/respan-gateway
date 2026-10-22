@@ -19,14 +19,14 @@
 
 **Respan Gateway** is a single Rust binary that sits between your code and
 every AI API. Point the SDK you already use at it, and it connects you to
-everything: chat models, images, video and voice from every major provider,
-web search and MCP tools for any model, and traffic control (format
-translation, fallback, retries and hedged requests), with a live log of
-every call. **[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
+everything: chat models, images, video and voice from every major provider;
+tools for any model, from web search and memory to code sandboxes and any MCP
+server; and traffic control (format translation, fallback, retries and hedged
+requests), with a live log of every call. **[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
 
 <br>
 <div align="center">
-  <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-dock.png" width="900">
+  <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, tools, embeddings and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-hero.png" width="900">
 </div>
 <br>
 
@@ -82,7 +82,7 @@ Or `cargo install respan-gateway`, or a
 **2. Run it with your keys**
 
 ```bash
-export OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... GEMINI_API_KEY=...
+export OPENAI_API_KEY=sk-...
 respan-gateway
 ```
 
