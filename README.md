@@ -9,7 +9,7 @@
     <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?style=flat&logo=python&logoColor=white&label=PyPI&color=6D28D9" alt="PyPI"></a>
     <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
   </div>
-  <p><b>The open-source AI gateway. Any SDK, any model, any tool.</b></p>
+  <p><b>The universal adapter for AI.</b></p>
 </div>
 
 ---
