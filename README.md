@@ -1,6 +1,10 @@
 <div align="center">
-  <a href="https://www.respan.ai"><img src="docs/assets/respan-logo.png" alt="Respan" width="72"></a>
-  <h1>Respan Gateway</h1>
+  <a href="https://www.respan.ai">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/wordmark-dark.png">
+      <img src="docs/assets/wordmark.png" alt="Respan Gateway" width="420">
+    </picture>
+  </a>
   <p><b>The universal adapter for AI.</b></p>
   <div>
     <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-brightgreen.svg?style=flat" alt="License: MIT OR Apache-2.0"></a>
@@ -24,15 +28,9 @@ every call.
 <div align="center">
   <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-dock.png" width="900">
 </div>
+
+<p align="center"><a href="https://www.youtube.com/watch?v=pVv2ibXiTXM"><b>▶ Watch the demo</b></a></p>
 <br>
-
-## Quick demo
-
-<div align="center">
-  <a href="https://www.youtube.com/watch?v=pVv2ibXiTXM">
-    <img alt="Watch the Respan Gateway demo on YouTube" src="docs/assets/demo-thumb.jpg" width="480">
-  </a>
-</div>
 
 ## Key features
 
