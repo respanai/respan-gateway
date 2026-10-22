@@ -222,12 +222,14 @@ impl Models {
             return Ok(Vec::new());
         };
         let models = listed.map_err(|r| format!("{}: {}", listing.provider, r.why))?;
-        // The list's models, each with the config's declaration laid over
-        // it, then the models it declares that the list does not name.
+        // The list's models, each of the kind the list says, else its name,
+        // with the config's declaration laid over it; then the models it
+        // declares that the list does not name.
         let mut cards: Vec<Model> = models;
         for card in &mut cards {
             card.provider.clone_from(&listing.provider);
-            card.kind = Some(kind_of(&card.id).to_owned());
+            card.kind
+                .get_or_insert_with(|| kind_of(&card.id).to_owned());
             if let Some(declared) = listing.declared.iter().find(|d| d.id == card.id) {
                 card.overlay(declared);
             }

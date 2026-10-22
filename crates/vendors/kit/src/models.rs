@@ -37,6 +37,17 @@ pub fn listed(answer: &Value) -> Vec<Model> {
         .collect()
 }
 
+/// The kind each of Mistral's capability flags says a model is, the first
+/// it has the one: a model that chats and hears audio chats.
+const KINDS: &[(&str, &str)] = &[
+    ("completion_chat", "chat"),
+    ("audio_transcription_realtime", "realtime"),
+    ("audio_transcription", "transcription"),
+    ("audio_speech", "speech"),
+    ("ocr", "ocr"),
+    ("moderation", "moderation"),
+];
+
 /// One entry of an OpenAI-compatible list.
 fn compatible(m: &Value) -> Option<Model> {
     let text = |keys: &[&str]| keys.iter().find_map(|k| m[k].as_str().map(str::to_owned));
@@ -57,7 +68,12 @@ fn compatible(m: &Value) -> Option<Model> {
     names(&m["supported_parameters"])
         .filter_map(Capability::parse)
         .for_each(|can| model.can(can));
-    // Mistral's: each a flag.
+    // Mistral's: each a flag, which says its kind too.
+    let flagged = |flag: &&(&str, &str)| m["capabilities"][flag.0] == true;
+    model.kind = KINDS
+        .iter()
+        .find(flagged)
+        .map(|(_, kind)| (*kind).to_owned());
     let said = m["capabilities"].as_object().into_iter().flatten();
     for (name, _) in said.filter(|(_, on)| **on == true) {
         if let Some(kind) = Modality::parse(name) {
@@ -124,7 +140,7 @@ mod tests {
               "pricing": { "input": 0.88, "output": 0.88 } },
             // Mistral's: capabilities, a context length of its own name.
             { "id": "mistral-small", "max_context_length": 32000, "description": "Small",
-              "capabilities": { "vision": true, "function_calling": true } },
+              "capabilities": { "completion_chat": true, "vision": true, "function_calling": true } },
             // OpenAI's own: an id and when, and a retirement.
             { "id": "gpt-old", "created": 1, "shutdown_date": "2026-10-23" },
         ] });
@@ -148,10 +164,39 @@ mod tests {
         assert_eq!(models[2].context_window, Some(32000));
         assert_eq!(models[2].input_modalities, [Modality::Image]);
         assert_eq!(models[2].capabilities, [Capability::Tools]);
+        assert_eq!(models[2].kind.as_deref(), Some("chat"));
+        assert_eq!(models[0].kind, None, "a list that says no kind");
         let retires = models[3].retires_at.map(|t| t.timestamp());
         assert_eq!(retires, Some(1_792_713_600));
         assert_eq!(models[3].created.map(|t| t.timestamp()), Some(1));
         assert_eq!(models[3].price, None);
+    }
+
+    #[test]
+    fn mistrals_flags_say_its_models_kinds() {
+        let answer = json!({ "data": [
+            { "id": "mistral-ocr-4", "capabilities": { "ocr": true, "vision": true, "function_calling": true } },
+            { "id": "voxtral-small", "capabilities": { "audio": true, "completion_chat": true } },
+            { "id": "voxtral-mini-transcribe-realtime-2602", "capabilities": { "audio_transcription_realtime": true } },
+            { "id": "voxtral-mini-transcribe-3", "capabilities": { "audio_transcription": true } },
+            { "id": "voxtral-mini-tts-3", "capabilities": { "audio_speech": true } },
+            { "id": "mistral-moderation", "capabilities": { "classification": true, "moderation": true } },
+            { "id": "mistral-embed", "capabilities": { "completion_chat": false } },
+        ] });
+        let kinds: Vec<_> = listed(&answer).into_iter().map(|m| m.kind).collect();
+        let said = |k: &str| Some(k.to_owned());
+        assert_eq!(
+            kinds,
+            [
+                said("ocr"),
+                said("chat"),
+                said("realtime"),
+                said("transcription"),
+                said("speech"),
+                said("moderation"),
+                None,
+            ]
+        );
     }
 
     #[test]
