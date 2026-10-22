@@ -1,191 +1,156 @@
-<h1 align="center">
-  <a href="https://www.respan.ai"><img src="docs/assets/respan-logo.png" alt="Respan" width="64" valign="middle" /></a> Respan Gateway
-</h1>
+<div align="center">
+  <a href="https://www.respan.ai"><img src="docs/assets/respan-logo.png" alt="Respan" width="72"></a>
+  <h1>Respan Gateway</h1>
+  <div>
+    <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-brightgreen.svg?style=flat" alt="License: MIT OR Apache-2.0"></a>
+    <a href="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/respanai/respan-gateway/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
+    <a href="https://github.com/respanai/respan-gateway/releases"><img src="https://img.shields.io/github/v/release/respanai/respan-gateway?style=flat&label=Latest%20Release&color=6D28D9" alt="Latest release"></a>
+    <a href="https://crates.io/crates/respan-gateway"><img src="https://img.shields.io/crates/v/respan-gateway?style=flat&logo=rust&label=crates.io&color=6D28D9" alt="crates.io"></a>
+    <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?style=flat&logo=python&logoColor=white&label=PyPI&color=6D28D9" alt="PyPI"></a>
+    <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://deepwiki.com/respanai/respan-gateway"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  </div>
+  <p><b>The open-source AI gateway. Any SDK, any model, any tool.</b></p>
+</div>
 
-<p align="center">
-  <a href="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml"><img src="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
-  <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?color=08C" alt="PyPI" /></a>
-  <a href="https://github.com/respanai/respan-gateway/releases"><img src="https://img.shields.io/github/v/release/respanai/respan-gateway?color=08C" alt="Latest release" /></a>
-  <a href="https://github.com/respanai/respan-gateway"><img src="https://img.shields.io/github/stars/respanai/respan-gateway?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-08C" alt="License: MIT OR Apache-2.0" /></a>
-  <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join the Respan Discord" /></a>
-  <a href="https://x.com/RespanAI"><img src="https://img.shields.io/badge/X-%40RespanAI-000000?logo=x&amp;logoColor=white" alt="Follow Respan on X" /></a>
-</p>
+---
 
-<p align="center"><a href="https://www.respan.ai"><b>respan.ai</b></a></p>
+**Respan Gateway** is one Rust binary between your apps and every AI
+provider. Point any official SDK at it, name any model, and it translates
+the request to that provider's API: OpenAI, Anthropic and Gemini formats in
+either direction, plus realtime voice, images, speech and video. It routes
+with fallback and hedged races, gives every model your MCP tools, and logs
+each call in a built-in UI.
 
-![Respan Gateway](docs/assets/respan-gateway-banner-v2.png)
+<br>
+<div align="center">
+  <img alt="Your SDK or agent connects through Respan Gateway to every model, media API and MCP tool" src="docs/assets/architecture.png" width="800">
+</div>
+<br>
 
-**[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
+## Demo
 
-One endpoint for every LLM vendor. Point any official SDK at the gateway,
-name any model, and it routes the request to the right provider,
-translating between OpenAI, Anthropic and Gemini APIs on the way.
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=pVv2ibXiTXM">
+    <img alt="Respan Gateway demo video" src="https://img.youtube.com/vi/pVv2ibXiTXM/maxresdefault.jpg" width="640">
+  </a>
+</div>
 
-- **Any client, any model.** OpenAI Chat Completions, OpenAI Responses,
-  Anthropic Messages and Gemini `generateContent` clients can all call
-  any model, with tools, images and reasoning translated.
-- **More than chat.** Realtime voice (OpenAI Realtime ⇄ Gemini Live),
-  images, speech, transcription, embeddings and video jobs. Anything else
-  is relayed untouched.
-- **Routing and resilience.** Named routes, globs, `provider/model`,
-  fallback, retries, hedged races, and picking the cheapest or fastest.
-- **MCP.** It fronts MCP servers behind your client keys. It can also run
-  their tools inside chat requests for clients that know nothing of MCP.
-- **Observability.** A live request log and web UI, per-call pricing, and
-  traces sent to [Respan](https://respan.ai).
-- **Extensible.** Every feature above is a plugin built on one public Rust
-  API. See the [plugin guide](docs/plugins.md).
+## Key features
 
-## Install
+- **Any client, any model**<br>
+  OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini
+  `generateContent` clients can all call any model, with streaming, tools,
+  images and reasoning translated.
+
+- **Realtime voice across vendors**<br>
+  An OpenAI Realtime client talks to Gemini Live, and back. Images, speech,
+  transcription, embeddings and video jobs go through OpenAI's endpoints to
+  any vendor that has them.
+
+- **MCP tools for every model**<br>
+  Put MCP servers or built-in tool vendors behind the gateway. It runs their
+  tools inside chat requests, so a plain chat call can search the web or run
+  code, whatever the client or model.
+
+- **Routing that cuts tail latency**<br>
+  Named routes, globs and `provider/model`; fallback, retries, cheapest or
+  fastest; and hedged races that send a slow call to a second provider.
+
+- **One binary, built-in UI**<br>
+  A 19 MB binary with a live request log, per-call pricing and config
+  reload. No database, no Python, no Docker required. Traces can go to
+  [Respan](https://respan.ai).
+
+- **Plugins on a public API**<br>
+  Every feature above is a Rust plugin on the same API you can use. See the
+  [plugin guide](docs/plugins.md) and the [examples](examples/README.md).
+
+## Quickstart
+
+**1. Install**
 
 ```bash
-# Linux, macOS
 curl -fsSL https://raw.githubusercontent.com/respanai/respan-gateway/main/install.sh | sh
 ```
 
-```powershell
-# Windows
-irm https://raw.githubusercontent.com/respanai/respan-gateway/main/install.ps1 | iex
-```
+Or `cargo install respan-gateway`, `pip install respan-gateway`, the
+[Windows installer](install.ps1), or a
+[GitHub release](https://github.com/respanai/respan-gateway/releases).
 
-It is a single binary with the web UI built in. It also comes from
-`cargo install respan-gateway`, as a Python package
-(`pip install respan-gateway`, see [`python/`](python/README.md)), and on
-each [GitHub release](https://github.com/respanai/respan-gateway/releases).
-
-No release is tagged yet, so until the first tag, build from source: build
-the UI with `cd apps/ui && pnpm install && pnpm build`, then run
-`cargo build --release -p respan-gateway`.
-
-## Quickstart
+**2. Run it with your keys**
 
 ```bash
 export OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... GEMINI_API_KEY=...
 respan-gateway
 ```
 
-You don't need a config file. Every vendor whose key is in the environment
-becomes a provider. The model name picks the provider, whatever API the
-client speaks:
+No config file needed: every vendor whose key is set becomes a provider.
 
-```bash
-# OpenAI Chat client → Claude
-curl localhost:8080/v1/chat/completions \
-  -d '{"model":"claude-haiku-5-5","messages":[{"role":"user","content":"hi"}]}'
-
-# Anthropic client → GPT
-curl localhost:8080/v1/messages \
-  -d '{"model":"gpt-6-luna","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
-
-# `provider/model` names a provider explicitly
-curl localhost:8080/v1/responses -d '{"model":"groq/openai/gpt-oss-20b","input":"hi"}'
-```
-
-An SDK only needs a base URL:
+**3. Call any model from any SDK**
 
 ```python
-from openai import OpenAI
-OpenAI(base_url="http://localhost:8080/v1", api_key="unused").chat.completions.create(
-    model="gemini-2.5-flash", messages=[{"role": "user", "content": "hi"}])
-
 from anthropic import Anthropic
-Anthropic(base_url="http://localhost:8080", api_key="unused").messages.create(
-    model="gpt-6-luna", max_tokens=64, messages=[{"role": "user", "content": "hi"}])
+
+client = Anthropic(base_url="http://localhost:8080", api_key="unused")
+reply = client.messages.create(
+    model="gpt-6-luna", max_tokens=256,
+    messages=[{"role": "user", "content": "Hello from the Anthropic SDK"}])
+print(reply.content[0].text)
 ```
 
-Media uses OpenAI's endpoints: `/v1/images/generations`,
-`/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/embeddings` and
-`/v1/videos`. `GET /v1/models` lists every provider's models, and the web UI
-is at [localhost:8080/ui/](http://localhost:8080/ui/).
+The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
+[configuration](docs/configuration.md) and [MCP tools](docs/mcp.md).
 
-## Configuration
+## Performance
 
-`respan-gateway init` writes a commented `gateway.toml` for client keys,
-routes, custom providers, prices and plugins:
+Measured on one Apple M4 Max against a local fake upstream, default configs,
+gateway auth on.
 
-```toml
-client_keys = [{ name = "app", key = "env:APP_KEY" }]
+| | Respan Gateway | Bifrost | Portkey | LiteLLM |
+|---|---:|---:|---:|---:|
+| Added latency, p50 | **0.07 ms** | 0.16 ms | 0.17 ms | 4.34 ms |
+| Throughput, 50 concurrent | **56,734/s** | 18,182/s | 4,187/s | 268/s |
+| Memory | **31 MB** | 488 MB | 350 MB | 418 MB |
+| p99 when 5% of calls stall 2 s | **105 ms** (hedged) | 2,002 ms | 2,003 ms | 2,024 ms |
 
-[providers.local]                       # Any OpenAI-compatible endpoint
-formats = ["openai-chat"]
-base_url = "http://localhost:8000/v1"
+<div align="center">
+  <img alt="Respan Gateway vs Bifrost, Portkey and LiteLLM" src="docs/assets/bench-gateways.png" width="800">
+</div>
 
-[routes.smart]                          # Clients ask for "model": "smart"
-to = ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"]
-```
+Versions, method and caveats are in [docs/benchmarks.md](docs/benchmarks.md).
 
-Without client keys, the gateway answers only loopback and refuses to start
-on a public address.
+## Integrations
 
-- [Configuration](docs/configuration.md): the command line, environment,
-  providers, client keys, routing, pricing and conversation state.
-- [Vendors](docs/vendors.md): every built-in vendor, its tier, key, formats
-  and base URL.
-- [Tool vendors](docs/tool-vendors.md): every built-in tool vendor, its
-  tier, key and tools.
-- [Tools](docs/mcp.md): MCP servers and tool vendors under `[tools]`, the merged `/mcp` endpoint and the tool loop.
-- [`gateway.example.toml`](gateway.example.toml): a short example to start from.
+**Models:** OpenAI, Anthropic, Gemini, xAI, DeepSeek, Mistral, Groq,
+OpenRouter, Together, Fireworks, Cerebras, Perplexity, Azure, Cloudflare,
+Ollama, vLLM and any compatible endpoint. [All vendors →](docs/vendors.md)
 
-## Supported APIs
+**Tools:** Apify, Browserbase, Cloudinary, Context7, Daytona, E2B,
+ElevenLabs, Linkup, Reducto, Tavily, TinyFish and Zep, plus any MCP server.
+[All tool vendors →](docs/tool-vendors.md)
 
-| Kind | Formats |
-|---|---|
-| chat | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`; `passthrough` for a vendor's other endpoints |
-| realtime | `openai-realtime` ⇄ `gemini-live`; transcription: `openai-realtime` ⇄ `gemini-live` ⇄ `mistral-realtime`; `responses-ws` relayed |
-| image, speech, transcription, embedding | OpenAI's endpoints |
-| video | `openai-videos`, `gemini-veo` |
+## Documentation
 
-**Vendors:** OpenAI, Anthropic, Gemini, Respan, TypeSafe, Groq, DeepSeek,
-OpenRouter, xAI, Mistral, Together, Fireworks, Ollama, Azure, vLLM,
-Cloudflare, Cerebras and Perplexity, plus any compatible endpoint; see [Vendors](docs/vendors.md)
-for their tiers, keys and formats. Translation details are in each
-format's README, for [chat](crates/formats/conversation-http/README.md),
-[media](crates/formats/media-http/README.md) and
-[realtime](crates/formats/realtime-ws/README.md).
+- [Overview](docs/README.md): supported APIs, built-in plugins, using it as a library
+- [Configuration](docs/configuration.md): `gateway.toml`, providers, client keys, routing, pricing
+- [Vendors](docs/vendors.md) and [tool vendors](docs/tool-vendors.md)
+- [MCP and tools](docs/mcp.md): MCP servers, the merged `/mcp` endpoint, the tool loop
+- [Plugin guide](docs/plugins.md) and [examples](examples/README.md)
 
-## Plugins
-
-Everything above is a plugin built on one public Rust API. The binary
-ships these:
-
-| Plugin | What it does |
-|---|---|
-| [`routing`](crates/plugins/routing/README.md) | Picks the provider for each request: routes, globs, fallback, retries, hedged races |
-| [`tool-loop`](crates/plugins/tool-loop/README.md) | Runs MCP tools inside chat requests, for any client and any model |
-| [`mcp-router`](crates/plugins/mcp-router/README.md) | Fronts MCP servers at `/mcp/{name}`, and all of them as one at `/mcp` |
-| [`respan`](crates/plugins/respan/README.md) | Sends each request to [Respan](https://respan.ai) as a trace |
-| [`pricing`](crates/plugins/pricing/README.md) | Prices each call from its usage |
-| [`responses`](crates/plugins/responses/README.md) | Keeps Responses API conversation state with any provider |
-| [`credentials`](crates/plugins/credentials/README.md) | Forwards a client's own key to providers that have none |
-
-**Tool vendors** turn an HTTP API into MCP tools with one key: Apify,
-Browserbase, Cloudinary, Context7, Daytona, E2B, ElevenLabs, Linkup,
-Reducto, Tavily, TinyFish and Zep. See [Tool vendors](docs/tool-vendors.md).
-
-To write your own, start with the [plugin guide](docs/plugins.md). The
-[`examples/`](examples/README.md) show guardrails, PII masking, billing,
-an LLM judge that picks the model, and more, one file each.
-
-## As a library
-
-The binary is a library, `respan_gateway`: `App::new(config)?.router()`
-returns an `axum::Router`. To build your own gateway from the crates, start
-with the [plugin guide](docs/plugins.md) and the [`examples/`](examples/README.md).
-
-## Contributing
+## Community
 
 Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the
-architecture, building, tests and releases. A new vendor or tool vendor is
-usually one file; issues labeled
-[good first issue](https://github.com/respanai/respan-gateway/labels/good%20first%20issue)
-are a place to start.
+architecture, building and tests, and a new vendor is usually one file.
+Start with a
+[good first issue](https://github.com/respanai/respan-gateway/labels/good%20first%20issue),
+ask in [Discussions](https://github.com/respanai/respan-gateway/discussions)
+or [Discord](https://discord.com/invite/KEanfAafQQ), and report security
+issues as [SECURITY.md](SECURITY.md) describes.
 
-- Bugs and feature requests: [Issues](https://github.com/respanai/respan-gateway/issues/new/choose)
-- Questions and ideas: [Discussions](https://github.com/respanai/respan-gateway/discussions)
-- Security issues: see [SECURITY.md](SECURITY.md)
-
-This project follows a [code of conduct](CODE_OF_CONDUCT.md).
+<a href="https://github.com/respanai/respan-gateway/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=respanai/respan-gateway" alt="Contributors">
+</a>
 
 ## License
 
