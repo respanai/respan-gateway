@@ -22,9 +22,7 @@ every AI API. Point the SDK you already use at it, and it connects you to
 everything: chat models, images, video and voice from every major provider,
 web search and MCP tools for any model, and traffic control (format
 translation, fallback, retries and hedged requests), with a live log of
-every call.
-
-**[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
+every call. **[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
 
 <br>
 <div align="center">
