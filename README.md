@@ -1,6 +1,7 @@
 <div align="center">
   <a href="https://www.respan.ai"><img src="docs/assets/respan-logo.png" alt="Respan" width="72"></a>
   <h1>Respan Gateway</h1>
+  <p><b>The universal adapter for AI.</b></p>
   <div>
     <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-brightgreen.svg?style=flat" alt="License: MIT OR Apache-2.0"></a>
     <a href="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/respanai/respan-gateway/ci.yml?branch=main&style=flat&label=CI" alt="CI"></a>
@@ -9,7 +10,6 @@
     <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?style=flat&logo=python&logoColor=white&label=PyPI&color=6D28D9" alt="PyPI"></a>
     <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
   </div>
-  <p><b>The universal adapter for AI.</b></p>
 </div>
 
 **Respan Gateway** is one Rust binary between your apps and every AI
