@@ -23,7 +23,7 @@ each call in a built-in UI.
 
 <br>
 <div align="center">
-  <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/hero.png" width="900">
+  <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-dock.png" width="900">
 </div>
 <br>
 
