@@ -1,22 +1,47 @@
-<h1 align="center">
-  <a href="https://www.respan.ai"><img src="docs/assets/respan-logo.png" alt="Respan" width="64" valign="middle" /></a> Respan Gateway
-</h1>
-
 <p align="center">
-  <a href="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml"><img src="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
-  <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?color=08C" alt="PyPI" /></a>
-  <a href="https://github.com/respanai/respan-gateway/releases"><img src="https://img.shields.io/github/v/release/respanai/respan-gateway?color=08C" alt="Latest release" /></a>
-  <a href="https://github.com/respanai/respan-gateway"><img src="https://img.shields.io/github/stars/respanai/respan-gateway?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
-  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-08C" alt="License: MIT OR Apache-2.0" /></a>
-  <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white" alt="Join the Respan Discord" /></a>
-  <a href="https://x.com/RespanAI"><img src="https://img.shields.io/badge/X-%40RespanAI-000000?logo=x&amp;logoColor=white" alt="Follow Respan on X" /></a>
+  <a href="https://www.respan.ai#gh-light-mode-only">
+    <img width="420" src="https://cdn.respan.ai/Respan-Brand-Assets/wordmark-dark.png" alt="Respan">
+  </a>
+  <a href="https://www.respan.ai#gh-dark-mode-only">
+    <img width="420" src="https://cdn.respan.ai/Respan-Brand-Assets/wordmark-light.png" alt="Respan">
+  </a>
 </p>
 
-<p align="center"><a href="https://www.respan.ai"><b>respan.ai</b></a></p>
+<div align="center"><h1>Any SDK. Any model. Any tool.</h1></div>
+<div align="center"><h4>Respan Gateway is an open-source AI gateway in one Rust binary: format translation, routing, MCP tools and realtime voice.</h4></div>
 
-![Respan Gateway](docs/assets/respan-gateway-banner-v2.png)
+<div align="center">
+   <div>
+      <h3>
+         <a href="#quickstart"><strong>Quickstart</strong></a> ·
+         <a href="https://www.youtube.com/watch?v=pVv2ibXiTXM"><strong>Watch the demo</strong></a> ·
+         <a href="#plugins"><strong>Plugins</strong></a>
+      </h3>
+   </div>
+   <div>
+      <a href="docs/configuration.md"><strong>Docs</strong></a> ·
+      <a href="docs/vendors.md"><strong>Vendors</strong></a> ·
+      <a href="docs/tool-vendors.md"><strong>Tool vendors</strong></a> ·
+      <a href="https://discord.com/invite/KEanfAafQQ"><strong>Discord</strong></a> ·
+      <a href="https://www.respan.ai"><strong>Respan</strong></a>
+   </div>
+   <br/>
+   <div>
+      <a href="https://github.com/respanai/respan-gateway/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/respanai/respan-gateway/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
+      <a href="https://github.com/respanai/respan-gateway/releases"><img src="https://img.shields.io/github/v/release/respanai/respan-gateway?style=flat-square&color=blue" alt="Latest release"></a>
+      <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?style=flat-square&logo=python&logoColor=white&label=pypi&color=blue" alt="PyPI"></a>
+      <a href="https://crates.io/crates/respan-gateway"><img src="https://img.shields.io/crates/v/respan-gateway?style=flat-square&logo=rust&label=crates.io&color=blue" alt="crates.io"></a>
+      <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-red.svg?style=flat-square" alt="License: MIT OR Apache-2.0"></a>
+      <a href="https://www.ycombinator.com/companies/respan"><img src="https://img.shields.io/badge/Y%20Combinator-W24-orange?style=flat-square" alt="Y Combinator W24"></a>
+      <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-join-5865F2?style=flat-square&logo=discord&logoColor=white" alt="Discord"></a>
+      <a href="https://x.com/RespanAI"><img src="https://img.shields.io/twitter/follow/RespanAI?style=social" alt="Follow @RespanAI on X"></a>
+   </div>
+</div>
+<br/>
 
-**[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
+<div align="center">
+  <a href="https://www.youtube.com/watch?v=pVv2ibXiTXM"><img width="800" src="docs/assets/gateway-hero.png" alt="Your SDK or agent connects through Respan Gateway to every model, media API and MCP tool"></a>
+</div>
 
 One endpoint for every LLM vendor. Point any official SDK at the gateway,
 name any model, and it routes the request to the right provider,
