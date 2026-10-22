@@ -12,8 +12,6 @@
   <p><b>The universal adapter for AI.</b></p>
 </div>
 
----
-
 **Respan Gateway** is one Rust binary between your apps and every AI
 provider. Point any official SDK at it, name any model, and it translates
 the request to that provider's API: OpenAI, Anthropic and Gemini formats in
