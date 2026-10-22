@@ -23,8 +23,10 @@ const AUDIO: AudioFormat = AudioFormat::pcm16(16_000);
 /// ended by the client, as Mistral detects no voices.
 #[derive(Debug)]
 pub(super) struct Client {
-    /// The model the handshake asked for, until the first frame.
-    opening: Option<Option<String>>,
+    /// The model the handshake asked for.
+    model: Option<String>,
+    /// Whether its session was opened.
+    opened: bool,
     /// The format of the client's audio, as its session says.
     input: AudioFormat,
 }
@@ -32,7 +34,8 @@ pub(super) struct Client {
 impl Client {
     pub(super) fn new(model: Option<String>) -> Self {
         Self {
-            opening: Some(model),
+            model,
+            opened: false,
             input: AUDIO,
         }
     }
@@ -41,19 +44,16 @@ impl Client {
         let v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
         let event = self.decode(v)?;
-        let Some(model) = self.opening.take() else {
+        if std::mem::replace(&mut self.opened, true) {
             out.push(event);
             return Ok(());
-        };
-        match event {
-            Input::Session(s) => out.push(Input::Session(open(s, model))),
-            other => {
-                let mut s = Session::default();
-                s.input_audio = Some(self.input);
-                out.push(Input::Session(open(s, model)));
-                out.push(other);
-            }
         }
+        let (first, rest) = match event {
+            Input::Session(s) => (s, None),
+            other => (Session::default(), Some(other)),
+        };
+        out.push(Input::Session(open(first, self.model.take(), self.input)));
+        out.extend(rest);
         Ok(())
     }
 
@@ -69,9 +69,8 @@ impl Client {
                 return Ok(Input::Session(s));
             }
             "input_audio.append" => {
-                let data = json::unbase64(&rest["audio"])
+                let data = json::take_audio(rest, &["audio"])
                     .ok_or_else(|| Fault::bad_request("an append's audio is not base64"))?;
-                json::remove(rest, &["audio"]);
                 Input::Audio {
                     audio: Audio {
                         data,
@@ -95,9 +94,10 @@ impl Client {
 }
 
 /// `s`, a client's first session, as the transcription it is: of `model`
-/// unless it names one, its turns the client's.
-fn open(mut s: Session, model: Option<String>) -> Session {
+/// and in `audio` unless it names others, its turns the client's.
+fn open(mut s: Session, model: Option<String>, audio: AudioFormat) -> Session {
     s.model = s.model.or(model);
+    s.input_audio = s.input_audio.or(Some(audio));
     s.purpose = Some(Purpose::Transcription);
     s.input_transcription = Some(true);
     s.turns = Some(Turns::Manual);
@@ -115,7 +115,7 @@ pub(super) struct Provider {
     input: AudioFormat,
     /// The client's audio in that format.
     convert: Convert,
-    /// Whether any audio was sent.
+    /// Whether audio was sent since the last commit.
     heard: bool,
 }
 
@@ -160,6 +160,7 @@ impl Provider {
                 frames
             }
             Input::Commit { native } => {
+                self.heard = false;
                 let mut v = json!({"type": "input_audio.flush"});
                 merge(&mut v, own_of(native)?.as_ref());
                 vec![v]
@@ -194,7 +195,7 @@ impl Provider {
         s.turns = None;
         s.output_transcription = None;
         s.input_transcription = s.input_transcription.filter(|on| !on);
-        let session = session::encode(&s, |what| untranslatable_input(NAME, what))?;
+        let session = session::encode(&s, refuse)?;
         let mut v = json!({"type": "session.update", "session": session});
         merge(
             &mut v,

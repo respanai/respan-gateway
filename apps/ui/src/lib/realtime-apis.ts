@@ -16,7 +16,7 @@ export type ClientMessage = Record<string, unknown>;
 /** What a session is for: the model answering, or the user's speech transcribed alone. */
 export type RealtimeMode = "conversation" | "transcription";
 
-/** Whether a model transcribes, by its name. */
+/** Whether a model transcribes, as its name says: a guess, as a model list says no more. */
 const transcribes = (model: Model) => /transcribe|whisper/i.test(model.id);
 
 /**

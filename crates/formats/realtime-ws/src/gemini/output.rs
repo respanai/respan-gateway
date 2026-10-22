@@ -46,6 +46,9 @@ pub(super) struct Provider {
     told: bool,
     /// What was heard of the user's turn, in a transcription.
     heard: String,
+    /// Whether the model answers the user's turn, in a transcription,
+    /// whose answer is dropped.
+    answered: bool,
 }
 
 impl Provider {
@@ -56,6 +59,7 @@ impl Provider {
             spoke: false,
             told: false,
             heard: String::new(),
+            answered: false,
         }
     }
 
@@ -66,12 +70,13 @@ impl Provider {
             out.push(Output::native(NAME, v));
             return Ok(());
         }
+        // A model that only transcribes ends its generation, never a turn.
+        let generated = v["serverContent"]["generationComplete"] == true;
         let used = usage(&mut v);
         let mut events = Vec::new();
         let shared = self.shared.clone();
-        let mut state = shared.lock();
         let mut said = Vec::new();
-        if self.decode(&mut state, &mut v, &mut events) {
+        if self.decode(&mut shared.lock(), &mut v, &mut events) {
             said.push(Output::ResponseStart {
                 id: None,
                 native: None,
@@ -87,43 +92,50 @@ impl Provider {
             None => events.extend(rest.map(|rest| Output::native(NAME, rest.clone()))),
         }
         said.extend(events);
-        let applied = state.applied.as_ref();
-        if applied.is_some_and(|s| s.purpose == Some(Purpose::Transcription)) {
-            said = said
-                .into_iter()
-                .filter_map(|e| self.transcribed(e))
-                .collect();
+        let purpose = shared.lock().applied.as_ref().and_then(|s| s.purpose);
+        if purpose != Some(Purpose::Transcription) {
+            out.extend(said);
+            return Ok(());
         }
-        out.extend(said);
+        for event in said {
+            self.transcribed(event, out);
+        }
+        if generated && !self.answered {
+            out.extend(self.whole());
+        }
         Ok(())
     }
 
     /// `event` in a transcription, which the Live API answers all the
-    /// same: its answer is dropped, and its end, which comes once all the
-    /// user said of its turn has, ends the user's transcript; a model that
-    /// only transcribes ends its generation, not a turn.
-    fn transcribed(&mut self, event: Output) -> Option<Output> {
+    /// same: its answer is dropped, and the user's transcript is whole when
+    /// the answer is (all the user said of its turn has come by then), or
+    /// when the user's next turn begins.
+    fn transcribed(&mut self, event: Output, out: &mut Vec<Output>) {
         match event {
             Output::InputTranscript {
                 ref text,
                 complete: false,
-                native: None,
+                ..
             } => {
                 self.heard.push_str(text);
-                Some(event)
+                out.push(event);
             }
-            Output::ResponseDone { .. } => self.whole(),
-            Output::Native(ref native)
-                if native.value["serverContent"]["generationComplete"] == true =>
-            {
-                self.whole().or(Some(event))
+            Output::SpeechStarted { .. } => {
+                out.extend(self.whole());
+                out.push(event);
             }
-            Output::ResponseStart { .. }
-            | Output::Audio { .. }
+            Output::ResponseStart { .. } => self.answered = true,
+            Output::ResponseDone { status, .. } => {
+                self.answered = false;
+                if status == Status::Completed {
+                    out.extend(self.whole());
+                }
+            }
+            Output::Audio { .. }
             | Output::Text { .. }
             | Output::Transcript { .. }
-            | Output::ToolCall { .. } => None,
-            event => Some(event),
+            | Output::ToolCall { .. } => {}
+            event => out.push(event),
         }
     }
 

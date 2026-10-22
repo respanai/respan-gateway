@@ -7,7 +7,8 @@ use respan_gateway_conversation::{Content, Message, Role};
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    Audio, AudioFormat, Encoding, Input, Output, Session, Status, ToolChoice, ToolResult, Turns,
+    Audio, AudioFormat, Encoding, Input, Output, Purpose, Session, Status, ToolChoice, ToolResult,
+    Turns,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
@@ -540,7 +541,11 @@ fn changes(applied: &Session, s: &Session) -> Option<&'static str> {
         Some(c) => Some(c.clone()),
     };
     [
-        ("type", differs(&s.purpose, &applied.purpose)),
+        // A session that says no purpose is a conversation.
+        (
+            "type",
+            differs(&s.purpose, &applied.purpose.or(Some(Purpose::Conversation))),
+        ),
         ("model", differs(&s.model, &applied.model)),
         (
             "instructions",

@@ -260,16 +260,22 @@ impl Provider {
                     };
                     v["session"]["type"] = kind.into();
                 }
+                // It transcribes the user's audio only with a named model:
+                // in a transcription, the one routing chose, which its first
+                // session names.
                 if opening && self.transcribing {
                     let path = ["session", "audio", "input", "transcription", "model"];
                     json::set(&mut v, &path, self.model.as_str().into());
                 }
-                // It transcribes the user's audio only with a named model.
                 let transcription = v.pointer_mut("/session/audio/input/transcription");
                 if let Some(transcription) = transcription.and_then(Value::as_object_mut) {
-                    transcription
-                        .entry("model")
-                        .or_insert_with(|| super::TRANSCRIPTION_MODEL.into());
+                    let model = match self.transcribing {
+                        true => self.model.as_str(),
+                        false => super::TRANSCRIPTION_MODEL,
+                    };
+                    if self.transcribing || !transcription.contains_key("model") {
+                        transcription.insert("model".into(), model.into());
+                    }
                 }
                 return Ok(Some(v));
             }

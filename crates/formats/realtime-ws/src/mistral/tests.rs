@@ -405,11 +405,10 @@ fn a_session_relayed_to_mistral_says_what_it_said() {
 #[test]
 fn a_client_at_its_path_is_its_own_and_a_transcription_not_openais() {
     use respan_gateway_core::Format;
-    use respan_gateway_http::raw::Original;
     use respan_gateway_http::{Body, ClientIo, http};
 
     use super::MistralRealtime;
-    use crate::{OpenAiRealtime, requested_purpose};
+    use crate::OpenAiRealtime;
 
     let request = |path: &str| {
         http::Request::get(path)
@@ -428,11 +427,47 @@ fn a_client_at_its_path_is_its_own_and_a_transcription_not_openais() {
     assert_eq!(at(&upgrade(mistral)), (true, false));
     assert_eq!(at(&upgrade("/v1/realtime?model=m")), (false, true));
 
-    // A session's handshake, as its provider is handed it.
-    let purpose = |path: &str| {
-        let io = upgrade(path);
-        let wire = io.extensions().get::<Original>().cloned();
-        requested_purpose(&wire.expect("its handshake"))
+    // A session at its path transcribes, whoever provides it.
+    let transcribes = |at: &str| crate::session::transcribes_at(&at.parse().expect("a URI"));
+    assert!(transcribes(mistral));
+    assert!(!transcribes("/v1/realtime?model=m"));
+}
+
+#[test]
+fn what_is_harmless_once_a_turn_is_committed_is_dropped() {
+    // An OpenAI client clears its buffer, empty since its commit.
+    let clear = Input::native(
+        "openai-realtime",
+        json!({"type": "input_audio_buffer.clear"}),
+    );
+    let frames = sent(&[
+        audio(vec![0; 320], 16_000),
+        Input::Commit { native: None },
+        clear.clone(),
+    ])
+    .expect("dropped");
+    assert_eq!(frames.last(), Some(&json!({"type": "input_audio.flush"})));
+    let unheard = sent(&[audio(vec![0; 320], 16_000), clear]);
+    assert!(unheard.is_err(), "audio not yet committed would be cleared");
+}
+
+#[test]
+fn a_done_of_no_tokens_says_them_as_it_came() {
+    let done = json!({"type": "transcription.done", "text": "",
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}});
+    let events = outputs(std::slice::from_ref(&done));
+    assert!(!events.iter().any(|e| matches!(e, Output::Usage(_))));
+    assert_eq!(told(&events), [done]);
+}
+
+#[test]
+fn a_clients_first_session_is_in_its_audio_unless_it_names_another() {
+    let events =
+        read(&[json!({"type": "session.update", "session": {"target_streaming_delay_ms": 240}})])
+            .expect("read");
+    let [Input::Session(s)] = events.as_slice() else {
+        panic!("{events:?}");
     };
-    assert_eq!(purpose(mistral), Some(Purpose::Transcription));
+    assert_eq!(s.input_audio, Some(AudioFormat::pcm16(16_000)));
+    assert_eq!(s.purpose, Some(Purpose::Transcription));
 }

@@ -77,7 +77,8 @@ pub(super) fn audio_format_json(f: AudioFormat) -> Option<Value> {
 /// what else it says stays.
 fn take_format(v: &mut Value) -> Option<AudioFormat> {
     let format = audio_format(at(v, FORMAT)?)?;
-    remove(v, &["session", "audio_format", "encoding"]);
-    remove(v, &["session", "audio_format", "sample_rate"]);
+    for field in ["encoding", "sample_rate"] {
+        remove(v, &[FORMAT[0], FORMAT[1], field]);
+    }
     Some(format)
 }

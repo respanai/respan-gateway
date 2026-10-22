@@ -10,8 +10,10 @@ use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
-use respan_gateway_realtime::{Input, Output, Purpose};
+use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
+
+use crate::foreign::Harmless;
 use serde_json::Value;
 
 /// Reads one frame as zero or more events.
@@ -31,8 +33,8 @@ pub(crate) fn say() -> (Say, Said) {
 }
 
 /// Every spec of the crate, which a client's request is matched against
-/// together.
-const SPECS: [&Spec; 4] = [
+/// together, and whose natives each other's writers know what to do with.
+pub(crate) const SPECS: [&Spec; 4] = [
     &crate::openai::SPEC,
     &crate::gemini::SPEC,
     &crate::mistral::SPEC,
@@ -50,6 +52,12 @@ pub(crate) struct Spec {
     pub(crate) protocol: Option<&'static str>,
     /// Whether its provider sends JSON in binary frames.
     pub(crate) binary_text: bool,
+    /// Whether its sessions transcribe alone: one opened at its path is a
+    /// transcription from its connect, whoever provides it.
+    pub(crate) transcribes: bool,
+    /// What of its natives another format may drop; with none, all are
+    /// refused.
+    pub(crate) harmless: Option<&'static Harmless>,
 }
 
 impl Spec {
@@ -172,18 +180,12 @@ pub(crate) fn model_at(uri: &Uri) -> Option<String> {
         .map(|(_, model)| model.into_owned())
 }
 
-/// What a client's handshake asks its session to be for: a transcription
-/// at `?intent=transcription`, as OpenAI's says it.
-pub(crate) fn purpose_at(uri: &Uri) -> Option<Purpose> {
-    let query = uri.query()?.as_bytes();
-    form_urlencoded::parse(query)
-        .any(|(name, intent)| name == "intent" && intent == "transcription")
-        .then_some(Purpose::Transcription)
+/// Whether a session opened at `uri` is a transcription from its connect,
+/// as one at the path of a spec that transcribes alone is.
+pub(crate) fn transcribes_at(uri: &Uri) -> bool {
+    let at = |path| respan_gateway_http::path::path_ends_with(uri, path);
+    SPECS.iter().any(|spec| spec.transcribes && at(spec.path))
 }
-
-/// A handshake's query asking for a transcription, as [`purpose_at`] reads
-/// it.
-pub(crate) const TRANSCRIPTION_QUERY: &str = "intent=transcription";
 
 /// A handshake's query naming `model`, escaped, as [`model_at`] reads it.
 pub(crate) fn model_query(model: &str) -> String {

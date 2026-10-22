@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import type { Kind, Model } from "@/lib/api";
 import { useModels } from "@/hooks/queries";
@@ -29,7 +29,7 @@ export function useModelChoice(
   order?: (models: Model[]) => Model[],
 ): ModelChoice {
   const { data: listed, isPending } = useModels(kind);
-  const models = listed && order ? order(listed) : listed;
+  const models = useMemo(() => (listed && order ? order(listed) : listed), [listed, order]);
   // A link may name the model to start with, as the models page's do.
   const [params] = useSearchParams();
   const [chosen, setModel] = useState(() => (params.get("kind") === kind ? (params.get("model") ?? "") : ""));

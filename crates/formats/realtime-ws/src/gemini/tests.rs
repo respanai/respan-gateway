@@ -467,3 +467,69 @@ fn a_transcriber_ends_the_users_transcript_at_its_generations_end() {
         .collect();
     assert_eq!(said, [("Hello there.", false), ("Hello there.", true)]);
 }
+
+#[test]
+fn a_session_that_says_no_purpose_is_a_conversation() {
+    // An OpenAI client's session opened by its first audio says none; its
+    // next says it converses, which changes nothing.
+    let shared = Shared::default();
+    let mut conversation = Session::default();
+    conversation.purpose = Some(Purpose::Conversation);
+    let sessions = [
+        Input::Session(Session::default()),
+        Input::Session(conversation),
+    ];
+    sent(&shared, &sessions).expect("no change");
+    let mut transcription = Session::default();
+    transcription.purpose = Some(Purpose::Transcription);
+    let shared = Shared::default();
+    let sessions = [
+        Input::Session(Session::default()),
+        Input::Session(transcription),
+    ];
+    sent(&shared, &sessions).expect_err("a change of purpose");
+}
+
+/// The user's whole transcripts of a transcription told by `messages`.
+fn transcribed(messages: &[Value]) -> Vec<String> {
+    let shared = Shared::default();
+    let mut session = Session::default();
+    session.purpose = Some(Purpose::Transcription);
+    sent(&shared, &[Input::Session(session)]).expect("sent");
+    outputs(&shared, messages)
+        .into_iter()
+        .filter_map(|e| match e {
+            Output::InputTranscript {
+                text,
+                complete: true,
+                ..
+            } => Some(text),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_interrupted_answer_leaves_the_users_turn_to_its_end() {
+    let heard = |text: &str| json!({"serverContent": {"inputTranscription": {"text": text}}});
+    let answer = json!({"serverContent": {"modelTurn": {"parts": [{"text": "Sure"}]}}});
+    let transcripts = transcribed(&[
+        heard("One."),
+        answer.clone(),
+        json!({"serverContent": {"interrupted": true}}),
+        heard(" Two."),
+        answer,
+        json!({"serverContent": {"turnComplete": true}}),
+    ]);
+    assert_eq!(transcripts, ["One.", " Two."]);
+}
+
+#[test]
+fn a_transcribers_generation_ends_its_users_transcript_whatever_it_carries() {
+    let transcripts = transcribed(&[
+        json!({"serverContent": {"inputTranscription": {"text": "Hello", "finished": false}}}),
+        json!({"serverContent": {"inputTranscription": {"text": " there."}}}),
+        json!({"serverContent": {"generationComplete": true}}),
+    ]);
+    assert_eq!(transcripts, ["Hello there."]);
+}

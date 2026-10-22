@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{NAME, session};
 use crate::foreign;
-use crate::json::{self, at, merge, number, remove, string, take, text};
+use crate::json::{self, at, count, merge, number, remove, string, take, text};
 
 /// A provider's events as the kind's.
 #[derive(Debug)]
@@ -48,10 +48,11 @@ fn decode(v: &Value) -> Option<Vec<Output>> {
             events
         }
         "error" => {
-            let code = take(rest, &["error", "code"], |c| c.as_u64(), number);
-            let message = match at(rest, &["error", "message"])? {
-                Value::String(message) => message.clone(),
-                other => other.to_string(),
+            let code = take(rest, &["error", "code"], count, number);
+            let message = match at(rest, &["error", "message"]) {
+                Some(Value::String(message)) => message.clone(),
+                Some(other) => other.to_string(),
+                None => String::new(),
             };
             remove(rest, &["error", "message"]);
             let cause = match code {
@@ -78,23 +79,23 @@ fn transcript(text: String, complete: bool, rest: &mut Value) -> Output {
     }
 }
 
-/// The tokens a session's end reports, taken from its `usage`. Its input is
-/// the user's audio. The seconds of audio it also reports, and its service
-/// tier, stay native.
+/// The tokens a session's end reports, taken from its `usage`, and its
+/// total if it is theirs. Its input is the user's audio. The seconds of
+/// audio it also reports, and its service tier, stay native.
 fn usage(v: &mut Value) -> Option<Usage> {
-    let count = |name: &str| at(v, &["usage", name])?.as_u64();
-    let (input, output) = (
-        count("prompt_tokens")?,
-        count("completion_tokens").unwrap_or(0),
-    );
-    for name in ["prompt_tokens", "completion_tokens", "total_tokens"] {
-        remove(v, &["usage", name]);
-    }
+    let input = take(v, &["usage", "prompt_tokens"], count, number);
+    let output = take(v, &["usage", "completion_tokens"], count, number);
+    let (input, output) = match (input, output) {
+        (None, None) => return None,
+        (input, output) => (input.unwrap_or(0), output.unwrap_or(0)),
+    };
+    let total = |t: &Value| count(t).filter(|t| *t == input + output);
+    take(v, &["usage", "total_tokens"], total, number);
     let mut usage = Usage::default();
     usage.tokens.input_tokens = input;
     usage.tokens.output_tokens = output;
     usage.input_audio_tokens = input;
-    Some(usage).filter(|u| *u != Usage::default())
+    Some(usage)
 }
 
 /// The provider's events written to a client as Mistral's: its session,

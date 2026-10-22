@@ -305,7 +305,7 @@ export function RealtimeTab() {
         )}
         {active ? (
           <div className="grid gap-2">
-            {api.cancel && mode === "conversation" && (
+            {api.cancel && !transcribing && (
               <Button variant="outline" onClick={interrupt} disabled={state.speaker !== "assistant"}>
                 <Hand /> Interrupt
               </Button>
@@ -342,7 +342,7 @@ export function RealtimeTab() {
           )}
           {state.lines.length === 0 ? (
             <p className="text-center text-sm text-muted-foreground">
-              {mode === "transcription"
+              {transcribing
                 ? "Your transcript appears here as you talk."
                 : "Transcripts of both sides appear here as you talk."}
             </p>

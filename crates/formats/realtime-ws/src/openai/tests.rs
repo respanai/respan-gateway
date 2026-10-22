@@ -538,25 +538,23 @@ fn a_transcription_is_opened_by_the_model_routing_chose() {
         v["session"]["audio"]["input"]["transcription"]["model"],
         "gpt-4o-transcribe"
     );
+    // A later session's transcription settings keep the model routing chose.
+    let mut later = Session::default();
+    later.input_transcription = Some(true);
+    let mut frames = Vec::new();
+    provider
+        .write(&Input::Session(later), &mut frames)
+        .expect("written");
+    let v: Value = serde_json::from_slice(&frames[0]).expect("JSON");
+    assert_eq!(
+        v["session"]["audio"]["input"]["transcription"]["model"],
+        "gpt-4o-transcribe"
+    );
 }
 
 #[test]
 fn a_handshake_asks_for_a_transcription_at_its_intent() {
-    use respan_gateway_http::raw::Original;
-    use respan_gateway_http::{Body, ClientIo, http};
-
-    use crate::requested_purpose;
-
-    // A session's handshake, as its provider is handed it.
-    let purpose = |path: &str| {
-        let request = http::Request::get(path)
-            .header("upgrade", "websocket")
-            .body(Body::default())
-            .expect("request");
-        let io = ClientIo::accept_live(request, 1 << 20).0;
-        let wire = io.extensions().get::<Original>().cloned();
-        requested_purpose(&wire.expect("its handshake"))
-    };
+    let purpose = |at: &str| super::purpose_at(&at.parse().expect("a URI"));
     let intent = "/v1/realtime?model=m&intent=transcription";
     assert_eq!(purpose(intent), Some(Purpose::Transcription));
     assert_eq!(purpose("/v1/realtime?model=m"), None);

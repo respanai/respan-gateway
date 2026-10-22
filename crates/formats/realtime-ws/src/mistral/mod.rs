@@ -24,7 +24,6 @@ const NAME: &str = SPEC.name;
 /// What of Mistral's own natives another format may drop: its session's
 /// streaming delay, which says how soon text comes, not what it says.
 pub(crate) const HARMLESS: Harmless = Harmless {
-    format: NAME,
     session: &["session.target_streaming_delay_ms"],
     vad: &[],
     message: &[],
@@ -43,6 +42,8 @@ pub(crate) const SPEC: Spec = Spec {
     path: "/audio/transcriptions/realtime",
     protocol: None,
     binary_text: false,
+    transcribes: true,
+    harmless: Some(&HARMLESS),
 };
 
 /// Mistral's realtime transcription: a `GET` upgrade to a path ending in

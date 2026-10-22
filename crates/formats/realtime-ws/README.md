@@ -19,9 +19,10 @@ a format per spec:
   events.
 
 Each is served at a path ending in its own, but not in another's that ends
-in it (Mistral's in OpenAI's `/realtime`), and sends to it; `format.transport(base_url)` is a `WsTransport` to its provider,
-set as its frames need. The key is the transport's (`with_headers`: OpenAI's
-and Mistral's `Authorization: Bearer`, Gemini's `x-goog-api-key`) or the
+in it (Mistral's in OpenAI's `/realtime`), and sends to it;
+`format.transport(base_url)` is a `WsTransport` to its provider, set as its
+frames need. The key is the transport's (`with_headers`: OpenAI's and
+Mistral's `Authorization: Bearer`, Gemini's `x-goog-api-key`) or the
 client's. A format that speaks a subprotocol offers it to the provider
 beside the client's own offers, and gives it back to a client that offered
 it. They share their session's handshake, and differ in their spec and
@@ -87,8 +88,9 @@ What one spec has and the other has not is emulated, dropped or refused:
   tool choice other than `auto` and `create_response: false` are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
-  its answers dropped: the user's transcript streams, and its turn's end
-  completes it.
+  its answers dropped: the user's transcript streams, and is whole at an
+  answer's end, the user's next turn, or a transcriber's end of its
+  generation.
 - To OpenAI: Gemini's client routes by `?model=` on its URL (OpenAI takes
   its model at connect), and its `activityStart` while the model speaks is
   `response.cancel` (one that reaches OpenAI as the response ends is refused
@@ -158,10 +160,11 @@ session is refused), and into the opening `Session` by
 own query, never the client's.
 
 A transcription is one from its connect, as OpenAI's is: its client asks
-for it at `?intent=transcription` (`requested_purpose`), beside the `?model=`
-that routes it, and OpenAI's provider dials `?intent=transcription` with no
-model, naming the model routing chose as the one that transcribes. Its
-first session is then a transcription, unless it says otherwise.
+for it at `?intent=transcription`, beside the `?model=` that routes it, and
+OpenAI's provider dials `?intent=transcription` with no model, naming the
+model routing chose as the one that transcribes, in every session. Its
+first session is then a transcription, unless it says otherwise; a session
+that says nothing of it is a conversation.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
 [realtime examples](../../../examples/realtime).
