@@ -11,6 +11,7 @@
     <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
   </div>
 </div>
+<br>
 
 **Respan Gateway** is one Rust binary between your apps and every AI
 provider. Point any official SDK at it, name any model, and it translates
