@@ -13,12 +13,18 @@
 </div>
 <br>
 
-**Respan Gateway** is one Rust binary between your apps and every AI
-provider. Point any official SDK at it, name any model, and it translates
-the request to that provider's API: OpenAI, Anthropic and Gemini formats in
-either direction, plus realtime voice, images, speech and video. It routes
-with fallback and hedged races, gives every model your MCP tools, and logs
-each call in a built-in UI.
+**Respan Gateway** is a single Rust binary that sits between your code and
+every AI API. Point the SDK you already use at it, and it connects you to
+everything: chat models, images, video and voice from every major provider,
+web search and MCP tools for any model, and traffic control (format
+translation, fallback, retries and hedged requests), with a live log of
+every call.
+
+**Observability is built in.** Respan Gateway is native to
+[Respan](https://respan.ai). Turn on one plugin and every request is logged
+and traced, with its cost, latency and tokens. Respan's span-02, a frontier
+decision model trained specifically to analyze agent behavior, reviews each
+agent run so you can see how your agents behave and where they go wrong.
 
 <br>
 <div align="center">
@@ -26,43 +32,51 @@ each call in a built-in UI.
 </div>
 <br>
 
-## Demo
+## Quick demo
 
 <div align="center">
   <a href="https://www.youtube.com/watch?v=pVv2ibXiTXM">
-    <img alt="Respan Gateway demo video" src="https://img.youtube.com/vi/pVv2ibXiTXM/maxresdefault.jpg" width="640">
+    <img alt="Watch the Respan Gateway demo on YouTube" src="docs/assets/demo-thumb.jpg" width="480">
   </a>
 </div>
 
 ## Key features
 
 - **Any client, any model**<br>
-  OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini
-  `generateContent` clients can all call any model, with streaming, tools,
+  OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini API
+  clients can all call any model, with streaming, tools,
   images and reasoning translated.
 
-- **Realtime voice across vendors**<br>
-  An OpenAI Realtime client talks to Gemini Live, and back. Images, speech,
-  transcription, embeddings and video jobs go through OpenAI's endpoints to
-  any vendor that has them.
+- **Multimodal**<br>
+  Realtime voice across vendors (an OpenAI Realtime client talks to Gemini
+  Live, and back), plus images, speech, transcription, embeddings and video
+  jobs through OpenAI's endpoints, to any vendor that has them.
 
 - **MCP tools for every model**<br>
-  Put MCP servers or built-in tool vendors behind the gateway. It runs their
-  tools inside chat requests, so a plain chat call can search the web or run
-  code, whatever the client or model.
+  Put MCP servers or built-in tool vendors behind the gateway, from web search
+  to code sandboxes. It runs their tools inside chat requests, so a plain chat
+  call can use them, whatever the client or model.
 
-- **Routing that cuts tail latency**<br>
+- **Traffic control**<br>
   Named routes, globs and `provider/model`; fallback, retries, cheapest or
-  fastest; and hedged races that send a slow call to a second provider.
+  fastest; and hedged requests that race a slow call against a second
+  provider.
 
-- **One binary, built-in UI**<br>
-  A 19 MB binary with a live request log, per-call pricing and config
-  reload. No database, no Python, no Docker required. Traces can go to
-  [Respan](https://respan.ai).
+- **Observability**<br>
+  A live request log with cost, latency and tokens for every call, and traces
+  in [Respan](https://respan.ai), where span-02 analyzes how your agents
+  behave.
 
-- **Plugins on a public API**<br>
-  Every feature above is a Rust plugin on the same API you can use. See the
-  [plugin guide](docs/plugins.md) and the [examples](examples/README.md).
+- **Best-in-class performance**<br>
+  0.07 ms of added latency, 56,000 requests per second and 31 MB of memory in
+  our benchmarks: about 3× the throughput of the next
+  fastest gateway we tested.
+
+- **Write your own plugin in minutes**<br>
+  Every feature above is a plugin, built on the same public Rust API you can
+  use: one trait with four hooks. Start from the [plugin guide](docs/plugins.md)
+  or an [example](examples/README.md) such as guardrails, PII masking or
+  billing.
 
 ## Quickstart
 
@@ -100,41 +114,111 @@ print(reply.content[0].text)
 The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
 [configuration](docs/configuration.md) and [MCP tools](docs/mcp.md).
 
+### Other ways to run it
+
+- [Python, in-process](python/README.md) — Run the gateway inside your Python app, with no server.
+- [Embed in Rust](docs/plugins.md#in-a-gateway-of-your-own) — Mount the gateway in your own Rust service.
+
 ## Performance
 
-Measured on one Apple M4 Max against a local fake upstream, default configs,
-gateway auth on.
-
-| | Respan Gateway | Bifrost | Portkey | LiteLLM |
+| | Respan Gateway | Bifrost | Portkey | LiteLLM (1 worker) |
 |---|---:|---:|---:|---:|
-| Added latency, p50 | **0.07 ms** | 0.16 ms | 0.17 ms | 4.34 ms |
-| Throughput, 50 concurrent | **56,734/s** | 18,182/s | 4,187/s | 268/s |
+| Added latency (p50) | **0.07 ms** | 0.16 ms | 0.17 ms | 4.34 ms |
+| Throughput | **56,734/s** | 18,182/s | 4,187/s | 268/s |
 | Memory | **31 MB** | 488 MB | 350 MB | 418 MB |
-| p99 when 5% of calls stall 2 s | **105 ms** (hedged) | 2,002 ms | 2,003 ms | 2,024 ms |
+| 1k streams, success | **100%** | 92–100% | — | 79% |
+| 1k streams, memory | **128 MB** | 688 MB | — | 493 MB |
+| p99, 5% slow calls | **105 ms** | 2,002 ms | 2,003 ms | 2,024 ms |
 
-<div align="center">
-  <img alt="Respan Gateway vs Bifrost, Portkey and LiteLLM" src="docs/assets/bench-gateways.png" width="800">
-</div>
+## Configuration
 
-Versions, method and caveats are in [docs/benchmarks.md](docs/benchmarks.md).
+You don't need a config file to start. When you want more, run
+`respan-gateway init` for a commented `gateway.toml`. One file sets up keys,
+providers, traffic control, tools and tracing:
 
-## Integrations
+```toml
+client_keys = [{ name = "app", key = "env:APP_KEY" }]   # who may call the gateway
 
-**Models:** OpenAI, Anthropic, Gemini, xAI, DeepSeek, Mistral, Groq,
-OpenRouter, Together, Fireworks, Cerebras, Perplexity, Azure, Cloudflare,
-Ollama, vLLM and any compatible endpoint. [All vendors →](docs/vendors.md)
+[providers.openai]                      # a built-in vendor: just add a key
+vendor = "openai"
+key = "env:OPENAI_API_KEY"
 
-**Tools:** Apify, Browserbase, Cloudinary, Context7, Daytona, E2B,
-ElevenLabs, Linkup, Reducto, Tavily, TinyFish and Zep, plus any MCP server.
-[All tool vendors →](docs/tool-vendors.md)
+[providers.anthropic]
+vendor = "anthropic"
+key = "env:ANTHROPIC_API_KEY"
 
-## Documentation
+[providers.local]                       # any OpenAI-compatible endpoint
+formats = ["openai-chat"]
+base_url = "http://localhost:8000/v1"
 
-- [Overview](docs/README.md): supported APIs, built-in plugins, using it as a library
-- [Configuration](docs/configuration.md): `gateway.toml`, providers, client keys, routing, pricing
-- [Vendors](docs/vendors.md) and [tool vendors](docs/tool-vendors.md)
-- [MCP and tools](docs/mcp.md): MCP servers, the merged `/mcp` endpoint, the tool loop
-- [Plugin guide](docs/plugins.md) and [examples](examples/README.md)
+[routes.smart]                          # clients ask for "model": "smart"
+to = ["anthropic/claude-haiku-5-5", "openai/gpt-6-luna"]
+hedge = "800ms"                         # race the second if the first is slow
+
+[tools.search]                          # web search as MCP tools
+vendor = "linkup"
+key = "env:LINKUP_API_KEY"
+
+[plugins.tool_loop]                     # every model can use them
+servers = ["search"]
+
+[plugins.respan]                        # trace every call in Respan
+key = "env:RESPAN_API_KEY"
+```
+
+`respan-gateway check` validates it, and `--watch` or `SIGHUP` reloads it
+without a restart. Without client keys, the gateway answers only on loopback
+and refuses to start on a public address.
+
+**Reference:** [configuration](docs/configuration.md) ·
+[vendors](docs/vendors.md) · [tool vendors](docs/tool-vendors.md) ·
+[MCP and tools](docs/mcp.md) · [`gateway.example.toml`](gateway.example.toml)
+
+## Supported API formats
+
+Call the gateway in any format on the left, and it reaches every provider on
+the right, translating between them.
+
+| | Your code calls | It can reach |
+|---|---|---|
+| **Chat** | OpenAI Chat Completions<br>OpenAI Responses<br>Anthropic Messages<br>Gemini API | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/anthropic-dark.svg"><img src="docs/assets/vendors/anthropic.svg" alt="Anthropic" title="Anthropic" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/deepseek.svg" alt="DeepSeek" title="DeepSeek" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="20" height="20"></picture><br>any chat model, whichever of the four formats it speaks |
+| **Realtime voice** | OpenAI Realtime<br>Gemini Live | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"><br>OpenAI ⇄ Gemini voice; Mistral for transcription |
+| **Images** | OpenAI Images | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> |
+| **Speech, transcription** | OpenAI Speech<br>OpenAI Transcriptions | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="20" height="20"></picture> |
+| **Embeddings** | OpenAI Embeddings | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="20" height="20"> <img src="docs/assets/vendors/cloudflare.svg" alt="Cloudflare" title="Cloudflare" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="20" height="20"></picture> |
+| **Video** | OpenAI Videos<br>Gemini Veo | <img src="docs/assets/vendors/veo.svg" alt="Google Veo" title="Google Veo" width="20" height="20"> Google Veo |
+| **Decisions** | Respan Decisions<br>TypeSafe System One | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/respan-dark.svg"><img src="docs/assets/vendors/respan.svg" alt="Respan" title="Respan" width="20" height="20"></picture> <img src="docs/assets/vendors/typesafe.png" alt="TypeSafe" title="TypeSafe" width="20" height="20"> |
+| **Tools** | MCP | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/mcp-dark.svg"><img src="docs/assets/vendors/mcp.svg" alt="MCP" title="MCP" width="20" height="20"></picture> your MCP servers and tool vendors |
+| **Anything else** | A vendor's own API | Relayed to that vendor untouched |
+
+Each vendor's formats are in [vendors](docs/vendors.md), and the translation
+details in each format's README: [chat](crates/formats/conversation-http/README.md),
+[media](crates/formats/media-http/README.md),
+[realtime](crates/formats/realtime-ws/README.md) and
+[decisions](crates/formats/decision-http/README.md).
+
+## Plugins
+
+Everything the gateway does is a plugin on one public Rust API. These ship
+built in, and connect to the providers and tools beside them:
+
+| | Built in | Works with |
+|---|---|---|
+| **Models** | Format translation, [`credentials`](crates/plugins/credentials/README.md) (a client's own key), [`responses`](crates/plugins/responses/README.md) (conversation state) | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="22" height="22"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/anthropic-dark.svg"><img src="docs/assets/vendors/anthropic.svg" alt="Anthropic" title="Anthropic" width="22" height="22"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="22" height="22"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="22" height="22"></picture> <img src="docs/assets/vendors/deepseek.svg" alt="DeepSeek" title="DeepSeek" width="22" height="22"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="22" height="22"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="22" height="22"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="22" height="22"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="22" height="22"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="22" height="22"> <img src="docs/assets/vendors/cerebras.svg" alt="Cerebras" title="Cerebras" width="22" height="22"> <img src="docs/assets/vendors/perplexity.svg" alt="Perplexity" title="Perplexity" width="22" height="22"> <img src="docs/assets/vendors/azure.svg" alt="Azure" title="Azure" width="22" height="22"> <img src="docs/assets/vendors/cloudflare.svg" alt="Cloudflare" title="Cloudflare" width="22" height="22"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="22" height="22"></picture> <img src="docs/assets/vendors/vllm.svg" alt="vLLM" title="vLLM" width="22" height="22"><br>and any compatible endpoint · [all vendors](docs/vendors.md) |
+| **Traffic control** | [`routing`](crates/plugins/routing/README.md): named routes, fallback, retries, hedged requests, cheapest or fastest | Every provider above |
+| **MCP tools** | [`tool-loop`](crates/plugins/tool-loop/README.md) runs tools inside chat requests; [`mcp-router`](crates/plugins/mcp-router/README.md) fronts MCP servers at `/mcp` | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/tool-vendors/linkup-dark.svg"><img src="docs/assets/tool-vendors/linkup.svg" alt="Linkup" title="Linkup" width="22" height="22"></picture> <img src="docs/assets/tool-vendors/tavily.svg" alt="Tavily" title="Tavily" width="22" height="22"> <img src="docs/assets/tool-vendors/apify.svg" alt="Apify" title="Apify" width="22" height="22"> <img src="docs/assets/tool-vendors/browserbase.svg" alt="Browserbase" title="Browserbase" width="22" height="22"> <img src="docs/assets/tool-vendors/tinyfish.png" alt="TinyFish" title="TinyFish" width="22" height="22"> <img src="docs/assets/tool-vendors/context7.svg" alt="Context7" title="Context7" width="22" height="22"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/tool-vendors/daytona-dark.png"><img src="docs/assets/tool-vendors/daytona.png" alt="Daytona" title="Daytona" width="22" height="22"></picture> <img src="docs/assets/tool-vendors/e2b.png" alt="E2B" title="E2B" width="22" height="22"> <img src="docs/assets/tool-vendors/reducto.svg" alt="Reducto" title="Reducto" width="22" height="22"> <img src="docs/assets/tool-vendors/zep.png" alt="Zep" title="Zep" width="22" height="22"> <img src="docs/assets/tool-vendors/cloudinary.svg" alt="Cloudinary" title="Cloudinary" width="22" height="22"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/tool-vendors/elevenlabs-dark.svg"><img src="docs/assets/tool-vendors/elevenlabs.svg" alt="ElevenLabs" title="ElevenLabs" width="22" height="22"></picture><br>and any MCP server · [all tool vendors](docs/tool-vendors.md) |
+| **Observability** | Live request log, [`pricing`](crates/plugins/pricing/README.md) for cost per call, [`respan`](crates/plugins/respan/README.md) for traces | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/respan-dark.svg"><img src="docs/assets/vendors/respan.svg" alt="Respan" title="Respan" width="22" height="22"></picture> [Respan](https://respan.ai) |
+
+**Your framework:** anything that lets you set a base URL works. Point it at
+your gateway and keep your code. There are step-by-step guides for the
+[OpenAI SDK](https://www.respan.ai/docs/integrations/gateway/open-ai-sdk), [Anthropic SDK](https://www.respan.ai/docs/integrations/gateway/anthropic-sdk),
+[Google GenAI](https://www.respan.ai/docs/integrations/gateway/google-gen-ai), [Vercel AI SDK](https://www.respan.ai/docs/integrations/gateway/vercel-ai-sdk),
+[LangChain](https://www.respan.ai/docs/integrations/gateway/lang-chain), [Pydantic AI](https://www.respan.ai/docs/integrations/gateway/pydantic-ai), [Pi](https://www.respan.ai/docs/integrations/gateway/pi),
+[OpenCode](https://www.respan.ai/docs/integrations/gateway/open-code) and [many more](https://www.respan.ai/docs/integrations/gateway/overview).
+
+**Your own plugin:** start with the [plugin guide](docs/plugins.md). The
+[examples](examples/README.md) show guardrails, PII masking, billing, an LLM
+judge that picks the model, and more, one file each.
 
 ## Community
 
@@ -145,6 +229,13 @@ Start with a
 ask in [Discussions](https://github.com/respanai/respan-gateway/discussions)
 or [Discord](https://discord.com/invite/KEanfAafQQ), and report security
 issues as [SECURITY.md](SECURITY.md) describes.
+
+**Roadmap:** what we're building next is in
+[issues](https://github.com/respanai/respan-gateway/issues). Missing a vendor,
+format or feature? [Ask for it](https://github.com/respanai/respan-gateway/issues/new/choose).
+
+**Want it managed?** [Respan](https://respan.ai) runs the gateway for you, with
+dashboards, evals and span-02.
 
 <a href="https://github.com/respanai/respan-gateway/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=respanai/respan-gateway" alt="Contributors">
