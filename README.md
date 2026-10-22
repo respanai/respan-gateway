@@ -22,14 +22,12 @@ every AI API. Point the SDK you already use at it, and it connects you to
 everything: chat models, images, video and voice from every major provider,
 web search and MCP tools for any model, and traffic control (format
 translation, fallback, retries and hedged requests), with a live log of
-every call.
+every call. **[▶ Watch the demo](https://www.youtube.com/watch?v=pVv2ibXiTXM)**
 
 <br>
 <div align="center">
   <img alt="Your app plugs into Respan Gateway, which connects it to models, voice, image and video, web search, MCP tools and self-hosted models, with fallback, hedging, translation, tool loop, PII redaction and tracing built in" src="docs/assets/gateway-dock.png" width="900">
 </div>
-
-<p align="center"><a href="https://www.youtube.com/watch?v=pVv2ibXiTXM"><b>▶ Watch the demo</b></a></p>
 <br>
 
 ## Key features
