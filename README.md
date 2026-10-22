@@ -8,7 +8,6 @@
     <a href="https://crates.io/crates/respan-gateway"><img src="https://img.shields.io/crates/v/respan-gateway?style=flat&logo=rust&label=crates.io&color=6D28D9" alt="crates.io"></a>
     <a href="https://pypi.org/project/respan-gateway/"><img src="https://img.shields.io/pypi/v/respan-gateway?style=flat&logo=python&logoColor=white&label=PyPI&color=6D28D9" alt="PyPI"></a>
     <a href="https://discord.com/invite/KEanfAafQQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"></a>
-    <a href="https://deepwiki.com/respanai/respan-gateway"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
   </div>
   <p><b>The open-source AI gateway. Any SDK, any model, any tool.</b></p>
 </div>
