@@ -268,12 +268,22 @@ impl Models {
 
 /// What a model does, by its name as vendors spell them; chat unless the
 /// name says otherwise.
-fn kind_of(id: &str) -> &'static str {
+pub(crate) fn kind_of(id: &str) -> &'static str {
     let id = id.to_ascii_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| id.contains(w));
     match () {
         _ if has(&["embed"]) => kind::EMBEDDING,
-        _ if has(&["dall-e", "gpt-image", "imagen", "grok-2-image", "flux"]) => kind::IMAGE,
+        _ if has(&[
+            "dall-e",
+            "gpt-image",
+            "imagen",
+            "-image",
+            "nano-banana",
+            "flux",
+        ]) =>
+        {
+            kind::IMAGE
+        }
         // Before transcription: a realtime transcriber is a session.
         _ if has(&["realtime", "-live", "live-", "native-audio"]) => kind::REALTIME,
         _ if has(&["whisper", "transcribe"]) => kind::TRANSCRIPTION,
@@ -406,6 +416,8 @@ mod tests {
         assert_eq!(kind("gpt-4o-mini"), "chat");
         assert_eq!(kind("gpt-image-1"), "image");
         assert_eq!(kind("imagen-4.0-generate-001"), "image");
+        assert_eq!(kind("gemini-3.1-flash-image"), "image");
+        assert_eq!(kind("nano-banana-pro-preview"), "image");
         assert_eq!(kind("whisper-large-v3"), "transcription");
         assert_eq!(kind("gpt-4o-mini-transcribe"), "transcription");
         assert_eq!(kind("gpt-4o-mini-tts"), "speech");

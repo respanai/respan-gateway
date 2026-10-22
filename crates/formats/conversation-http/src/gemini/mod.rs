@@ -154,8 +154,9 @@ fn finish_of(reason: &str) -> Finish {
 }
 
 /// The model, unescaped, and the method a Gemini path names:
-/// `.../models/{model}:{method}`.
-fn call_of(uri: &http::Uri) -> Option<(String, &str)> {
+/// `.../models/{model}:{method}`, `generateContent` or
+/// `streamGenerateContent`.
+pub fn call_of(uri: &http::Uri) -> Option<(String, &str)> {
     let path = uri.path();
     let (rest, last) = path.rsplit_once('/')?;
     let (model, method) = last.rsplit_once(':')?;
@@ -166,7 +167,7 @@ fn call_of(uri: &http::Uri) -> Option<(String, &str)> {
 }
 
 /// Whether a streaming call at `uri` asks for server-sent events (`alt=sse`).
-fn sse(uri: &http::Uri) -> bool {
+pub fn sse(uri: &http::Uri) -> bool {
     uri.query()
         .is_some_and(|q| q.split('&').any(|p| p == "alt=sse"))
 }
@@ -496,7 +497,7 @@ fn google_status(status: StatusCode) -> &'static str {
 
 /// Usage as `usageMetadata` has it, if there is any: the output without the
 /// thoughts as `candidatesTokenCount`, and their sum as the total.
-fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
+pub fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
     if u.is_empty() && native.is_empty() {
         return None;
     }
@@ -522,8 +523,8 @@ fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
     Some(body)
 }
 
-/// Usage totals; the thoughts are part of the output.
-fn usage_of(u: &Value) -> Result<Usage, Fault> {
+/// Usage totals of a `usageMetadata`; the thoughts are part of the output.
+pub fn usage_of(u: &Value) -> Result<Usage, Fault> {
     let n = |key: &str| count(u.get(key));
     let thoughts = n("thoughtsTokenCount")?.unwrap_or(0);
     Ok(Usage {

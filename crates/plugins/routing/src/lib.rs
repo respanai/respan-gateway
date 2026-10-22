@@ -160,6 +160,12 @@ impl Routes {
         &self.stats
     }
 
+    /// Whether `provider` speaks `format`.
+    pub fn speaks(&self, provider: &str, format: &str) -> bool {
+        let speaks = self.providers.iter().find(|(name, _)| name == provider);
+        speaks.is_some_and(|(_, speaks)| speaks.iter().any(|s| s.format == format))
+    }
+
     /// The rules, in the order tried among their sort.
     pub fn rules(&self) -> &[Arc<Rule>] {
         &self.rules

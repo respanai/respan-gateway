@@ -1,15 +1,13 @@
-//! Google's Veo as the Gemini API serves it, over HTTP: a provider format
-//! of the [`video`](respan_gateway_media::video) kind, [`GeminiVeo`]. A provider's base URL
-//! includes the version, `https://generativelanguage.googleapis.com/v1beta`,
-//! and its transport the key, `x-goog-api-key`.
+//! Google's Veo: a format of the [`video`](respan_gateway_media::video)
+//! kind, [`GeminiVeo`].
 
+use super::{is_segment, refusal};
 use crate::edge::{bind_provider, content, sends};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::fields::kept;
-use respan_gateway_conversation_http::gemini::{self, GeminiGenerate};
+use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
 use respan_gateway_http::bytes::Bytes;
@@ -83,12 +81,6 @@ impl GeminiVeo {
         let mut segments = name.split('/');
         segments.all(is_segment).then_some(name)
     }
-}
-
-/// Whether `s` is a path segment that every reader reads as it is.
-fn is_segment(s: &str) -> bool {
-    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.');
-    !s.is_empty() && s != "." && s != ".." && s.chars().all(plain)
 }
 
 /// The redirects its calls follow: to Google's hosts over HTTPS alone, as
@@ -651,12 +643,6 @@ fn operation_of_job(job: &Job, base: &str) -> Value {
         _ => {}
     }
     operation
-}
-
-/// A client's refusal, as Gemini's `generateContent` writes it:
-/// `{"error": {code, message, status}}`.
-fn refusal(fault: &Fault, request: &http::Request<Bytes>, head: &mut ResponseHead) -> Bytes {
-    GeminiGenerate.refusal(fault, request, head)
 }
 
 #[cfg(test)]

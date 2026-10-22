@@ -29,7 +29,6 @@ export function servedApis<A extends { id: string }>(
 
 /** The media tabs' APIs: OpenAI's, the one client format of each of their kinds. */
 export const mediaApis = {
-  image: [{ id: "openai-images", label: "OpenAI Images", endpoint: "/v1/images/generations" }],
   transcription: [
     { id: "openai-transcriptions", label: "OpenAI Transcriptions", endpoint: "/v1/audio/transcriptions" },
   ],

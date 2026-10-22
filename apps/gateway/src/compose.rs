@@ -92,7 +92,7 @@ pub fn compose(
         Some(serve) => serve.clone(),
         None => default_serve(&upstreams, formats),
     };
-    let gateway = serve_formats(gateway, &serve, &upstreams, formats)?;
+    let served = served(&serve, &upstreams, formats)?;
     let routing = &config.plugins.routing;
     if let Some(default) = &routing.default
         && !upstreams.iter().any(|u| u.name == *default)
@@ -111,6 +111,7 @@ pub fn compose(
     }
     let catalog = catalog(&upstreams, config)?;
     let routes = Arc::new(routes(&upstreams, rules, routing.default.clone()).with_catalog(catalog));
+    let gateway = (served.into_iter()).try_fold(gateway, |gateway, f| f.serve(gateway, &routes))?;
     let plan = Plan {
         upstreams,
         serve,
@@ -187,14 +188,15 @@ fn providers(
     Ok((gateway, upstreams))
 }
 
-/// The gateway serving each format of `serve`, in order. A session of
-/// Responses or a relay, routed by no model, needs exactly one provider.
-fn serve_formats(
-    mut gateway: Gateway,
+/// The formats of `serve`, in the order to register them: as listed, but
+/// a format that claims some of its endpoints' requests before the rest,
+/// which take the others. A session of Responses or a relay, routed by no
+/// model, needs exactly one provider.
+fn served<'a>(
     serve: &[String],
     upstreams: &[Upstream],
-    formats: &[KnownFormat],
-) -> Result<Gateway, Fault> {
+    formats: &'a [KnownFormat],
+) -> Result<Vec<&'a KnownFormat>, Fault> {
     let after = serve.iter().skip_while(|n| *n != PASSTHROUGH).nth(1);
     if let Some(after) = after {
         return Err(Fault::config(format!(
@@ -202,12 +204,13 @@ fn serve_formats(
              serve '{PASSTHROUGH}' last"
         )));
     }
+    let mut served = Vec::new();
     for name in serve {
-        let served = format_named(formats, name, "formats")?;
-        gateway = served.serve(gateway)?;
+        let format = format_named(formats, name, "formats")?;
+        served.push(format);
         // A session or a relay is not routed by its model: one provider
         // speaks it.
-        if !matches!(served.kind, kind::RESPONSES | kind::PASSTHROUGH) {
+        if !matches!(format.kind, kind::RESPONSES | kind::PASSTHROUGH) {
             continue;
         }
         let speakers: Vec<&str> = upstreams
@@ -223,7 +226,8 @@ fn serve_formats(
             return Err(Fault::config(message));
         }
     }
-    Ok(gateway)
+    served.sort_by_key(|f| !f.claims);
+    Ok(served)
 }
 
 /// The providers' names, comma separated.

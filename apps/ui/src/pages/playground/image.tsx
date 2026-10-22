@@ -11,16 +11,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useModelChoice } from "@/hooks/use-model-choice";
 import { useApiChoice, useLastCall } from "@/hooks/use-playground";
 import { postJson } from "@/lib/api";
-import { mediaApis } from "@/lib/playground-apis";
+import { imageApis } from "@/lib/image-apis";
+import type { Json } from "@/lib/playground-apis";
 import { MediaLayout } from "./media-form";
 import { ModelPicker } from "./model-picker";
 import { RequestError } from "./request-error";
 import { SelectField } from "./select-field";
 import { submitOnModEnter } from "./submit-on-mod-enter";
-
-interface ImagesResponse {
-  data: { b64_json?: string; url?: string; revised_prompt?: string }[];
-}
 
 const sizes = [
   { value: "1024x1024", label: "Square", hint: "1024 × 1024", ratio: "aspect-square" },
@@ -71,29 +68,26 @@ function ImageCard({ src, caption, index }: { src: string; caption?: string; ind
 
 export function ImageTab() {
   const choice = useModelChoice("image", "gpt-image-1");
-  const api = useApiChoice("image", mediaApis.image);
+  const api = useApiChoice("image", imageApis);
   const call = useLastCall();
   const [prompt, setPrompt] = useState("");
   const [size, setSize] = useState(sizes[0].value);
   const [quality, setQuality] = useState("auto");
   const [n, setN] = useState("1");
+  const tunes = api.api.tunes;
+  const count = tunes ? Number(n) : 1;
   const generate = useMutation({
-    mutationFn: () =>
-      call.track({ api: api.api.id, model: choice.model }, () =>
-        postJson<ImagesResponse>("/v1/images/generations", {
-          model: choice.model,
-          prompt: prompt.trim(),
-          size,
-          quality,
-          n: Number(n),
-        }),
-      ),
+    mutationFn: () => {
+      const { api: adapter } = api;
+      const ask = { model: choice.model, prompt: prompt.trim(), size, quality, n: count };
+      const { path, body } = adapter.create(ask);
+      return call.track({ api: adapter.id, model: choice.model }, async () =>
+        adapter.read(await postJson<Json>(path, body)),
+      );
+    },
   });
 
-  const images = (generate.data?.data ?? []).map((img) => ({
-    src: img.b64_json ? `data:image/png;base64,${img.b64_json}` : (img.url ?? ""),
-    revised: img.revised_prompt,
-  }));
+  const images = generate.data ?? [];
   const ratio = sizes.find((s) => s.value === size)?.ratio;
 
   return (
@@ -133,10 +127,12 @@ export function ImageTab() {
           </div>
           <ModelPicker id="image-model" choice={choice} />
           <ChoiceGroup label="Size" value={size} onChange={setSize} choices={sizes} className="grid-cols-3" />
-          <div className="grid grid-cols-2 gap-3">
-            <SelectField id="image-quality" label="Quality" value={quality} onChange={setQuality} options={qualities} className="capitalize" />
-            <SelectField id="image-n" label="Images" value={n} onChange={setN} options={["1", "2", "3", "4"]} />
-          </div>
+          {tunes && (
+            <div className="grid grid-cols-2 gap-3">
+              <SelectField id="image-quality" label="Quality" value={quality} onChange={setQuality} options={qualities} className="capitalize" />
+              <SelectField id="image-n" label="Images" value={n} onChange={setN} options={["1", "2", "3", "4"]} />
+            </div>
+          )}
         </>
       }
     >
@@ -144,7 +140,7 @@ export function ImageTab() {
         <RequestError error={generate.error} what="images" />
       ) : generate.isPending ? (
         <div className="grid gap-4 sm:grid-cols-2" aria-busy="true" aria-label="Generating images">
-          {Array.from({ length: Number(n) }, (_, i) => (
+          {Array.from({ length: count }, (_, i) => (
             <Skeleton key={i} className={`${ratio} rounded-xl`} />
           ))}
         </div>
@@ -157,7 +153,7 @@ export function ImageTab() {
       ) : (
         <EmptyState icon={ImageIcon} title="Generate an image">
           <p>
-            Sent to <code>/v1/images/generations</code>; results appear here, ready to copy or
+            Sent to <code>{api.api.endpoint}</code>; results appear here, ready to copy or
             download.
           </p>
         </EmptyState>

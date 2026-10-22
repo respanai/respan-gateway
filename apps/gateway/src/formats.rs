@@ -4,6 +4,8 @@
 //! ([`respan_gateway_vendors::VendorProvider`]); every format a vendor
 //! speaks is one of these.
 
+use std::sync::Arc;
+
 use respan_gateway_conversation as conversation;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
@@ -14,12 +16,12 @@ use respan_gateway_decision as decision;
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
-use respan_gateway_media_http::gemini::GeminiVeo;
+use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_passthrough_http::Passthrough;
-use respan_gateway_plugin_routing::Model;
+use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
     GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs, SessionModel, requested_model,
@@ -61,7 +63,11 @@ pub fn first_of_each_kind<T>(
     firsts
 }
 
-type Serve = dyn Fn(Gateway) -> Result<Gateway, Fault> + Send + Sync;
+/// Registers a format's clients with the gateway, given the routes.
+type Serve = dyn Fn(Gateway, &Arc<Routes>) -> Result<Gateway, Fault> + Send + Sync;
+
+/// Which of the requests a client format matches it takes, by the routes.
+type Claims = fn(&Routes, &ClientIo) -> bool;
 
 /// A format compiled into the binary.
 pub struct KnownFormat {
@@ -72,6 +78,9 @@ pub struct KnownFormat {
     pub websocket: bool,
     /// What its video jobs' ids start with, which routes a follow-up.
     pub job_ids: Option<&'static str>,
+    /// Whether its clients take only some of the requests it matches,
+    /// which another format of their endpoint takes otherwise.
+    pub claims: bool,
     /// None for a format only providers speak.
     serve: Option<Box<Serve>>,
     /// How its requests name their model.
@@ -98,8 +107,35 @@ impl KnownFormat {
         let client = format.clone();
         let mut known = Self::provider_only(kind, &format);
         known.endpoints = endpoints.iter().map(|e| (*e).to_owned()).collect();
-        known.serve = Some(Box::new(move |gateway| {
+        known.serve = Some(Box::new(move |gateway, _| {
             gateway.client::<I, O, _>(client.clone())
+        }));
+        known
+    }
+
+    /// `format` of `kind`, its clients sending to `endpoints`, taking of
+    /// the requests it matches those `claims` says.
+    pub fn claiming<F, I, O>(
+        kind: &'static str,
+        endpoints: &[&str],
+        format: F,
+        claims: Claims,
+    ) -> Self
+    where
+        F: Clone + Send + Sync + 'static + Format<ClientIo, I, O> + Format<ProviderIo, O, I>,
+        I: Clone + Send + Sync + 'static,
+        O: Clone + Send + Sync + 'static,
+    {
+        let mut known = Self::of(kind, endpoints, format.clone());
+        known.claims = true;
+        known.serve = Some(Box::new(move |gateway, routes| {
+            let routes = routes.clone();
+            let claimed = Claimed {
+                format: format.clone(),
+                routes,
+                claims,
+            };
+            gateway.client::<I, O, _>(claimed)
         }));
         known
     }
@@ -115,6 +151,7 @@ impl KnownFormat {
             endpoints: Vec::new(),
             websocket: false,
             job_ids: None,
+            claims: false,
             serve: None,
             model: Model::none(),
         }
@@ -125,7 +162,7 @@ impl KnownFormat {
         mut self,
         serve: impl Fn(Gateway) -> Result<Gateway, Fault> + Send + Sync + 'static,
     ) -> Self {
-        self.serve = Some(Box::new(serve));
+        self.serve = Some(Box::new(move |gateway, _| serve(gateway)));
         self
     }
 
@@ -149,9 +186,9 @@ impl KnownFormat {
         self.serve.is_some()
     }
 
-    pub fn serve(&self, gateway: Gateway) -> Result<Gateway, Fault> {
+    pub fn serve(&self, gateway: Gateway, routes: &Arc<Routes>) -> Result<Gateway, Fault> {
         match &self.serve {
-            Some(serve) => serve(gateway),
+            Some(serve) => serve(gateway, routes),
             None => Err(Fault::config(format!(
                 "formats: {} is spoken only by providers; no client sends it",
                 self.name
@@ -224,6 +261,13 @@ pub fn formats() -> Vec<KnownFormat> {
         )),
         KnownFormat::of(kind::CHAT, endpoints::MESSAGES, AnthropicMessages).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
+        KnownFormat::claiming(
+            kind::IMAGE,
+            endpoints::GENERATE_CONTENT,
+            GeminiImages,
+            draws,
+        )
+        .model(Model::of(image::Input::model, image::Input::set_model)),
         session(kind::REALTIME, GeminiLive, GeminiLive::PATH, true).model(realtime()),
         session(
             kind::REALTIME,
@@ -241,6 +285,53 @@ pub fn formats() -> Vec<KnownFormat> {
         )),
         KnownFormat::of(kind::PASSTHROUGH, endpoints::PASSTHROUGH, Passthrough),
     ]
+}
+
+/// Whether a `generateContent` call is for an image ([`drawn_elsewhere`]).
+fn draws(routes: &Routes, io: &ClientIo) -> bool {
+    let model = GeminiImages::model(io.request().uri());
+    model.is_some_and(|model| drawn_elsewhere(routes, &model))
+}
+
+/// Whether routing sends `model`, an image model, to a provider that cannot
+/// take a call of it as `generateContent`. Gemini's own image models are
+/// asked as they were, as chats, which keep a conversation and its text.
+pub(crate) fn drawn_elsewhere(routes: &Routes, model: &str) -> bool {
+    let Some(to) = routes.route(kind::IMAGE, GeminiImages::NAME, Some(model)) else {
+        return false;
+    };
+    let model = to.model.as_deref().unwrap_or(model);
+    let card = routes.catalog().get(&to.provider, model);
+    let kind = card.and_then(|c| c.kind);
+    let kind = kind
+        .as_deref()
+        .unwrap_or_else(|| crate::models::kind_of(model));
+    kind == kind::IMAGE && !routes.speaks(&to.provider, GeminiGenerate.name())
+}
+
+/// A client format taking only the requests it matches that `claims` says.
+#[derive(Clone)]
+struct Claimed<F> {
+    format: F,
+    routes: Arc<Routes>,
+    claims: Claims,
+}
+
+impl<F, I, O> Format<ClientIo, I, O> for Claimed<F>
+where
+    F: Format<ClientIo, I, O>,
+{
+    fn name(&self) -> &str {
+        self.format.name()
+    }
+
+    fn matches(&self, io: &ClientIo) -> bool {
+        self.format.matches(io) && (self.claims)(&self.routes, io)
+    }
+
+    fn bind(&self, io: ClientIo) -> Result<respan_gateway_core::Connection<I, O>, Fault> {
+        self.format.bind(io)
+    }
 }
 
 /// How the model of a chat request is named.

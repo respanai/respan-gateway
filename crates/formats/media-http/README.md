@@ -60,6 +60,39 @@ streams, where its key goes), and `Dialected::new(spec, dialect)` is a
 provider format of the spec's name, so a client of the spec is still
 relayed to it.
 
+`gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
+such as Nano Banana, through `generateContent`, to clients and providers,
+at `https://generativelanguage.googleapis.com/v1beta` with the key in
+`x-goog-api-key`.
+
+- A call is `POST /models/{model}:generateContent`, one user turn of the
+  images to edit (`inlineData`, or `fileData` for one named by URL) and the
+  prompt. Its `size` is the `imageConfig` of the nearest aspect ratio
+  Gemini draws (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9;
+  within 5%, else 400), with an `imageSize` of `2K` or `4K` above 1K; its
+  count `candidateCount`, which Gemini's image models refuse above 1. A
+  mask is refused, 400, as Gemini edits by prompt alone; quality, file
+  format and user are dropped.
+- An answer's images are its parts' `inlineData` (or `fileData`), not its
+  thoughts'; its text is dropped; its usage is `usageMetadata`'s. An
+  answer with no image is refused, 400 `no_image`, saying why: the
+  `finishReason` or block reason, and what the model said.
+- A client of it, served by any provider of the kind: a `POST` to
+  `.../models/{model}:generateContent` or `:streamGenerateContent`, one
+  user turn of text and images; a history is refused, 400.
+  `generationConfig`'s `candidateCount` is the count, its `imageConfig`
+  of one of those aspect ratios (and `1K`, `2K` or `4K`) a size, about
+  Gemini's own (`1248x832` for 3:2); `responseModalities` is dropped, as
+  the answer is images; the rest of it, and the body's other fields, are
+  this format's native fields. The answer is one candidate of the images
+  and the usage; a stream is that response once, as SSE with `alt=sse`,
+  else in a JSON array.
+- The gateway serves it beside `gemini-generate`, at the same paths: a
+  call is an image's if routing sends its model, of the image kind, to a
+  provider that cannot take the call as `generateContent`, else a chat's.
+  So a Gemini client draws with OpenAI's models, and Gemini's own image
+  models are asked as they were, as chats, which keep a conversation.
+
 `gemini::GeminiVeo`, named `gemini-veo`: Google's Veo as the Gemini API serves it, to clients and providers,
 at `https://generativelanguage.googleapis.com/v1beta` with the key in
 `x-goog-api-key`.

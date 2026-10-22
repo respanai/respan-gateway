@@ -318,6 +318,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "openai-videos",
             "openai-embeddings",
             "gemini-generate",
+            "gemini-images",
             "gemini-live",
             "mistral-realtime",
             "gemini-veo",
@@ -611,6 +612,19 @@ fn an_unknown_format_names_the_compiled_in_ones() {
     let text = "formats = [\"openai-chat\", \"nope\"]\n";
     let said = "formats: unknown format 'nope'; compiled-in formats: [";
     assert!(resolve(text).err().is_some_and(|e| e.starts_with(said)));
+}
+
+#[test]
+fn a_gemini_call_for_an_image_another_provider_draws_is_an_images() {
+    let text = "providers = { o = { vendor = \"openai\", key = \"k\" }, g = { vendor = \"gemini\", key = \"k\" } }\n";
+    let plan = plan(text).unwrap_or_else(|e| panic!("{e}"));
+    assert!(plan.serves("gemini-images"));
+    let drawn = |model| crate::formats::drawn_elsewhere(&plan.routes, model);
+    assert!(drawn("gpt-image-2"));
+    // Gemini's own image model is a chat of Gemini's, as it was.
+    assert!(!drawn("g/gemini-3.1-flash-image"));
+    assert!(!drawn("gemini-2.5-flash"));
+    assert!(!drawn("o/gpt-4o"));
 }
 
 #[test]
