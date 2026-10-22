@@ -40,7 +40,7 @@ requests), with a live log of every call. **[▶ Watch the demo](https://www.you
 - **Multimodal**<br>
   Realtime voice across vendors (an OpenAI Realtime client talks to Gemini
   Live, and back), plus images, speech, transcription, embeddings and video
-  jobs through OpenAI's endpoints, to any vendor that has them.
+  through OpenAI's or Gemini's APIs, to any vendor that has them.
 
 - **MCP tools for every model**<br>
   Put MCP servers or built-in tool vendors behind the gateway, from web search
@@ -107,7 +107,7 @@ The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
 
 - [Python, in-process](python/README.md) — Run the gateway inside your Python app, with no server.
 - [Embed in Rust](docs/plugins.md#in-a-gateway-of-your-own) — Mount the gateway in your own Rust service.
-- [Docker](Dockerfile) — `ghcr.io/respanai/respan-gateway`, for amd64 and arm64.
+- [Docker](Dockerfile) — Run the image `ghcr.io/respanai/respan-gateway` on any container host.
 
 ## Performance
 
