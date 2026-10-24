@@ -61,6 +61,10 @@ jobs:
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ env.PUSH }}
           cache-from: type=gha,scope=${{ env.ARCH }}
           cache-to: type=gha,scope=${{ env.ARCH }},mode=max
+          # No attestations: they show as unknown/unknown platforms in the
+          # registry, beside the two real ones.
+          provenance: false
+          sbom: false
       - name: Keep the digest
         if: env.PUSH == 'true'
         run: |
@@ -100,7 +104,6 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
       - name: Tag both architectures
         working-directory: ${{ runner.temp }}/digests
         run: |
