@@ -48,9 +48,9 @@ pub trait Dialect: Clone + Send + Sync + 'static {
         None
     }
 
-    /// The call as the format wrote it, its key on it, before it is sent:
-    /// its head edited, and its whole body rewritten if this says how.
-    /// `Err` fails it unsent.
+    /// The call as the format wrote it, before it is sent and before its
+    /// transport puts the key on it: its head edited, and its whole body
+    /// rewritten if this says how. `Err` fails it unsent.
     fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
         let _ = head;
         Ok(None)
