@@ -47,6 +47,8 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
+| <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Google Vertex AI | `vertex` | `GOOGLE_VERTEX_ACCESS_TOKEN` or `CLOUDSDK_AUTH_ACCESS_TOKEN` | `gemini-generate`, `anthropic-messages`, `openai-chat`, `openai-embeddings` |
+| <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Vertex AI express mode | `vertex-express` | `GOOGLE_VERTEX_API_KEY` | `gemini-generate` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions` |
 
 These tables are kept by hand: a vendor added to `ALL` in
@@ -79,6 +81,32 @@ Perplexity's Agent API speaks `openai-responses` alone, at
 `https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
 such as `openai/gpt-5.6-sol`.
 
+Vertex AI's formats are under a project's location,
+`https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}`
+(`https://aiplatform.googleapis.com/..` for the `global` location), each
+with a Google access token as the bearer key: `gemini-generate` at
+`/publishers/google`; `anthropic-messages` at `/publishers/anthropic`,
+Claude's, each call posted to the model's `rawPredict` (or
+`streamRawPredict`) with `anthropic_version` in the body and no model;
+`openai-chat` at the location itself, posted to
+`/endpoints/openapi/chat/completions`, but a Mistral model's to its own
+`rawPredict` at `/publishers/mistralai`; and `openai-embeddings` at
+`/endpoints/openapi`. Its models are each publisher's list
+(`/v1beta1/publishers/{publisher}/models`) of those it serves with no
+deployment of one's own: Google's and Anthropic's named as they are, and
+sent in their own formats, the others' as `{publisher}/{model}`, such as
+`meta/llama-4-maverick-17b-128e-instruct-maas`, in Chat Completions; a
+Google model is `google/{model}` there, which the gateway writes for it. A
+model whose publisher is also a provider's name, such as `openai`, is
+asked for as `vertex/openai/gpt-oss-120b-maas`. The lists say no kind,
+limits or prices. The key expires within the hour: the gateway sends the
+one it is given, so whoever runs it gives it a fresh one, such as `gcloud
+auth print-access-token` prints, in a config file it reloads. Express mode,
+`vertex-express`, takes an API key that does not expire, in
+`x-goog-api-key`, for `gemini-generate` alone at
+`https://aiplatform.googleapis.com/v1/publishers/google`, under no
+project; it lists no models.
+
 Respan's formats sit under one API, `https://api.respan.ai/api`:
 `openai-chat` and `openai-responses` at it, `anthropic-messages` at
 `/anthropic`, `gemini-generate` at `/google/gemini/v1beta` (its key in
@@ -94,7 +122,9 @@ provider of no vendor at TypeSafe's URL calls `/decisions` and is not found.
 Without a config file, `RESPAN_<VENDOR>_BASE_URL` moves a vendor's base URL
 (`OLLAMA_HOST` for `ollama`); with one, only the file's `base_url` counts
 (`respan-gateway init` writes the moved URL into it). `azure` and `vllm`
-need a `base_url`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, or one.
+need a `base_url`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, or one;
+`vertex` needs `GOOGLE_CLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`, or each
+format's URL in `formats`.
 
 How each vendor's quirks are handled, and how to add one, is in
 [`crates/vendors`](../crates/vendors/README.md).

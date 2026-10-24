@@ -46,6 +46,7 @@ pub const VENDOR: Vendor = Vendor {
     ],
     models: list_models,
     format_for: Some(format_for),
+    ..Vendor::DEFAULT
 };
 
 /// The format a request for `model` goes in: the client's own if it is

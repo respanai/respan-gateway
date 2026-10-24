@@ -29,6 +29,7 @@ use serde_json::{Map, Value};
 use super::errors::{answer, failure_json, said_error, says_error};
 use super::values::{shows, unwritable_content};
 use super::{Schema, StreamResponse};
+use crate::dialect::Dialect;
 
 /// The call of `input` in `schema`'s format, a JSON `POST` to
 /// [`Schema::PATH`] with the format's headers ([`Schema::HEADERS`]), and its
@@ -37,13 +38,16 @@ use super::{Schema, StreamResponse};
 /// ([`Original`]) did, else for one. The client's request, if of this format,
 /// carries its spec's headers and query parameters ([`Schema::CARRIED`],
 /// [`Schema::CARRIED_QUERY`]) and gives its spelling of a field the format
-/// spells two ways ([`Schema::respell`]). `Err` with `config` for live input.
+/// spells two ways ([`Schema::respell`]). A vendor's `dialect`, if any, says
+/// the path and the body as it takes them ([`Dialect::target`],
+/// [`Dialect::body`]). `Err` with `config` for live input.
 pub(crate) fn post<C: Schema>(
     schema: C,
     head: &mut RequestHead,
     input: Option<&Input>,
     original: Option<&Original>,
     stream: Option<StreamResponse>,
+    dialect: Option<Arc<dyn Dialect>>,
 ) -> Result<Box<dyn Encoder<Input>>, Fault> {
     if input.is_none() {
         return Err(Fault::config(format!(
@@ -72,7 +76,14 @@ pub(crate) fn post<C: Schema>(
         let asked = original.and_then(|w| w.memo(|r| probe(r.body())));
         asked.is_none_or(|asked| asked.stream)
     });
-    match input.and_then(|input| schema.target(input, stream).transpose()) {
+    let target = |input: &Input| match &dialect {
+        Some(dialect) => match dialect.target(input, stream) {
+            Ok(None) => schema.target(input, stream),
+            said => said,
+        },
+        None => schema.target(input, stream),
+    };
+    match input.and_then(|input| target(input).transpose()) {
         Some(target) => {
             let target = target?;
             head.uri = target.parse().map_err(|e| {
@@ -95,6 +106,7 @@ pub(crate) fn post<C: Schema>(
         schema,
         stream,
         original,
+        dialect,
     }))
 }
 
@@ -115,6 +127,7 @@ struct RequestEncoder<C> {
     schema: C,
     stream: bool,
     original: Option<Value>,
+    dialect: Option<Arc<dyn Dialect>>,
 }
 
 impl<C: Schema> RequestEncoder<C> {
@@ -134,6 +147,9 @@ impl<C: Schema> RequestEncoder<C> {
             None => C::translated(&mut v),
         }
         C::prepare_call(&mut v);
+        if let Some(dialect) = &self.dialect {
+            dialect.body(&mut v);
+        }
         out.extend_from_slice(&to_bytes(&v)?);
         Ok(())
     }

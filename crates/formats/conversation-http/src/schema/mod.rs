@@ -334,7 +334,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
             .cloned();
         let io = io.with_refusal(move |answer| errors::answer(&schema, answer));
         Ok(io.bind(
-            move |head, input| exchange::post(schema, head, input, original.as_ref(), stream),
+            move |head, input| exchange::post(schema, head, input, original.as_ref(), stream, None),
             move |head, call| schema.read_response(head, call),
         ))
     }

@@ -9,12 +9,15 @@
 //! ```
 
 use std::borrow::Cow;
+use std::sync::Arc;
 
 use respan_gateway_conversation::{Input, Output};
 use respan_gateway_core::{Connection, Fault, Filter, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::raw::Original;
 use respan_gateway_http::{Connect, Decoder, Encoder, KeyIn, ProviderIo, Reach, Upstream};
+
+use serde_json::{Map, Value};
 
 use crate::Schema;
 use crate::schema::{StreamResponse, answer, own_request, post};
@@ -41,6 +44,20 @@ pub trait Dialect: Send + Sync + 'static {
     /// Where the vendor takes its key, if not where the spec does.
     fn key(&self) -> Option<KeyIn> {
         None
+    }
+
+    /// The path and query of the call for `input`, as the vendor takes it,
+    /// streamed if `stream`, if the vendor puts it elsewhere than the spec;
+    /// `None` for the spec's ([`Schema::target`]).
+    fn target(&self, input: &Input, stream: bool) -> Result<Option<String>, Fault> {
+        let _ = (input, stream);
+        Ok(None)
+    }
+
+    /// The call's JSON `body` as the vendor takes it, after the spec wrote
+    /// it: as it is, unless the vendor names a field otherwise.
+    fn body(&self, body: &mut Map<String, Value>) {
+        let _ = body;
     }
 }
 
@@ -119,7 +136,15 @@ where
             move |head, input| {
                 // Its path, from the input as the vendor takes it, and its body.
                 let taken = input.map(|i| writes.input(i, &call)).transpose()?;
-                let encoder = post(spec, head, taken.as_deref(), original.as_ref(), stream)?;
+                let departs: Arc<dyn Dialect> = Arc::new(writes.clone());
+                let encoder = post(
+                    spec,
+                    head,
+                    taken.as_deref(),
+                    original.as_ref(),
+                    stream,
+                    Some(departs),
+                )?;
                 Ok(Box::new(Written {
                     encoder,
                     dialect: writes,

@@ -1,10 +1,11 @@
 //! OpenAI Embeddings: `POST /embeddings` (JSON), answered whole in JSON.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, foreign, invalid, json_bytes,
-    kept, merge_missing, missing, native_of, post_to, rest_of, sends, set, take_count, take_string,
+    Fields, Form, as_usage_extras, b64, bind_client, foreign, invalid, json_bytes, kept,
+    merge_missing, missing, native_of, post_to, rest_of, sends, set, take_count, take_string,
     unb64, unreadable, whole_json,
 };
+use crate::dialect::{self, Spec};
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
@@ -70,7 +71,31 @@ impl Format<ProviderIo, Output, Input> for OpenAiEmbeddings {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, post, |_, _| Some(read_response())))
+        Ok(dialect::bind(*self, io))
+    }
+}
+
+/// Its spec's parts, which a vendor's dialect runs around.
+impl Spec for OpenAiEmbeddings {
+    type Input = Input;
+    type Output = Output;
+    const NAME: &'static str = NAME;
+
+    fn post(
+        &self,
+        head: &mut RequestHead,
+        input: &Input,
+        _: bool,
+    ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+        post(head, input)
+    }
+
+    fn read_response(
+        &self,
+        _: &http::response::Parts,
+        _: &http::Request<Bytes>,
+    ) -> Option<Box<dyn Decoder<Output>>> {
+        Some(read_response())
     }
 }
 

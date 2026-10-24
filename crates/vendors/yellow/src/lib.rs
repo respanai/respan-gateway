@@ -14,6 +14,7 @@ pub mod ollama;
 pub mod openrouter;
 pub mod perplexity;
 pub mod together;
+pub mod vertex;
 pub mod vllm;
 pub mod xai;
 
@@ -34,5 +35,7 @@ pub const ALL: &[&Vendor] = &[
     &cloudflare::VENDOR,
     &cerebras::VENDOR,
     &perplexity::VENDOR,
+    &vertex::VENDOR,
+    &vertex::EXPRESS,
     &deepinfra::VENDOR,
 ];

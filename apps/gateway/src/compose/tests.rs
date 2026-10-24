@@ -829,3 +829,168 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
         );
     }
 }
+
+/// A provider that records each call (its path, `authorization` and JSON
+/// body) and answers it with the body its path ends in, from `answers`.
+struct Recorder {
+    base: String,
+    calls: Arc<parking_lot::Mutex<Vec<Recorded>>>,
+}
+
+/// A recorded call's path, `authorization` and JSON body.
+type Recorded = (String, Option<String>, serde_json::Value);
+
+impl Recorder {
+    async fn start(answers: &'static [(&'static str, &'static str)]) -> Self {
+        let calls = Arc::<parking_lot::Mutex<Vec<_>>>::default();
+        let kept = calls.clone();
+        let handle = move |request: axum::extract::Request| {
+            let kept = kept.clone();
+            async move {
+                let path = request.uri().path().to_owned();
+                let auth = request.headers().get("authorization");
+                let auth = auth.and_then(|v| v.to_str().ok()).map(str::to_owned);
+                let body = BodyExt::collect(request.into_body()).await;
+                let body = body.map(|b| b.to_bytes()).unwrap_or_default();
+                let body = serde_json::from_slice(&body).unwrap_or_default();
+                kept.lock().push((path.clone(), auth, body));
+                let answer = answers.iter().find(|(end, _)| path.ends_with(end));
+                let answer = answer.map_or("{}", |(_, answer)| answer);
+                ([("content-type", "application/json")], answer)
+            }
+        };
+        let router = axum::Router::new().fallback(handle);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await;
+        let listener = listener.unwrap_or_else(|e| panic!("bind: {e}"));
+        let base = format!(
+            "http://{}",
+            listener
+                .local_addr()
+                .map(|a| a.to_string())
+                .unwrap_or_default()
+        );
+        tokio::spawn(async move { axum::serve(listener, router).await });
+        Self { base, calls }
+    }
+
+    /// The last call's path, `authorization` and body.
+    fn last(&self) -> Recorded {
+        self.calls.lock().last().cloned().unwrap_or_default()
+    }
+}
+
+const CLAUDE_ANSWER: &str = r#"{"id":"msg_1","type":"message","role":"assistant","model":"claude-haiku-5-5","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#;
+const CHAT_ANSWER: &str = r#"{"id":"c1","object":"chat.completion","created":1,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+const GEMINI_ANSWER: &str = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}"#;
+const EMBEDDINGS_ANSWER: &str = r#"{"object":"list","data":[{"object":"embedding","index":0,"embedding":[0.5]}],"model":"m","usage":{"prompt_tokens":1,"total_tokens":1}}"#;
+
+/// Each Vertex model goes to the API that serves it, a client of any
+/// format: Claude to its `rawPredict`, Google's to `generateContent` or the
+/// OpenAI-compatible API by its publisher's name, Mistral's to its own
+/// `rawPredict`; and a Vertex SDK's own path is a Gemini client's.
+#[tokio::test]
+async fn vertex_sends_each_model_to_the_api_that_serves_it() {
+    let vertex = Recorder::start(&[
+        (":rawPredict", CLAUDE_ANSWER),
+        ("/chat/completions", CHAT_ANSWER),
+        (":generateContent", GEMINI_ANSWER),
+        ("/embeddings", EMBEDDINGS_ANSWER),
+    ])
+    .await;
+    let location = Recorder::start(&[
+        (":rawPredict", CHAT_ANSWER),
+        ("/chat/completions", CHAT_ANSWER),
+    ])
+    .await;
+    let at = format!("{}/v1/projects/p/locations/l", vertex.base);
+    let location_at = format!("{}/v1/projects/p/locations/l", location.base);
+    let text = format!(
+        "providers = {{ v = {{ vendor = \"vertex\", key = \"tok\", formats = {{ gemini-generate = \"{at}/publishers/google\", anthropic-messages = \"{at}/publishers/anthropic\", openai-chat = \"{location_at}\", openai-embeddings = \"{at}/endpoints/openapi\" }} }} }}\n"
+    );
+    let gateway = resolve(&text).unwrap_or_else(|e| panic!("gateway: {e}"));
+    let chat = |model: &str| {
+        serde_json::json!({"model": model, "max_tokens": 5, "messages": [{"role": "user", "content": "hi"}]})
+            .to_string()
+    };
+    let call = |path: &str, body: String| {
+        let gateway = gateway.clone();
+        let request = post(path, body);
+        async move {
+            let (response, _) = serve(&gateway, request).await;
+            let (status, _, body) = read_whole(response).await;
+            gateway.idle().await;
+            assert_eq!(status, StatusCode::OK, "{body:?}");
+        }
+    };
+    let claude =
+        "/v1/projects/p/locations/l/publishers/anthropic/models/claude-haiku-5-5:rawPredict";
+    for client in ["/v1/messages", "/v1/chat/completions"] {
+        call(client, chat("claude-haiku-5-5")).await;
+        let (path, auth, body) = vertex.last();
+        assert_eq!(path, claude, "{client}");
+        assert_eq!(auth.as_deref(), Some("Bearer tok"));
+        assert_eq!(body["anthropic_version"], "vertex-2023-10-16");
+        assert!(body.get("model").is_none(), "{body}");
+    }
+    call("/v1/messages", chat("gemini-3.5-flash")).await;
+    let gemini =
+        "/v1/projects/p/locations/l/publishers/google/models/gemini-3.5-flash:generateContent";
+    assert_eq!(vertex.last().0, gemini);
+    let body = serde_json::json!({"contents": [{"role": "user", "parts": [{"text": "hi"}]}]});
+    call(gemini, body.to_string()).await;
+    assert_eq!(vertex.last().0, gemini, "a Vertex SDK's own path");
+    // Chat Completions sit beside the publishers, at the location.
+    call("/v1/chat/completions", chat("gemini-3.5-flash")).await;
+    let (path, _, body) = location.last();
+    assert_eq!(
+        path,
+        "/v1/projects/p/locations/l/endpoints/openapi/chat/completions"
+    );
+    assert_eq!(body["model"], "google/gemini-3.5-flash");
+    call(
+        "/v1/messages",
+        chat("meta/llama-4-maverick-17b-128e-instruct-maas"),
+    )
+    .await;
+    assert_eq!(
+        location.last().2["model"],
+        "meta/llama-4-maverick-17b-128e-instruct-maas"
+    );
+    call("/v1/chat/completions", chat("mistralai/mistral-medium-3")).await;
+    let (path, _, body) = location.last();
+    assert_eq!(
+        path,
+        "/v1/projects/p/locations/l/publishers/mistralai/models/mistral-medium-3:rawPredict"
+    );
+    assert_eq!(body["model"], "mistral-medium-3");
+    let embed = serde_json::json!({"model": "gemini-embedding-001", "input": "hi"});
+    call("/v1/embeddings", embed.to_string()).await;
+    let (path, _, body) = vertex.last();
+    assert_eq!(
+        path,
+        "/v1/projects/p/locations/l/endpoints/openapi/embeddings"
+    );
+    assert_eq!(body["model"], "google/gemini-embedding-001");
+}
+
+#[test]
+fn vertex_express_takes_an_api_key_under_no_project() {
+    let plan = plan("providers = { x = { vendor = \"vertex-express\", key = \"AQ.k\" } }\n")
+        .unwrap_or_else(|e| panic!("{e}"));
+    let express = &plan.upstreams[0];
+    let entries: Vec<_> = express
+        .entries
+        .iter()
+        .map(|e| (e.format.as_str(), e.base_url.as_str()))
+        .collect();
+    assert_eq!(
+        entries,
+        [(
+            "gemini-generate",
+            "https://aiplatform.googleapis.com/v1/publishers/google"
+        )]
+    );
+    let parts = express.provider.parts().unwrap_or_default();
+    let key = parts.first().and_then(|p| p.headers.get("x-goog-api-key"));
+    assert_eq!(key.and_then(|v| v.to_str().ok()), Some("AQ.k"));
+}

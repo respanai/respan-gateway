@@ -16,7 +16,7 @@ use crate::formats::{KnownFormat, kind};
 use crate::vendors;
 use respan_gateway_plugin_routing::{Routes, Rule, Speaks};
 use respan_gateway_sdk::{Catalog, Model};
-use respan_gateway_vendors::{Network, VendorProvider};
+use respan_gateway_vendors::{Locate, Network, VendorProvider};
 
 /// The name of the format that relays what no other served format accepts.
 pub const PASSTHROUGH: &str = "passthrough";
@@ -374,13 +374,14 @@ fn upstream(
     // Each format at the URL `formats` gives it, else at its vendor's, each
     // `{NAME}` in it from the environment; or, with one `base_url`, at that.
     let given = |format: &str| p.formats.as_ref().and_then(|f| f.url_of(format));
+    let locate = vendor.map_or(respan_gateway_vendors::located as Locate, |v| v.locate);
     let mut at = Vec::new();
     for (format, default) in &speaks {
         let url = match (given(format.name()), default) {
             (Some(url), _) => Some(url.to_owned()),
             // One base URL, set below, is every format's.
             (None, _) if p.base_url.is_some() => None,
-            (None, Some(url)) => Some(respan_gateway_vendors::located(url).map_err(|var| {
+            (None, Some(url)) => Some(locate(url).map_err(|var| {
                 bad(format!(
                     "environment variable {var} is not set; the base URL of {} needs it, or give \
                      it one",
