@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chatApi, chatApis, type ChatApiId, type ChatDelta } from "./chat-apis";
 import type { ServedFormat } from "./api";
 import { servedApis } from "./playground-apis";
+import { EventStreamParser } from "./eventstream";
 import { SseParser } from "./sse";
 
 const messages = [
@@ -125,6 +126,71 @@ describe("stream adapters", () => {
   });
 });
 
+/** A message of the AWS event stream, its CRCs left zero: the gateway checks them. */
+function message(headers: Record<string, string>, payload: unknown): Uint8Array {
+  const text = new TextEncoder();
+  const block = Object.entries(headers).flatMap(([name, value]) => {
+    const [n, v] = [text.encode(name), text.encode(value)];
+    return [n.length, ...n, 7, v.length >> 8, v.length & 255, ...v];
+  });
+  const body = text.encode(JSON.stringify(payload));
+  const total = 16 + block.length + body.length;
+  const out = new Uint8Array(total);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, total);
+  view.setUint32(4, block.length);
+  out.set(block, 12);
+  out.set(body, 12 + block.length);
+  return out;
+}
+
+const converse = (kind: string, payload: unknown) =>
+  message({ ":event-type": kind, ":message-type": "event" }, payload);
+
+describe("Bedrock Converse", () => {
+  it("sends system blocks and content blocks, and names the model in the path", () => {
+    const bedrock = chatApi("bedrock-converse");
+    expect(bedrock.body("m", messages)).toEqual({
+      system: [{ text: "Be brief" }],
+      messages: [
+        { role: "user", content: [{ text: "Hi" }] },
+        { role: "assistant", content: [{ text: "Hello" }] },
+        { role: "user", content: [{ text: "Again" }] },
+      ],
+    });
+    expect(bedrock.path("us.amazon.nova-lite-v1:0")).toBe("/model/us.amazon.nova-lite-v1%3A0/converse-stream");
+  });
+
+  it("reads its event stream split anywhere, and throws on an exception", () => {
+    const parts = [
+      converse("messageStart", { role: "assistant" }),
+      converse("contentBlockDelta", { contentBlockIndex: 0, delta: { text: "He" } }),
+      converse("contentBlockDelta", { contentBlockIndex: 0, delta: { text: "y" } }),
+      converse("messageStop", { stopReason: "end_turn" }),
+      converse("metadata", { usage: { inputTokens: 4, outputTokens: 2 } }),
+    ];
+    const whole = new Uint8Array(parts.flatMap((p) => [...p]));
+    for (const cut of [0, 5, 40, whole.length]) {
+      const parser = new EventStreamParser();
+      const events = [...parser.push(whole.subarray(0, cut)), ...parser.push(whole.subarray(cut))];
+      const out: ChatDelta & { text: string } = { text: "" };
+      for (const event of events) {
+        const d = chatApi("bedrock-converse").read(event);
+        out.text += d.text ?? "";
+        for (const k of ["inputTokens", "outputTokens", "finishReason"] as const) {
+          if (d[k] !== undefined) Object.assign(out, { [k]: d[k] });
+        }
+      }
+      expect(out).toEqual({ text: "Hey", finishReason: "end_turn", inputTokens: 4, outputTokens: 2 });
+    }
+    const failed = message({ ":exception-type": "throttlingException", ":message-type": "exception" }, {
+      message: "slow down",
+    });
+    const [exception] = new EventStreamParser().push(failed);
+    expect(() => chatApi("bedrock-converse").read(exception)).toThrow("slow down");
+  });
+});
+
 describe("servedApis for chat", () => {
   it("lists only the chat APIs the gateway serves, in display order", () => {
     const serve: Pick<ServedFormat, "format" | "kind">[] = [
@@ -137,6 +203,6 @@ describe("servedApis for chat", () => {
 
   it("falls back to OpenAI Chat before the gateway has answered", () => {
     expect(servedApis("chat", chatApis, undefined).map((a) => a.id)).toEqual(["openai-chat"]);
-    expect(chatApis).toHaveLength(4);
+    expect(chatApis).toHaveLength(5);
   });
 });

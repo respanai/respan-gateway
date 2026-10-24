@@ -26,6 +26,8 @@ An `Encoder<T>` writes values as frames and a `Decoder<T>` reads frames as
 values; a closure is either. `Sse` reads a body's server-sent events, one at
 a time, and `Whole` all of a body at once; `All` writes all values at once.
 
+`path::escape` writes a model id or any text as one path segment.
+
 The bindings own everything else: response handoff, backpressure and
 completion, whole or streamed uploads, what a proxy strips from a call, a
 fault's status and `Retry-After`, refused answers read whole into a fault

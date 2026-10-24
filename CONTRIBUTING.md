@@ -40,7 +40,7 @@ Each crate's `README.md` documents its public contract.
 |---|---|
 | `crates/core/` | The kernel and the plugin API: typed event streams, hooks, lifecycles, faults |
 | `crates/kinds/` | Event types per kind: `conversation`, `media`, `decision`, `realtime`, `mcp` |
-| `crates/wires/` | Bytes at both edges: HTTP, SSE, WebSocket, the Reqwest transport |
+| `crates/wires/` | Bytes at both edges: HTTP, SSE, the AWS event stream, WebSocket, the Reqwest transport |
 | `crates/formats/` | A kind over a wire, one spec each, naming no vendor |
 | `crates/vendors/` | Every vendor, a file each, in `green/` or `yellow/` |
 | `crates/tool-vendors/` | Every tool vendor (an HTTP API as MCP tools), a file each, in `green/` or `yellow/` |

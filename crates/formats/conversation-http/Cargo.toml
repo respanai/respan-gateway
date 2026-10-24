@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-conversation-http"
-description = "The conversation kind over HTTP: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini generateContent."
+description = "The conversation kind over HTTP: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, Gemini generateContent and Bedrock Converse."
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 respan-gateway-sse.workspace = true
+respan-gateway-eventstream.workspace = true
 respan-gateway-http-faults.workspace = true
 base64.workspace = true
 percent-encoding.workspace = true

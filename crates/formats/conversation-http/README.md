@@ -17,6 +17,9 @@ events.
 - `Schema::Decoding`: a format's decoder (a `respan_gateway_http::Decoder`)
   of one streamed response into events, holding a response's start until
   its first content.
+- `Schema::FRAMING`: how a streamed response is framed, server-sent events
+  unless the format names the media type of a body it frames itself
+  (`Framing::Own`), as Converse's AWS event stream.
 - `StreamResponse(bool)`: a call extension choosing whether the provider is
   asked to stream; without it the call follows the client's request.
 
@@ -145,6 +148,66 @@ the answer finished. Usage counts the thoughts in the output, and the cached
 tokens in the input. A stream with no `finishReason` was cut. Errors are
 `{"error": {"code", "message", "status"}}`.
 
+## Amazon Bedrock Converse
+
+`bedrock::BedrockConverse`, named `bedrock-converse`: a `POST` to
+`/model/{modelId}/converse` or `/converse-stream`; its provider base URL is a
+region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, with a
+Bedrock API key as a bearer token (requests are not signed with SigV4). Its
+clients are the Bedrock Runtime SDKs with the gateway as their endpoint and
+a bearer token as their key (`AWS_BEARER_TOKEN_BEDROCK`), at a path that
+ends in `/model/{modelId}/converse` or `/converse-stream`, the model
+unescaped from it.
+
+The model is in the path, escaped whole, so an inference profile's id
+(`us.anthropic.claude-sonnet-4-20250514-v1:0`) or an ARN is one segment. A
+stream is `application/vnd.amazon.eventstream`, not SSE: its messages
+(`respan-gateway-eventstream`) are checked against their CRCs, an
+`exception` or `error` message is an upstream fault of its type (with the
+HTTP status Bedrock gives it), and a body that ends inside a message or
+before `messageStop` was cut.
+
+`system` is the leading system messages; `messages` alternate `user` and
+`assistant`, so consecutive turns of a role are joined and blank text is left
+out. A part is `text`; `image` (png, jpeg, gif, webp) or `document` (pdf,
+csv, doc, docx, xls, xlsx, html, txt, md), as bytes only, so a remote URL is
+refused before any call and an image is sent as a data URL; `toolUse` and
+`toolResult` (`status: "error"` for a failed one; blank text is left out,
+and a result with none says `(no output)`); or `reasoningContent`,
+which Bedrock must have signed or redacted to take it back, and is otherwise
+left out. A part, tool or system block with a cache marker, Anthropic's
+`cache_control` or a client's `cachePoint`, is followed by a `cachePoint`. `inferenceConfig` is the output limit, `temperature`, `topP` and
+stop sequences; `toolConfig` the tools and the choice (`auto`, `any`, or one
+`tool`; a choice of `None` offers no tools). Bedrock names reasoning and
+`top_k` per model, in `additionalModelRequestFields`: a [reasoning
+budget](#reasoning-and-sampling) is `thinking`, and `top_k`, an effort, JSON
+without a schema, an end user's id and one tool call at a time are refused,
+as are the fields of another format. A JSON schema is `outputConfig`'s
+`textFormat`, the schema as text.
+
+A response's blocks are the kind's: `text`, `toolUse` (its input whole) and
+`reasoningContent` (its `signature` or `redactedContent` the block's fields).
+A stream sends no start for text or reasoning, so the first delta opens the
+block. `stopReason` is the finish: `end_turn` and `stop_sequence` stop,
+`max_tokens` is the token limit, `content_filtered` and
+`guardrail_intervened` are filtered (the latter native to this format), and
+others stay native. Usage counts the cache reads and writes as parts of the
+input. Converse names neither an id nor a model, so the response's are empty;
+its metrics, trace and model-specific fields are inert.
+
+A client's request is read the same way back: a `cachePoint` marks the
+part, tool or system block before it, and what the kind has no form for (a
+guardrail, a service tier, request metadata, a guard or video block, media
+in S3, the model's own `additionalModelRequestFields`) stays native, so a
+Bedrock provider is sent it and another refuses it. Its answer is
+Converse's body, or for `converse-stream` the event stream: `messageStart`,
+each block's deltas by its index (a tool's `contentBlockStart`),
+`contentBlockStop`, then `messageStop` and `metadata`; usage's
+`inputTokens` is the input apart from the cache reads and writes, as
+Bedrock counts it. A failure in the stream is an `exception` message of
+Bedrock's type for its status; a refusal is `{"message"}` with its type in
+`x-amzn-errortype`, which the SDKs raise as their exceptions.
+
 ## Reasoning and sampling
 
 `Input.options.reasoning` and `top_k` are the kind's; each format reads and
@@ -152,14 +215,14 @@ writes them as below. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
 to its own format unchanged, and is refused in another.
 
-| Kind | OpenAI Chat | Responses | Anthropic | Gemini |
-| --- | --- | --- | --- | --- |
-| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` |
-| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` |
-| `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` |
-| `summary: true` | refused | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` |
-| `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` |
-| `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` |
+| Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
+| --- | --- | --- | --- | --- | --- |
+| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
+| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
+| `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
+| `summary: true` | refused | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
+| `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
+| `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` | refused |
 
 An effort and a budget do not convert, so each travels only to a format that
 has it (see the [kind](../../kinds/conversation/README.md)); asking for both
@@ -172,4 +235,5 @@ read in either case and written in lower case.
 
 A response that made tool calls finishes as tool use when the provider says
 `stop` (as OpenAI does when `tool_choice` forces a function, and Gemini
-always, and Responses when `completed`); Anthropic says `tool_use` itself.
+always, and Responses when `completed`); Anthropic and Bedrock say `tool_use`
+themselves.

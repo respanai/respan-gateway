@@ -7,6 +7,7 @@
 //! - [`anthropic`]: Anthropic Messages.
 //! - [`responses`]: OpenAI Responses.
 //! - [`gemini`]: Google Gemini's `generateContent`.
+//! - [`bedrock`]: Amazon Bedrock's Converse.
 //!
 //! A format is its spec: what a provider sends beyond it is kept native, at
 //! the place it appeared, for a plugin to read (each module says where), or
@@ -17,14 +18,16 @@ use serde_json::Value;
 pub mod dialect;
 pub mod fields;
 mod schema;
-pub use schema::{Asked, Schema, StreamResponse, merge_details, read_provider_error};
+pub use schema::{Asked, Framing, Schema, StreamResponse, merge_details, read_provider_error};
 
 pub mod anthropic;
+pub mod bedrock;
 pub mod gemini;
 pub mod openai;
 pub mod responses;
 
 use anthropic::AnthropicMessages;
+use bedrock::BedrockConverse;
 use gemini::GeminiGenerate;
 use openai::OpenAiChat;
 use responses::OpenAiResponses;
@@ -37,11 +40,12 @@ const fn inertness<S: Schema>() -> Inertness {
     (S::NAME, S::is_inert)
 }
 
-const FORMATS: [Inertness; 4] = [
+const FORMATS: [Inertness; 5] = [
     inertness::<OpenAiChat>(),
     inertness::<AnthropicMessages>(),
     inertness::<OpenAiResponses>(),
     inertness::<GeminiGenerate>(),
+    inertness::<BedrockConverse>(),
 ];
 
 /// Whether `raw`, an event of `format`, changes no answer: a block's fields

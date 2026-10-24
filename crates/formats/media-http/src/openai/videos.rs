@@ -17,7 +17,7 @@ use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
-use respan_gateway_http::path::forwarded_path;
+use respan_gateway_http::path::{escape, forwarded_path};
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Jobs, Output, Status, Variant};
@@ -149,18 +149,6 @@ fn variant(uri: &Uri) -> Result<Variant, Fault> {
             "must be video, thumbnail or spritesheet",
         )),
     }
-}
-
-/// `text` escaped as a path segment or query value: all but RFC 3986's
-/// unreserved characters.
-fn escape(text: &str) -> String {
-    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-    const UNRESERVED: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
-    utf8_percent_encode(text, UNRESERVED).to_string()
 }
 
 /// A client's request.

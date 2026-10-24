@@ -1,5 +1,6 @@
 import { gatewayFetch } from "@/lib/api";
 import { chatApi, type ChatApiId, type ChatMessage } from "@/lib/chat-apis";
+import { readEventStream } from "@/lib/eventstream";
 import { readSse } from "@/lib/sse";
 
 export type { ChatMessage } from "@/lib/chat-apis";
@@ -47,7 +48,8 @@ export async function streamChat({
   });
   if (!res.body) throw new Error("The gateway sent an empty response");
 
-  await readSse(res.body, (event) => {
+  const read = adapter.framing === "eventstream" ? readEventStream : readSse;
+  await read(res.body, (event) => {
     const delta = adapter.read(event);
     if (delta.text) {
       stats.ttfbMs ??= performance.now() - started;

@@ -197,6 +197,55 @@ async fn the_example_config_routes_by_model_both_ways() {
     assert_eq!(to_gpt["type"], "message", "{to_gpt}");
 }
 
+/// A client of the Bedrock Runtime SDKs, its endpoint the gateway's, is
+/// answered by a provider of another format: whole as Converse's JSON, and
+/// at `converse-stream` in the AWS event stream.
+#[tokio::test]
+async fn a_bedrock_client_converses_with_a_model_of_another_format() {
+    let text = "providers = { a = { formats = \"openai-chat\", base_url = \"https://a.test/v1\", auth = { type = \"bearer\", key = \"sk-test\" } } }\nformats = [\"bedrock-converse\"]\n";
+    let (gateway, a, _) = local(text).await;
+    let body = r#"{"messages":[{"role":"user","content":[{"text":"hi"}]}],"inferenceConfig":{"maxTokens":5}}"#;
+    let (whole, _) = serve(&gateway, post("/model/gpt-x/converse", body)).await;
+    let (status, _, whole) = read_whole(whole).await;
+    let whole: serde_json::Value = whole
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
+    assert_eq!(status, StatusCode::OK, "{whole}");
+    assert_eq!(
+        whole["output"]["message"]["content"][0]["text"], "a",
+        "{whole}"
+    );
+    assert_eq!(whole["stopReason"], "end_turn", "{whole}");
+
+    a.answer(Answer::text("a"));
+    let path = "/model/a%2Fgpt-x/converse-stream";
+    let (streamed, _) = serve(&gateway, post(path, body)).await;
+    let (status, headers, streamed) = read_whole(streamed).await;
+    assert_eq!(status, StatusCode::OK);
+    let media = headers.get("content-type").and_then(|v| v.to_str().ok());
+    assert_eq!(media, Some("application/vnd.amazon.eventstream"));
+    let mut parser = respan_gateway_eventstream::Parser::new(None);
+    let events = parser
+        .push(streamed.unwrap_or_default())
+        .unwrap_or_default();
+    let kinds: Vec<_> = events
+        .iter()
+        .filter_map(|m| m.text(":event-type"))
+        .collect();
+    assert_eq!(kinds.first(), Some(&"messageStart"));
+    assert!(kinds.contains(&"contentBlockDelta"), "{kinds:?}");
+    assert_eq!(kinds[kinds.len() - 2..], ["messageStop", "metadata"]);
+
+    gateway.idle().await;
+    assert_eq!(models_asked(&a), ["gpt-x", "gpt-x"]);
+    assert!(
+        a.requests()
+            .iter()
+            .all(|r| r.path == "/v1/chat/completions")
+    );
+}
+
 /// The plan of `text`.
 fn plan(text: &str) -> Result<Plan, String> {
     let config = Config::parse(text).map_err(|e| e.to_string())?;
@@ -341,6 +390,37 @@ fn a_list_of_formats_shares_one_base_url_and_key() {
     assert_eq!(x_api_key.and_then(|v| v.to_str().ok()), Some("k"));
     assert!(parts[1].headers.contains_key("authorization"));
     assert_eq!(both.entries[1].base_url, "https://x.test");
+}
+
+/// Bedrock's formats are its region's runtime with its key a bearer token;
+/// of them, only Converse serves its clients, as InvokeModel's bodies are
+/// each model's own.
+#[test]
+fn bedrock_is_called_at_its_regions_runtime_and_serves_converse() {
+    let plan = plan(
+        "providers = { aws = { vendor = \"bedrock\", key = \"k\", base_url = \"https://bedrock-runtime.eu-west-1.amazonaws.com\" } }\n",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let aws = &plan.upstreams[0];
+    let entries: Vec<(&str, &str)> = (aws.entries.iter())
+        .map(|e| (e.format.as_str(), e.base_url.as_str()))
+        .collect();
+    let runtime = "https://bedrock-runtime.eu-west-1.amazonaws.com";
+    assert_eq!(
+        entries,
+        [
+            ("bedrock-converse", runtime),
+            ("bedrock-embeddings", runtime)
+        ]
+    );
+    let parts = aws.provider.parts().unwrap_or_default();
+    let auth = parts.first().and_then(|p| p.headers.get("authorization"));
+    assert_eq!(auth.and_then(|v| v.to_str().ok()), Some("Bearer k"));
+    let bedrock: Vec<&str> = (plan.serve.iter())
+        .filter(|f| f.starts_with("bedrock-"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(bedrock, ["bedrock-converse"]);
 }
 
 /// Vendors share `openai-chat`: each takes its key as its own vendor says,

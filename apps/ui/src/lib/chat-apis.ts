@@ -9,7 +9,8 @@ export type ChatApiId =
   | "openai-chat"
   | "anthropic-messages"
   | "openai-responses"
-  | "gemini-generate";
+  | "gemini-generate"
+  | "bedrock-converse";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -31,8 +32,10 @@ export interface ChatApi {
   endpoint: string;
   path: (model: string) => string;
   body: (model: string, messages: ChatMessage[]) => unknown;
-  /** Reads one SSE event; throws on an error the stream reports. */
+  /** Reads one stream event; throws on an error the stream reports. */
   read: (event: SseEvent) => ChatDelta;
+  /** How its stream is framed: server-sent events unless it says. */
+  framing?: "eventstream";
 }
 
 const parse = (event: SseEvent): Json => JSON.parse(event.data) as Json;
@@ -164,6 +167,42 @@ const geminiGenerate: ChatApi = {
   },
 };
 
-export const chatApis: ChatApi[] = [openaiChat, anthropicMessages, openaiResponses, geminiGenerate];
+const bedrockConverse: ChatApi = {
+  id: "bedrock-converse",
+  label: "Bedrock Converse",
+  endpoint: "/model/{model}/converse-stream",
+  path: (model) => `/model/${encodeURIComponent(model)}/converse-stream`,
+  framing: "eventstream",
+  body(_model, messages) {
+    const { system, turns } = split(messages);
+    return {
+      ...(system && { system: [{ text: system }] }),
+      messages: turns.map((m) => ({ role: m.role, content: [{ text: m.content }] })),
+    };
+  },
+  read(event) {
+    const data = parse(event);
+    switch (event.event) {
+      case "exception":
+        return fail(data);
+      case "contentBlockDelta":
+        return { text: data.delta?.text };
+      case "messageStop":
+        return { finishReason: data.stopReason };
+      case "metadata":
+        return { inputTokens: data.usage?.inputTokens, outputTokens: data.usage?.outputTokens };
+      default:
+        return {};
+    }
+  },
+};
+
+export const chatApis: ChatApi[] = [
+  openaiChat,
+  anthropicMessages,
+  openaiResponses,
+  geminiGenerate,
+  bedrockConverse,
+];
 
 export const chatApi = (id: string): ChatApi => chatApis.find((a) => a.id === id) ?? openaiChat;

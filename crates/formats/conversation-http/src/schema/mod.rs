@@ -31,8 +31,9 @@ pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
+pub(crate) use exchange::refusal as refusal_body;
 pub(crate) use exchange::{
-    Gate, error_event, own_request, post, response_encoder, unreadable_event,
+    Gate, error_event, own_request, post, response_encoder, unreadable_event, whole_encoder,
 };
 pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::{
@@ -61,6 +62,17 @@ use serde_json::{Map, Value};
 #[derive(Debug, Clone, Copy)]
 pub struct StreamResponse(pub bool);
 
+/// How a format's streamed response is framed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Framing {
+    /// Server-sent events (`text/event-stream`), one event at a time to the
+    /// format's decoder.
+    Sse,
+    /// A body of this media type, whose bytes the format's decoder frames
+    /// itself, such as AWS's event stream.
+    Own(&'static str),
+}
+
 /// A vendor's JSON schema for the conversation kind: what a conversation
 /// format supplies. The HTTP binding around it, at both edges, is shared:
 /// these provided methods, which a format's `Format` implementations call
@@ -80,6 +92,8 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// (`"stream": true`), as OpenAI's and Anthropic's do; a format that says
     /// it in the path leaves it out.
     const STREAM_FLAG: bool = true;
+    /// How a streamed response is framed, which its media type says.
+    const FRAMING: Framing = Framing::Sse;
     /// Headers a request to a provider gets if it has none of that name.
     const HEADERS: &'static [(&'static str, &'static str)] = &[];
     /// The request headers of this format's spec, such as a version or beta

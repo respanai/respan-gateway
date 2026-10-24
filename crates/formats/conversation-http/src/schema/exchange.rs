@@ -28,7 +28,7 @@ use serde_json::{Map, Value};
 
 use super::errors::{answer, failure_json, said_error, says_error};
 use super::values::{shows, unwritable_content};
-use super::{Schema, StreamResponse};
+use super::{Framing, Schema, StreamResponse};
 
 /// The call of `input` in `schema`'s format, a JSON `POST` to
 /// [`Schema::PATH`] with the format's headers ([`Schema::HEADERS`]), and its
@@ -221,8 +221,8 @@ pub(crate) fn read_response<C: Schema>(
     if head.status.is_success() && bodiless(method, head.status) {
         return None;
     }
-    if is_stream(head) {
-        return Some(Box::new(Sse::new(Held::new(schema.decoder()))));
+    if streamed::<C>(head) {
+        return Some(frames(schema));
     }
     let head = head.clone();
     Some(Box::new(Whole::new(
@@ -237,6 +237,28 @@ pub(crate) fn read_response<C: Schema>(
     )))
 }
 
+/// Whether a response of `C`'s format is a stream: a success of the media
+/// type its framing names.
+fn streamed<C: Schema>(head: &ResponseHead) -> bool {
+    match C::FRAMING {
+        Framing::Sse => is_stream(head),
+        Framing::Own(media) => {
+            let essence = content_type(head).and_then(|c| c.split(';').next());
+            let own = essence.is_some_and(|e| e.trim().eq_ignore_ascii_case(media));
+            own && head.status.is_success()
+        }
+    }
+}
+
+/// The decoder of one streamed response, as its format frames it, its
+/// start held ([`Held`]).
+fn frames<C: Schema>(schema: C) -> Box<dyn Decoder<Output>> {
+    match C::FRAMING {
+        Framing::Sse => Box::new(Sse::new(Held::new(schema.decoder()))),
+        Framing::Own(_) => Box::new(Held::new(schema.decoder())),
+    }
+}
+
 /// [`read_response`] of a finite answer, synchronously.
 pub(crate) fn decode_response<C: Schema>(
     schema: C,
@@ -247,8 +269,8 @@ pub(crate) fn decode_response<C: Schema>(
     if head.status.is_success() && bodiless(&call.method, head.status) {
         return Ok(Vec::new());
     }
-    if is_stream(&head) {
-        let mut events = Sse::new(Held::new(schema.decoder()));
+    if streamed::<C>(&head) {
+        let mut events = frames(schema);
         let mut out = Vec::new();
         events.decode(bytes, &mut out)?;
         events.end(Ok(()), &mut out)?;
@@ -320,6 +342,15 @@ pub(crate) fn refusal<C: Schema>(fault: &Fault, head: &mut ResponseHead) -> Byte
         Some(words) => words.clone(),
         None => C::error_body(fault).to_string().into(),
     }
+}
+
+/// The encoder of a whole response in `schema`'s format, for a format that
+/// chooses its framing itself.
+pub(crate) fn whole_encoder<C: Schema>(schema: C) -> Box<dyn Encoder<Output>> {
+    Box::new(UnaryEncoder {
+        whole: Assembled::default(),
+        schema,
+    })
 }
 
 /// Writes one message at its end: the events collected into a whole body. A
@@ -421,6 +452,10 @@ impl<D: Decoder<Output>> Decoder<Output> for Held<D> {
         self.hold(out, from, result.is_err());
         out.append(&mut self.held);
         result
+    }
+
+    fn limit(&mut self, bytes: Option<usize>) {
+        self.reading.limit(bytes);
     }
 }
 

@@ -80,5 +80,6 @@ webbrowser = "1"
 uuid.workspace = true
 futures.workspace = true
 mockllm = { git = "https://github.com/lihe07/mockllm", rev = "26cf441" }
+respan-gateway-eventstream.workspace = true
 reqwest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "process", "io-util", "time"] }
