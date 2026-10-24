@@ -40,6 +40,8 @@ const icons: Record<string, VendorIcon> = {
   openai: { src: openai, mono: true },
   openrouter: { src: openrouter, mono: true },
   together: { src: together, mono: false },
+  vertex: { src: gemini, mono: false },
+  "vertex-express": { src: gemini, mono: false },
   vllm: { src: vllm, mono: false },
   xai: { src: xai, mono: true },
 };

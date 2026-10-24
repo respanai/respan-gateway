@@ -13,12 +13,14 @@
 //! dialect of a spec. The kit runs nothing of a vendor's beside its
 //! formats. What vendors share is here too: every spec's format, as a
 //! provider of no vendor speaks it ([`FORMATS`]), and what vendors of Chat
-//! Completions share in their dialects ([`chat`]).
+//! Completions share in their dialects ([`chat`]), and of Gemini's
+//! transcriptions ([`transcription`]).
 
 pub mod chat;
 mod formats;
 pub mod models;
 mod provider;
+pub mod transcription;
 
 pub use formats::{FORMATS, format};
 pub use models::{BoxFuture, Capability, ListModels, Modality, Model, Models, Price, time};
@@ -59,7 +61,15 @@ pub struct Vendor {
     /// The format a request for a model goes in, if not the usual: the
     /// client's own, else its first of the kind.
     pub format_for: Option<FormatFor>,
+    /// Its base URLs with their names from the environment: [`located`],
+    /// unless a value it names changes more than its place, such as a
+    /// location whose host is another.
+    pub locate: Locate,
 }
+
+/// A vendor's base URL, each `{NAME}` in it the environment variable
+/// `NAME`; `Err` with the name of one not set ([`located`]).
+pub type Locate = for<'a> fn(&'a str) -> Result<String, &'a str>;
 
 impl std::fmt::Debug for Vendor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -79,6 +89,7 @@ impl Vendor {
         formats: &[],
         models: models::openai,
         format_for: None,
+        locate: located,
     };
 
     /// Its format `name`, and that format's base URL, if it speaks it.

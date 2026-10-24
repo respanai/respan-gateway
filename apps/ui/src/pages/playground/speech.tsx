@@ -18,8 +18,14 @@ import { RequestError } from "./request-error";
 import { SelectField } from "./select-field";
 
 const voices = ["alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer"];
-const voiceChoices = voices.map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1) }));
 const formats = ["mp3", "opus", "aac", "flac", "wav"];
+// Gemini's speech models take its own voices, and speak WAV alone.
+const geminiVoices = ["Kore", "Puck", "Charon", "Zephyr", "Fenrir", "Leda", "Orus", "Aoede"];
+const geminiFormats = ["wav"];
+const choicesOf = (names: string[]) => names.map((v) => ({ value: v, label: v[0].toUpperCase() + v.slice(1) }));
+
+/** Whether `model` is one of Gemini's speech models, such as `gemini/gemini-3.8-flash-tts`. */
+const isGeminiSpeech = (model: string) => /(^|\/)gemini-[^/]*tts/i.test(model);
 // OpenAI's limit; a provider may allow less.
 const MAX_CHARS = 4096;
 
@@ -28,8 +34,13 @@ export function SpeechTab() {
   const api = useApiChoice("speech", mediaApis.speech);
   const call = useLastCall();
   const [text, setText] = useState("");
-  const [voice, setVoice] = useState("alloy");
-  const [format, setFormat] = useState("mp3");
+  const gemini = isGeminiSpeech(choice.model);
+  const [picked, setVoice] = useState("alloy");
+  const [pickedFormat, setFormat] = useState("mp3");
+  const ownVoices = gemini ? geminiVoices : voices;
+  const ownFormats = gemini ? geminiFormats : formats;
+  const voice = ownVoices.includes(picked) ? picked : ownVoices[0];
+  const format = ownFormats.includes(pickedFormat) ? pickedFormat : ownFormats[0];
   const speak = useMutation({
     mutationFn: () =>
       call.track({ api: api.api.id, model: choice.model }, async () => {
@@ -77,8 +88,14 @@ export function SpeechTab() {
             />
           </div>
           <ModelPicker id="speech-model" choice={choice} />
-          <ChoiceGroup label="Voice" value={voice} onChange={setVoice} choices={voiceChoices} className="grid-cols-2" />
-          <SelectField id="speech-format" label="Format" value={format} onChange={setFormat} options={formats} />
+          <ChoiceGroup
+            label="Voice"
+            value={voice}
+            onChange={setVoice}
+            choices={choicesOf(ownVoices)}
+            className="grid-cols-2"
+          />
+          <SelectField id="speech-format" label="Format" value={format} onChange={setFormat} options={ownFormats} />
         </>
       }
     >

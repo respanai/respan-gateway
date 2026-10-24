@@ -46,7 +46,9 @@ departing from a spec it speaks, and its file handles it:
   `Dialect` of Chat Completions
   (`respan_gateway_conversation_http::dialect`): what the vendor takes and
   sends beyond the spec, turned into the kind's events and back, inside the
-  format, and the header it takes its key in if not the spec's. The vendor
+  format, the header it takes its key in if not the spec's, and the path
+  and body of its call where they depart from the spec's, as Vertex AI
+  posts Claude's Messages to the model's `rawPredict`. The vendor
   lists it as `(&Dialected::new(OpenAiChat, Groq), Some(BASE_URL))`, a
   format of the spec's name, so a client of the spec is still relayed to
   it, and no plugin of the gateway's sees anything but the kind's events;

@@ -3,7 +3,8 @@
 //! [`GeminiImages`].
 
 use super::{is_segment, refusal};
-use crate::edge::{bind_provider, sends};
+use crate::dialect::{self, Spec};
+use crate::edge::sends;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
@@ -15,7 +16,7 @@ use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
-use respan_gateway_http::{All, ClientIo, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
@@ -82,9 +83,31 @@ impl Format<ProviderIo, Output, Input> for GeminiImages {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_response)))
-        }))
+        Ok(dialect::bind(*self, io))
+    }
+}
+
+/// Its spec's parts, which a vendor's dialect runs around.
+impl Spec for GeminiImages {
+    type Input = Input;
+    type Output = Output;
+    const NAME: &'static str = NAME;
+
+    fn post(
+        &self,
+        head: &mut RequestHead,
+        input: &Input,
+        _: bool,
+    ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+        call(head, input)
+    }
+
+    fn read_response(
+        &self,
+        _: &ResponseHead,
+        _: &http::Request<Bytes>,
+    ) -> Option<Box<dyn Decoder<Output>>> {
+        Some(Box::new(Whole::new(read_response)))
     }
 }
 

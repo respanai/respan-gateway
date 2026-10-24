@@ -1,6 +1,6 @@
 //! Google's Gemini API: Chat Completions and embeddings at its
 //! OpenAI-compatible base, and its own API beside it: `generateContent`,
-//! for chats and images, Gemini Live and Veo.
+//! for chats, images, speech and transcriptions, Gemini Live and Veo.
 
 use std::borrow::Cow;
 
@@ -12,13 +12,17 @@ use serde_json::{Map, Value, json};
 
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
+use respan_gateway_media::transcription;
+use respan_gateway_media_http::dialect::{Dialect as MediaDialect, Dialected as MediaDialected};
+use respan_gateway_media_http::gemini::{
+    GeminiImages, GeminiSpeech, GeminiTranscriptions, GeminiVeo,
+};
 use respan_gateway_media_http::openai::OpenAiEmbeddings;
 use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Model, Models, Vendor, VendorProvider, built_wrong, chat, http,
-    json as body_json, models,
+    json as body_json, models, transcription as text_only,
 };
 
 /// Its own API: `generateContent` and Veo.
@@ -43,12 +47,28 @@ pub const VENDOR: Vendor = Vendor {
         (&Dialected::new(OpenAiChat, Gemini), Some(OPENAI_API)),
         (&GeminiLive, Some(LIVE)),
         (&GeminiImages, Some(API)),
+        (
+            &MediaDialected::new(GeminiTranscriptions, Gemini),
+            Some(API),
+        ),
+        (&GeminiSpeech, Some(API)),
         (&GeminiVeo, Some(API)),
         (&OpenAiEmbeddings, Some(OPENAI_API)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
 };
+
+/// Gemini's transcriptions: the text alone, so the client's other fields
+/// are refused.
+impl MediaDialect<transcription::Input, transcription::Output> for Gemini {
+    fn input<'a>(
+        &self,
+        input: &'a transcription::Input,
+    ) -> Result<Cow<'a, transcription::Input>, Fault> {
+        text_only::text_only(input)
+    }
+}
 
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.

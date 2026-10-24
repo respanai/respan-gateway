@@ -118,6 +118,29 @@ describe("SpeechTab", () => {
   });
 });
 
+describe("SpeechTab with a Gemini model", () => {
+  it("offers Gemini's voices and WAV, its one format", async () => {
+    const calls = serve({
+      "GET /v1/models": () =>
+        json({ object: "list", data: [{ id: "vertex/gemini-2.5-flash-tts", object: "model", kind: "speech" }] }),
+      "POST /v1/audio/speech": () =>
+        new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "audio/wav" } }),
+    });
+    renderApp(<SpeechTab />);
+    await userEvent.type(screen.getByLabelText("Text"), "Hello.");
+    expect(await screen.findByRole("radio", { name: "Kore" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Alloy" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Speak" }));
+    expect(await screen.findByText("vertex/gemini-2.5-flash-tts · wav")).toBeInTheDocument();
+    expect(sentJson(calls, "POST /v1/audio/speech")).toEqual({
+      model: "vertex/gemini-2.5-flash-tts",
+      input: "Hello.",
+      voice: "Kore",
+      response_format: "wav",
+    });
+  });
+});
+
 describe("EmbeddingsTab", () => {
   it("embeds both texts and scores how alike they are", async () => {
     const calls = serve({
