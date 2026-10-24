@@ -101,3 +101,15 @@ pub(crate) fn frame(
     }
     Ok(())
 }
+
+/// `text` escaped as a path segment or query value: all but RFC 3986's
+/// unreserved characters.
+pub(crate) fn escape(text: &str) -> String {
+    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+    const UNRESERVED: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    utf8_percent_encode(text, UNRESERVED).to_string()
+}

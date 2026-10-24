@@ -9,7 +9,7 @@ use super::{
     merge_missing, missing, native_of, rest_of, sends, set, take_count, take_string, unreadable,
     whole_json, write_field,
 };
-use crate::edge::{bind_provider, content};
+use crate::edge::{bind_provider, content, escape};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
@@ -149,18 +149,6 @@ fn variant(uri: &Uri) -> Result<Variant, Fault> {
             "must be video, thumbnail or spritesheet",
         )),
     }
-}
-
-/// `text` escaped as a path segment or query value: all but RFC 3986's
-/// unreserved characters.
-fn escape(text: &str) -> String {
-    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-    const UNRESERVED: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
-        .remove(b'-')
-        .remove(b'.')
-        .remove(b'_')
-        .remove(b'~');
-    utf8_percent_encode(text, UNRESERVED).to_string()
 }
 
 /// A client's request.
