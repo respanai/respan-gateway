@@ -1689,6 +1689,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "respan-gateway-eventstream"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "respan-gateway-core",
+ "respan-gateway-http-faults",
+]
+
+[[package]]
 name = "respan-gateway-examples"
 version = "0.1.0"
 dependencies = [

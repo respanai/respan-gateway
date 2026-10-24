@@ -40,6 +40,7 @@ respan-gateway-http-transport = { path = "crates/wires/http-transport", version 
 respan-gateway-plugin-relay = { path = "crates/plugins/relay", version = "0.1.0" }
 respan-gateway-plugin-credentials = { path = "crates/plugins/credentials", version = "0.1.0" }
 respan-gateway-sse = { path = "crates/wires/sse", version = "0.1.0" }
+respan-gateway-eventstream = { path = "crates/wires/eventstream", version = "0.1.0" }
 respan-gateway-plugin-routing = { path = "crates/plugins/routing", version = "0.1.0" }
 respan-gateway-plugin-fallback = { path = "crates/plugins/fallback", version = "0.1.1" }
 respan-gateway-plugin-tool-loop = { path = "crates/plugins/tool-loop", version = "0.2.0" }
