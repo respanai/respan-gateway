@@ -3,6 +3,7 @@
 //! to end against their live APIs. A vendor moves to green once it is.
 
 pub mod azure;
+pub mod bedrock;
 pub mod cerebras;
 pub mod cloudflare;
 pub mod deepinfra;
@@ -34,5 +35,6 @@ pub const ALL: &[&Vendor] = &[
     &cloudflare::VENDOR,
     &cerebras::VENDOR,
     &perplexity::VENDOR,
+    &bedrock::VENDOR,
     &deepinfra::VENDOR,
 ];

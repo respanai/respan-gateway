@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+form_urlencoded.workspace = true
 respan-gateway-conversation.workspace = true
 respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true

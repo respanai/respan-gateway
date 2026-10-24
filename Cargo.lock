@@ -2127,6 +2127,7 @@ name = "respan-gateway-vendors-yellow"
 version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
+ "form_urlencoded",
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
