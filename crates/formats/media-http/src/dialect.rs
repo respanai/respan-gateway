@@ -10,6 +10,7 @@
 
 use std::borrow::Cow;
 use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
@@ -98,6 +99,33 @@ pub trait Dialect<I, O>: Clone + Send + Sync + 'static {
     fn key(&self) -> Option<KeyIn> {
         None
     }
+
+    /// The call of `input` (as [`input`](Self::input) gave it) as the
+    /// vendor takes it, if it is none of the spec's: its head written into
+    /// `head`, a `POST` relative to the base URL, the encoder of its body
+    /// and the decoder of its answer, which knows what was asked. `None`
+    /// lets the spec write it.
+    fn call(&self, head: &mut RequestHead, input: &I) -> Option<Result<OwnCall<I, O>, Fault>> {
+        let _ = (head, input);
+        None
+    }
+}
+
+/// The decoder of the answer to a call a dialect wrote, once written.
+type Answer<O> = Arc<Mutex<Option<Box<dyn Decoder<O>>>>>;
+
+/// A call a vendor writes its own way ([`Dialect::call`]).
+pub struct OwnCall<I, O> {
+    /// The encoder of its body.
+    pub body: Box<dyn Encoder<I>>,
+    /// The decoder of a success's body.
+    pub answer: Box<dyn Decoder<O>>,
+}
+
+impl<I, O> std::fmt::Debug for OwnCall<I, O> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnCall").finish_non_exhaustive()
+    }
 }
 
 /// Spec `S` as a vendor speaks it, in its dialect `D`: a provider format of
@@ -157,11 +185,19 @@ where
         let (spec, dialect) = (self.spec, self.dialect.clone());
         let stream = dialect.streams(spec.streams(&io));
         let writes = dialect.clone();
+        let own: Answer<S::Output> = Arc::default();
+        let reads = Arc::clone(&own);
         Ok(bind_provider(
             io,
             S::NAME,
             move |head, input| {
-                let encoder = spec.post(head, &*writes.input(input)?, stream)?;
+                let input = writes.input(input)?;
+                if let Some(call) = writes.call(head, &input) {
+                    let OwnCall { body, answer } = call?;
+                    *own.lock().unwrap_or_else(|e| e.into_inner()) = Some(answer);
+                    return Ok(body);
+                }
+                let encoder = spec.post(head, &input, stream)?;
                 Ok(Box::new(Written {
                     encoder,
                     dialect: writes,
@@ -169,7 +205,8 @@ where
                 }) as Box<dyn Encoder<S::Input>>)
             },
             move |head, sent| {
-                let own = dialect.read_response(head);
+                let called = reads.lock().unwrap_or_else(|e| e.into_inner()).take();
+                let own = called.or_else(|| dialect.read_response(head));
                 own.or_else(|| spec.read_response(head, sent))
             },
         ))

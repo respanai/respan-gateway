@@ -141,6 +141,40 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
+async fn a_rerank_is_served_at_cohere_paths_and_called_where_the_vendor_says() {
+    let cohere = FakeOpenAi::start().await;
+    let deepinfra = FakeOpenAi::start().await;
+    let text = format!(
+        "providers = {{ cohere = {{ vendor = \"cohere\", key = \"sk-test\", formats = {{ cohere-rerank = \"{}/v2\" }} }}, deepinfra = {{ vendor = \"deepinfra\", key = \"sk-test\", formats = {{ cohere-rerank = \"{}/v1/inference\" }} }} }}\n",
+        cohere.base_url().trim_end_matches("/v1"),
+        deepinfra.base_url().trim_end_matches("/v1")
+    );
+    let gateway = resolve(&text).unwrap_or_else(|e| panic!("gateway: {e}"));
+    for (path, model) in [
+        ("/v1/rerank", "cohere/rerank-v3.5"),
+        ("/v2/rerank", "cohere/rerank-v3.5"),
+        ("/v1/rerank", "deepinfra/Qwen/Qwen3-Reranker-0.6B"),
+    ] {
+        let body = serde_json::json!({"model": model, "query": "q", "documents": ["a", "b"]});
+        // The fakes serve no rerank: what counts is where each was called.
+        let (response, _) = serve(&gateway, post(path, body.to_string())).await;
+        let _ = read_whole(response).await;
+    }
+    gateway.idle().await;
+    let paths = |mock: &FakeOpenAi| {
+        mock.requests()
+            .iter()
+            .map(|r| r.path.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(paths(&cohere), ["/v2/rerank", "/v2/rerank"]);
+    assert_eq!(
+        paths(&deepinfra),
+        ["/v1/inference/Qwen/Qwen3-Reranker-0.6B"]
+    );
+}
+
+#[tokio::test]
 async fn the_example_config_routes_by_model_both_ways() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;

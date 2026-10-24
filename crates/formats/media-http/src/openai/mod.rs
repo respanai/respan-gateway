@@ -59,24 +59,24 @@ use multipart::Writer;
 /// as strings, those named `name[]` as an array under `name`, and its files
 /// apart, by name, `[]` dropped.
 #[derive(Debug, Default, Clone)]
-struct Fields {
-    map: Map<String, Value>,
-    files: Vec<(String, Media)>,
+pub(crate) struct Fields {
+    pub(crate) map: Map<String, Value>,
+    pub(crate) files: Vec<(String, Media)>,
 }
 
 /// A client's request as its decoder reads it: the head's headers and the
 /// body, whose fields are parsed once for every reader of the original.
-struct Form<'a> {
-    headers: &'a HeaderMap,
-    raw: &'a Bytes,
-    original: Option<&'a Original>,
+pub(crate) struct Form<'a> {
+    pub(crate) headers: &'a HeaderMap,
+    pub(crate) raw: &'a Bytes,
+    pub(crate) original: Option<&'a Original>,
 }
 
 impl Form<'_> {
     /// The fields of the body, a form if the content type says so, else a
     /// JSON object. The first reader parses them; the response's framing
     /// reads the same ([`asked`]).
-    fn fields(&self) -> Result<Fields, Fault> {
+    pub(crate) fn fields(&self) -> Result<Fields, Fault> {
         let parsed = self
             .original
             .and_then(|w| w.memo(|r| parse_fields(r.headers(), r.body())));
@@ -206,17 +206,20 @@ fn bytes_of(media: &Media) -> Option<&Bytes> {
 }
 
 /// A 400 for a request whose field `param` `what`, as OpenAI words one.
-fn invalid(param: &str, what: &str) -> Fault {
+pub(crate) fn invalid(param: &str, what: &str) -> Fault {
     fields::invalid(param, what).with(ErrorCode("invalid_request_error".into()))
 }
 
 /// A 400 for a request without the field `param`.
-fn missing(param: &str) -> Fault {
+pub(crate) fn missing(param: &str) -> Fault {
     invalid(param, "is required")
 }
 
 /// The string field `key`, taken from `map`.
-fn take_string(map: &mut Map<String, Value>, key: &str) -> Result<Option<String>, Fault> {
+pub(crate) fn take_string(
+    map: &mut Map<String, Value>,
+    key: &str,
+) -> Result<Option<String>, Fault> {
     match map.remove(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => Ok(Some(s)),
@@ -240,7 +243,7 @@ fn take_number(map: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, F
 }
 
 /// The whole number field `key`, taken from `map`.
-fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fault> {
+pub(crate) fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fault> {
     let count = match map.remove(key) {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::Number(n)) => n.as_u64(),
@@ -298,18 +301,18 @@ fn write_usage(usage: &Usage) -> Map<String, Value> {
 /// The fields of a usage object the kind has no place for, as an event of
 /// `format`, `{"usage": {..}}`, which its encoders write into the usage they
 /// write; none if there are none.
-fn usage_extras(format: &str, extras: Map<String, Value>) -> Option<NativeValue> {
+pub(crate) fn usage_extras(format: &str, extras: Map<String, Value>) -> Option<NativeValue> {
     (!extras.is_empty()).then(|| NativeValue::new(format, json!({ "usage": extras })))
 }
 
 /// The usage fields of an event [`usage_extras`] made.
-fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
+pub(crate) fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
     let o = v.as_object().filter(|o| o.len() == 1)?;
     o.get("usage")?.as_object()
 }
 
 /// An event of another format than `format`, which it cannot write.
-fn foreign(format: &str, native: &NativeValue) -> Fault {
+pub(crate) fn foreign(format: &str, native: &NativeValue) -> Fault {
     Fault::new(format!(
         "an event of format {} cannot be written in {format}",
         native.format
@@ -329,7 +332,7 @@ fn unb64(text: &str) -> Option<Bytes> {
 }
 
 /// `v` as JSON bytes.
-fn json_bytes(v: &Map<String, Value>) -> Result<Bytes, Fault> {
+pub(crate) fn json_bytes(v: &Map<String, Value>) -> Result<Bytes, Fault> {
     serde_json::to_vec(v)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("a body could not be written").with_source(e))
@@ -382,7 +385,11 @@ fn said_error(raw: Bytes) -> Fault {
 
 /// A provider's whole JSON body `raw` of `format`, if `is_response` says it
 /// is one; else the error it says, or an `upstream` fault.
-fn whole_json(format: &str, raw: Bytes, is_response: fn(&Value) -> bool) -> Result<Value, Fault> {
+pub(crate) fn whole_json(
+    format: &str,
+    raw: Bytes,
+    is_response: fn(&Value) -> bool,
+) -> Result<Value, Fault> {
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     if is_response(&v) {
         return Ok(v);
@@ -397,7 +404,7 @@ fn whole_json(format: &str, raw: Bytes, is_response: fn(&Value) -> bool) -> Resu
 
 /// A provider's answer of `format` that cannot be read, such as a
 /// malformed image.
-fn unreadable(format: &str, what: &str) -> Fault {
+pub(crate) fn unreadable(format: &str, what: &str) -> Fault {
     Fault::upstream(format!("the provider's {format} response {what}"))
 }
 
@@ -409,13 +416,13 @@ fn refusal(fault: &Fault, request: &http::Request<Bytes>, head: &mut ResponseHea
 /// Chooses the encoder of a response from the client's request, the text
 /// fields it asked ([`asked`]) and the response's head, whose content type
 /// it sets.
-type ChooseEncoder<O> =
+pub(crate) type ChooseEncoder<O> =
     fn(&http::Request<Bytes>, &Map<String, Value>, &mut ResponseHead) -> Box<dyn Encoder<O>>;
 
 /// The client edge of a format: a request decoded by `decode`, and its
 /// response written by the encoder `encoder` chooses for the client's
 /// request, with the head's content type it sets.
-fn bind_client<I, O>(
+pub(crate) fn bind_client<I, O>(
     io: ClientIo,
     decode: fn(&RequestHead, &Form) -> Result<I, Fault>,
     encoder: ChooseEncoder<O>,
@@ -449,7 +456,7 @@ where
 }
 
 /// Set a call's path and content type.
-fn post_to(head: &mut RequestHead, path: &str, content_type: &str) -> Result<(), Fault> {
+pub(crate) fn post_to(head: &mut RequestHead, path: &str, content_type: &str) -> Result<(), Fault> {
     respan_gateway_http::path::set_path(head, path)?;
     let content_type = HeaderValue::from_str(content_type)
         .map_err(|e| Fault::internal("a content type is no header").with_source(e))?;
@@ -500,7 +507,7 @@ fn write_field(form: &mut Writer, name: &str, value: &Value) {
 }
 
 /// Set a response's content type.
-fn content_type(head: &mut ResponseHead, value: &'static str) {
+pub(crate) fn content_type(head: &mut ResponseHead, value: &'static str) {
     head.headers
         .insert(CONTENT_TYPE, HeaderValue::from_static(value));
 }

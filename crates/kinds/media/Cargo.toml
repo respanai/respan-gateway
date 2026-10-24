@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-media"
-description = "The media kinds: images, transcription, speech, video and embeddings."
+description = "The media kinds: images, transcription, speech, video, embeddings and rerank."
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true

@@ -5,6 +5,7 @@
 pub mod azure;
 pub mod cerebras;
 pub mod cloudflare;
+pub mod cohere;
 pub mod deepinfra;
 pub mod deepseek;
 pub mod fireworks;
@@ -35,4 +36,5 @@ pub const ALL: &[&Vendor] = &[
     &cerebras::VENDOR,
     &perplexity::VENDOR,
     &deepinfra::VENDOR,
+    &cohere::VENDOR,
 ];

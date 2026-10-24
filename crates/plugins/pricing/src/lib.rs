@@ -23,7 +23,7 @@ use respan_gateway_core::{
     ClientContext, Extensions, Fault, Filter, Plugin, ProviderContext, async_trait,
 };
 use respan_gateway_decision as decision;
-use respan_gateway_media::{embedding, image, speech, transcription, video};
+use respan_gateway_media::{embedding, image, rerank, speech, transcription, video};
 use respan_gateway_realtime as realtime;
 pub use respan_gateway_sdk::{Catalog, Price};
 
@@ -208,6 +208,10 @@ pub fn on_usage(edge: &mut impl Edge, into: Arc<dyn Fn(Used) + Send + Sync>) -> 
         embedding::Output::Usage(u) => used(u),
         _ => None,
     })?;
+    watch(edge, &into, |o: &rerank::Output| match o {
+        rerank::Output::Usage(u) => used(u),
+        _ => None,
+    })?;
     watch(edge, &into, |o: &realtime::Output| match o {
         realtime::Output::Usage(u) => used(&u.tokens),
         _ => None,
@@ -262,6 +266,7 @@ pub fn model_sent(px: &ProviderContext) -> Option<String> {
         .or_else(|| of(px, transcription::Input::model))
         .or_else(|| of(px, speech::Input::model))
         .or_else(|| of(px, embedding::Input::model))
+        .or_else(|| of(px, rerank::Input::model))
         .or_else(|| of(px, video::Input::model))
         .or_else(|| of(px, decision::Input::model))
 }

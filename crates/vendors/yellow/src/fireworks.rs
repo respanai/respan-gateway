@@ -1,6 +1,8 @@
-//! Fireworks: Chat Completions and embeddings, as OpenAI serves them.
+//! Fireworks: Chat Completions and embeddings, as OpenAI serves them, and
+//! rerank as Cohere does, its answer's results as `data`.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_media_http::cohere::CohereRerank;
 use respan_gateway_media_http::openai::OpenAiEmbeddings;
 
 use respan_gateway_vendor_kit::Vendor;
@@ -15,6 +17,7 @@ pub const VENDOR: Vendor = Vendor {
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
         (&OpenAiEmbeddings, Some(BASE_URL)),
+        (&CohereRerank, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
