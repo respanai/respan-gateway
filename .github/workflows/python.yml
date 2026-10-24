@@ -83,15 +83,24 @@ jobs:
         with:
           name: ui-dist
           path: apps/ui/dist
-      # One abi3 wheel per platform serves every Python from 3.10.
+      # One abi3 wheel per platform serves every Python from 3.10. Linux
+      # wheels are built in the manylinux_2_28 container, so they install on
+      # glibc 2.28 and newer (Ubuntu 20.04, Debian 11, Amazon Linux 2023);
+      # built on the runner itself they would need its glibc 2.39. Other
+      # platforms ignore `manylinux`.
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: python
+          manylinux: "2_28"
           args: --release --out dist
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.os }}
           path: python/dist/*.whl
+      - name: The Linux wheel needs no newer glibc than 2.28
+        if: runner.os == 'Linux'
+        shell: bash
+        run: ls python/dist/*.whl | grep manylinux_2_28
       # The wheel itself must import and run, not just build.
       - uses: actions/setup-python@v5
         with:
