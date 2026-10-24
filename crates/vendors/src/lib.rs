@@ -11,7 +11,7 @@
 //!
 //! A quirk is a vendor's deployment departing from a spec it speaks; its
 //! module handles it, as data or as its dialect of the spec's format
-//! (`respan_gateway_conversation_http::dialect`). What a spec's own vendor
+//! (`respan_gateway_http::dialect`). What a spec's own vendor
 //! does, as Gemini's signatures or OpenAI Realtime's transcription model,
 //! is the spec's, in its format.
 

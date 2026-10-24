@@ -297,14 +297,6 @@ impl Schema for OpenAiResponses {
             json!({ "message": fault.message(), "type": code, "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
-
-    /// What is kept beside a response: the fields of an item or of the
-    /// usage, those the response changed, and a reasoning's raw text.
-    fn is_inert(raw: &Value) -> bool {
-        let kind = raw["type"].as_str().unwrap_or_default();
-        matches!(kind, USAGE_FIELDS | RESPONSE_FIELDS)
-            || kind.starts_with("response.reasoning_text.")
-    }
 }
 
 /// A response's usage, as the kind counts it, from its usage object `u`.

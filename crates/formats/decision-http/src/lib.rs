@@ -1,7 +1,8 @@
 #![warn(missing_docs)]
 //! The decision kind over HTTP ([`Decisions`]): a `POST` to a path ending
 //! in `/decisions` or `/systemone`, answered whole in JSON. A provider is
-//! called at `/decisions`, unless its vendor's [`dialect`] says otherwise.
+//! called at `/decisions`, unless its vendor's dialect moves the call
+//! ([`respan_gateway_http::dialect`]).
 //!
 //! A request is `{"model", "state", "questions": {id: question}}`, each
 //! question `{"type", "instructions", "criteria"}`: `noul` with criteria
@@ -28,8 +29,6 @@ use respan_gateway_http::path::{path_ends_with, set_path};
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
-
-pub mod dialect;
 
 const NAME: &str = "decisions";
 const PATH: &str = "/decisions";
@@ -92,29 +91,26 @@ impl Format<ProviderIo, Output, Input> for Decisions {
         NAME
     }
 
+    /// A call: a `POST` of the whole request to `/decisions`.
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        bind_provider(io, PATH)
+        Ok(io.with_refusal(read_provider_error).bind(
+            move |head, input: Option<&Input>| {
+                let input = input.ok_or_else(|| {
+                    Fault::config(format!("{NAME} does not accept streaming inputs"))
+                })?;
+                head.method = Method::POST;
+                set_path(head, PATH)?;
+                let json = HeaderValue::from_static("application/json");
+                head.headers.insert(CONTENT_TYPE, json);
+                let body = to_bytes(&encode_request(input)?)?;
+                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
+                    out.push(body.clone());
+                    Ok(())
+                }) as Box<dyn Encoder<Input>>)
+            },
+            |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
+        ))
     }
-}
-
-/// A call: a `POST` of the whole request to `path`.
-fn bind_provider(io: ProviderIo, path: &'static str) -> Result<Connection<Output, Input>, Fault> {
-    Ok(io.with_refusal(read_provider_error).bind(
-        move |head, input: Option<&Input>| {
-            let input = input
-                .ok_or_else(|| Fault::config(format!("{NAME} does not accept streaming inputs")))?;
-            head.method = Method::POST;
-            set_path(head, path)?;
-            let json = HeaderValue::from_static("application/json");
-            head.headers.insert(CONTENT_TYPE, json);
-            let body = to_bytes(&encode_request(input)?)?;
-            Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                out.push(body.clone());
-                Ok(())
-            }) as Box<dyn Encoder<Input>>)
-        },
-        |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
-    ))
 }
 
 /// A client's request.

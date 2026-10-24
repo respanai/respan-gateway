@@ -1,9 +1,7 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
-use crate::is_inert;
 use crate::schema::{
     Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
-    unwritable_native,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
 use respan_gateway_core::{Fault, NativeValue};
@@ -281,6 +279,7 @@ impl Chunks {
             return Ok(());
         }
         let delta = match (part, slot.call) {
+            (Delta::Reasoning(_), _) => json!({ "reasoning_content": text }),
             (Delta::Text(_), _) => json!({ "content": text }),
             (Delta::Arguments(_), Some(index)) => {
                 slot.arguments = true;
@@ -355,10 +354,8 @@ impl Chunks {
             Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
                 self.write_native(raw, out);
             }
-            Output::Native(NativeValue { format, value: raw }) if is_inert(format, raw) => {}
-            Output::Native(NativeValue { format, value: raw }) => {
-                return Err(unwritable_native(format, raw));
-            }
+            // Another format's: only a client of that format could read it.
+            Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

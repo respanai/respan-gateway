@@ -679,14 +679,21 @@ fn a_text_block_with_citations_is_text_with_its_fields_and_events() {
 }
 
 #[test]
-fn an_event_the_format_cannot_write_fails() {
-    // An event of another format that carries content.
+fn an_event_of_another_format_is_dropped() {
+    // Even one that carries content: only a client of that format could
+    // read it.
     let foreign = Output::native(
         "openai-chat",
         json!({ "choices": [{ "index": 1, "delta": { "content": "B" } }] }),
     );
-    assert!(stream_of(std::slice::from_ref(&foreign)).is_err());
-    assert!(body_of(&[foreign]).is_err());
+    let stream = stream_of(std::slice::from_ref(&foreign)).expect("a stream");
+    assert!(!stream.contains("\"B\""), "{stream}");
+    let body = body_of(&[foreign]).expect("a body");
+    assert!(!body.to_string().contains("\"B\""), "{body}");
+}
+
+#[test]
+fn an_event_the_format_cannot_write_fails() {
     // Text for a block that never opened.
     assert!(stream_of(&[Output::text(0, "x")]).is_err());
     // A block that opens as another kind.

@@ -52,6 +52,8 @@ struct Opened {
 /// What a block of a response is made of, in OpenAI's terms.
 #[derive(Debug, PartialEq)]
 enum Key {
+    /// `reasoning_content`.
+    Reasoning,
     Text,
     /// The tool call numbered so by `index`.
     Call(u64),
@@ -127,10 +129,10 @@ impl OpenAiDecoder {
         }
     }
 
-    /// Open a block of `key` as `kind`, ending the open text.
+    /// Open a block of `key` as `kind`, ending the open reasoning or text.
     fn open(&mut self, key: Key, kind: Block, out: &mut Vec<Output>) -> u32 {
         for (n, block) in self.blocks.iter_mut().enumerate() {
-            if block.open && block.key == Key::Text {
+            if block.open && matches!(block.key, Key::Reasoning | Key::Text) {
                 block.open = false;
                 out.push(Output::block_end(u32::try_from(n).unwrap_or(u32::MAX)));
             }
@@ -231,6 +233,11 @@ impl OpenAiDecoder {
                 self.name.clone(),
                 json!({ "choices": [rest] }),
             ));
+        }
+        let reasoning = body["reasoning_content"].as_str();
+        if let Some(text) = reasoning.filter(|t| !t.is_empty()) {
+            let delta = Delta::Reasoning(text.into());
+            self.say(Key::Reasoning, Block::Reasoning, delta, out);
         }
         if let Some(text) = body["content"].as_str().filter(|t| !t.is_empty()) {
             self.say(Key::Text, Block::Text, Delta::Text(text.into()), out);
@@ -361,7 +368,7 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
             let text = y.is_string() || y.is_null();
             let ours = match field.as_str() {
                 "role" => true,
-                "content" => text,
+                "content" | "reasoning_content" => text,
                 "tool_calls" => typed,
                 _ => false,
             };

@@ -438,7 +438,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     assert_eq!(call, Some(("gemini_call_r_1".into(), "f".into())));
     assert!(events.contains(&Output::finished(Finish::ToolUse)));
     assert!(events.contains(&Output::arguments(1, r#"{"a":1}"#)));
-    // The signature is kept for this format, and inert for another.
+    // The signature is kept for this format; another drops it.
     let fields = events.iter().find_map(|e| match e {
         Output::Native(n) if n.value["type"] == "block_fields" => Some(Value::clone(&n.value)),
         _ => None,
@@ -447,7 +447,6 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         fields,
         Some(json!({ "type": "block_fields", "block": 1, "fields": { "thoughtSignature": "s" } }))
     );
-    assert!(crate::is_inert("openai-chat", &fields.expect("fields")));
 
     assert_eq!(decode_body(&chunk), events);
 }
@@ -574,10 +573,12 @@ fn a_stream_is_written_a_response_per_delta_and_a_last_with_the_finish() {
 }
 
 #[test]
-fn what_another_format_cannot_write_is_refused() {
+fn what_another_format_says_is_dropped_and_what_none_can_is_refused() {
     let alien = Output::native("anthropic-messages", json!({ "type": "x" }));
-    assert!(stream_of(std::slice::from_ref(&alien)).is_err());
-    assert!(body_of(&[alien]).is_err());
+    let stream = stream_of(std::slice::from_ref(&alien)).expect("a stream");
+    assert!(!stream.contains("\"x\""), "{stream}");
+    let body = body_of(&[alien]).expect("a body");
+    assert!(!body.to_string().contains("\"x\""), "{body}");
     let video = Output::native(
         GEMINI,
         json!({ "type": "part", "part": { "executableCode": {} } }),

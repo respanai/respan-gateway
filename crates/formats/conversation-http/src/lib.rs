@@ -10,11 +10,10 @@
 //!
 //! A format is its spec: what a provider sends beyond it is kept native, at
 //! the place it appeared, for a plugin to read (each module says where), or
-//! for a vendor's [`dialect`] of it.
+//! for a vendor's dialect of it ([`respan_gateway_http::dialect`]). What is
+//! native to one format reaches only a client of that format: another
+//! drops it from a response.
 
-use serde_json::Value;
-
-pub mod dialect;
 pub mod fields;
 mod schema;
 pub use schema::{Asked, Schema, StreamResponse, merge_details, read_provider_error};
@@ -23,35 +22,3 @@ pub mod anthropic;
 pub mod gemini;
 pub mod openai;
 pub mod responses;
-
-use anthropic::AnthropicMessages;
-use gemini::GeminiGenerate;
-use openai::OpenAiChat;
-use responses::OpenAiResponses;
-
-/// Each format here, by name, with what it says about its own events
-/// ([`Schema::is_inert`]).
-type Inertness = (&'static str, fn(&Value) -> bool);
-
-const fn inertness<S: Schema>() -> Inertness {
-    (S::NAME, S::is_inert)
-}
-
-const FORMATS: [Inertness; 4] = [
-    inertness::<OpenAiChat>(),
-    inertness::<AnthropicMessages>(),
-    inertness::<OpenAiResponses>(),
-    inertness::<GeminiGenerate>(),
-];
-
-/// Whether `raw`, an event of `format`, changes no answer: a block's fields
-/// ([`Output::block_fields`]), or what that format says is inert
-/// ([`Schema::is_inert`]).
-///
-/// [`Output::block_fields`]: respan_gateway_conversation::Output::block_fields
-fn is_inert(format: &str, raw: &Value) -> bool {
-    respan_gateway_conversation::block_fields(raw).is_some()
-        || FORMATS
-            .iter()
-            .any(|(name, inert)| *name == format && inert(raw))
-}

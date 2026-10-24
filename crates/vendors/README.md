@@ -42,14 +42,16 @@ departing from a spec it speaks, and its file handles it:
 - as data: each format's base URL, as its docs give it, and how it lists
   its models if not as OpenAI's `GET /models` does (`Vendor::models`, a fn
   of the provider, which calls with `client()`);
-- as its dialect of the spec's format, such as `groq::Groq`, a
-  `Dialect` of Chat Completions
-  (`respan_gateway_conversation_http::dialect`): what the vendor takes and
-  sends beyond the spec, turned into the kind's events and back, inside the
-  format, and the header it takes its key in if not the spec's. The vendor
-  lists it as `(&Dialected::new(OpenAiChat, Groq), Some(BASE_URL))`, a
-  format of the spec's name, so a client of the spec is still relayed to
-  it, and no plugin of the gateway's sees anything but the kind's events;
+- as its dialect of the spec's format, such as `groq::Groq`, a `Dialect`
+  (`respan_gateway_http::dialect`) laid over Chat Completions: its inputs
+  before the format writes them and its outputs after the format reads
+  them, as the kind's values; the call and its answer on the wire, their
+  heads and whole bodies; and the header it takes its key in if not the
+  spec's. A dialect says how the vendor departs from the spec, never who
+  the client is. The vendor lists it as
+  `(&Dialected::new(OpenAiChat, Groq), Some(BASE_URL))`, a format of the
+  spec's name, so a client of the spec is still relayed to it, and no
+  plugin of the gateway's sees anything but the kind's values;
 - as a format of its own, for a vendor that speaks no spec.
 
 What a spec says, and what its own vendor does, such as Anthropic's key in

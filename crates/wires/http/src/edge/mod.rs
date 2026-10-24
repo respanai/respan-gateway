@@ -16,7 +16,7 @@ use respan_gateway_core::{Fault, guarded};
 
 pub use body::Body;
 pub use client::{ClientIo, Reply, handle, handle_live};
-pub use provider::{ProviderIo, connect};
+pub use provider::{ProviderIo, Rewrite, connect};
 
 /// A body, its bytes one item per data frame, ending with an `Err` if it
 /// broke off.

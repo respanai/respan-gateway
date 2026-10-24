@@ -518,20 +518,6 @@ pub(crate) fn unwritable_content() -> Fault {
     unwritable(None)
 }
 
-/// [`unwritable_content`] for a value the kind has no form for: which it
-/// is, by its format and its `type` or its fields, never what it says.
-pub(crate) fn unwritable_native(format: &str, value: &Value) -> Fault {
-    let what = match (value.get("type").and_then(Value::as_str), value.as_object()) {
-        (Some(kind), _) => format!("`{kind}`"),
-        (None, Some(fields)) => {
-            let names: Vec<&str> = fields.keys().map(String::as_str).collect();
-            format!("fields `{}`", names.join("`, `"))
-        }
-        (None, None) => "value".to_owned(),
-    };
-    unwritable(Some(format!("{format}'s {what}")))
-}
-
 fn unwritable(what: Option<String>) -> Fault {
     let message = "the response holds content that cannot yet be written anew in this format";
     let message = match what {

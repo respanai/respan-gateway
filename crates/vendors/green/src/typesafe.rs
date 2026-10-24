@@ -1,12 +1,16 @@
 //! TypeSafe: System One, its decision models' API.
 
+use respan_gateway_core::Fault;
+use respan_gateway_decision::{Input, Output};
 use respan_gateway_decision_http::Decisions;
-use respan_gateway_decision_http::dialect::{Dialect, Dialected};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::set_path;
 
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
-    Body, BoxFuture, Model, Models, Vendor, VendorProvider, built_wrong, http, json,
+    Body, BoxFuture, Dialect, Dialected, Model, Models, Rewrite, Vendor, VendorProvider,
+    built_wrong, http, json,
 };
 
 /// Where its API is.
@@ -26,8 +30,12 @@ pub const VENDOR: Vendor = Vendor {
 pub struct TypeSafe;
 
 impl Dialect for TypeSafe {
-    fn path(&self) -> Option<&'static str> {
-        Some("/systemone")
+    type Input = Input;
+    type Output = Output;
+
+    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        set_path(head, "/systemone")?;
+        Ok(None)
     }
 }
 

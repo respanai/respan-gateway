@@ -2,11 +2,8 @@
 //! OpenAI-compatible base, and its own API beside it: `generateContent`,
 //! for chats and images, Gemini Live and Veo.
 
-use std::borrow::Cow;
-
 use respan_gateway_conversation::{Content, Input, Output, Role};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_conversation_http::dialect::{Call, Dialect, Dialected};
 use respan_gateway_core::{Fault, Filter, NativeFields};
 use serde_json::{Map, Value, json};
 
@@ -17,8 +14,8 @@ use respan_gateway_media_http::openai::OpenAiEmbeddings;
 use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
-    Body, BoxFuture, Capability, Model, Models, Vendor, VendorProvider, built_wrong, chat, http,
-    json as body_json, models,
+    Body, BoxFuture, Capability, Dialect, Dialected, Model, Models, Vendor, VendorProvider,
+    built_wrong, http, json as body_json, models,
 };
 
 /// Its own API: `generateContent` and Veo.
@@ -62,24 +59,20 @@ pub use respan_gateway_conversation_http::gemini::SIGNATURE_PLACEHOLDER;
 pub struct Gemini;
 
 impl Dialect for Gemini {
-    fn input<'a>(&self, input: &'a Input, _: &Call) -> Result<Cow<'a, Input>, Fault> {
-        let calls = |m: &respan_gateway_conversation::Message| {
-            m.role == Role::Assistant
-                && m.content
-                    .iter()
-                    .any(|p| matches!(p, Content::ToolCall { .. }))
-        };
-        if !needs_signatures(input.model.as_deref()) || !input.messages.iter().any(calls) {
-            return Ok(Cow::Borrowed(input));
-        }
-        let mut input = input.clone();
-        sign_calls(&mut input);
-        Ok(Cow::Owned(input))
-    }
+    type Input = Input;
+    type Output = Output;
 
-    fn output(&self, call: &Call) -> Option<Box<dyn Filter<Output>>> {
-        chat::read(call, &["extra_content"], false)
+    fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
+        Some(Box::new(signed))
     }
+}
+
+/// `input`, its calls signed if its model needs them signed.
+fn signed(input: &mut Input) -> Result<(), Fault> {
+    if needs_signatures(input.model.as_deref()) {
+        sign_calls(input);
+    }
+    Ok(())
 }
 
 /// Signs, with the placeholder in its `extra_content`, the first call of

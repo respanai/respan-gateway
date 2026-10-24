@@ -34,12 +34,11 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::is_inert;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
     merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
-    unwritable_content, unwritable_native, usage_extra,
+    unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -255,12 +254,6 @@ impl Schema for AnthropicMessages {
         }
     }
 
-    /// A ping, or what is kept beside a response: a signature, a stop
-    /// sequence, usage fields with no unit, a tool call's fields.
-    fn is_inert(raw: &Value) -> bool {
-        matches!(raw["type"].as_str(), Some("ping" | "message_delta"))
-    }
-
     /// The system prompt becomes a leading system message.
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
@@ -473,11 +466,8 @@ impl Schema for AnthropicMessages {
                         _ => return Err(unwritable_content()),
                     }
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if is_inert(format, raw) => {}
-                AssembledItem::Native(NativeValue { format, value: raw }) => {
-                    return Err(unwritable_native(format, raw));
-                }
+                // Another format's: only a client of that format could read it.
+                AssembledItem::Native(_) => {}
             }
         }
         for (place, text) in input {

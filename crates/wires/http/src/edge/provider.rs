@@ -37,6 +37,8 @@ where
         success: Box::new(crate::rules::success),
         refusal: Box::new(respan_gateway_http_faults::provider_fault),
         codings: false,
+        request: None,
+        response: None,
     }
 }
 
@@ -58,7 +60,23 @@ pub struct ProviderIo {
     refusal: Refusal,
     /// Whether a success in a content coding is read as it came.
     codings: bool,
+    /// What changes the call as its format wrote it ([`ProviderIo::with_request`]).
+    request: Option<RequestHook>,
+    /// What changes the answer before its format reads it
+    /// ([`ProviderIo::with_response`]).
+    response: Option<ResponseHook>,
 }
+
+/// A whole body, rewritten: a call's before it is sent, or an answer's
+/// before it is read.
+pub type Rewrite = Box<dyn FnOnce(Bytes) -> Result<Bytes, Fault> + Send>;
+
+/// What changes a call ([`ProviderIo::with_request`]).
+type RequestHook = Box<dyn FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send>;
+
+/// What changes an answer ([`ProviderIo::with_response`]).
+type ResponseHook = Box<dyn FnOnce(&RequestHead, &mut ResponseHead) -> Option<Rewrite> + Send>;
+
 impl ProviderIo {
     /// Per-call transport state supplied by the gateway and its plugins.
     pub fn extensions(&self) -> &Extensions {
@@ -94,6 +112,31 @@ impl ProviderIo {
     /// `upstream`: the gateway decodes no coding.
     pub fn with_content_codings(mut self) -> Self {
         self.codings = true;
+        self
+    }
+
+    /// Change the call after its format wrote it, before it is sent:
+    /// `request` edits its head, and may rewrite its whole body, which a
+    /// call of live input, whose body streams, cannot have. `Err` fails the
+    /// call unsent. The format still reads its answer against the call as
+    /// it wrote it.
+    pub fn with_request(
+        mut self,
+        request: impl FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send + 'static,
+    ) -> Self {
+        self.request = Some(Box::new(request));
+        self
+    }
+
+    /// Change the answer before its format reads it: `response` edits its
+    /// head, given the call's as its format wrote it, and may rewrite its
+    /// whole body, read up to the transport's limit. It runs on every
+    /// answer, a refusal too, before its success is decided.
+    pub fn with_response(
+        mut self,
+        response: impl FnOnce(&RequestHead, &mut ResponseHead) -> Option<Rewrite> + Send + 'static,
+    ) -> Self {
+        self.response = Some(Box::new(response));
         self
     }
 
@@ -168,6 +211,11 @@ impl ProviderIo {
                 head.clone(),
                 body.full_bytes().cloned().unwrap_or_default(),
             );
+            let (head, body) = match self.request {
+                Some(request) => changed(head, body, request)?,
+                None => (head, body),
+            };
+            let response_hook = self.response;
             let mut request = http::Request::from_parts(head, body);
             let relayed = self.extensions.get::<crate::raw::Relayed>().copied();
             let client_head = relayed
@@ -200,8 +248,12 @@ impl ProviderIo {
                 let (ended, answer_ended) = oneshot::channel::<()>();
                 let response = async move {
                     let (response, completion) = (self.send)(request).await?;
-                    let (head, body) = response.into_parts();
+                    let (mut head, mut body) = response.into_parts();
                     let call = sent.clone().into_parts().0;
+                    if let Some(rewrite) = response_hook.and_then(|hook| hook(&call, &mut head)) {
+                        body = Body::full(rewrite(body.read_answer(limit).await?)?);
+                        head.headers.remove(http::header::CONTENT_LENGTH);
+                    }
                     let succeeded = success(&head, &call);
                     // Claimed now, before the answer is handed over, and held
                     // by its events: a call that fails or is dropped for
@@ -270,6 +322,24 @@ impl ProviderIo {
         });
         (incoming, outgoing)
     }
+}
+
+/// A call's `head` and `body` as `request` changes them: a rewrite of the
+/// body needs the whole of it.
+fn changed(
+    mut head: RequestHead,
+    body: Body,
+    request: RequestHook,
+) -> Result<(RequestHead, Body), Fault> {
+    let Some(rewrite) = request(&mut head)? else {
+        return Ok((head, body));
+    };
+    let whole = body
+        .full_bytes()
+        .cloned()
+        .ok_or_else(|| Fault::internal("a call of live input has no whole body to rewrite"))?;
+    head.headers.remove(http::header::CONTENT_LENGTH);
+    Ok((head, Body::full(rewrite(whole)?)))
 }
 
 /// A refused answer's fault: its body read whole, up to `limit`, by

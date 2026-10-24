@@ -1,15 +1,14 @@
 //! Groq: Chat Completions, transcriptions and speech.
 
-use respan_gateway_conversation::{Output, Usage};
+use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_conversation_http::dialect::{Call, Dialect, Dialected};
 use respan_gateway_conversation_http::openai::{self, OpenAiChat};
 use respan_gateway_core::{Filter, NativeValue, Result};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_media_http::openai::{OpenAiSpeech, OpenAiTranscriptions};
 
-use respan_gateway_vendor_kit::Vendor;
+use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor};
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.groq.com/openai/v1";
@@ -33,7 +32,10 @@ pub struct Groq;
 /// For a client of any format, Chat Completions' too: the usage counts for
 /// each.
 impl Dialect for Groq {
-    fn output(&self, _: &Call) -> Option<Box<dyn Filter<Output>>> {
+    type Input = Input;
+    type Output = Output;
+
+    fn outputs(&self) -> Option<Box<dyn Filter<Output>>> {
         Some(Box::new(XGroqUsage::default()))
     }
 }

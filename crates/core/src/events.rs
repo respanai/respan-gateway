@@ -1,5 +1,6 @@
 //! Symmetric standard streams and sinks with protocol-owned preparation.
 
+use std::collections::VecDeque;
 use std::fmt;
 use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
@@ -10,7 +11,7 @@ use futures::stream::BoxStream;
 use futures::{FutureExt, Sink, Stream, StreamExt};
 
 use crate::fault::guarded;
-use crate::{Fault, Result};
+use crate::{Fault, Filter, Result};
 
 /// The most ready events one poll moves before yielding: Tokio's cooperative
 /// budget per task poll, so a hot stream yields no later than the runtime
@@ -214,6 +215,126 @@ impl<T: Send + Sync + 'static> EventStream<T> {
     }
 }
 
+impl<T: Clone + Send + Sync + 'static> EventStream<T> {
+    /// These events through `filter`, as [`Filter`] says: each value
+    /// edited as it comes, what it kept back pushed at the end, its end run
+    /// at every end. A single value stays single, the filter run once when
+    /// it is read, and must give exactly one value for it. A refusal is
+    /// not filtered.
+    pub fn filtered(self, filter: Box<dyn Filter<T>>) -> Self {
+        let shape = match self.shape {
+            Shape::Single(value) => {
+                let filter = parking_lot::Mutex::new(filter);
+                Shape::Single(Single::deferred(
+                    move || one(&mut **filter.lock(), value.cloned()),
+                    T::clone,
+                ))
+            }
+            Shape::Stream(events) => Shape::Stream(Box::pin(Filtered::new(events, filter))),
+            Shape::Empty => Shape::Stream(Box::pin(Filtered::new(
+                futures::stream::empty().boxed(),
+                filter,
+            ))),
+            Shape::Refused(fault) => Shape::Refused(fault),
+        };
+        EventStream {
+            shape,
+            ended: self.ended,
+        }
+    }
+}
+
+/// The one value `filter` gives for `value`, its end run after.
+fn one<T: 'static>(filter: &mut dyn Filter<T>, value: Result<T>) -> Result<T> {
+    let mut out = Vec::new();
+    let edited = value.and_then(|value| guarded(|| filter.edit(value, &mut out)));
+    let ended = guarded(|| filter.end(&edited, &mut out));
+    edited.and(ended)?;
+    match <[T; 1]>::try_from(out) {
+        Ok([value]) => Ok(value),
+        Err(out) => Err(Fault::internal(format!(
+            "a filter of one value gave {}",
+            out.len()
+        ))),
+    }
+}
+
+/// A live stream through a filter.
+struct Filtered<T: 'static> {
+    events: BoxStream<'static, Result<T>>,
+    /// Until its end has run.
+    filter: Option<Box<dyn Filter<T>>>,
+    ready: VecDeque<T>,
+}
+
+impl<T: 'static> Unpin for Filtered<T> {}
+
+impl<T: 'static> Filtered<T> {
+    fn new(events: BoxStream<'static, Result<T>>, filter: Box<dyn Filter<T>>) -> Self {
+        Self {
+            events,
+            filter: Some(filter),
+            ready: VecDeque::new(),
+        }
+    }
+
+    /// Run the filter's end, as `end` ended: what it kept back is ready if
+    /// it ended well, dropped if it failed. The fault the stream ends with,
+    /// if any.
+    fn end(&mut self, end: Result<()>) -> Option<Fault> {
+        let mut filter = self.filter.take()?;
+        let mut out = Vec::new();
+        let ended = guarded(|| filter.end(&end, &mut out));
+        match end.and(ended) {
+            Ok(()) => {
+                self.ready.extend(out);
+                None
+            }
+            Err(fault) => Some(fault),
+        }
+    }
+}
+
+impl<T: 'static> Stream for Filtered<T> {
+    type Item = Result<T>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(value) = this.ready.pop_front() {
+                return Poll::Ready(Some(Ok(value)));
+            }
+            let Some(filter) = this.filter.as_mut() else {
+                return Poll::Ready(None);
+            };
+            let end = match futures::ready!(this.events.poll_next_unpin(cx)) {
+                Some(Ok(value)) => {
+                    let mut out = Vec::new();
+                    match guarded(|| filter.edit(value, &mut out)) {
+                        Ok(()) => {
+                            this.ready.extend(out);
+                            continue;
+                        }
+                        Err(fault) => Err(fault),
+                    }
+                }
+                Some(Err(fault)) => Err(fault),
+                None => Ok(()),
+            };
+            if let Some(fault) = this.end(end) {
+                return Poll::Ready(Some(Err(fault)));
+            }
+        }
+    }
+}
+
+/// A stream dropped before its end ends its filter too.
+impl<T: 'static> Drop for Filtered<T> {
+    fn drop(&mut self) {
+        self.end(Err(Fault::abandoned()));
+    }
+}
+
 impl<T> Unpin for EventStream<T> {}
 
 impl<T> Stream for EventStream<T> {
@@ -343,6 +464,18 @@ impl<T> EventSink<T> {
         } else {
             Ok(())
         }
+    }
+}
+
+impl<T: Clone + Send + Sync + 'static> EventSink<T> {
+    /// This sink, given its source's events through `filter`
+    /// ([`EventStream::filtered`]).
+    pub fn filtered(mut self, filter: Box<dyn Filter<T>>) -> Self {
+        EventSink::preparing(move |events: &mut EventStream<T>| {
+            *events = std::mem::replace(events, EventStream::empty()).filtered(filter);
+            self.prepare(events)?;
+            Ok(self)
+        })
     }
 }
 
@@ -773,5 +906,81 @@ mod tests {
         });
         sink.prepare(&mut source).expect("prepare raw");
         deliver(source, sink).await.expect("close raw");
+    }
+
+    /// Doubles each value, keeps the last back for the end, and notes that
+    /// it ended.
+    struct Held {
+        last: Option<u8>,
+        ended: Arc<AtomicUsize>,
+    }
+
+    impl Filter<u8> for Held {
+        fn edit(&mut self, value: u8, out: &mut Vec<u8>) -> Result<()> {
+            out.extend(self.last.replace(value * 2));
+            Ok(())
+        }
+
+        fn end(&mut self, end: &Result<()>, out: &mut Vec<u8>) -> Result<()> {
+            self.ended.fetch_add(1, Ordering::SeqCst);
+            if end.is_ok() {
+                out.extend(self.last.take());
+            }
+            Ok(())
+        }
+    }
+
+    fn held() -> (Box<dyn Filter<u8>>, Arc<AtomicUsize>) {
+        let ended = Arc::new(AtomicUsize::new(0));
+        let filter = Held {
+            last: None,
+            ended: ended.clone(),
+        };
+        (Box::new(filter), ended)
+    }
+
+    #[tokio::test]
+    async fn a_filtered_stream_edits_each_value_and_ends_once() {
+        let (filter, ended) = held();
+        let events = EventStream::stream(stream::iter([Ok(1_u8), Ok(2), Ok(3)]));
+        let read: Vec<u8> = events.filtered(filter).try_collect().await.expect("read");
+        assert_eq!(read, [2, 4, 6]);
+        assert_eq!(ended.load(Ordering::SeqCst), 1);
+        // A fault ends it: what it kept back is dropped.
+        let (filter, ended) = held();
+        let broken = stream::iter([Ok(1_u8), Err(Fault::truncated())]);
+        let read: Vec<_> = EventStream::stream(broken).filtered(filter).collect().await;
+        assert!(matches!(read.as_slice(), [Err(_)]), "{read:?}");
+        assert_eq!(ended.load(Ordering::SeqCst), 1);
+        // So does a drop before its end.
+        let (filter, ended) = held();
+        let mut events = EventStream::stream(stream::iter([Ok(1_u8), Ok(2)])).filtered(filter);
+        assert_eq!(events.next().await.map(says), Some(Ok(2)));
+        drop(events);
+        assert_eq!(ended.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_filtered_single_value_stays_single() {
+        let double = |value: &mut u8| {
+            *value *= 2;
+            Ok(())
+        };
+        let events = EventStream::single(4_u8).filtered(Box::new(double));
+        assert!(events.is_single());
+        assert_eq!(events.value().map(says), Some(Ok(&8)));
+        // A filter that keeps it back gives it at its end.
+        let (filter, _) = held();
+        let events = EventStream::single(4_u8).filtered(filter);
+        assert_eq!(events.value().map(says), Some(Ok(&8)));
+        // One that drops it gives none, which a single value cannot be.
+        struct Drops;
+        impl Filter<u8> for Drops {
+            fn edit(&mut self, _: u8, _: &mut Vec<u8>) -> Result<()> {
+                Ok(())
+            }
+        }
+        let events = EventStream::single(4_u8).filtered(Box::new(Drops));
+        assert!(events.value().is_some_and(|v| v.is_err()));
     }
 }

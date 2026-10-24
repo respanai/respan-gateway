@@ -25,22 +25,19 @@ mod values;
 mod tests;
 
 pub(crate) use crate::fields::{rest_of, unix_now};
-pub(crate) use errors::answer;
 pub use errors::{merge_details, read_provider_error};
 pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
-pub(crate) use exchange::{
-    Gate, error_event, own_request, post, response_encoder, unreadable_event,
-};
+pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::{
     INERT, Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
     encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
     native_fields, only, own_fields, remainder, set, source_url, stop_json, tidy, tool_field,
-    unsupported_fields, untranslatable, unwritable_content, unwritable_native, usage_extra,
+    unsupported_fields, untranslatable, unwritable_content, usage_extra,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -146,13 +143,6 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// Whether the call at `uri` asks for a stream by its path, as a format
     /// does that names its method there; else the request body says.
     fn streams(_uri: &http::Uri) -> bool {
-        false
-    }
-    /// Whether `raw`, an event of this format the kind has no form for,
-    /// changes no answer: a keep-alive, or what the format keeps beside a
-    /// response. Another format drops it when translating, and refuses any
-    /// other.
-    fn is_inert(_raw: &Value) -> bool {
         false
     }
 

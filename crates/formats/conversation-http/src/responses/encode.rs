@@ -3,10 +3,8 @@
 use super::{
     ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
 };
-use crate::is_inert;
 use crate::schema::{
     Gate, block_fields, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
-    unwritable_native,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
@@ -164,10 +162,8 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     _ => return Err(unwritable_content()),
                 }
             }
-            AssembledItem::Native(NativeValue { format, value: raw }) if is_inert(format, raw) => {}
-            AssembledItem::Native(NativeValue { format, value: raw }) => {
-                return Err(unwritable_native(format, raw));
-            }
+            // Another format's: only a client of that format could read it.
+            AssembledItem::Native(_) => {}
         }
     }
     let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
@@ -641,10 +637,8 @@ impl Events {
                     self.foreign(raw, out);
                 }
             }
-            Output::Native(NativeValue { format, value: raw }) if is_inert(format, raw) => {}
-            Output::Native(NativeValue { format, value: raw }) => {
-                return Err(unwritable_native(format, raw));
-            }
+            // Another format's: only a client of that format could read it.
+            Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

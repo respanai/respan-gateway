@@ -9,7 +9,8 @@ use serde_json::json;
 use crate::Schema;
 use crate::anthropic::AnthropicMessages;
 use crate::openai::OpenAiChat;
-use crate::schema::{NativeFieldsExt, answer, decode_content, encode_content};
+use crate::schema::errors::answer;
+use crate::schema::{NativeFieldsExt, decode_content, encode_content};
 
 #[test]
 fn a_cache_marker_stays_with_its_own_part_among_equal_text() {

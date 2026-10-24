@@ -2,20 +2,17 @@
 //! serves: Chat Completions, Responses, Anthropic Messages and Gemini's
 //! `generateContent`; and decisions, for its own decision models.
 
-use respan_gateway_conversation::Output;
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::dialect::{Call, Dialect, Dialected};
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::Filter;
 use respan_gateway_decision_http::Decisions;
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
     Ask, Body, BoxFuture, Capability, Modality, Model, Models, Price, Vendor, VendorProvider,
-    built_wrong, chat, http, json, time,
+    built_wrong, http, json, time,
 };
 
 use crate::openai::responses_only;
@@ -38,7 +35,7 @@ pub const VENDOR: Vendor = Vendor {
     id: "respan",
     key_env: &["RESPAN_API_KEY"],
     formats: &[
-        (&Dialected::new(OpenAiChat, Respan), Some(BASE_URL)),
+        (&OpenAiChat, Some(BASE_URL)),
         (&OpenAiResponses, Some(BASE_URL)),
         (&AnthropicMessages, Some(ANTHROPIC)),
         (&GeminiGenerate, Some(GEMINI)),
@@ -60,20 +57,6 @@ fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
         _ => OpenAiChat::NAME,
     };
     (ask.format != native).then_some(OpenAiChat::NAME)
-}
-
-/// Respan's Chat Completions: `provider_specific_fields`, on a choice or
-/// its message, what the vendor behind it said beyond the spec, only
-/// describes it; a model's reasoning comes as `reasoning_content`, read as
-/// reasoning for a client of another format, and again as Claude's
-/// `thinking_blocks`, whose signatures only Anthropic reads back.
-#[derive(Debug, Clone, Copy)]
-pub struct Respan;
-
-impl Dialect for Respan {
-    fn output(&self, call: &Call) -> Option<Box<dyn Filter<Output>>> {
-        chat::read(call, &["provider_specific_fields", "thinking_blocks"], true)
-    }
 }
 
 /// Its models: its catalog, a page at a time, which needs no key, so is

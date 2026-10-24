@@ -267,24 +267,26 @@ fn a_choices_unknown_field_stays_native_and_goes_back_as_it_came() {
     );
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":\"stop\""), "{stream}");
-    // Another format refuses it, as it may change the answer.
+    // Another format drops it: only a client of this one could read it.
     let mut whole = Assembled::default();
     out.iter()
         .try_for_each(|r| whole.push(r))
         .expect("assembled");
-    assert!(AnthropicMessages.encode_whole(&whole).is_err());
+    let body = AnthropicMessages.encode_whole(&whole).expect("a body");
+    assert!(!body.to_string().contains("x_vendor"), "{body}");
 }
 
 #[test]
-fn openai_chat_reads_no_vendors_field_but_relays_it() {
+fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let chunks = [
         "data: {\"id\":\"x\",\"x_vendor\":{\"usage\":{\"prompt_tokens\":3}},\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"hm\"}}]}\n\n",
         "data: [DONE]\n\n",
     ];
     let (out, end) = decode_all(&chunks);
     assert!(end.is_ok());
-    // No usage and no reasoning: the vendor's object stays in the start's
-    // fields, the delta's field in the choice's.
+    // The vendor's object is no usage, and stays in the start's fields;
+    // `reasoning_content` is reasoning, where every vendor that reasons
+    // over Chat Completions says it.
     let Some(Output::Start(start)) = out.first() else {
         panic!("{out:?}");
     };
@@ -292,8 +294,14 @@ fn openai_chat_reads_no_vendors_field_but_relays_it() {
         start.native.fields()["x_vendor"],
         json!({ "usage": { "prompt_tokens": 3 } })
     );
-    let rest = json!({ "choices": [{ "index": 0, "delta": { "reasoning_content": "hm" } }] });
-    assert_eq!(out[1..], [Output::native(OPENAI, rest)]);
+    assert_eq!(
+        out[1..],
+        [
+            Output::block_start(0, Block::Reasoning),
+            Output::reasoning(0, "hm"),
+            Output::block_end(0),
+        ]
+    );
     // Both go back to a client of the format as they came.
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":{\"usage\""), "{stream}");
@@ -314,6 +322,31 @@ fn openai_chat_reads_no_vendors_field_but_relays_it() {
             .map(|v| v["messages"][0]["reasoning_content"].clone()),
         Some(json!("hm"))
     );
+}
+
+#[test]
+fn reasoning_content_opens_a_reasoning_block_before_the_text() {
+    let chunks = [
+        "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"hm\"}}]}\n\n",
+        "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n",
+    ];
+    let (out, _) = decode_all(&chunks);
+    assert_eq!(
+        out[1..],
+        [
+            Output::block_start(0, Block::Reasoning),
+            Output::reasoning(0, "hm"),
+            Output::block_end(0),
+            Output::block_start(1, Block::Text),
+            Output::text(1, "ok"),
+            Output::block_end(1),
+            Output::finished(Finish::Stop),
+        ]
+    );
+    // A whole body's message says it the same way.
+    let body = json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
+        "message": { "role": "assistant", "content": "ok", "reasoning_content": "hm" } }] });
+    assert_eq!(decode_body(&body)[1..], out[1..]);
 }
 
 #[test]
@@ -477,9 +510,10 @@ fn a_tool_call_a_filter_replaces_with_text_is_gone() {
     let stream = stream_of(&replies, false).expect("a stream");
     assert!(stream.contains("\"content\":\"[removed]\""), "{stream}");
     assert!(!stream.contains("tool_calls"), "{stream}");
-    // What it cannot write fails the response.
+    // Another format's event is dropped.
     let foreign = [Output::native("anthropic-messages", json!({ "type": "x" }))];
-    assert!(body_of(&foreign).is_err());
+    let body = body_of(&foreign).expect("a body");
+    assert!(!body.to_string().contains("\"x\""), "{body}");
 }
 
 #[test]
@@ -1342,16 +1376,14 @@ fn a_stream_made_from_events_always_finishes() {
 }
 
 #[test]
-fn a_translated_tool_call_is_refused() {
-    // An event another format has no form in this one for is refused...
-    let other = Output::native(
-        "anthropic-messages",
-        json!({ "type": "content_block_start" }),
-    );
-    assert!(stream_of(&[other], false).is_err());
-    // ... but a keep-alive changes no answer, and is dropped.
-    let ping = Output::native("anthropic-messages", json!({ "type": "ping" }));
-    assert!(stream_of(&[ping], false).is_ok());
+fn another_formats_events_are_dropped() {
+    // What only a client of that format could read, a block's start or a
+    // keep-alive alike.
+    for kind in ["content_block_start", "ping"] {
+        let other = Output::native("anthropic-messages", json!({ "type": kind }));
+        let stream = stream_of(&[other], false).expect("a stream");
+        assert!(!stream.contains(kind), "{stream}");
+    }
 }
 
 // What a chunk has no place for is written beside the text.
@@ -1388,14 +1420,16 @@ fn a_whole_body_joins_every_text_and_keeps_calls() {
     // A call with no arguments has none, as JSON.
     assert_eq!(message["tool_calls"][0]["function"]["arguments"], "{}");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
-    // OpenAI Chat has no field for reasoning.
+    // Reasoning is its `reasoning_content`.
     replies.extend([
         Output::block_start(0, Block::Reasoning),
         Output::reasoning(0, "hm"),
         Output::block_end(0),
     ]);
-    assert!(body_of(&replies).is_err());
-    assert!(stream_of(&replies, false).is_err());
+    let body = body_of(&replies).expect("a body");
+    assert_eq!(body["choices"][0]["message"]["reasoning_content"], "hm");
+    let stream = stream_of(&replies, false).expect("a stream");
+    assert!(stream.contains("\"reasoning_content\":\"hm\""), "{stream}");
 }
 
 #[test]

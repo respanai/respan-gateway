@@ -81,11 +81,9 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::is_inert;
 use crate::schema::{
     Asked, Keep, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
-    kept_fields, merge_details, merge_fields, native_fields, set, unwritable_content,
-    unwritable_native, usage_extra,
+    kept_fields, merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
@@ -354,14 +352,6 @@ impl Schema for GeminiGenerate {
         Box::new(EventStream::default())
     }
 
-    /// What is kept beside a response: its fields, a candidate's, usage's.
-    fn is_inert(raw: &Value) -> bool {
-        matches!(
-            raw["type"].as_str(),
-            Some("candidate_fields" | "response_fields" | "usage_fields")
-        )
-    }
-
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
@@ -426,11 +416,8 @@ impl Schema for GeminiGenerate {
                         _ => return Err(unwritable_content()),
                     }
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if is_inert(format, raw) => {}
-                AssembledItem::Native(NativeValue { format, value: raw }) => {
-                    return Err(unwritable_native(format, raw));
-                }
+                // Another format's: only a client of that format could read it.
+                AssembledItem::Native(_) => {}
             }
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);

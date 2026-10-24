@@ -580,7 +580,7 @@ fn a_stream_cut_before_its_end_is_truncated() {
 }
 
 #[test]
-fn items_the_kind_has_no_form_for_are_native_and_refused_in_translation() {
+fn items_the_kind_has_no_form_for_are_native_and_dropped_in_translation() {
     let item = json!({ "id": "ws_1", "type": "web_search_call", "status": "completed" });
     let stream = [
         json!({ "type": "response.created", "response": response("in_progress", json!([])) }),
@@ -615,11 +615,16 @@ fn items_the_kind_has_no_form_for_are_native_and_refused_in_translation() {
         .map(|e| e["sequence_number"].clone())
         .collect();
     assert_eq!(sequence, (0..6).map(|n| json!(n)).collect::<Vec<_>>());
-    // Another format cannot say it.
+    // Another format drops it: only a client of this one could read it.
     let mut whole = Assembled::default();
     out.iter().for_each(|e| whole.push(e).expect("events"));
-    assert!(AnthropicMessages.encode_whole(&whole).is_err());
-    assert!(OpenAiChat.encode_whole(&whole).is_err());
+    for body in [
+        AnthropicMessages.encode_whole(&whole),
+        OpenAiChat.encode_whole(&whole),
+    ] {
+        let body = body.expect("a body");
+        assert!(!body.to_string().contains("web_search_call"), "{body}");
+    }
     // A body writes it in its output.
     assert_eq!(body_of(&out).expect("a body")["output"], json!([item]));
 }
@@ -849,19 +854,23 @@ fn a_text_that_no_one_wrote_is_still_an_item() {
 }
 
 #[test]
-fn another_formats_events_are_dropped_or_refused() {
+fn another_formats_events_are_dropped() {
     let ping = Output::native("anthropic-messages", json!({ "type": "ping" }));
     let stray = Output::native("openai-chat", json!({ "choices": [{ "index": 1 }] }));
-    let ok = [
+    let replies = [
         Output::start("r", "m"),
         ping,
+        stray,
         Output::finished(Finish::Stop),
     ];
-    assert!(stream_of(&ok).is_ok());
-    assert!(body_of(&ok).is_ok());
-    let bad = [Output::start("r", "m"), stray];
-    assert!(stream_of(&bad).is_err());
-    assert!(body_of(&bad).is_err());
+    let stream = stream_of(&replies).expect("a stream");
+    let written = serde_json::to_string(&stream).expect("json");
+    assert!(
+        !written.contains("ping") && !written.contains("choices"),
+        "{written}"
+    );
+    let body = body_of(&replies).expect("a body");
+    assert!(!body.to_string().contains("choices"), "{body}");
 }
 
 #[test]
@@ -972,7 +981,7 @@ fn instructions_count_as_the_reader_reads_them() {
 }
 
 #[test]
-fn a_foreign_value_it_cannot_write_is_named_in_its_refusal() {
+fn a_foreign_value_is_dropped_beside_what_it_can_write() {
     let foreign = NativeValue::new("openai-chat", json!({"logprobs": {}, "refusal": "no"}));
     let replies = [
         Output::start("r1", "m"),
@@ -981,14 +990,13 @@ fn a_foreign_value_it_cannot_write_is_named_in_its_refusal() {
         Output::block_end(0),
         Output::Native(foreign),
     ];
-    for refused in [body_of(&replies).map(drop), stream_of(&replies).map(drop)] {
-        let fault = refused.expect_err("refused");
-        assert!(
-            fault
-                .message()
-                .ends_with("in this format: openai-chat's fields `logprobs`, `refusal`"),
-            "{}",
-            fault.message()
-        );
-    }
+    let body = body_of(&replies).expect("a body");
+    assert_eq!(body["output"][0]["content"][0]["text"], "hi");
+    assert!(!body.to_string().contains("refusal"), "{body}");
+    let stream = stream_of(&replies).expect("a stream");
+    let written = serde_json::to_string(&stream).expect("json");
+    assert!(
+        written.contains("\"hi\"") && !written.contains("refusal"),
+        "{written}"
+    );
 }

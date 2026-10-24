@@ -1,13 +1,10 @@
 //! DeepSeek: Chat Completions.
 
-use std::borrow::Cow;
-
 use respan_gateway_conversation::{Input, Output};
-use respan_gateway_conversation_http::dialect::{Call, Dialect, Dialected};
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_core::{Fault, Filter};
+use respan_gateway_core::Filter;
 
-use respan_gateway_vendor_kit::{Vendor, chat};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor, chat};
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.deepseek.com";
@@ -20,16 +17,16 @@ pub const VENDOR: Vendor = Vendor {
     ..Vendor::DEFAULT
 };
 
-/// DeepSeek's Chat Completions: reasoning is `reasoning_content`.
+/// DeepSeek's Chat Completions: it takes reasoning back as
+/// `reasoning_content`.
 #[derive(Debug, Clone, Copy)]
 pub struct DeepSeek;
 
 impl Dialect for DeepSeek {
-    fn input<'a>(&self, input: &'a Input, _: &Call) -> Result<Cow<'a, Input>, Fault> {
-        Ok(chat::reasoning_written(input))
-    }
+    type Input = Input;
+    type Output = Output;
 
-    fn output(&self, call: &Call) -> Option<Box<dyn Filter<Output>>> {
-        chat::read(call, &[], true)
+    fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
+        Some(Box::new(chat::write_reasoning))
     }
 }

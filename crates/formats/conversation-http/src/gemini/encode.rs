@@ -1,9 +1,8 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
-use crate::is_inert;
 use crate::schema::{
     Gate, Schema, arguments_object, block_fields, check_usage, merge_fields, merge_into,
-    own_fields, unwritable_content, unwritable_native,
+    own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::{Fault, NativeValue};
@@ -396,10 +395,8 @@ impl EventStream {
                     _ => return Err(unwritable_content()),
                 }
             }
-            Output::Native(NativeValue { format, value: raw }) if is_inert(format, raw) => {}
-            Output::Native(NativeValue { format, value: raw }) => {
-                return Err(unwritable_native(format, raw));
-            }
+            // Another format's: only a client of that format could read it.
+            Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

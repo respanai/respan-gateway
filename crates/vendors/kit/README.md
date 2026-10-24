@@ -26,10 +26,11 @@ and what vendors share. The vendors themselves are
   speaks it, and a format by name as a vendor speaks it or as its spec has
   it.
 - `chat`: what vendors of Chat Completions share in their dialects:
-  reasoning written as `reasoning_content` (`reasoning_written`), and
-  `read`: for a client of another format, a choice's fields that only
-  describe it dropped and its `reasoning_content` read as reasoning.
+  reasoning taken back as `reasoning_content` (`write_reasoning`, a filter
+  of a call's input).
+- `Dialect` and `Dialected`: a vendor's dialect of a spec, laid over the
+  spec's format (`respan_gateway_http::dialect`).
 
 A format is a spec and names no vendor; a vendor's departures from a spec
-are its own, in the formats it speaks: its dialect of the spec, which the
-spec's format crate lets it write, or a format of its own.
+are its own, in the formats it speaks: its dialect of the spec, laid over
+the spec's format, or a format of its own.

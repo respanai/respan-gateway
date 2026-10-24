@@ -10,11 +10,14 @@
 //!   `native` holds the response's other fields (`created`, `system_fingerprint`,
 //!   `service_tier`, a vendor's own object, ...) as the chunk has them.
 //! - Blocks are numbered in the order they open. The first choice's
-//!   `content` and each `tool_calls` entry (by its `index`, else by its `id`)
-//!   open a [`Block::Text`] and a [`Block::ToolCall`] on their first
-//!   non-empty delta, or, for a call, on the entry that names its `id` and
-//!   `name`. Opening any block ends the text block that is open; tool calls
-//!   stay open, as they interleave.
+//!   `reasoning_content`, `content` and each `tool_calls` entry (by its
+//!   `index`, else by its `id`) open a [`Block::Reasoning`], a
+//!   [`Block::Text`] and a [`Block::ToolCall`] on their first non-empty
+//!   delta, or, for a call, on the entry that names its `id` and `name`.
+//!   Opening any block ends the reasoning or text block that is open; tool
+//!   calls stay open, as they interleave. `reasoning_content` is no field
+//!   of OpenAI's own: it is where every OpenAI-compatible vendor that
+//!   reasons says it (DeepSeek, vLLM, ...).
 //! - A `finish_reason`, or the end of the stream, ends every block still
 //!   open, in the order they opened, and a finish gives a [`Output::Finish`].
 //! - `usage` gives a [`Output::Usage`] of what it adds to the totals
@@ -43,9 +46,11 @@
 //! Encoders do the reverse. A stream is written as chunks: the opening
 //! `role` chunk, a chunk per delta, and, at the end, the finish, the usage
 //! chunk if the client asked for it, and `[DONE]`. A whole body is written
-//! from the events collected: all text joined into the message `content`.
-//! A block is any number unique in the response: chunks number tool calls
-//! in the order they open. Reasoning has no field, and is refused.
+//! from the events collected: all text joined into the message `content`,
+//! all reasoning into its `reasoning_content`. A block is any number unique
+//! in the response: chunks number tool calls in the order they open. A call
+//! writes no reasoning: OpenAI takes none back, and a vendor that does says
+//! so in its dialect.
 
 mod decode;
 mod encode;
@@ -53,12 +58,10 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::is_inert;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
     merge_details, merge_fields, merge_into, native_fields, parse_effort, set, stop_json,
-    take_native, tidy, unix_now, unsupported_fields, untranslatable, unwritable_content,
-    unwritable_native, usage_extra,
+    take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -342,10 +345,10 @@ impl Schema for OpenAiChat {
                 _ => None,
             })
             .collect();
-        if !reasoning.is_empty() {
-            return Err(unwritable_content());
-        }
         let mut message = json!({ "role": "assistant", "content": text });
+        if !reasoning.is_empty() {
+            message["reasoning_content"] = reasoning.into();
+        }
         if !calls.is_empty() {
             if text.is_empty() {
                 message["content"] = Value::Null;
@@ -375,10 +378,9 @@ impl Schema for OpenAiChat {
                 merge_into(&mut response, fields);
                 continue;
             }
-            match (&**format == OPENAI, raw["choices"].as_array()) {
-                (true, Some(more)) => more.iter().for_each(|c| merge_choice(&mut choices, c)),
-                _ if !is_inert(format, raw) => return Err(unwritable_native(format, raw)),
-                _ => {}
+            // Another format's goes: only a client of that format could read it.
+            if let (true, Some(more)) = (&**format == OPENAI, raw["choices"].as_array()) {
+                more.iter().for_each(|c| merge_choice(&mut choices, c));
             }
         }
         let mut body = envelope(whole.start.as_ref(), "chat.completion", unix_now());
@@ -425,13 +427,6 @@ impl Schema for OpenAiChat {
                 v.remove("max_completion_tokens");
             }
         }
-    }
-
-    /// Usage, a tool call's fields, or the response's, kept beside it.
-    fn is_inert(raw: &Value) -> bool {
-        raw.as_object().is_some_and(|o| {
-            o.len() == 1 && ["usage", "response"].iter().any(|k| o.contains_key(*k))
-        })
     }
 }
 

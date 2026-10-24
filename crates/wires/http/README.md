@@ -37,6 +37,27 @@ or implementation macro.
 The passthrough format, which relays traffic of no kind, is the
 `respan-gateway-passthrough-http` crate's: this crate has no format.
 
+## A vendor's dialect
+
+A format is a spec and names no vendor. Where a vendor departs from a spec it
+speaks, its `dialect::Dialect` says how, and `Dialected::new(format, dialect)`
+lays it over the format: a provider format of the spec's name, the format
+untouched between the dialect's edges.
+
+```text
+client ─► inputs  ─► the format writes the call  ─► request  ─► vendor
+client ◄─ outputs ◄─ the format reads the answer ◄─ response ◄─ vendor
+```
+
+`inputs` and `outputs` are core `Filter`s of the kind's values, as they
+stream. `request` and `response` see the call and its answer on the wire,
+their heads and, if they say how (`Rewrite`), their whole bodies: they are
+`ProviderIo::with_request` and `ProviderIo::with_response`, which run on a
+call after its format wrote it and on an answer before its format reads it.
+`key` says where the vendor takes its key, if not where the format does. A
+dialect never learns who the client is: what is native to a format reaches
+only a client of that format, which is the formats' rule, not the vendor's.
+
 ## A small format
 
 This format sends UTF-8 questions to `POST /echo` and receives byte answers:
