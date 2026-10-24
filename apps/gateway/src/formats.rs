@@ -16,6 +16,7 @@ use respan_gateway_decision as decision;
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
+use respan_gateway_media_http::empiriolabs::{EmpirioLabsTranscriptions, EmpirioLabsVideos};
 use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -248,6 +249,9 @@ pub fn formats() -> Vec<KnownFormat> {
             transcription::Input::model,
             transcription::Input::set_model,
         )),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &EmpirioLabsTranscriptions).model(
+            Model::of(transcription::Input::model, transcription::Input::set_model),
+        ),
         KnownFormat::of(kind::SPEECH, endpoints::SPEECH, OpenAiSpeech)
             .model(Model::of(speech::Input::model, speech::Input::set_model)),
         // Only a `Create` names a model; a follow-up goes by its job's id
@@ -278,6 +282,9 @@ pub fn formats() -> Vec<KnownFormat> {
         .model(realtime()),
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
             .job_ids("veo_")
+            .model(Model::of(video::Input::model, video::Input::set_model)),
+        KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos)
+            .job_ids("empiriolabs_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::of(kind::DECISION, endpoints::DECISIONS, Decisions).model(Model::of(
             decision::Input::model,

@@ -30,6 +30,7 @@ pub use images::OpenAiImages;
 pub use respan_gateway_conversation_http::StreamResponse;
 pub use speech::OpenAiSpeech;
 pub use transcriptions::OpenAiTranscriptions;
+pub(crate) use transcriptions::decode_json as read_transcript;
 pub use videos::OpenAiVideos;
 
 use crate::edge::{bind_provider, sends};

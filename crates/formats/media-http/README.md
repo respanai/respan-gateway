@@ -27,6 +27,8 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - An edit goes to `/images/edits` as a form of its images' bytes, or in JSON
   if one is a URL. An image a client names by file id cannot be relayed and
   is refused.
+- An answer's image is of its `output_format`, else of the type its bytes
+  say, else PNG.
 - A file's type is its part's, unless that says none or
   `application/octet-stream`, which OpenAI refuses for images; then its
   name's, then its first bytes'.
@@ -53,12 +55,54 @@ Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 `steps`) stay native, so a relay in the same format keeps them.
 
 `dialect::{Spec, Dialect, Dialected}`: a format as a vendor speaks it.
-`OpenAiSpeech` is a `Spec`, its provider edge in parts, and so far the only
-one; a vendor's `Dialect` says what it takes and answers beyond the spec
-(its input before the spec writes it, how its answer is read, whether it
-streams, where its key goes), and `Dialected::new(spec, dialect)` is a
+`OpenAiImages`, `OpenAiTranscriptions` and `OpenAiSpeech` are `Spec`s,
+their provider edges in parts; a vendor's `Dialect` says what it takes and
+answers beyond the spec (its input before the spec writes it, the path it
+takes the call at, how its answer is read, whether it streams, where its
+key goes), and `Dialected::new(spec, dialect)` is a
 provider format of the spec's name, so a client of the spec is still
 relayed to it.
+
+`empiriolabs::{EmpirioLabsTranscriptions, EmpirioLabsVideos}`, named
+`empiriolabs-transcriptions` and `empiriolabs-videos`: EmpirioLabs AI's
+APIs that answer as jobs, to providers only, at
+`https://api.empiriolabs.ai/v1` with a bearer key. A job of either is
+polled at `GET /jobs/{id}`, the one endpoint of all its asynchronous kinds,
+so neither is served to clients: the gateway could not tell a client's
+video job from its image or transcription one by the path, and EmpirioLabs
+AI's API names a finished video only by its URL, which a job of a provider
+whose content the gateway serves itself (OpenAI Videos, Veo) does not have.
+
+- A transcription is OpenAI's form to `POST /audio/transcriptions`, which
+  EmpirioLabs AI answers, 202, with a job, however short the audio. The
+  call polls it, first after half a second, then twice as long after each
+  poll, at most 4 s, until it is `completed`, its `result` a transcript in
+  OpenAI's JSON, read as `openai-transcriptions` reads one; `failed` or
+  `cancelled` fail the call `upstream` with the job's error code and
+  message, and so does a job not done within 10 minutes. The seconds of
+  audio its `result` bills (`usage.duration_seconds`) are `Seconds`. A
+  translation is refused, 400 `unsupported`, before any call: it serves no
+  `/audio/translations`.
+- A video's `Create` is `POST /videos/generations`: its `seconds` `duration`, its
+  `size` (`WxH`, else 400) an `aspect_ratio` in lowest terms and a
+  `resolution` (the tier nearest its short side: `480p`, `720p`, `1080p` or
+  `4k`), its reference image
+  `image` (a URL, or a data URL of its bytes), and its `empiriolabs-videos`
+  native fields as they are, a field the kind has a place for winning. A
+  model that takes its `duration` as text, such as `"5s"`, is given it as
+  a native field, with no `seconds`.
+- A video job's id is `empiriolabs_` and the provider's,
+  as a path segment holds it; another id is not found, 404. `processing` is
+  `in_progress`; `completed` with a video is `completed`, its videos' URLs
+  in `Job::videos`; `failed`, `cancelled` and `completed` with no video are
+  `failed`, with the provider's `error` code and message.
+- A video's content is refused, 400 `unsupported`, before any call: it is
+  only at a signed URL of `media.empiriolabs.ai`, which no path of its API
+  serves, and a provider's calls all go beside its base URL.
+- EmpirioLabs AI cannot remix, delete or list videos, nor make a thumbnail or
+  spritesheet: those are refused, 400 `unsupported`, before any call.
+- What EmpirioLabs AI answers beyond the kind is dropped rather than kept
+  native.
 
 `gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
 such as Nano Banana, through `generateContent`, to clients and providers,

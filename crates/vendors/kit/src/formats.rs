@@ -7,6 +7,7 @@ use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::Decisions;
+use respan_gateway_media_http::empiriolabs::{EmpirioLabsTranscriptions, EmpirioLabsVideos};
 use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -34,6 +35,8 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiVideos,
     &GeminiVeo,
     &GeminiImages,
+    &EmpirioLabsTranscriptions,
+    &EmpirioLabsVideos,
     &Decisions,
     &Passthrough,
 ];

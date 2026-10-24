@@ -4,7 +4,7 @@
 
 | Format | Endpoint | Served by |
 | --- | --- | --- |
-| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), at `/systemone`; or any compatible base URL |
+| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`); or any compatible base URL |
 
 A provider is called at `/decisions`. A vendor that departs from the
 contract says so in its `dialect::Dialect`, and lists

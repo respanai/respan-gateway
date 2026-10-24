@@ -66,9 +66,9 @@ pub(crate) fn bind<S: Spec>(spec: S, io: ProviderIo) -> Connection<S::Output, S:
 }
 
 /// How a vendor departs from a media spec it speaks, of input `I` and
-/// output `O`: what it takes, before the spec writes it, how its answer is
-/// read, and whether it streams. What it does not say is
-/// the spec's.
+/// output `O`: what it takes, before the spec writes it, where it takes
+/// the call, how its answer is read, and whether it streams. What it does
+/// not say is the spec's.
 pub trait Dialect<I, O>: Clone + Send + Sync + 'static {
     /// The input as the vendor takes it, before the spec writes it: `input`
     /// itself, unless the vendor takes it otherwise; `Err` refuses it
@@ -78,6 +78,13 @@ pub trait Dialect<I, O>: Clone + Send + Sync + 'static {
         I: Clone,
     {
         Ok(Cow::Borrowed(input))
+    }
+
+    /// Where the vendor takes the call the spec wrote into `head`: where the
+    /// spec sends it, unless the vendor takes it at another path.
+    fn call(&self, head: &mut RequestHead) -> Result<(), Fault> {
+        let _ = head;
+        Ok(())
     }
 
     /// The decoder of an answer of `head`, if the vendor answers it
@@ -152,7 +159,8 @@ where
     }
 
     /// As the spec's, the input through the dialect before it is written,
-    /// and the answer read as the dialect reads it, if it does.
+    /// the call where the dialect takes it, and the answer read as the
+    /// dialect reads it, if it does.
     fn bind(&self, io: ProviderIo) -> Result<Connection<S::Output, S::Input>, Fault> {
         let (spec, dialect) = (self.spec, self.dialect.clone());
         let stream = dialect.streams(spec.streams(&io));
@@ -162,6 +170,7 @@ where
             S::NAME,
             move |head, input| {
                 let encoder = spec.post(head, &*writes.input(input)?, stream)?;
+                writes.call(head)?;
                 Ok(Box::new(Written {
                     encoder,
                     dialect: writes,

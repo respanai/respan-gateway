@@ -4,11 +4,12 @@
 
 use super::multipart::{self, Writer};
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, bytes_of, event_json,
-    file_name, foreign, invalid, is_true, json_bytes, kept, merge_missing, mime_of, missing,
-    native_of, post_to, read_usage, rest_of, sends, set, sse_event, streams, take_count,
-    take_string, unb64, unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
+    Fields, Form, as_usage_extras, b64, bind_client, bytes_of, event_json, file_name, foreign,
+    invalid, is_true, json_bytes, kept, merge_missing, mime_of, missing, native_of, post_to,
+    read_usage, rest_of, sends, set, sniff, sse_event, streams, take_count, take_string, unb64,
+    unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
 };
+use crate::dialect::{self, Spec};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeFields, NativeValue};
@@ -36,7 +37,8 @@ const EDITS: &str = "/images/edits";
 ///
 /// A whole response decodes into a [`Start`] of its `created` and its other
 /// fields, an [`Image`] per item of `data` (its `b64_json` decoded, or its
-/// `url`), and its usage. A stream decodes into a [`Start`] of its first
+/// `url`), and its usage; an image is of the answer's `output_format`, else
+/// of the type its bytes say, else PNG. A stream decodes into a [`Start`] of its first
 /// event's fields, a [`Partial`] per partial image and an [`Image`] per
 /// completed one, with its usage; a stream that ends before its image fails
 /// `truncated`. Either is written to a client in the framing it asked for;
@@ -84,13 +86,35 @@ impl Format<ProviderIo, Output, Input> for OpenAiImages {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let stream = streams(&io, &[GENERATIONS, EDITS], |f| is_true(f.get("stream")));
-        Ok(bind_provider(
-            io,
-            NAME,
-            move |head, input| post(head, input, stream),
-            |head, _| read_response(head),
-        ))
+        Ok(dialect::bind(*self, io))
+    }
+}
+
+/// Its spec's parts, which a vendor's dialect runs around.
+impl Spec for OpenAiImages {
+    type Input = Input;
+    type Output = Output;
+    const NAME: &'static str = NAME;
+
+    fn streams(&self, io: &ProviderIo) -> bool {
+        streams(io, &[GENERATIONS, EDITS], |f| is_true(f.get("stream")))
+    }
+
+    fn post(
+        &self,
+        head: &mut RequestHead,
+        input: &Input,
+        stream: bool,
+    ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+        post(head, input, stream)
+    }
+
+    fn read_response(
+        &self,
+        head: &http::response::Parts,
+        _: &http::Request<Bytes>,
+    ) -> Option<Box<dyn Decoder<Output>>> {
+        read_response(head)
     }
 }
 
@@ -281,19 +305,31 @@ fn read_usage_into(u: &Value, out: &mut Vec<Output>) -> Result<(), Fault> {
     Ok(())
 }
 
-/// The image of an item or event `v`, of file format `format`.
+/// The image of an item or event `v`, of file format `format`; of none,
+/// the type its bytes say, else PNG.
 fn media_of(v: &Value, format: Option<&str>) -> Result<Media, Fault> {
-    let mime = match format.unwrap_or("png") {
+    let typed = |format: &str| match format {
         "jpg" | "jpeg" => "image/jpeg".to_owned(),
         other => format!("image/{other}"),
+    };
+    let mime = |bytes: &[u8]| {
+        let sniffed = || {
+            sniff(bytes)
+                .filter(|m| m.starts_with("image/"))
+                .map(Into::into)
+        };
+        format
+            .map(typed)
+            .or_else(sniffed)
+            .unwrap_or_else(|| typed("png"))
     };
     match (v["b64_json"].as_str(), v["url"].as_str()) {
         (Some(data), _) => {
             let bytes =
                 unb64(data).ok_or_else(|| unreadable(NAME, "holds an image not in base64"))?;
-            Ok(Media::new(mime, MediaSource::Bytes(bytes)))
+            Ok(Media::new(mime(&bytes), MediaSource::Bytes(bytes)))
         }
-        (None, Some(url)) => Ok(Media::new(mime, MediaSource::Url(url.to_owned()))),
+        (None, Some(url)) => Ok(Media::new(mime(&[]), MediaSource::Url(url.to_owned()))),
         (None, None) => Err(unreadable(NAME, "holds an image with no b64_json or url")),
     }
 }
@@ -548,6 +584,22 @@ mod tests {
             original: None,
         };
         decode_request(&head, &form)
+    }
+
+    #[test]
+    fn an_image_of_no_output_format_is_of_the_type_its_bytes_say() {
+        let mut out = Vec::new();
+        let webp = r#"{"created": 1, "data": [{"b64_json": "UklGRvoKAABXRUJQVlA4"}]}"#;
+        decode_whole(Bytes::from_static(webp.as_bytes()), &mut out).expect("read");
+        let typed = |out: &[Output]| match out.get(1) {
+            Some(Output::Image(image)) => image.media.mime_type.clone(),
+            _ => String::new(),
+        };
+        assert_eq!(typed(&out), "image/webp");
+        let said = r#"{"created": 1, "output_format": "jpeg", "data": [{"b64_json": "UklGRvoKAABXRUJQVlA4"}]}"#;
+        out.clear();
+        decode_whole(Bytes::from_static(said.as_bytes()), &mut out).expect("read");
+        assert_eq!(typed(&out), "image/jpeg", "as the answer says");
     }
 
     #[test]

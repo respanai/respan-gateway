@@ -5,11 +5,12 @@
 
 use super::multipart::{self, Writer};
 use super::{
-    Fields, Form, as_usage_extras, bind_client, bind_provider, bytes_of, event_json, file_name,
-    foreign, invalid, is_true, json_bytes, kept, merge_missing, missing, native_of, post_to,
-    read_usage, rest_of, seconds_json, sends, set, sse_event, streams, take_number, take_string,
-    unreadable, usage_extras, whole_json, write_field, write_usage,
+    Fields, Form, as_usage_extras, bind_client, bytes_of, event_json, file_name, foreign, invalid,
+    is_true, json_bytes, kept, merge_missing, missing, native_of, post_to, read_usage, rest_of,
+    seconds_json, sends, set, sse_event, streams, take_number, take_string, unreadable,
+    usage_extras, whole_json, write_field, write_usage,
 };
+use crate::dialect::{self, Spec};
 use crate::edge::ended_events;
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
@@ -87,14 +88,36 @@ impl Format<ProviderIo, Output, Input> for OpenAiTranscriptions {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
+        Ok(dialect::bind(*self, io))
+    }
+}
+
+/// Its spec's parts, which a vendor's dialect runs around.
+impl Spec for OpenAiTranscriptions {
+    type Input = Input;
+    type Output = Output;
+    const NAME: &'static str = NAME;
+
+    fn streams(&self, io: &ProviderIo) -> bool {
         let paths = [TRANSCRIPTIONS, TRANSLATIONS];
-        let stream = streams(&io, &paths, |f| is_true(f.get("stream")));
-        Ok(bind_provider(
-            io,
-            NAME,
-            move |head, input| post(head, input, stream),
-            |head, _| Some(read_response(head)),
-        ))
+        streams(io, &paths, |f| is_true(f.get("stream")))
+    }
+
+    fn post(
+        &self,
+        head: &mut RequestHead,
+        input: &Input,
+        stream: bool,
+    ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+        post(head, input, stream)
+    }
+
+    fn read_response(
+        &self,
+        head: &http::response::Parts,
+        _: &http::Request<Bytes>,
+    ) -> Option<Box<dyn Decoder<Output>>> {
+        Some(read_response(head))
     }
 }
 
@@ -172,7 +195,7 @@ fn read_response(head: &http::response::Parts) -> Box<dyn Decoder<Output>> {
 }
 
 /// The events of a whole JSON body.
-fn decode_json(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+pub(crate) fn decode_json(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["text"].is_string())?;
     let mut transcript = Transcript::new(v["text"].as_str().unwrap_or_default());
     transcript.language = v["language"].as_str().map(Into::into);
