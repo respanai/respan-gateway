@@ -90,7 +90,7 @@ use serde_json::{Map, Value, json};
 pub use decode::ResponsesDecoder;
 
 /// The wire format's name ([`Schema::NAME`]).
-const RESPONSES: &str = "openai-responses";
+pub(crate) const RESPONSES: &str = "openai-responses";
 
 /// The type of the native that carries an annotation of a text block.
 const ANNOTATION: &str = "annotation";

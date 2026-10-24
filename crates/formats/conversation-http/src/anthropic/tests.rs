@@ -183,6 +183,99 @@ fn a_request_round_trips_through_a_conversation() {
     );
 }
 
+/// The Messages request an OpenAI request `extra` would be, of `format`:
+/// `chat` or `responses`.
+fn messages_of(format: &str, extra: Value) -> Result<Map<String, Value>, Fault> {
+    let mut body = match format {
+        "chat" => json!({ "model": "claude", "messages": [{ "role": "user", "content": "hi" }] }),
+        _ => json!({ "model": "claude", "input": "hi" }),
+    };
+    with_fields(&mut body, extra);
+    let raw = Bytes::from(body.to_string());
+    let chat = match format {
+        "chat" => crate::openai::OpenAiChat.decode_request(raw),
+        _ => crate::responses::OpenAiResponses.decode_request(raw),
+    };
+    chat.and_then(|chat| AnthropicMessages.encode_request(&chat))
+}
+
+fn with_fields(body: &mut Value, extra: Value) {
+    if let (Some(body), Value::Object(extra)) = (body.as_object_mut(), extra) {
+        body.extend(extra);
+    }
+}
+
+#[test]
+fn an_openai_requests_messages_fields_are_written_as_messages_says_them() {
+    let cases = [
+        (
+            json!({ "inference_geo": "us" }),
+            "/inference_geo",
+            json!("us"),
+        ),
+        (
+            json!({ "service_tier": "standard_only" }),
+            "/service_tier",
+            json!("standard_only"),
+        ),
+        (json!({ "speed": "fast" }), "/speed", json!("fast")),
+        (json!({ "top_k": 5 }), "/top_k", json!(5)),
+        (
+            json!({ "cache_control": { "type": "ephemeral" } }),
+            "/cache_control",
+            json!({ "type": "ephemeral" }),
+        ),
+        (
+            json!({ "safety_identifier": "u-1" }),
+            "/metadata/user_id",
+            json!("u-1"),
+        ),
+        (
+            json!({ "safety_identifier": "u-1", "user": "u-2" }),
+            "/metadata/user_id",
+            json!("u-2"),
+        ),
+    ];
+    for format in ["chat", "responses"] {
+        for (extra, at, value) in &cases {
+            let written = messages_of(format, extra.clone());
+            let written = written.map(|v| Value::Object(v).pointer(at).cloned());
+            assert_eq!(
+                written.ok().flatten().as_ref(),
+                Some(value),
+                "{format} {extra}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_messages_request_for_where_or_how_it_is_served_is_refused_by_openai() {
+    for extra in [
+        json!({}),
+        json!({ "inference_geo": "us" }),
+        json!({ "service_tier": "standard_only" }),
+        json!({ "speed": "fast" }),
+    ] {
+        let mut body = json!({ "model": "c", "max_tokens": 5,
+            "messages": [{ "role": "user", "content": "hi" }] });
+        with_fields(&mut body, extra.clone());
+        let chat = AnthropicMessages.decode_request(Bytes::from(body.to_string()));
+        let chat = chat.expect("a conversation");
+        let to_chat = crate::openai::OpenAiChat.encode_request(&chat);
+        let to_responses = crate::responses::OpenAiResponses.encode_request(&chat);
+        for written in [to_chat, to_responses] {
+            match extra.as_object().is_some_and(Map::is_empty) {
+                true => assert!(written.is_ok()),
+                false => {
+                    let client = |f: Fault| f.is(respan_gateway_core::FaultKind::Client);
+                    assert!(written.is_err_and(client), "{extra}");
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn the_metadata_user_id_is_the_user() {
     let body = json!({ "model": "c", "max_tokens": 5,
