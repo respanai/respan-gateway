@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-media-http"
-description = "The media kinds over HTTP: OpenAI Images, Audio Transcriptions, Speech, Videos and Embeddings, and Google's Veo and image models."
+description = "The media kinds over HTTP: OpenAI Images, Audio Transcriptions, Speech, Videos and Embeddings, Google's Veo and image models, and Soniox audio."
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+tokio = { workspace = true, features = ["time"] }
 uuid.workspace = true
 percent-encoding.workspace = true
 form_urlencoded.workspace = true
@@ -27,4 +28,7 @@ respan-gateway-media.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
+respan-gateway-http-transport.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
 respan-gateway-http.workspace = true

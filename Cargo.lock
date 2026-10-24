@@ -1813,6 +1813,7 @@ dependencies = [
 name = "respan-gateway-media-http"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "base64 0.22.1",
  "form_urlencoded",
  "futures",
@@ -1823,9 +1824,11 @@ dependencies = [
  "respan-gateway-core",
  "respan-gateway-http",
  "respan-gateway-http-faults",
+ "respan-gateway-http-transport",
  "respan-gateway-media",
  "respan-gateway-sse",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 

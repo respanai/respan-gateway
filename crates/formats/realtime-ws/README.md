@@ -13,6 +13,23 @@ a format per spec:
   binary frames, which its transport takes as text.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
+- `SonioxRealtime`, `soniox-realtime`: transcription and speech-to-text
+  translation at `/transcribe-websocket` after `wss://stt-rt.soniox.com`,
+  with bearer authentication on the handshake. The first frame configures
+  the session, including native one-way or two-way `translation`; later
+  audio frames carry bare base64 text. Binary client frames and body
+  `api_key` credentials are refused. `{"type":"finalize"}` finalizes a
+  turn; an empty text frame ends the audio while the client waits for the
+  final `finished` response. Send `{"type":"keepalive"}` during pauses
+  according to Soniox's timeout rules; WebSocket pings do not replace it.
+  Source tokens become typed transcripts only when final. Revisable tokens,
+  translated tokens, timings and speaker labels survive in native
+  responses. Translation to a different client protocol is refused.
+  Audio processing milliseconds remain native and are never token usage.
+  Terminal errors are relayed once, then fail session completion with the
+  provider's HTTP status and `error_type` for logging.
+  A close without a finished or error response is truncated. This protocol
+  transcribes and translates speech to text; it does not generate speech.
 - `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native

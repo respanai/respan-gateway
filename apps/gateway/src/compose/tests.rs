@@ -312,6 +312,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "anthropic-messages",
             "openai-responses",
             "openai-realtime",
+            "soniox-realtime",
             "openai-images",
             "openai-transcriptions",
             "openai-speech",
@@ -827,5 +828,200 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
             Some(path),
             "{model}"
         );
+    }
+}
+
+#[test]
+fn soniox_serves_audio_and_realtime_clients_through_its_native_formats() {
+    let plan = plan("providers = { s = { vendor = \"soniox\", key = \"test-key\" } }\n")
+        .unwrap_or_else(|error| panic!("{error}"));
+    assert!(plan.serves("openai-transcriptions"));
+    assert!(plan.serves("openai-speech"));
+    assert!(!plan.serves("soniox-speech"));
+    assert!(!plan.serves("soniox-transcriptions"));
+    assert!(plan.serves("soniox-realtime"));
+    assert_eq!(plan.upstreams.len(), 1);
+    let entries = &plan.upstreams[0].entries;
+    assert_eq!(entries.len(), 3);
+    assert_eq!(entries[0].format, "soniox-transcriptions");
+    assert_eq!(entries[0].base_url, "https://api.soniox.com/v1");
+    assert_eq!(entries[1].format, "soniox-speech");
+    assert_eq!(entries[1].base_url, "https://tts-rt.soniox.com");
+    assert_eq!(entries[2].format, "soniox-realtime");
+    assert_eq!(entries[2].base_url, "wss://stt-rt.soniox.com");
+    for part in plan.upstreams[0].provider.parts().expect("parts") {
+        assert_eq!(part.headers["authorization"], "Bearer test-key");
+    }
+}
+
+#[tokio::test]
+async fn soniox_speech_uses_its_configured_vendor_over_a_real_socket() {
+    let (seen, mut calls) = tokio::sync::mpsc::unbounded_channel();
+    let upstream = axum::Router::new().route(
+        "/tts",
+        axum::routing::post(
+            move |headers: http::HeaderMap, axum::Json(body): axum::Json<serde_json::Value>| {
+                let seen = seen.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer local-soniox-key");
+                    seen.send(body).expect("captured request");
+                    (
+                        [(http::header::CONTENT_TYPE, "audio/wav")],
+                        b"RIFFsoniox-audio".as_slice(),
+                    )
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move { axum::serve(listener, upstream).await });
+    let gateway = resolve(&format!(
+        "providers = {{ s = {{ vendor = \"soniox\", key = \"local-soniox-key\", formats = {{ \"soniox-speech\" = \"http://{address}\" }} }} }}\n"
+    )).unwrap_or_else(|error| panic!("{error}"));
+    let body = serde_json::json!({
+        "model": "s/tts-rt-v2", "input": "Hello", "voice": "Adrian",
+        "language": "en", "response_format": "wav"
+    });
+    let (response, _) = serve(&gateway, post("/v1/audio/speech", body.to_string())).await;
+    let (status, headers, body) = read_whole(response).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    assert_eq!(headers["content-type"], "audio/wav");
+    assert_eq!(body.expect("audio"), "RIFFsoniox-audio");
+    assert_eq!(
+        calls.recv().await,
+        Some(serde_json::json!({
+            "model": "tts-rt-v2", "text": "Hello", "voice": "Adrian",
+            "language": "en", "audio_format": "wav"
+        }))
+    );
+    gateway.idle().await;
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn soniox_realtime_uses_the_vendor_transport_and_preserves_translation_tokens() {
+    use axum::extract::WebSocketUpgrade;
+    use axum::extract::ws::Message;
+    use axum::routing::get;
+    use futures::{SinkExt, StreamExt};
+    use serde_json::{Value, json};
+
+    let answer = json!({
+        "tokens": [
+            {"text":"Hola", "is_final":true, "translation_status":"original", "language":"es"},
+            {"text":"Hello", "is_final":true, "translation_status":"translation", "language":"en", "source_language":"es"}
+        ],
+        "final_audio_proc_ms":1250, "total_audio_proc_ms":1250, "finished":true
+    });
+    for (answer, failed) in [
+        (answer, false),
+        (
+            json!({"error_code":401, "error_type":"unauthenticated", "error_message":"Incorrect API key", "tokens":[]}),
+            true,
+        ),
+    ] {
+        let reply = answer.clone();
+        let (seen, received) = tokio::sync::oneshot::channel();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Some(seen)));
+        let fake = axum::Router::new().route(
+            "/transcribe-websocket",
+            get(move |headers: http::HeaderMap, upgrade: WebSocketUpgrade| {
+                assert_eq!(headers["authorization"], "Bearer local-soniox-realtime-key");
+                let reply = reply.clone();
+                let seen = seen.clone();
+                async move {
+                    upgrade.on_upgrade(move |mut socket| async move {
+                        let mut frames = Vec::new();
+                        while let Some(Ok(Message::Text(frame))) = socket.next().await {
+                            frames.push(frame.to_string());
+                            if frame.is_empty() {
+                                break;
+                            }
+                        }
+                        let configuration: Value =
+                            serde_json::from_str(&frames[0]).expect("configuration");
+                        assert_eq!(configuration["model"], "stt-rt-v5");
+                        assert_eq!(
+                            configuration["translation"],
+                            json!({"type":"one_way", "target_language":"en"})
+                        );
+                        assert!(configuration.get("api_key").is_none());
+                        assert_eq!(frames[1], "AAA=");
+                        assert_eq!(
+                            serde_json::from_str::<Value>(&frames[2]).expect("finalize"),
+                            json!({"type":"finalize"})
+                        );
+                        socket
+                            .send(Message::Text(reply.to_string().into()))
+                            .await
+                            .expect("answer");
+                        if let Some(seen) = seen.lock().expect("seen").take() {
+                            let _ = seen.send(frames);
+                        }
+                        socket.close().await.expect("close");
+                    })
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let task = tokio::spawn(async move {
+            axum::serve(listener, fake).await.expect("fake server");
+        });
+        let config = format!(
+            "providers = {{ s = {{ vendor = \"soniox\", key = \"local-soniox-realtime-key\", formats = {{ \"soniox-realtime\" = \"ws://{address}\" }} }} }}\nformats = [\"soniox-realtime\"]\n[routes.\"*\"]\nto = \"s\"\n"
+        );
+        let gateway = resolve(&config).expect("Soniox gateway");
+        let frames = vec![
+        json!({"model":"stt-rt-v5", "audio_format":"pcm_s16le", "sample_rate":16000, "num_channels":1,
+               "translation":{"type":"one_way", "target_language":"en"}}).to_string(),
+        "AAA=".to_string(), json!({"type":"finalize"}).to_string(), String::new()
+    ];
+        let body = Body::stream(futures::stream::iter(
+            frames.into_iter().map(|frame| Ok(Bytes::from(frame))),
+        ));
+        let request = http::Request::get("/transcribe-websocket?model=stt-rt-v5")
+            .header("upgrade", "websocket")
+            .body(body)
+            .expect("request");
+        let check = async {
+            let (response, _) = respan_gateway_http::handle_live(&gateway, request, 1 << 20).await;
+            assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+            let mut body = response.into_body();
+            let frame = body
+                .next()
+                .await
+                .expect("native frame")
+                .expect("frame data");
+            assert_eq!(
+                serde_json::from_slice::<Value>(&frame).expect("native result"),
+                answer
+            );
+            if failed {
+                let error = body
+                    .next()
+                    .await
+                    .expect("terminal provider failure")
+                    .expect_err("failed session");
+                assert_eq!(error.code(), "unauthenticated");
+                assert_eq!(
+                    respan_gateway_http_faults::status(&error),
+                    StatusCode::UNAUTHORIZED
+                );
+            } else {
+                assert!(body.next().await.is_none());
+            }
+            assert_eq!(received.await.expect("provider frames").len(), 4);
+            gateway.idle().await;
+        };
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), check).await;
+        task.abort();
+        result.expect("bounded real WebSocket test");
     }
 }

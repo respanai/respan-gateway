@@ -34,11 +34,12 @@ pub(crate) fn say() -> (Say, Said) {
 
 /// Every spec of the crate, which a client's request is matched against
 /// together, and whose natives each other's writers know what to do with.
-pub(crate) const SPECS: [&Spec; 4] = [
+pub(crate) const SPECS: [&Spec; 5] = [
     &crate::openai::SPEC,
     &crate::gemini::SPEC,
     &crate::mistral::SPEC,
     &crate::responses::SPEC,
+    &crate::soniox::SPEC,
 ];
 
 /// What a spec says of its session.

@@ -24,7 +24,7 @@ pub use respan_gateway_vendor_kit::{
 pub use respan_gateway_vendors_green::{anthropic, gemini, openai, respan, typesafe};
 pub use respan_gateway_vendors_yellow::{
     azure, cerebras, cloudflare, deepinfra, deepseek, fireworks, groq, mistral, ollama, openrouter,
-    perplexity, together, vllm, xai,
+    perplexity, soniox, together, vllm, xai,
 };
 
 /// The green vendors: maintained, and verified end to end.
@@ -53,10 +53,27 @@ pub const ALL: &[&Vendor] = &[
     &cerebras::VENDOR,
     &perplexity::VENDOR,
     &deepinfra::VENDOR,
+    &soniox::VENDOR,
     &respan::VENDOR,
 ];
 
 /// The vendor `id`.
 pub fn find(id: &str) -> Option<&'static Vendor> {
     ALL.iter().copied().find(|p| p.id == id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn soniox_is_registered_once_in_the_yellow_tier() {
+        assert_eq!(
+            ALL.iter().filter(|vendor| vendor.id == soniox::ID).count(),
+            1
+        );
+        assert!(YELLOW.iter().any(|vendor| vendor.id == soniox::ID));
+        assert!(!GREEN.iter().any(|vendor| vendor.id == soniox::ID));
+        assert_eq!(find(soniox::ID).map(|vendor| vendor.formats.len()), Some(3));
+    }
 }

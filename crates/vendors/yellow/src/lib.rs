@@ -13,6 +13,7 @@ pub mod mistral;
 pub mod ollama;
 pub mod openrouter;
 pub mod perplexity;
+pub mod soniox;
 pub mod together;
 pub mod vllm;
 pub mod xai;
@@ -35,4 +36,5 @@ pub const ALL: &[&Vendor] = &[
     &cerebras::VENDOR,
     &perplexity::VENDOR,
     &deepinfra::VENDOR,
+    &soniox::VENDOR,
 ];

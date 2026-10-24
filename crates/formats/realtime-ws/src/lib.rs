@@ -5,6 +5,7 @@
 //! - [`OpenAiRealtime`]: OpenAI Realtime, `openai-realtime`.
 //! - [`GeminiLive`]: Gemini Live, `gemini-live`.
 //! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
+//! - [`SonioxRealtime`]: Soniox transcription and translation, `soniox-realtime`.
 //! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
 //!   which is not realtime: it streams Responses over a socket, and uses the
 //!   kind's types only as native events.
@@ -30,11 +31,13 @@ mod mistral;
 mod openai;
 mod responses;
 mod session;
+mod soniox;
 
 pub use gemini::GeminiLive;
 pub use mistral::MistralRealtime;
 pub use openai::OpenAiRealtime;
 pub use responses::ResponsesWs;
+pub use soniox::SonioxRealtime;
 
 use respan_gateway_http::raw::Original;
 

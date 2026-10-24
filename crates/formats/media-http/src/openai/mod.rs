@@ -20,7 +20,7 @@
 
 mod embeddings;
 mod images;
-mod multipart;
+pub(crate) mod multipart;
 mod speech;
 mod transcriptions;
 mod videos;
@@ -474,7 +474,7 @@ fn streams(io: &ProviderIo, paths: &[&str], wants: fn(&Map<String, Value>) -> bo
 /// The text fields of a client's request, for its response's framing, as
 /// its decoder parsed them ([`Form::fields`]); none if it cannot be read, as
 /// it then was refused.
-fn asked(original: Option<&Original>) -> &Map<String, Value> {
+pub(crate) fn asked(original: Option<&Original>) -> &Map<String, Value> {
     static NONE: LazyLock<Map<String, Value>> = LazyLock::new(Map::new);
     let parsed = original.and_then(|w| w.memo(|r| parse_fields(r.headers(), r.body())));
     parsed
