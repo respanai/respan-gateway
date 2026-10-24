@@ -126,3 +126,68 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   operation's `error`, or, filtered, a response of
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
   message, status}}`. Veo reports no progress: an operation is done or not.
+
+`bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
+InvokeModel for embeddings, a provider of the embedding kind, at its
+region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, its key
+a Bedrock API key as a bearer token.
+
+- A call is `POST /model/{model}/invoke`, the model escaped in the path; an
+  inference profile's id (`us.cohere.embed-v4:0`) is its model as it is.
+- Cohere Embed (`cohere.embed-*`) embeds every text in one call:
+  `{texts, input_type, embedding_types: ["float"]}`, `input_type` the
+  client's (an `openai-embeddings` field) or `search_document`; an item of
+  parts is one input, v3's one image (`images`), v4's texts and images
+  together (`inputs`); v4 takes `dimensions` as `output_dimension`.
+- The others embed one input per call, so a request of several is as many
+  calls, a few at a time, one attempt of the provider's: its vectors are
+  the inputs' in order, its usage theirs together. Titan Text
+  (`amazon.titan-embed-text-*`) embeds a text, v2 with `dimensions`;
+  Titan Multimodal (`amazon.titan-embed-image-v1`) a text, an image or the
+  two, `dimensions` as `embeddingConfig.outputEmbeddingLength`; Nova
+  Multimodal Embeddings (`amazon.nova-2-multimodal-embeddings-v1:0`) each
+  text and each part, a text, image, audio or video, `dimensions` as
+  `embeddingDimension` and the client's `input_type` as
+  `embeddingPurpose` (`GENERIC_INDEX` unless it says); Marengo Embed 3.0
+  (`twelvelabs.marengo-embed-3-0-v1:0`) a text, an image or the two.
+- A part's media is a base64 data URL, `{"type": "image", "url":
+  "data:image/png;base64,..."}`: Bedrock takes media as bytes.
+- Vectors are asked for as floats; the client's `encoding_format` is the
+  client edge's. Usage is the input tokens Bedrock counts: Titan's
+  `inputTextTokenCount`, else the `x-amzn-bedrock-input-token-count`
+  header.
+- Token ids, media by URL, parts a model does not read, a `dimensions` it
+  does not take and fields of another format are refused, 400, before any
+  call.
+
+`bedrock::BedrockImages`, named `bedrock-images`: Amazon Bedrock's
+InvokeModel for Stability AI images, a provider of the image kind, at the
+same runtime and key as `bedrock-embeddings`.
+
+- A call is `POST /model/{model}/invoke`, the model (or inference profile,
+  `us.stability.stable-image-inpaint-v1:0`) escaped in the path. One image
+  per call: a request for more is refused, 400.
+- A generation (`stability.sd3-5-large-v1:0`,
+  `stability.stable-image-core-v1:1`, `stability.stable-image-ultra-v1:1`)
+  is `{prompt, aspect_ratio, output_format}`, the aspect ratio the nearest
+  Stability takes to the request's `size`; Stable Diffusion 3.5 (with
+  `mode`) and Ultra take an edit as image-to-image (`image`); the style
+  guide draws from the prompt, with `size` too, in its image's style.
+  Stability's models are offered in a few regions only (`us-west-2` for
+  most), which is not checked here.
+- An Image Service (inpaint, outpaint, erase, search and replace, search
+  and recolor, remove background, style transfer, style guide, control
+  sketch and structure, the fast, creative and conservative upscales) takes
+  the edit's first image as base64 `image` (style transfer: `init_image`,
+  with the second as `style_image`), the inpaint and erase services its
+  `mask`, and a prompt but for erase, remove background and the fast
+  upscale. Images are bytes, not URLs.
+- The request's native fields (`seed`, `negative_prompt`, `search_prompt`,
+  `select_prompt`, `grow_mask`, `control_strength`, `fidelity`,
+  `creativity`, `left`/`right`/`up`/`down`, ...) are the service's own and
+  pass through, a form's numbers as numbers.
+- An answer is `{images, finish_reasons, seeds}`: an image per entry of
+  `images`, its type read from its bytes. A `finish_reasons` entry that is
+  not null is a fault: a content filter's is a 400 coded `content_filter`,
+  another a provider fault. Bedrock reports no tokens, so the images are
+  the usage.

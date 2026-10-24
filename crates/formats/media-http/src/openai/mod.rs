@@ -171,7 +171,7 @@ const MIME: &[(&str, &str)] = &[
 ];
 
 /// The type a file's first bytes say, for the formats these endpoints take.
-fn sniff(content: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(content: &[u8]) -> Option<&'static str> {
     let at = |from: usize, magic: &[u8]| content.get(from..from + magic.len()) == Some(magic);
     Some(match () {
         _ if at(0, b"\x89PNG") => "image/png",
