@@ -2130,6 +2130,7 @@ dependencies = [
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
+ "respan-gateway-decision-http",
  "respan-gateway-http",
  "respan-gateway-media",
  "respan-gateway-media-http",

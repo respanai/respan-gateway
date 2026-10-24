@@ -53,12 +53,28 @@ Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 `steps`) stay native, so a relay in the same format keeps them.
 
 `dialect::{Spec, Dialect, Dialected}`: a format as a vendor speaks it.
-`OpenAiSpeech` is a `Spec`, its provider edge in parts, and so far the only
-one; a vendor's `Dialect` says what it takes and answers beyond the spec
-(its input before the spec writes it, how its answer is read, whether it
-streams, where its key goes), and `Dialected::new(spec, dialect)` is a
-provider format of the spec's name, so a client of the spec is still
-relayed to it.
+`OpenAiSpeech` and `OpenAiImages` are `Spec`s, their provider edge in parts,
+and so far the only ones; a vendor's `Dialect` says what it takes and answers
+beyond the spec (its input before the spec writes it, the path it serves the
+call at, how its answer is read, whether it streams, where its key goes), and
+`Dialected::new(spec, dialect)` is a provider format of the spec's name, so a
+client of the spec is still relayed to it.
+
+`openrouter::OpenRouterVideos`, named `openrouter-videos`: OpenRouter's video
+generation, to providers only, at `https://openrouter.ai/api/v1` with a
+bearer key.
+
+- A creation is `POST /videos` (a model is needed): `seconds` is `duration`,
+  `size` is `size`, a reference image the first of `frame_images`, and the
+  format's native fields, such as `generate_audio`, the rest of the body.
+- A job is polled by `GET /videos/{id}`: `pending` is queued, `in_progress`
+  in progress, `completed` completed, and `failed`, `cancelled` and `expired`
+  failed, with the job's `error`; its `usage` (the cost) and `generation_id`
+  stay native. Its content is `GET /videos/{id}/content?index=0`.
+- A job's id starts `gen-vid-`, which routes a follow-up to its provider.
+  Delete, list, a thumbnail and a spritesheet are refused, 400
+  `unsupported`, before any call, and so is a remix: OpenRouter continues a
+  job (`previous_job_id`) only for a call that names its model again.
 
 `gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
 such as Nano Banana, through `generateContent`, to clients and providers,

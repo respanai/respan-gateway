@@ -829,3 +829,74 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
         );
     }
 }
+
+/// OpenRouter's media, each at its own path: an image at `/images`, a
+/// video at `/videos` and its follow-ups by its `gen-vid-` id, beside
+/// another provider of videos; decisions at `/systemone`.
+#[tokio::test]
+async fn openrouter_is_called_at_each_media_kinds_own_path() {
+    let text = "providers = { router = { vendor = \"openrouter\", base_url = \"https://a.test/v1\", key = \"k\" }, other = { formats = \"openai-videos\", base_url = \"https://b.test/v1\", key = \"k\" } }\n[routes.\"x-ai/*\"]\nto = \"router\"\n";
+    let (gateway, router, other) = local(text).await;
+    let call = |method: http::Method, path: &str, body: serde_json::Value| {
+        let mut req = post(path, body.to_string());
+        *req.method_mut() = method;
+        let gateway = gateway.clone();
+        async move {
+            let (response, _) = serve(&gateway, req).await;
+            _ = read_whole(response).await;
+            gateway.idle().await;
+        }
+    };
+    let id = "gen-vid-1792778188-abcdefghij0123456789";
+    let image = serde_json::json!({ "model": "router/black-forest-labs/flux", "prompt": "a fox" });
+    call(http::Method::POST, "/v1/images/generations", image).await;
+    let video = serde_json::json!({ "model": "x-ai/grok-imagine-video", "prompt": "a fox", "seconds": "4" });
+    call(http::Method::POST, "/v1/videos", video).await;
+    call(
+        http::Method::GET,
+        &format!("/v1/videos/{id}"),
+        serde_json::Value::Null,
+    )
+    .await;
+    let content = format!("/v1/videos/{id}/content");
+    call(http::Method::GET, &content, serde_json::Value::Null).await;
+    call(
+        http::Method::GET,
+        "/v1/videos/video_1",
+        serde_json::Value::Null,
+    )
+    .await;
+    let question = serde_json::json!({ "type": "noul", "instructions": "Is it?", "criteria": { "true": "yes", "false": "no" } });
+    let decision = serde_json::json!({ "model": "router/typesafe/jev-1.14", "state": "a fox", "questions": { "q": question } });
+    call(http::Method::POST, "/v1/decisions", decision).await;
+    let called = |mock: &FakeOpenAi| -> Vec<(String, String)> {
+        let at = |r: &mockllm::Request| match r.query.as_str() {
+            "" => r.path.clone(),
+            query => format!("{}?{query}", r.path),
+        };
+        mock.requests()
+            .iter()
+            .map(|r| (r.method.clone(), at(r)))
+            .collect()
+    };
+    let to = |method: &str, path: String| (method.to_owned(), path);
+    assert_eq!(
+        called(&router),
+        [
+            to("POST", "/v1/images".into()),
+            to("POST", "/v1/videos".into()),
+            to("GET", format!("/v1/videos/{id}")),
+            to("GET", format!("/v1/videos/{id}/content?index=0")),
+            to("POST", "/v1/systemone".into()),
+        ]
+    );
+    assert_eq!(called(&other), [to("GET", "/v1/videos/video_1".into())]);
+    let video = router.requests()[1].body.clone();
+    assert_eq!(
+        (&video["model"], &video["duration"]),
+        (
+            &serde_json::json!("x-ai/grok-imagine-video"),
+            &serde_json::json!(4)
+        )
+    );
+}

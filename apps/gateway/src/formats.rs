@@ -20,6 +20,7 @@ use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
@@ -278,6 +279,9 @@ pub fn formats() -> Vec<KnownFormat> {
         .model(realtime()),
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
             .job_ids("veo_")
+            .model(Model::of(video::Input::model, video::Input::set_model)),
+        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos)
+            .job_ids(OpenRouterVideos::JOB_IDS)
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::of(kind::DECISION, endpoints::DECISIONS, Decisions).model(Model::of(
             decision::Input::model,

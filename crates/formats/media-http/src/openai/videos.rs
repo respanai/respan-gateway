@@ -153,7 +153,7 @@ fn variant(uri: &Uri) -> Result<Variant, Fault> {
 
 /// `text` escaped as a path segment or query value: all but RFC 3986's
 /// unreserved characters.
-fn escape(text: &str) -> String {
+pub(crate) fn escape(text: &str) -> String {
     use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
     const UNRESERVED: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
         .remove(b'-')

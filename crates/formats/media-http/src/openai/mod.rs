@@ -27,10 +27,12 @@ mod videos;
 
 pub use embeddings::OpenAiEmbeddings;
 pub use images::OpenAiImages;
+pub(crate) use images::to_data_url;
 pub use respan_gateway_conversation_http::StreamResponse;
 pub use speech::OpenAiSpeech;
 pub use transcriptions::OpenAiTranscriptions;
 pub use videos::OpenAiVideos;
+pub(crate) use videos::escape;
 
 use crate::edge::{bind_provider, sends};
 use base64::Engine;
