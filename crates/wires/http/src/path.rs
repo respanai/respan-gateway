@@ -66,6 +66,18 @@ pub fn forwarded_path(path: &str) -> String {
     }
 }
 
+/// `text` escaped as a path segment or query value: all but RFC 3986's
+/// unreserved characters, so a model id such as an ARN stays one segment.
+pub fn escape(text: &str) -> String {
+    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+    const UNRESERVED: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    utf8_percent_encode(text, UNRESERVED).to_string()
+}
+
 /// Whether a request's path, in `uri`, ends in `suffix`, however it is
 /// spelled (see [`clean_path`]).
 pub fn path_ends_with(uri: &http::Uri, suffix: &str) -> bool {
@@ -158,6 +170,20 @@ mod tests {
         }
         let get = head(http::Method::GET, "/v1/chat/completions");
         assert!(!posts_to(&get, "/chat/completions"));
+    }
+
+    #[test]
+    fn an_escaped_model_id_is_one_segment_that_decodes_back() {
+        for id in [
+            "anthropic.claude-haiku-4-5-20251001-v1:0",
+            "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-lite-v1:0",
+            "a b?c#d%e",
+        ] {
+            let escaped = escape(id);
+            assert!(!escaped.contains(['/', ':', '?', '#', ' ']), "{escaped}");
+            assert_eq!(decoded(&escaped), id);
+        }
+        assert_eq!(escape("cohere.embed-v4_0~x"), "cohere.embed-v4_0~x");
     }
 
     #[test]
