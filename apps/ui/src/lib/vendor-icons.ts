@@ -4,6 +4,7 @@
 
 import anthropic from "@lobehub/icons-static-svg/icons/anthropic.svg?url";
 import azure from "@lobehub/icons-static-svg/icons/azure-color.svg?url";
+import bedrock from "@lobehub/icons-static-svg/icons/bedrock-color.svg?url";
 import cerebras from "@lobehub/icons-static-svg/icons/cerebras-color.svg?url";
 import cloudflare from "@lobehub/icons-static-svg/icons/cloudflare-color.svg?url";
 import deepinfra from "@lobehub/icons-static-svg/icons/deepinfra-color.svg?url";
@@ -28,6 +29,7 @@ export interface VendorIcon {
 const icons: Record<string, VendorIcon> = {
   anthropic: { src: anthropic, mono: true },
   azure: { src: azure, mono: false },
+  bedrock: { src: bedrock, mono: false },
   cerebras: { src: cerebras, mono: false },
   cloudflare: { src: cloudflare, mono: false },
   deepinfra: { src: deepinfra, mono: false },
@@ -46,6 +48,7 @@ const icons: Record<string, VendorIcon> = {
 
 /** Each vendor's API domain, as its base URL ends. */
 const domains: [string, string][] = [
+  ["amazonaws.com", "bedrock"],
   ["anthropic.com", "anthropic"],
   ["azure.com", "azure"],
   ["cerebras.ai", "cerebras"],

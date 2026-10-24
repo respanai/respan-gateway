@@ -343,6 +343,26 @@ fn a_list_of_formats_shares_one_base_url_and_key() {
     assert_eq!(both.entries[1].base_url, "https://x.test");
 }
 
+/// Bedrock's formats are its region's runtime with its key a bearer token,
+/// and serve no client: their clients are the kinds' own formats'.
+#[test]
+fn bedrock_is_called_at_its_regions_runtime_and_serves_no_client() {
+    let plan = plan(
+        "providers = { aws = { vendor = \"bedrock\", key = \"k\", base_url = \"https://bedrock-runtime.eu-west-1.amazonaws.com\" } }\n",
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let aws = &plan.upstreams[0];
+    let entries: Vec<(&str, &str)> = (aws.entries.iter())
+        .map(|e| (e.format.as_str(), e.base_url.as_str()))
+        .collect();
+    let runtime = "https://bedrock-runtime.eu-west-1.amazonaws.com";
+    assert_eq!(entries, [("bedrock-embeddings", runtime)]);
+    let parts = aws.provider.parts().unwrap_or_default();
+    let auth = parts.first().and_then(|p| p.headers.get("authorization"));
+    assert_eq!(auth.and_then(|v| v.to_str().ok()), Some("Bearer k"));
+    assert!(plan.serve.iter().all(|f| !f.starts_with("bedrock-")));
+}
+
 /// Vendors share `openai-chat`: each takes its key as its own vendor says,
 /// and a provider of no vendor as OpenAI's does.
 #[test]
