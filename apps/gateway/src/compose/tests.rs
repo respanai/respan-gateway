@@ -854,3 +854,27 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
         );
     }
 }
+
+#[cfg(feature = "ark")]
+#[test]
+fn ark_configuration_is_optional_and_parses_native_policy() {
+    let config = Config::parse(
+        r#"
+[providers.local]
+formats=["openai-chat"]
+base_url="http://127.0.0.1:12345/v1"
+[plugins.ark]
+pii="mask"
+dlp="block"
+max_queued=2
+[plugins.ark.scanner]
+max_input_bytes=4096
+max_findings=32
+"#,
+    )
+    .expect("valid Ark configuration");
+    let ark = config.plugins.ark.expect("configured Ark");
+    assert!(matches!(ark.pii, respan_gateway_plugin_ark::Action::Mask));
+    assert_eq!(ark.scanner.max_input_bytes, 4096);
+    assert_eq!(ark.max_queued, 2);
+}

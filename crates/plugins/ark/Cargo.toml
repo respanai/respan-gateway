@@ -1,0 +1,40 @@
+[package]
+name = "respan-gateway-plugin-ark"
+description = "Local PII, DLP and prompt-injection checks with optional Wolf FP16"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+wolf = ["patronus-ark-core/wolf"]
+
+onnx-coreml = ["wolf", "patronus-ark-core/onnx-coreml"]
+
+onnx-cuda = ["wolf", "patronus-ark-core/onnx-cuda"]
+
+onnx-directml = ["wolf", "patronus-ark-core/onnx-directml"]
+
+onnx-tensorrt = ["wolf", "patronus-ark-core/onnx-tensorrt"]
+
+[dependencies]
+# Development stack dependency: Core PR patronus-protect/patronus-security#172.
+patronus-ark-core = { git = "https://github.com/patronus-protect/patronus-security", rev = "fdda717", default-features = false }
+respan-gateway-core.workspace = true
+respan-gateway-conversation.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+blake3 = "1"
+respan-gateway-conversation-http.workspace = true
+respan-gateway-http.workspace = true
+respan-gateway-http-transport.workspace = true
+mockllm = { git = "https://github.com/lihe07/mockllm", rev = "26cf441" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

@@ -186,3 +186,35 @@ tool calls is kept the same way when OpenAI's Responses API serves it.
 Tool servers (`[tools.<name>]`: MCP servers and tool vendors such as
 Linkup), the `/mcp` endpoint that merges them, and the tool loop are in
 [mcp.md](mcp.md).
+
+## Local Ark guardrails
+
+Build with `cargo build -p respan-gateway --features ark` for native checks,
+or `--features ark-wolf` to include offline Wolf FP16 inference. No Ark
+code is included in the default binary. The plugin scans outgoing chat
+message text, reasoning, tool arguments and nested tool results. Each text
+field has its own document score. Unsupported content is refused; response
+streams are outside this plugin's coverage.
+
+```toml
+[plugins.ark]
+pii = "mask"
+dlp = "block"
+max_queued = 32
+queue_timeout_ms = 1000
+scan_timeout_ms = 30000
+max_request_bytes = 1048576
+
+[plugins.ark.scanner]
+max_input_bytes = 1048576
+max_findings = 10000
+
+# Requires ark-wolf and a training-verified local bundle:
+# [plugins.ark.scanner.wolf]
+# bundle_dir = "/srv/models/wolf-single-fp16"
+# threshold = 0.8 # application policy; select this explicitly
+```
+
+Input and final-provider guards share one warm scanner. Errors refuse the
+request. A timed-out inference continues to reserve capacity until it ends.
+The provider guard must be registered after any provider input mutators.

@@ -23,7 +23,17 @@ path = "src/lib.rs"
 name = "respan-gateway"
 path = "src/main.rs"
 
+[features]
+default = []
+ark = ["dep:respan-gateway-plugin-ark"]
+ark-wolf = ["ark", "respan-gateway-plugin-ark/wolf"]
+ark-coreml = ["ark-wolf", "respan-gateway-plugin-ark/onnx-coreml"]
+ark-cuda = ["ark-wolf", "respan-gateway-plugin-ark/onnx-cuda"]
+ark-directml = ["ark-wolf", "respan-gateway-plugin-ark/onnx-directml"]
+ark-tensorrt = ["ark-wolf", "respan-gateway-plugin-ark/onnx-tensorrt"]
+
 [dependencies]
+respan-gateway-plugin-ark = { workspace = true, optional = true }
 respan-gateway-tool-vendors.workspace = true
 respan-gateway-plugin-mcp-router.workspace = true
 parking_lot.workspace = true

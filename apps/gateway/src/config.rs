@@ -348,6 +348,9 @@ pub enum Auth {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginsConfig {
+    /// Local Ark checks; enabled only in builds with the ark feature.
+    #[cfg(feature = "ark")]
+    pub ark: Option<respan_gateway_plugin_ark::Config>,
     /// Which provider each request goes to; always on. Its routes are
     /// the top-level `routes`.
     #[serde(default)]

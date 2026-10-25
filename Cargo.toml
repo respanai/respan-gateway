@@ -28,6 +28,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/respanai/respan-gateway"
 
 [workspace.dependencies]
+respan-gateway-plugin-ark = { path = "crates/plugins/ark", version = "0.1.0" }
 respan-gateway-realtime = { path = "crates/kinds/realtime", version = "0.1.1" }
 respan-gateway-core = { path = "crates/core", version = "0.1.2" }
 respan-gateway-sdk = { path = "crates/sdk", version = "0.1.0" }

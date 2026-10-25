@@ -106,9 +106,27 @@ impl Built {
             }
             None => gateway,
         };
+        #[cfg(feature = "ark")]
+        let ark = config
+            .plugins
+            .ark
+            .as_ref()
+            .map(|config| respan_gateway_plugin_ark::Ark::new(config.clone()))
+            .transpose()?;
+        #[cfg(feature = "ark")]
+        let gateway = match &ark {
+            Some(guard) => gateway.plugin(guard.clone()),
+            None => gateway,
+        };
         let fronted = aggregate.clone();
         let (gateway, closer, aggregate) =
             with_plugins(gateway, &config, aggregate, &plan, &formats, process);
+        // Final provider input guard sees edits and tool-loop calls; trace calls see its result.
+        #[cfg(feature = "ark")]
+        let gateway = match &ark {
+            Some(guard) => gateway.plugin(guard.provider_guard()),
+            None => gateway,
+        };
         let gateway = match respan_calls {
             Some(calls) => gateway.plugin(calls),
             None => gateway,
