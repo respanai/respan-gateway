@@ -28,41 +28,41 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/respanai/respan-gateway"
 
 [workspace.dependencies]
-respan-gateway-realtime = { path = "crates/kinds/realtime", version = "0.1.0" }
-respan-gateway-core = { path = "crates/core", version = "0.1.1" }
+respan-gateway-realtime = { path = "crates/kinds/realtime", version = "0.1.1" }
+respan-gateway-core = { path = "crates/core", version = "0.1.2" }
 respan-gateway-sdk = { path = "crates/sdk", version = "0.1.0" }
 respan-gateway-conversation = { path = "crates/kinds/conversation", version = "0.1.0" }
-respan-gateway-media = { path = "crates/kinds/media", version = "0.1.0" }
+respan-gateway-media = { path = "crates/kinds/media", version = "0.1.1" }
 respan-gateway-decision = { path = "crates/kinds/decision", version = "0.1.0" }
-respan-gateway-http = { path = "crates/wires/http", version = "0.1.0" }
+respan-gateway-http = { path = "crates/wires/http", version = "0.1.1" }
 respan-gateway-http-faults = { path = "crates/wires/http-faults", version = "0.1.0" }
 respan-gateway-http-transport = { path = "crates/wires/http-transport", version = "0.2.0" }
 respan-gateway-plugin-relay = { path = "crates/plugins/relay", version = "0.1.0" }
 respan-gateway-plugin-credentials = { path = "crates/plugins/credentials", version = "0.1.0" }
 respan-gateway-sse = { path = "crates/wires/sse", version = "0.1.0" }
-respan-gateway-plugin-routing = { path = "crates/plugins/routing", version = "0.1.0" }
+respan-gateway-plugin-routing = { path = "crates/plugins/routing", version = "0.1.1" }
 respan-gateway-plugin-fallback = { path = "crates/plugins/fallback", version = "0.1.1" }
 respan-gateway-plugin-tool-loop = { path = "crates/plugins/tool-loop", version = "0.2.0" }
 respan-gateway-plugin-respan = { path = "crates/plugins/respan", version = "0.2.0" }
 respan-gateway-plugin-pricing = { path = "crates/plugins/pricing", version = "0.1.0" }
-respan-gateway-plugin-responses = { path = "crates/plugins/responses", version = "0.1.0" }
+respan-gateway-plugin-responses = { path = "crates/plugins/responses", version = "0.2.0" }
 respan-gateway-mcp = { path = "crates/kinds/mcp", version = "0.1.0" }
 respan-gateway-ws = { path = "crates/wires/ws", version = "0.2.0" }
-respan-gateway-conversation-http = { path = "crates/formats/conversation-http", version = "0.1.0" }
-respan-gateway-media-http = { path = "crates/formats/media-http", version = "0.1.0" }
-respan-gateway-decision-http = { path = "crates/formats/decision-http", version = "0.1.0" }
-respan-gateway-realtime-ws = { path = "crates/formats/realtime-ws", version = "0.2.0" }
+respan-gateway-conversation-http = { path = "crates/formats/conversation-http", version = "0.2.0" }
+respan-gateway-media-http = { path = "crates/formats/media-http", version = "0.2.0" }
+respan-gateway-decision-http = { path = "crates/formats/decision-http", version = "0.2.0" }
+respan-gateway-realtime-ws = { path = "crates/formats/realtime-ws", version = "0.2.1" }
 respan-gateway-mcp-http = { path = "crates/formats/mcp-http", version = "0.1.1" }
 respan-gateway-passthrough-http = { path = "crates/formats/passthrough-http", version = "0.1.0" }
-respan-gateway-vendor-kit = { path = "crates/vendors/kit", version = "0.2.0" }
-respan-gateway-vendors-green = { path = "crates/vendors/green", version = "0.2.0" }
-respan-gateway-vendors-yellow = { path = "crates/vendors/yellow", version = "0.2.0" }
-respan-gateway-vendors = { path = "crates/vendors", version = "0.2.0" }
+respan-gateway-vendor-kit = { path = "crates/vendors/kit", version = "0.3.0" }
+respan-gateway-vendors-green = { path = "crates/vendors/green", version = "0.3.0" }
+respan-gateway-vendors-yellow = { path = "crates/vendors/yellow", version = "0.3.0" }
+respan-gateway-vendors = { path = "crates/vendors", version = "0.3.0" }
 respan-gateway-serve = { path = "crates/serve", version = "0.2.0" }
 respan-gateway-tool-vendor-kit = { path = "crates/tool-vendors/kit", version = "0.1.0" }
 respan-gateway-tool-vendors-green = { path = "crates/tool-vendors/green", version = "0.1.0" }
-respan-gateway-tool-vendors-yellow = { path = "crates/tool-vendors/yellow", version = "0.1.0" }
-respan-gateway-tool-vendors = { path = "crates/tool-vendors", version = "0.1.0" }
+respan-gateway-tool-vendors-yellow = { path = "crates/tool-vendors/yellow", version = "0.1.1" }
+respan-gateway-tool-vendors = { path = "crates/tool-vendors", version = "0.1.1" }
 respan-gateway-plugin-mcp-router = { path = "crates/plugins/mcp-router", version = "0.1.0" }
 async-trait = "0.1"
 axum = "0.8"
