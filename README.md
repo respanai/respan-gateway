@@ -107,7 +107,7 @@ The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
 
 - [Python, in-process](python/README.md) — Run the gateway inside your Python app, with no server.
 - [Embed in Rust](docs/plugins.md#in-a-gateway-of-your-own) — Mount the gateway in your own Rust service.
-- [Docker](Dockerfile) — Run the image `ghcr.io/respanai/respan-gateway:main` on any container host. Releases from v0.3.0 on also publish `:latest` and `:X.Y.Z`.
+- [Docker](Dockerfile) — `docker run -p 8080:8080 -e OPENAI_API_KEY -e RESPAN_CLIENT_KEYS=<a key of yours> ghcr.io/respanai/respan-gateway` on any container host; listening beyond localhost, it needs a client key.
 
 ## Performance
 
