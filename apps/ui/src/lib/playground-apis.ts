@@ -27,11 +27,12 @@ export function servedApis<A extends { id: string }>(
   return served.length > 0 ? served : apis.slice(0, 1);
 }
 
-/** The media tabs' APIs: OpenAI's, the one client format of each of their kinds. */
+/** The media tabs' APIs: the one client format of each of their kinds. */
 export const mediaApis = {
   transcription: [
     { id: "openai-transcriptions", label: "OpenAI Transcriptions", endpoint: "/v1/audio/transcriptions" },
   ],
   speech: [{ id: "openai-speech", label: "OpenAI Speech", endpoint: "/v1/audio/speech" }],
   embedding: [{ id: "openai-embeddings", label: "OpenAI Embeddings", endpoint: "/v1/embeddings" }],
+  rerank: [{ id: "cohere-rerank", label: "Cohere Rerank", endpoint: "/v2/rerank" }],
 } satisfies Record<string, ApiOption[]>;

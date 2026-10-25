@@ -1,6 +1,8 @@
-//! OpenRouter: Chat Completions, for many vendors' models.
+//! OpenRouter: Chat Completions, and rerank as Cohere does, for many
+//! vendors' models.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_media_http::cohere::CohereRerank;
 
 use respan_gateway_vendor_kit::Vendor;
 
@@ -12,6 +14,9 @@ const BASE_URL: &str = "https://openrouter.ai/api/v1";
 pub const VENDOR: Vendor = Vendor {
     id: "openrouter",
     key_env: &["OPENROUTER_API_KEY"],
-    formats: &[(&OpenAiChat, Some(BASE_URL))],
+    formats: &[
+        (&OpenAiChat, Some(BASE_URL)),
+        (&CohereRerank, Some(BASE_URL)),
+    ],
     ..Vendor::DEFAULT
 };

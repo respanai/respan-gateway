@@ -1,8 +1,10 @@
-//! vLLM: Chat Completions, as a server one runs serves it.
+//! vLLM: Chat Completions, and rerank as Cohere does, as a server one runs
+//! serves them.
 
 use respan_gateway_conversation::{Input, Output};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::Filter;
+use respan_gateway_media_http::cohere::CohereRerank;
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor, chat};
 
@@ -11,7 +13,10 @@ use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor, chat};
 pub const VENDOR: Vendor = Vendor {
     id: "vllm",
     key_env: &[],
-    formats: &[(&Dialected::new(OpenAiChat, Vllm), None)],
+    formats: &[
+        (&Dialected::new(OpenAiChat, Vllm), None),
+        (&CohereRerank, None),
+    ],
     ..Vendor::DEFAULT
 };
 

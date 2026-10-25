@@ -11,6 +11,7 @@ formats over HTTP are
 | `transcription` | Speech to text, or to English (`Task`) | `audio`, `task`, `language`, `prompt`, `temperature` | `Delta`, `Transcript`, `Rendered`, `Usage`, `Seconds` |
 | `speech` | Text to speech | `text`, `voice`, `instructions`, `speed`, `audio_format` | `Audio` chunks, `Usage` |
 | `embedding` | Embeddings of texts, images and videos | `items` (`Text`, `Tokens` or `Parts`), `dimensions`, `user` | `Start`, `Embedding` vectors, `Usage` |
+| `rerank` | Documents ranked against a query | `query`, `documents`, `top_n`, `return_documents` | `Start`, `Result` scores, `Usage`, `Searches` |
 | `video` | Video generation, a job | an operation: `Create` (`model`, `prompt`, `seconds`, `size`, a `reference` image), `Remix`, `Retrieve`, `Content` (a `Variant`), `Delete`, `List` | `Job`, `Jobs`, `Content` chunks, `Deleted` |
 
 Every `Input` has an optional `model`, read by `model()` and rewritten by
@@ -18,7 +19,8 @@ Every `Input` has an optional `model`, read by `model()` and rewritten by
 conversation kind's `Media` (a MIME type, bytes or a URL, a name) and token
 usage its `Usage`; a kind has a type of its own only where neither says it:
 a `Transcript` (`text`, `language`, `duration`, `segments`, `words`), and
-`Seconds` of audio a provider bills, as Whisper does. Every `Output` also has
+`Seconds` of audio a provider bills, as Whisper does, and `Searches`, the
+search units a rerank provider bills. Every `Output` also has
 `Native`, an event the kind has no form for.
 
 What a kind has no form for stays as the format that decoded it has it, in

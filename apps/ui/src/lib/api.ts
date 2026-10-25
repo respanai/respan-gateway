@@ -9,6 +9,7 @@ export type Kind =
   | "transcription"
   | "speech"
   | "embedding"
+  | "rerank"
   | "decision"
   | "video"
   | "mcp"

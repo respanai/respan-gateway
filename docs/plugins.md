@@ -49,7 +49,7 @@ Each **kind** of traffic has its own `Input`/`Output` pair, in its own crate:
 | Kind | Crate | Types |
 |---|---|---|
 | Chat | `respan-gateway-conversation` | `Input` (model, messages, options, tools), `Output` (stream events) |
-| Images, speech, transcription, embeddings, video | `respan-gateway-media` | `image::Input`, `speech::Input`, … with their `Output`s |
+| Images, speech, transcription, embeddings, rerank, video | `respan-gateway-media` | `image::Input`, `speech::Input`, … with their `Output`s |
 | Realtime sessions | `respan-gateway-realtime` | `Input` / `Output` session events, both ways |
 | MCP | `respan-gateway-mcp` | `Input` / `Output` JSON-RPC envelopes |
 | Typed decisions | `respan-gateway-decision` | `Input` / `Output` |

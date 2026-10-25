@@ -5,10 +5,12 @@
 //!   serve them, one format per kind.
 //! - [`gemini`]: Google's Veo and image models, as the Gemini API serves
 //!   them, of the video and image kinds.
+//! - [`cohere`]: Cohere's rerank, as Cohere and compatible vendors serve it.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
 
+pub mod cohere;
 mod edge;
 pub mod gemini;
 pub mod openai;

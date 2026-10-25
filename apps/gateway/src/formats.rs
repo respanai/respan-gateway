@@ -15,7 +15,8 @@ use respan_gateway_core::{Fault, Format, Gateway};
 use respan_gateway_decision as decision;
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
-use respan_gateway_media::{embedding, image, speech, transcription, video};
+use respan_gateway_media::{embedding, image, rerank, speech, transcription, video};
+use respan_gateway_media_http::cohere::CohereRerank;
 use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -41,13 +42,22 @@ pub mod kind {
     pub const SPEECH: &str = "speech";
     pub const VIDEO: &str = "video";
     pub const EMBEDDING: &str = "embedding";
+    pub const RERANK: &str = "rerank";
     pub const DECISION: &str = "decision";
     /// MCP: tools and resources over streamable HTTP, served by the `mcp`
     /// section.
     pub const MCP: &str = "mcp";
     /// The kinds of one request and its answer, whose client formats are
     /// served by default once a provider speaks the kind.
-    pub const ONE_SHOT: [&str; 6] = [IMAGE, TRANSCRIPTION, SPEECH, VIDEO, EMBEDDING, DECISION];
+    pub const ONE_SHOT: [&str; 7] = [
+        IMAGE,
+        TRANSCRIPTION,
+        SPEECH,
+        VIDEO,
+        EMBEDDING,
+        RERANK,
+        DECISION,
+    ];
 }
 
 /// The first of `items` of each kind, in order.
@@ -213,6 +223,7 @@ mod endpoints {
     ];
     pub const SPEECH: &[&str] = &["POST /v1/audio/speech"];
     pub const EMBEDDINGS: &[&str] = &["POST /v1/embeddings"];
+    pub const RERANK: &[&str] = &["POST /v1/rerank", "POST /v2/rerank"];
     pub const DECISIONS: &[&str] = &["POST /v1/decisions", "POST /v1/systemone"];
     pub const VIDEOS: &[&str] = &[
         "POST /v1/videos",
@@ -259,6 +270,8 @@ pub fn formats() -> Vec<KnownFormat> {
             embedding::Input::model,
             embedding::Input::set_model,
         )),
+        KnownFormat::of(kind::RERANK, endpoints::RERANK, CohereRerank)
+            .model(Model::of(rerank::Input::model, rerank::Input::set_model)),
         KnownFormat::of(kind::CHAT, endpoints::MESSAGES, AnthropicMessages).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::claiming(

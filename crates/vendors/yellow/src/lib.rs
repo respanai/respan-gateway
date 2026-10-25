@@ -5,6 +5,7 @@
 pub mod azure;
 pub mod cerebras;
 pub mod cloudflare;
+pub mod cohere;
 pub mod deepinfra;
 pub mod deepseek;
 pub mod empiriolabs;
@@ -40,6 +41,7 @@ pub const ALL: &[&Vendor] = &[
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
+    &cohere::VENDOR,
 ];
 
 /// A call's JSON without its field `key`.
