@@ -100,7 +100,6 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha
       - name: Tag both architectures
         working-directory: ${{ runner.temp }}/digests
         run: |
