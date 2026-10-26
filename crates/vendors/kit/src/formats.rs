@@ -11,8 +11,11 @@ use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::soniox::{SonioxSpeech, SonioxTranscriptions};
 use respan_gateway_passthrough_http::Passthrough;
-use respan_gateway_realtime_ws::{GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs};
+use respan_gateway_realtime_ws::{
+    GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs, SonioxRealtime,
+};
 
 use crate::{Upstream, Vendor};
 
@@ -27,9 +30,12 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &ResponsesWs,
     &GeminiLive,
     &MistralRealtime,
+    &SonioxRealtime,
     &OpenAiImages,
     &OpenAiTranscriptions,
     &OpenAiSpeech,
+    &SonioxSpeech,
+    &SonioxTranscriptions,
     &OpenAiEmbeddings,
     &OpenAiVideos,
     &GeminiVeo,

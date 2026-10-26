@@ -13,6 +13,7 @@ pub mod groq;
 pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
+pub mod soniox;
 pub mod together;
 pub mod vllm;
 pub mod xai;
@@ -38,6 +39,7 @@ pub const ALL: &[&Vendor] = &[
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
+    &soniox::VENDOR,
 ];
 
 /// A call's JSON without its field `key`.
