@@ -854,3 +854,27 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
         );
     }
 }
+
+/// OpenRouter's media, each at its own path: an image at `/images`,
+/// decisions at `/systemone`.
+#[tokio::test]
+async fn openrouter_is_called_at_each_media_kinds_own_path() {
+    let text = "providers = { router = { vendor = \"openrouter\", base_url = \"https://a.test/v1\", key = \"k\" } }\n";
+    let (gateway, router, _) = local(text).await;
+    let call = |path: &str, body: serde_json::Value| {
+        let gateway = gateway.clone();
+        let req = post(path, body.to_string());
+        async move {
+            let (response, _) = serve(&gateway, req).await;
+            _ = read_whole(response).await;
+            gateway.idle().await;
+        }
+    };
+    let image = serde_json::json!({ "model": "router/black-forest-labs/flux", "prompt": "a fox" });
+    call("/v1/images/generations", image).await;
+    let question = serde_json::json!({ "type": "noul", "instructions": "Is it?", "criteria": { "true": "yes", "false": "no" } });
+    let decision = serde_json::json!({ "model": "router/typesafe/jev-1.14", "state": "a fox", "questions": { "q": question } });
+    call("/v1/decisions", decision).await;
+    let called: Vec<_> = router.requests().iter().map(|r| r.path.clone()).collect();
+    assert_eq!(called, ["/v1/images", "/v1/systemone"]);
+}

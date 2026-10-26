@@ -15,6 +15,7 @@ base64.workspace = true
 respan-gateway-conversation.workspace = true
 respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true
+respan-gateway-decision.workspace = true
 respan-gateway-decision-http.workspace = true
 respan-gateway-http.workspace = true
 respan-gateway-media.workspace = true

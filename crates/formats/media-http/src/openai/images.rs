@@ -564,6 +564,13 @@ mod tests {
     }
 
     #[test]
+    fn a_generation_goes_to_openais_path() {
+        let mut head = http::Request::new(()).into_parts().0;
+        post(&mut head, &Input::new("p"), false).expect("a call");
+        assert_eq!(head.uri.path(), GENERATIONS);
+    }
+
+    #[test]
     fn an_image_of_no_output_format_is_of_the_type_its_bytes_say() {
         let mut out = Vec::new();
         let webp = r#"{"created": 1, "data": [{"b64_json": "UklGRvoKAABXRUJQVlA4"}]}"#;
