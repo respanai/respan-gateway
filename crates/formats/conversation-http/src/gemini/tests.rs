@@ -452,6 +452,35 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
 }
 
 #[test]
+fn a_function_call_without_args_is_a_tool_call_of_no_arguments() {
+    let chunk = json!({ "candidates": [{ "content": { "role": "model", "parts": [
+        { "functionCall": { "name": "now" } },
+    ] }, "finishReason": "STOP" }], "responseId": "r" });
+    let events = decode(std::slice::from_ref(&chunk)).expect("events");
+    assert!(
+        events.contains(&Output::block_start(
+            0,
+            Block::ToolCall {
+                id: "gemini_call_r_0".into(),
+                name: "now".into(),
+            }
+        )),
+        "{events:?}"
+    );
+    assert!(events.contains(&Output::arguments(0, "{}")), "{events:?}");
+    assert!(
+        events.contains(&Output::finished(Finish::ToolUse)),
+        "{events:?}"
+    );
+    assert_eq!(decode_body(&chunk), events);
+    let body = body_of(&events).expect("body");
+    assert_eq!(
+        body["candidates"][0]["content"]["parts"][0]["functionCall"],
+        json!({"name": "now", "args": {}})
+    );
+}
+
+#[test]
 fn finish_reasons_map_to_the_kinds_and_back() {
     let reason = |r: &str| {
         decode_body(&last_chunk("x", r))

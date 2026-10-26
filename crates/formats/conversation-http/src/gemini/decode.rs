@@ -125,11 +125,12 @@ impl GeminiDecoder {
             .filter(|_| payload("functionCall"))
         {
             let name = call.get("name").and_then(Value::as_str);
-            let args = call.get("args").filter(|a| a.is_object() || a.is_null());
-            let clean = call
-                .keys()
-                .all(|k| matches!(k.as_str(), "name" | "args" | "id"));
-            let (Some(name), Some(args), true) = (name, args, clean) else {
+            let args = call.get("args").unwrap_or(&Value::Null);
+            let clean = (args.is_object() || args.is_null())
+                && call
+                    .keys()
+                    .all(|k| matches!(k.as_str(), "name" | "args" | "id"));
+            let (Some(name), true) = (name, clean) else {
                 return self.opaque(p, out);
             };
             let fields = remainder(p, &["functionCall"]);
