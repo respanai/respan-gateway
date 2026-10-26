@@ -3,6 +3,7 @@
 //! cannot write.
 
 use base64::Engine;
+use base64::alphabet::Alphabet;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields};
@@ -136,15 +137,25 @@ pub(crate) fn frame(v: &Value) -> Result<Bytes, Fault> {
         .map_err(|e| Fault::internal("an event could not be written").with_source(e))
 }
 
-/// Base64 read with or without its padding.
-const LENIENT: GeneralPurpose = GeneralPurpose::new(
-    &base64::alphabet::STANDARD,
-    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
-);
+/// Base64 of `alphabet` read with or without its padding.
+const fn lenient(alphabet: &'static Alphabet) -> GeneralPurpose {
+    GeneralPurpose::new(
+        alphabet,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    )
+}
 
-/// The bytes of standard base64 `v`, padded or not.
+const LENIENT: GeneralPurpose = lenient(&base64::alphabet::STANDARD);
+const LENIENT_URL_SAFE: GeneralPurpose = lenient(&base64::alphabet::URL_SAFE);
+
+/// The bytes of base64 `v`, standard or URL-safe, padded or not.
 pub(crate) fn unbase64(v: &Value) -> Option<Bytes> {
-    LENIENT.decode(v.as_str()?).ok().map(Bytes::from)
+    let text = v.as_str()?;
+    LENIENT
+        .decode(text)
+        .or_else(|_| LENIENT_URL_SAFE.decode(text))
+        .ok()
+        .map(Bytes::from)
 }
 
 /// The audio at `path` in `v`, removed, if it is base64.
