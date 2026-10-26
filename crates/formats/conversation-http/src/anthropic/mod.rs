@@ -50,6 +50,8 @@ use respan_gateway_http::{ClientIo, Encoder, ProviderIo, http};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use serde_json::{Map, Value, json};
 
+use crate::openai::OPENAI;
+use crate::responses::RESPONSES;
 use decode::AnthropicDecoder;
 use encode::EventStream;
 use request::{
@@ -219,6 +221,26 @@ impl Schema for AnthropicMessages {
     const CARRIED: &'static [&'static str] = &["anthropic-version", "anthropic-beta"];
     const CARRIED_QUERY: &'static [&'static str] = &["beta"];
     const OWN: &'static [&'static str] = &["metadata", "output_config", "thinking"];
+    /// Messages' own fields an OpenAI client may send for an Anthropic
+    /// model, from either OpenAI format: where it is served
+    /// (`inference_geo`), its capacity (`service_tier`) and `speed`, the
+    /// sampling cut-off (`top_k`), the cache breakpoint (`cache_control`),
+    /// and the end user's id for abuse checks (`safety_identifier`, as
+    /// `metadata.user_id`).
+    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[
+        (OPENAI, "inference_geo", "inference_geo"),
+        (OPENAI, "service_tier", "service_tier"),
+        (OPENAI, "speed", "speed"),
+        (OPENAI, "top_k", "top_k"),
+        (OPENAI, "cache_control", "cache_control"),
+        (OPENAI, "safety_identifier", "metadata.user_id"),
+        (RESPONSES, "inference_geo", "inference_geo"),
+        (RESPONSES, "service_tier", "service_tier"),
+        (RESPONSES, "speed", "speed"),
+        (RESPONSES, "top_k", "top_k"),
+        (RESPONSES, "cache_control", "cache_control"),
+        (RESPONSES, "safety_identifier", "metadata.user_id"),
+    ];
     type Decoding = AnthropicDecoder;
 
     fn decoder(&self) -> AnthropicDecoder {
