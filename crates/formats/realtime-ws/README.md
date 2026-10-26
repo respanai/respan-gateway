@@ -66,8 +66,9 @@ code, never its message.
 ## Translation
 
 The target format's writer converts audio its spec cannot carry: G.711 is
-decoded for Gemini, which takes PCM at any rate it is told; Gemini's
-clients' audio is resampled to OpenAI's 24 kHz; Gemini's 24 kHz audio is
+decoded for Gemini, which takes PCM at any rate it is told; a client's PCM,
+at whatever rate its session names, is resampled to and declared as
+OpenAI's 24 kHz; Gemini's 24 kHz audio is
 encoded as the G.711 an OpenAI client asked for. A response from Gemini
 reaches an OpenAI client with the items, content parts and ids OpenAI
 would send, its usage in `response.done`.

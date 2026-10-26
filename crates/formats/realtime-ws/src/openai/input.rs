@@ -4,7 +4,7 @@
 use respan_gateway_conversation::{Content, Message, Role};
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
+use respan_gateway_realtime::{Audio, AudioFormat, Encoding, Input, Purpose, Session, ToolResult};
 use serde_json::{Value, json};
 
 use super::{NAME, session};
@@ -242,6 +242,13 @@ impl Provider {
                 // A transcription names its model in its first session.
                 if s == Session::default() && !(opening && self.transcribing) {
                     return Ok(None);
+                }
+                if let Some(f) = s
+                    .input_audio
+                    .as_mut()
+                    .filter(|f| f.encoding == Encoding::Pcm16)
+                {
+                    *f = AudioFormat::pcm16(24_000);
                 }
                 if let Some(format) = s.input_audio {
                     self.input = format;
