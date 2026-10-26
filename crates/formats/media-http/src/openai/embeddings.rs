@@ -15,6 +15,8 @@ use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
 use serde_json::{Map, Value};
+use std::collections::HashSet;
+use std::sync::{Arc, OnceLock};
 
 const NAME: &str = "openai-embeddings";
 const EMBEDDINGS: &str = "/embeddings";
@@ -30,6 +32,11 @@ const EMBEDDINGS: &str = "/embeddings";
 /// whichever the provider answers, and written as the client's
 /// `encoding_format` asks, `float` unless it says `base64`. The field is
 /// relayed to the provider as the client wrote it.
+///
+/// An answer holds one vector for each text or token list asked, each at
+/// its own `index`, in any order; parts get one or more. An answer with
+/// another count, an index twice or one past the inputs is a provider
+/// fault: a caller would pair its vectors with the wrong inputs.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiEmbeddings;
 
@@ -70,7 +77,18 @@ impl Format<ProviderIo, Output, Input> for OpenAiEmbeddings {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, post, |_, _| Some(read_response())))
+        // How many vectors the call asks for, from the input it was made of.
+        let asked = Arc::new(OnceLock::new());
+        let seen = Arc::clone(&asked);
+        Ok(bind_provider(
+            io,
+            NAME,
+            move |head, input: &Input| {
+                _ = seen.set(vectors_for(&input.items));
+                post(head, input)
+            },
+            move |_, _| Some(read_response(asked.get().copied().flatten())),
+        ))
     }
 }
 
@@ -160,21 +178,57 @@ fn items_json(items: &[Item]) -> Result<Value, Fault> {
     }
 }
 
-/// The decoder of a provider's answer: one JSON body.
-fn read_response() -> Box<dyn Decoder<Output>> {
-    Box::new(Whole::new(decode_whole))
+/// How many vectors an answer to `items` holds: one for each, unless one
+/// is parts, which the model answers with one or more.
+fn vectors_for(items: &[Item]) -> Option<usize> {
+    let parts = items.iter().any(|item| matches!(item, Item::Parts(_)));
+    (!parts).then_some(items.len())
 }
 
-/// The events of a whole JSON response.
-fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+/// The decoder of a provider's answer: one JSON body, which holds `asked`
+/// vectors if that is known.
+fn read_response(asked: Option<usize>) -> Box<dyn Decoder<Output>> {
+    Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
+        decode_whole(raw, asked, out)
+    }))
+}
+
+/// The events of a whole JSON response, which holds `asked` vectors, each
+/// at its own index among them, if that is known, else at least one.
+fn decode_whole(raw: Bytes, asked: Option<usize>, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
+    let held = v["data"].as_array().map_or(0, Vec::len);
+    match asked {
+        Some(asked) if asked != held => {
+            let what = format!("holds {held} vectors for {asked} inputs");
+            return Err(unreadable(NAME, &what));
+        }
+        None if held == 0 => return Err(unreadable(NAME, "holds no vectors")),
+        _ => {}
+    }
+    let mut indexes = HashSet::new();
     let mut start = Start::new(v["model"].as_str().map(Into::into));
     start.native = native_of(NAME, rest_of(&v, &["object", "data", "model", "usage"]));
     out.push(Output::Start(start));
     for (at, item) in v["data"].as_array().into_iter().flatten().enumerate() {
-        let index = item["index"].as_u64().and_then(|i| u32::try_from(i).ok());
+        let index = match &item["index"] {
+            Value::Null => at as u32,
+            i => i
+                .as_u64()
+                .and_then(|i| u32::try_from(i).ok())
+                .ok_or_else(|| unreadable(NAME, "holds an index that is no count"))?,
+        };
+        if asked.is_some_and(|asked| index as usize >= asked) {
+            return Err(unreadable(
+                NAME,
+                &format!("holds index {index} past the inputs"),
+            ));
+        }
+        if !indexes.insert(index) {
+            return Err(unreadable(NAME, &format!("holds index {index} twice")));
+        }
         let vector = vector_of(&item["embedding"])?;
-        let mut embedding = Embedding::new(index.unwrap_or(at as u32), vector);
+        let mut embedding = Embedding::new(index, vector);
         embedding.native = native_of(NAME, rest_of(item, &["object", "index", "embedding"]));
         out.push(Output::Embedding(embedding));
     }
@@ -352,6 +406,64 @@ mod tests {
         assert!(vector_of(&json!("AAA=")).is_err());
     }
 
+    /// The events of `answer` to a call of `input`, as the format reads it.
+    fn answered(input: Value, answer: Value) -> Result<Vec<Output>, Fault> {
+        let asked = vectors_for(&items(input)?);
+        let mut decoder = read_response(asked);
+        let mut events = Vec::new();
+        decoder.decode(Bytes::from(answer.to_string()), &mut events)?;
+        decoder.end(Ok(()), &mut events)?;
+        Ok(events)
+    }
+
+    fn vectors(indexes: &[Value]) -> Value {
+        let data: Vec<_> = indexes
+            .iter()
+            .map(|index| json!({"index": index, "embedding": [1.5]}))
+            .collect();
+        json!({"data": data})
+    }
+
+    #[test]
+    fn an_answer_that_cannot_be_paired_with_its_inputs_is_refused() {
+        let cases = [
+            (json!(["a", "b"]), vectors(&[json!(0)])),
+            (json!(["a", "b"]), vectors(&[json!(0), json!(1), json!(2)])),
+            (json!("a"), vectors(&[])),
+            (json!([[1], [2]]), vectors(&[json!(0), json!(0)])),
+            (json!(["a", "b"]), vectors(&[json!(0), json!(2)])),
+            (json!(["a", "b"]), vectors(&[json!(1), Value::Null])),
+            (json!(["a"]), vectors(&[json!(-1)])),
+            (json!([{"type": "image"}]), vectors(&[])),
+            (json!([{"type": "image"}]), vectors(&[json!(3), json!(3)])),
+        ];
+        for (input, answer) in cases {
+            let refused = answered(input.clone(), answer.clone());
+            assert!(
+                refused.is_err_and(|f| f.is(FaultKind::Provider)),
+                "{input} {answer}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_answer_in_any_order_or_of_several_vectors_for_parts_is_read() {
+        let indexes = |events: Vec<Output>| -> Vec<u32> {
+            let embedding = |e: Output| match e {
+                Output::Embedding(e) => Some(e.index),
+                _ => None,
+            };
+            events.into_iter().filter_map(embedding).collect()
+        };
+        let swapped = answered(json!(["a", "b"]), vectors(&[json!(1), json!(0)]));
+        assert_eq!(indexes(swapped.expect("events")), [1, 0]);
+        let unindexed = answered(json!(["a", "b"]), vectors(&[Value::Null, Value::Null]));
+        assert_eq!(indexes(unindexed.expect("events")), [0, 1]);
+        let parts = json!([{"type": "text", "text": "a"}, {"type": "image", "url": "u"}]);
+        let each = answered(parts, vectors(&[json!(0), json!(1)]));
+        assert_eq!(indexes(each.expect("events")), [0, 1]);
+    }
+
     #[test]
     fn a_response_is_written_with_its_usage_and_extras() {
         let raw = json!({
@@ -362,7 +474,7 @@ mod tests {
             "w": true,
         });
         let mut events = Vec::new();
-        decode_whole(Bytes::from(raw.to_string()), &mut events).expect("events");
+        decode_whole(Bytes::from(raw.to_string()), Some(1), &mut events).expect("events");
         assert!(events.contains(&Output::Usage(Usage::new(3, 0))));
         let written = encode_whole(&events, false).expect("a body");
         let written: Value = serde_json::from_slice(&written).unwrap_or_default();
