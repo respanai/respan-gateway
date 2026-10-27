@@ -236,7 +236,7 @@ impl AsText for Content {
 /// An assistant message: its text runs are message items, its calls and
 /// reasoning items of their own.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    // Another format's inert fields are dropped; any other, or its own,
+    // Another format's inert fields and cache marker are dropped; any other, or its own,
     // have no place here.
     let what = |_: &str| "an assistant message's fields".to_owned();
     if !kept_fields(RESPONSES, &m.native, what, Keep::CACHE_MARKER)?.is_empty() {

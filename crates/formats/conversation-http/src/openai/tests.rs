@@ -1738,6 +1738,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
     let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
     let input = sent.map(|v| v["input"][0].clone()).ok();
     assert_eq!(input, Some(json!({ "role": "user", "content": "hi" })));
+    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
     // On a user's message too, and on a tool result's.
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "name": "alice", "content": "hi" },
@@ -1777,5 +1778,6 @@ fn a_messages_unknown_field_is_still_refused_by_another_format() {
     let chat = OpenAiChat.decode_json(&body);
     assert!(OpenAiResponses.encode_request(&chat).is_err());
     assert!(AnthropicMessages.encode_request(&chat).is_err());
+    assert!(GeminiGenerate.encode_request(&chat).is_err());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
 }
