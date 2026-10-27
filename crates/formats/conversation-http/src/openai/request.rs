@@ -119,14 +119,14 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// a place for and that it can leave out: a participant's `name`, the
 /// reasoning an assistant sends back (`reasoning_content`, `reasoning`,
 /// `reasoning_details`, `thinking_blocks`), which a provider takes back only
-/// from the format it came in, and a message's `cache_control`, a hint.
+/// from the format it came in. A message's `cache_control` stays a field of
+/// its own, a cache marker ([`Keep::CACHE_MARKER`]).
 const INERT_FIELDS: &[&str] = &[
     "name",
     "reasoning_content",
     "reasoning",
     "reasoning_details",
     "thinking_blocks",
-    "cache_control",
 ];
 
 /// An OpenAI message read as the kind's

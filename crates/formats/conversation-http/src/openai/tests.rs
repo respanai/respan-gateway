@@ -1717,6 +1717,27 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
             "{key}"
         );
     }
+    // A message's cache marker stays its own field, which a plugin can move
+    // onto a part, and Gemini drops it too.
+    let body = json!({ "model": "m", "messages": [
+        { "role": "user", "content": "hi", "cache_control": { "type": "ephemeral" } },
+    ]});
+    let chat = OpenAiChat.decode_json(&body);
+    let fields = chat.messages[0].native.fields();
+    assert_eq!(
+        fields.get("cache_control"),
+        Some(&json!({ "type": "ephemeral" }))
+    );
+    assert!(!fields.contains_key(crate::schema::INERT));
+    let sent = GeminiGenerate.encode_request(&chat).map(Value::from);
+    let content = sent.map(|v| v["contents"][0].clone()).ok();
+    assert_eq!(
+        content,
+        Some(json!({ "role": "user", "parts": [{ "text": "hi" }] }))
+    );
+    let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
+    let input = sent.map(|v| v["input"][0].clone()).ok();
+    assert_eq!(input, Some(json!({ "role": "user", "content": "hi" })));
     // On a user's message too, and on a tool result's.
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "name": "alice", "content": "hi" },

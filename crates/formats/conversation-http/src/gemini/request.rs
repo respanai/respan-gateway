@@ -240,7 +240,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
 /// another format's it drops.
 fn unsaid(m: &Message) -> bool {
     let what = |_: &str| String::new();
-    let kept = kept_fields(GEMINI, &m.native, what, Keep::default());
+    let kept = kept_fields(GEMINI, &m.native, what, Keep::CACHE_MARKER);
     kept.is_ok_and(|f| f.is_empty())
 }
 
@@ -268,7 +268,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
         let what = |_: &str| "messages with fields the kind has no place for".to_owned();
-        content.extend(kept_fields(GEMINI, &m.native, what, Keep::default())?);
+        content.extend(kept_fields(GEMINI, &m.native, what, Keep::CACHE_MARKER)?);
         let answers = !m.content.is_empty()
             && unsaid(m)
             && m.content

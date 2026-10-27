@@ -99,14 +99,14 @@ pub(crate) fn kept_fields(
 }
 
 /// The fields of a message's `native` to write in `format`, as
-/// [`kept_fields`] says, the [`INERT`] ones written as they came by their
-/// own format.
+/// [`kept_fields`] says, a cache marker dropped by another format, the
+/// [`INERT`] ones written as they came by their own.
 pub(crate) fn message_fields(
     format: &str,
     native: &Option<NativeFields>,
     what: impl FnOnce(&str) -> String,
 ) -> Result<Map<String, Value>, Fault> {
-    let mut fields = kept_fields(format, native, what, Keep::default())?;
+    let mut fields = kept_fields(format, native, what, Keep::CACHE_MARKER)?;
     if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
         fields.extend(inert);
     }
