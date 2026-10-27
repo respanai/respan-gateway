@@ -234,7 +234,18 @@ fn reloaded_json(
 /// `409` (`reload_unavailable`).
 async fn reload(State(admin): State<Arc<Admin>>) -> Response {
     let process = admin.process.clone();
-    match process.reload() {
+    let reload_process = process.clone();
+    let result = match tokio::task::spawn_blocking(move || reload_process.reload()).await {
+        Ok(result) => result,
+        Err(error) => {
+            return auth::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "reload_failed",
+                &format!("reload worker failed: {error}"),
+            );
+        }
+    };
+    match result {
         Ok(reloaded) => Json(reloaded_json(&process, &reloaded)).into_response(),
         Err(e @ ReloadError::Unavailable) => {
             auth::error(StatusCode::CONFLICT, "reload_unavailable", &e.to_string())
@@ -890,5 +901,66 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (_, listed) = send(&app, Method::GET, "/ui/api/mcp", "").await;
         assert_eq!(enabled(&listed), json!(true));
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn blocking_reload_preparation_keeps_the_previous_app_responsive() {
+        use std::sync::{
+            Condvar, Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        let entered = Arc::new(AtomicBool::new(false));
+        let released = Arc::new(AtomicBool::new(false));
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let watchdog_gate = Arc::clone(&gate);
+        let watchdog_released = Arc::clone(&released);
+        let watchdog = std::thread::spawn(move || {
+            // A broken inline reload cannot deadlock this single-thread runtime:
+            // the watchdog releases it, and the assertion below then fails.
+            let _ = release_rx.recv_timeout(Duration::from_secs(2));
+            watchdog_released.store(true, Ordering::Release);
+            let (lock, ready) = &*watchdog_gate;
+            *lock.lock().unwrap_or_else(|e| e.into_inner()) = true;
+            ready.notify_all();
+        });
+        let loader_entered = Arc::clone(&entered);
+        let loader_gate = Arc::clone(&gate);
+        let app = App::new(Config::parse(TOOLS).unwrap_or_else(|e| panic!("{e}")))
+            .unwrap_or_else(|e| panic!("{e}"))
+            .reload_from(move || {
+                loader_entered.store(true, Ordering::Release);
+                let (lock, ready) = &*loader_gate;
+                let mut released = lock.lock().unwrap_or_else(|e| e.into_inner());
+                while !*released {
+                    released = ready.wait(released).unwrap_or_else(|e| e.into_inner());
+                }
+                Config::parse(TOOLS)
+            });
+        let reload_app = app.clone();
+        let reloading =
+            tokio::spawn(
+                async move { send(&reload_app, Method::POST, "/ui/api/reload", "").await },
+            );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !entered.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|e| panic!("reload never entered its preparation: {e}"));
+        assert!(
+            !released.load(Ordering::Acquire),
+            "reload blocked the async worker until the watchdog had to release it"
+        );
+        let (status, _) = send(&app, Method::GET, "/ui/api/overview", "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            !released.load(Ordering::Acquire),
+            "the old gateway must answer while replacement preparation is held"
+        );
+        release_tx.send(()).unwrap_or_else(|e| panic!("{e}"));
+        let (status, _) = reloading.await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(status, StatusCode::OK);
+        watchdog.join().unwrap_or_else(|e| panic!("{e:?}"));
     }
 }

@@ -1,0 +1,119 @@
+{
+  "current_core_commit": "c079462",
+  "current_core_dirty_files": "M CHANGELOG.md\n M README.md\n M ark-core/README.md\n M ark-core/examples/wolf_benchmark.rs\n M ark-core/src/lib.rs\n M ark-core/src/ml/tokenizer_store.rs\n M ark-core/src/onnx.rs\n M ark-core/src/scanner.rs\n M ark-core/src/wolf.rs\n M ark-core/tests/wolf_runtime.rs\n M docs/rust-api.md\n M rust/src/assets/download.rs\n M rust/src/ml/onnx.rs\n M scripts/generate_docs.py\n?? ark-core/src/control.rs\n?? ark-core/tests/fixtures/generate_wolf_cancellable.py\n?? ark-core/tests/fixtures/wolf_cancellable.onnx\n?? ark-core/tests/fixtures/wolf_synthetic_reference_254.json",
+  "historical_core_commit": "c079462",
+  "mode": "after",
+  "model": {
+    "execution_provider": "cpu",
+    "full_input_bytes": 508,
+    "full_input_windows": 1,
+    "model_path": "/tmp/ark-wolf-memory-ab/assets-fp16/model_fp16.onnx",
+    "precision_reported": "fp16",
+    "sequence_contract": "current Core; full 254 content input reported as one window"
+  },
+  "model_asset": {
+    "blake3": "ddd703549cf65a9dc2a22311bfcc8851d7a66b82486ef0bdc9532e69a6b7b415",
+    "bytes": 281826832,
+    "path": "/tmp/ark-wolf-memory-ab/assets-fp16/model_fp16.onnx"
+  },
+  "notes": [
+    "After-drop RSS does not by itself prove a leak: allocator-retained pages are not forcibly relieved.",
+    "Historical legacy global runtime pool uses historical defaults; Core before retains its natural implicit environment.",
+    "Requested session threads are identical; effective global-pool behavior is part of the before/after change, not silently normalized away.",
+    "No low-memory diagnostic flags are applied to either production loader.",
+    "Native L1 and HTTP are absent; compare model/session increments, not the historical 725MiB total adapter process."
+  ],
+  "optional_manifest_present": false,
+  "ort_runtime_info": "ORT Build Info: git-branch=rel-1.28.0, git-commit-id=da9b5e3, fp8-kv-cache=1, build type=Release",
+  "phases": [
+    {
+      "elapsed_ms": 2667.0329580000002,
+      "phase": "process_before_any_runtime_initialization",
+      "rss_bytes": 5898240
+    },
+    {
+      "elapsed_ms": 18034.225542,
+      "phase": "constructor_returned_includes_empty_backend_warmup",
+      "rss_bytes": 279986176
+    },
+    {
+      "elapsed_ms": 22691.386707999998,
+      "phase": "after_short_inference",
+      "rss_bytes": 404422656
+    },
+    {
+      "elapsed_ms": 30475.978542,
+      "phase": "after_254_content_input",
+      "rss_bytes": 405225472
+    },
+    {
+      "elapsed_ms": 32280.183291999998,
+      "phase": "after_drop_immediate",
+      "rss_bytes": 271007744
+    },
+    {
+      "elapsed_ms": 33716.797208,
+      "phase": "after_drop_100ms_no_allocator_relief",
+      "rss_bytes": 271007744
+    }
+  ],
+  "process_id": 68794,
+  "runtime_policy": "current Core natural constructor, no forced warmup",
+  "settings": {
+    "batch": 1,
+    "environment_ort_dylib_path": null,
+    "environment_rayon_num_threads": "1",
+    "graph_optimization": "Level3",
+    "http": false,
+    "native_detectors": false,
+    "probe_flags": "",
+    "provider": "cpu",
+    "requested_session_inter_threads": 1,
+    "requested_session_intra_threads": 1,
+    "spinning": false
+  },
+  "tokenizer_asset": {
+    "blake3": "c0ce68fa4a728f7afcadedaca908f674c0dc53f2ce5096dc4340e3709858f25b",
+    "bytes": 9463304,
+    "path": "/tmp/ark-wolf-memory-ab/assets-fp16/tokenizer.mmbpe"
+  },
+  "diagnostic_flags": "",
+  "default_profile": true,
+  "peak_rss_bytes": 680558592,
+  "vmmap_reports": [
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-0-after_tokenizer_before_session.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-1-after_session_before_warmup.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-2-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-3-after_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-4-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-5-after_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-6-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-68794-7-after_ort_run.txt"
+  ],
+  "memory_summary": {
+    "post_commit": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-core-68794-1-after_session_before_warmup.txt",
+      "physical_footprint": "288.4M",
+      "physical_footprint_peak": "499.1M",
+      "writable_regions": "Writable regions: Total=1.4G written=642K(0%) resident=484.3M(33%) swapped_out=3392K(0%) unallocated=988.3M(67%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE            143.1M   139.0M       0K       0K       0K       0K       0K        2         see MALLOC ZONE table below",
+      "total": "TOTAL                              2.4G   616.3M   284.7M    3808K       0K       0K       0K     1394"
+    },
+    "full_input": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-core-68794-7-after_ort_run.txt",
+      "physical_footprint": "567.0M",
+      "physical_footprint_peak": "567.0M",
+      "writable_regions": "Writable regions: Total=1.6G written=723K(0%) resident=373.3M(23%) swapped_out=192.8M(12%) unallocated=1.0G(65%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE            143.1M    91.2M    91.2M       0K       0K       0K       0K        2         see MALLOC ZONE table below",
+      "total": "TOTAL                              2.5G   504.9M   373.9M   193.2M       0K       0K       0K     1397"
+    },
+    "after_drop": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-main-68794-after_drop_100ms_no_allocator_relief.txt",
+      "physical_footprint": "48.8M",
+      "physical_footprint_peak": "567.0M",
+      "writable_regions": "Writable regions: Total=1.3G written=562K(0%) resident=245.1M(19%) swapped_out=4560K(0%) unallocated=1.0G(81%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE            159.1M   107.0M       0K       0K       0K       0K       0K        3         see MALLOC ZONE table below",
+      "total": "TOTAL                              2.2G   385.7M    44.0M    4992K       0K       0K       0K     1390"
+    }
+  }
+}

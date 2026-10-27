@@ -45,7 +45,7 @@ fn color_enabled(terminal: bool) -> bool {
         2 => false,
         _ => {
             terminal
-                && !std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
+                && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
                 && std::env::var_os("TERM").is_none_or(|v| v != "dumb")
         }
     }

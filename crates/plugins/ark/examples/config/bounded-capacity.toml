@@ -1,0 +1,27 @@
+# One active scanner, eight waiting inspections, and a shared 10-second work budget.
+[plugins.ark]
+pii = "redact"
+dlp = "redact"
+max_queued = 8
+queue_timeout_ms = 500
+scan_timeout_ms = 10000
+max_request_bytes = 262144
+
+[plugins.ark.scanner]
+max_input_bytes = 262144
+max_findings = 2000
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8
+backend = "cpu"
+precision = "int8_int4"
+
+[plugins.ark.scanner.wolf.runtime_options]
+intra_threads = 1
+inter_threads = 1
+spinning = false

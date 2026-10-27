@@ -287,9 +287,14 @@ where
     let log = config.log;
     let source = config.source().to_string();
     let reload_source = config.source().clone();
-    let app = match App::new(config) {
-        Ok(app) => app,
-        Err(e) => return fail(&format!("{source}: {e}")),
+    let app = match tokio::task::spawn_blocking(move || {
+        App::new(config).map_err(|error| error.to_string())
+    })
+    .await
+    {
+        Ok(Ok(app)) => app,
+        Ok(Err(error)) => return fail(&format!("{source}: {error}")),
+        Err(error) => return fail(&format!("{source}: startup worker failed: {error}")),
     };
     if models {
         return list_models(&app).await;
@@ -400,6 +405,16 @@ impl Overrides {
     }
 }
 
+// Configuration can prepare models and run synchronous warmup. Keep that work
+// off async workers while the previous build continues serving during reload.
+async fn reload_without_blocking(app: &App) {
+    let log = app.config().log;
+    let app = app.clone();
+    if let Err(error) = tokio::task::spawn_blocking(move || app.reload()).await {
+        log.say(Level::Error, &format!("reload worker failed: {error}"));
+    }
+}
+
 /// Reloads on each SIGHUP.
 #[cfg(unix)]
 async fn reload_on_hangup(app: App, mut hangup: tokio::signal::unix::Signal) {
@@ -407,7 +422,7 @@ async fn reload_on_hangup(app: App, mut hangup: tokio::signal::unix::Signal) {
         app.config()
             .log
             .say(Level::Info, "SIGHUP: reloading the config");
-        let _ = app.reload();
+        reload_without_blocking(&app).await;
     }
 }
 
@@ -424,7 +439,7 @@ async fn reload_on_change(app: App, path: PathBuf) {
             app.config()
                 .log
                 .say(Level::Info, "config file changed: reloading");
-            let _ = app.reload();
+            reload_without_blocking(&app).await;
         }
     }
 }

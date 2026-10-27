@@ -1,0 +1,43 @@
+[package]
+name = "respan-gateway-plugin-ark"
+description = "PII, DLP and prompt-injection protection with Wolf Defender"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+wolf = ["patronus-ark-core/wolf", "patronus-ark-core/download"]
+
+onnx-coreml = ["wolf", "patronus-ark-core/onnx-coreml"]
+
+onnx-cuda = ["wolf", "patronus-ark-core/onnx-cuda"]
+
+onnx-directml = ["wolf", "patronus-ark-core/onnx-directml"]
+
+onnx-tensorrt = ["wolf", "patronus-ark-core/onnx-tensorrt"]
+
+[dependencies]
+patronus-ark-core = { version = "0.1.13", default-features = false }
+respan-gateway-core.workspace = true
+blake3 = "1"
+respan-gateway-http.workspace = true
+respan-gateway-http-faults.workspace = true
+respan-gateway-conversation.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+
+[dev-dependencies]
+fs2 = "0.4"
+toml.workspace = true
+respan-gateway-plugin-tool-loop.workspace = true
+respan-gateway-conversation-http.workspace = true
+respan-gateway-http-transport.workspace = true
+mockllm = { git = "https://github.com/lihe07/mockllm", rev = "26cf441" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

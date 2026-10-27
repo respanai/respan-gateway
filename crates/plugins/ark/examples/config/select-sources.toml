@@ -1,0 +1,17 @@
+# Keep PII/DLP protection everywhere; run PI checks only on tool results.
+[plugins.ark]
+pii = "redact"
+dlp = "block"
+pii_sources = ["user_input", "tool_call", "tool_result"]
+dlp_sources = ["user_input", "tool_call", "tool_result"]
+pi_sources = ["tool_result"]
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8
+backend = "cpu"
+precision = "int8_int4"

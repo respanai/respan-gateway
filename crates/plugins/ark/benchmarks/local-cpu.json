@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "host": {
+    "os": "macos",
+    "arch": "aarch64",
+    "kernel": "23.6.0",
+    "cpu": "Apple M1",
+    "memory_bytes": "17179869184"
+  },
+  "profile": "release",
+  "provider": "mockllm FakeOpenAi over loopback HTTP",
+  "binary_wolf_feature": true,
+  "configured_active_scans": 1,
+  "ort_batch_size": 1,
+  "ort_intra_op_threads": 1,
+  "ort_inter_op_threads": 1,
+  "rayon_threads": 1,
+  "tokio_worker_threads": 2,
+  "model": {
+    "bundle": "/tmp/ark-wolf-rust-bundle-final",
+    "optional_manifest_present": true,
+    "model_file_bytes": 281826832,
+    "precision": "fp16",
+    "execution_provider": "cpu",
+    "decision_threshold": 0.5,
+    "manifest_revision": "a6b3bb2697cb69cca88f866e45c0f33f1d2793bc",
+    "asset_revision_file": null,
+    "model_blake3": "ddd703549cf65a9dc2a22311bfcc8851d7a66b82486ef0bdc9532e69a6b7b415",
+    "tokenizer_blake3": "c0ce68fa4a728f7afcadedaca908f674c0dc53f2ce5096dc4340e3709858f25b"
+  },
+  "native_categories": [
+    "pii",
+    "dlp",
+    "injection"
+  ],
+  "source_state": {
+    "adapter_commit": "a19c4cc",
+    "adapter_dirty_files": "M Cargo.lock\n M apps/gateway/src/app/built.rs\n M apps/gateway/src/compose/tests.rs\n M crates/plugins/ark/Cargo.toml\n M crates/plugins/ark/README.md\n M crates/plugins/ark/src/lib.rs\n M deny.toml\n M docs/configuration.md\n?? crates/plugins/ark/benchmarks/\n?? crates/plugins/ark/examples/\n?? crates/plugins/ark/tests/http_guardrails.rs\n?? crates/plugins/ark/tests/real_wolf.rs\n?? crates/plugins/ark/tests/support/\n?? crates/plugins/ark/tests/tool_loop.rs",
+    "core_commit": "60243b2",
+    "core_dirty_files": "M ark-core/build.rs\n M ark-core/src/wolf.rs\n M rust/src/ml/onnx.rs\n M rust/src/pipeline/l3_worker/dedicated.rs",
+    "rustc": "rustc 1.89.0 (29483883e 2025-08-04)"
+  },
+  "input_windows": {
+    "short": {
+      "bytes": 54,
+      "content_tokens": 9,
+      "windows_per_field_per_scan": 1,
+      "content_window_tokens": 256,
+      "overlap": 0
+    },
+    "long": {
+      "bytes": 4920,
+      "content_tokens": 661,
+      "windows_per_field_per_scan": 3,
+      "content_window_tokens": 256,
+      "overlap": 0
+    }
+  },
+  "modes": {
+    "baseline": {
+      "mode": "baseline",
+      "process_id": 58925,
+      "scanner_startup_ms": 0.000209,
+      "gateway_startup_ms": 1.39625,
+      "initial_rss_bytes": 6389760,
+      "initialized_rss_bytes": 7815168,
+      "warm_rss_bytes": 9420800,
+      "final_rss_bytes": 10059776,
+      "timings": {
+        "short": {
+          "samples": 12,
+          "p50_ms": 1.5078330000000002,
+          "p95_ms": 1.759459,
+          "min_ms": 1.4710420000000002,
+          "max_ms": 1.759459,
+          "sorted_samples_ms": [
+            1.4710420000000002,
+            1.489208,
+            1.495833,
+            1.496625,
+            1.499208,
+            1.5078330000000002,
+            1.5245,
+            1.525958,
+            1.559625,
+            1.57025,
+            1.6390829999999998,
+            1.759459
+          ]
+        },
+        "long": {
+          "samples": 3,
+          "p50_ms": 1.515916,
+          "p95_ms": 1.56875,
+          "min_ms": 1.502917,
+          "max_ms": 1.56875,
+          "sorted_samples_ms": [
+            1.502917,
+            1.515916,
+            1.56875
+          ]
+        }
+      },
+      "parallel_short": {
+        "clients": 4,
+        "elapsed_ms": 2.1878330000000004,
+        "latency": {
+          "samples": 4,
+          "p50_ms": 1.847166,
+          "p95_ms": 2.127916,
+          "min_ms": 0.792333,
+          "max_ms": 2.127916,
+          "sorted_samples_ms": [
+            0.792333,
+            1.847166,
+            1.989917,
+            2.127916
+          ]
+        }
+      },
+      "provider_requests": 21,
+      "guard_scan_passes_per_request": 0,
+      "peak_rss_bytes": 10207232,
+      "peak_rss_source": "time -l maximum resident set size, bytes"
+    },
+    "l1": {
+      "mode": "l1",
+      "process_id": 58955,
+      "scanner_startup_ms": 947.77325,
+      "gateway_startup_ms": 948.024958,
+      "initial_rss_bytes": 6422528,
+      "initialized_rss_bytes": 79052800,
+      "warm_rss_bytes": 86900736,
+      "final_rss_bytes": 87130112,
+      "timings": {
+        "short": {
+          "samples": 12,
+          "p50_ms": 2.015041,
+          "p95_ms": 2.1937089999999997,
+          "min_ms": 1.837375,
+          "max_ms": 2.1937089999999997,
+          "sorted_samples_ms": [
+            1.837375,
+            1.876958,
+            1.885041,
+            1.928791,
+            2.002833,
+            2.015041,
+            2.024667,
+            2.0322500000000003,
+            2.073541,
+            2.0852079999999997,
+            2.165958,
+            2.1937089999999997
+          ]
+        },
+        "long": {
+          "samples": 3,
+          "p50_ms": 4.9589170000000005,
+          "p95_ms": 5.413333000000001,
+          "min_ms": 4.91725,
+          "max_ms": 5.413333000000001,
+          "sorted_samples_ms": [
+            4.91725,
+            4.9589170000000005,
+            5.413333000000001
+          ]
+        }
+      },
+      "parallel_short": {
+        "clients": 4,
+        "elapsed_ms": 3.391833,
+        "latency": {
+          "samples": 4,
+          "p50_ms": 3.215375,
+          "p95_ms": 3.343709,
+          "min_ms": 1.914041,
+          "max_ms": 3.343709,
+          "sorted_samples_ms": [
+            1.914041,
+            3.215375,
+            3.258666,
+            3.343709
+          ]
+        }
+      },
+      "provider_requests": 21,
+      "guard_scan_passes_per_request": 2,
+      "peak_rss_bytes": 87228416,
+      "peak_rss_source": "time -l maximum resident set size, bytes"
+    },
+    "wolf": {
+      "mode": "wolf",
+      "process_id": 58995,
+      "scanner_startup_ms": 2524.9574159999997,
+      "gateway_startup_ms": 2525.229875,
+      "initial_rss_bytes": 6422528,
+      "initialized_rss_bytes": 754221056,
+      "warm_rss_bytes": 760561664,
+      "final_rss_bytes": 760709120,
+      "timings": {
+        "short": {
+          "samples": 12,
+          "p50_ms": 142.25225,
+          "p95_ms": 149.205084,
+          "min_ms": 129.49154199999998,
+          "max_ms": 149.205084,
+          "sorted_samples_ms": [
+            129.49154199999998,
+            130.418584,
+            139.720334,
+            140.390208,
+            142.178291,
+            142.25225,
+            142.49304199999995,
+            142.66825,
+            145.462167,
+            145.628875,
+            146.961916,
+            149.205084
+          ]
+        },
+        "long": {
+          "samples": 3,
+          "p50_ms": 3076.6330000000003,
+          "p95_ms": 3176.683833,
+          "min_ms": 3022.711209,
+          "max_ms": 3176.683833,
+          "sorted_samples_ms": [
+            3022.711209,
+            3076.6330000000003,
+            3176.683833
+          ]
+        }
+      },
+      "parallel_short": {
+        "clients": 4,
+        "elapsed_ms": 513.542917,
+        "latency": {
+          "samples": 4,
+          "p50_ms": 385.332208,
+          "p95_ms": 513.486208,
+          "min_ms": 323.145416,
+          "max_ms": 513.486208,
+          "sorted_samples_ms": [
+            323.145416,
+            385.332208,
+            449.397708,
+            513.486208
+          ]
+        }
+      },
+      "provider_requests": 21,
+      "guard_scan_passes_per_request": 2,
+      "peak_rss_bytes": 760741888,
+      "peak_rss_source": "time -l maximum resident set size, bytes"
+    }
+  },
+  "approximate_memory_deltas": {
+    "native_over_baseline_warm_bytes": 77479936,
+    "wolf_over_native_warm_bytes": 673660928
+  },
+  "notes": [
+    "Fresh process per mode; same release binary, optional ORT code linked in all modes.",
+    "Each guarded request scans at client and provider edges, so Wolf windows run twice.",
+    "RSS deltas include allocators, tokenizer, sessions and model execution; they are not pure weight sizes.",
+    "HTTP timing includes JSON, scanner work, mockllm request/reply and complete response consumption.",
+    "p95 is nearest rank; long samples are deliberately small and do not establish a service SLO.",
+    "Incoming request uses in-process respan_gateway_http::handle; the provider hop uses real loopback TCP/HTTP."
+  ]
+}

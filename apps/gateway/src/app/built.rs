@@ -108,7 +108,7 @@ impl Built {
         };
         let fronted = aggregate.clone();
         let (gateway, closer, aggregate) =
-            with_plugins(gateway, &config, aggregate, &plan, &formats, process);
+            with_plugins(gateway, &config, aggregate, &plan, &formats, process)?;
         let gateway = match respan_calls {
             Some(calls) => gateway.plugin(calls),
             None => gateway,
@@ -206,7 +206,7 @@ fn with_plugins(
     plan: &Plan,
     formats: &[KnownFormat],
     process: &Process,
-) -> Plugins {
+) -> Result<Plugins, Error> {
     let (log, switches) = (&process.log, &process.switches);
     let names: HashMap<String, String> = plan
         .upstreams
@@ -248,10 +248,21 @@ fn with_plugins(
         Some(closer) => gateway.plugin(closer.plugin()),
         None => gateway,
     };
-    let gateway = gateway
-        .plugin(Recorder::new(log.clone(), formats, names.clone()))
-        .plugin(routing(plan, formats))
-        .plugin(mcp_router);
+    let gateway = gateway.plugin(Recorder::new(log.clone(), formats, names.clone()));
+    // Observe refusals, then check chat input before any plugin can answer it.
+    #[cfg(feature = "ark")]
+    let ark = config
+        .plugins
+        .ark
+        .as_ref()
+        .map(|config| respan_gateway_plugin_ark::Ark::new(config.clone()))
+        .transpose()?;
+    #[cfg(feature = "ark")]
+    let gateway = match &ark {
+        Some(guard) => gateway.plugin(guard.clone()),
+        None => gateway,
+    };
+    let gateway = gateway.plugin(routing(plan, formats)).plugin(mcp_router);
     let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
     // A provider without a key of its own gets the client's.
     let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
@@ -282,6 +293,12 @@ fn with_plugins(
     // It answers the request itself: a request the tool loop runs is not
     // sent to a route's other candidates.
     let gateway = gateway.plugin(Dispatch::new(respan_gateway_http_faults::retryable));
+    // Check the final provider input after edits and on every tool/fallback call.
+    #[cfg(feature = "ark")]
+    let gateway = match &ark {
+        Some(guard) => gateway.plugin(guard.provider_guard()),
+        None => gateway,
+    };
     // Last: a call is priced at the model the plugins before chose.
     let pricing = respan_gateway_plugin_pricing::Pricing::new(plan.routes.catalog().clone())
         .provider_names(names)
@@ -293,7 +310,7 @@ fn with_plugins(
             .map(|m| m.0.clone())
         });
     let gateway = gateway.plugin(pricing);
-    (gateway, closer, aggregate_closer)
+    Ok((gateway, closer, aggregate_closer))
 }
 
 /// Video jobs' follow-ups, to the provider of each format whose job ids

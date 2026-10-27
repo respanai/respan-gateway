@@ -186,3 +186,40 @@ tool calls is kept the same way when OpenAI's Responses API serves it.
 Tool servers (`[tools.<name>]`: MCP servers and tool vendors such as
 Linkup), the `/mcp` endpoint that merges them, and the tool loop are in
 [mcp.md](mcp.md).
+
+## Local Ark guardrails
+
+Build with `--features ark` for native checks or `--features ark-wolf` to run
+Wolf Defender. Configure the plugin explicitly; it is off when its section is
+absent. Startup stays offline by default. Opt into preparing missing pinned model
+assets with `warmup.download = "missing"`; request scans never download assets.
+
+```toml
+[plugins.ark]
+pii = "redact"
+dlp = "redact"
+pii_sources = ["user_input", "tool_call", "tool_result"]
+dlp_sources = ["user_input", "tool_call", "tool_result"]
+pi_sources = ["user_input", "tool_result"]
+max_queued = 32
+queue_timeout_ms = 1000
+scan_timeout_ms = 30000
+max_request_bytes = 1048576
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000 # Asset acquisition only; separate from scan deadlines.
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8 # Example policy value; validate your threshold.
+backend = "cpu"
+```
+
+PII/DLP can independently block or redact each supported source. PI blocks
+only on selected `pi_sources`. `user_input` means text in `Role::User` messages;
+tool calls/results use their typed Respan content. Reasoning and passthrough
+metadata are not scanned. There is no separate Skill source in the chat API.
+
+See the [plugin README](../crates/plugins/ark/README.md) for the complete setting
+table, native detector controls, scan matrix and exact admission/error behavior.

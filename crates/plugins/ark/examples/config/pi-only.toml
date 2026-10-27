@@ -1,0 +1,18 @@
+# Native PI and Wolf Defender on user input and tool results; PII/DLP disabled.
+[plugins.ark]
+pii_sources = []
+dlp_sources = []
+pi_sources = ["user_input", "tool_result"]
+
+[plugins.ark.scanner]
+categories = ["injection"]
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8
+backend = "cpu"
+precision = "fp16"

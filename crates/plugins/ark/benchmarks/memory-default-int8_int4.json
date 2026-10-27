@@ -1,0 +1,119 @@
+{
+  "current_core_commit": "c079462",
+  "current_core_dirty_files": "M CHANGELOG.md\n M README.md\n M ark-core/README.md\n M ark-core/examples/wolf_benchmark.rs\n M ark-core/src/lib.rs\n M ark-core/src/ml/tokenizer_store.rs\n M ark-core/src/onnx.rs\n M ark-core/src/scanner.rs\n M ark-core/src/wolf.rs\n M ark-core/tests/wolf_runtime.rs\n M docs/rust-api.md\n M rust/src/assets/download.rs\n M rust/src/ml/onnx.rs\n M scripts/generate_docs.py\n?? ark-core/src/control.rs\n?? ark-core/tests/fixtures/generate_wolf_cancellable.py\n?? ark-core/tests/fixtures/wolf_cancellable.onnx\n?? ark-core/tests/fixtures/wolf_synthetic_reference_254.json",
+  "historical_core_commit": "c079462",
+  "mode": "after",
+  "model": {
+    "execution_provider": "cpu",
+    "full_input_bytes": 508,
+    "full_input_windows": 1,
+    "model_path": "/tmp/ark-wolf-memory-ab/assets-int8/onnx/int8_int4_embeddings/model.onnx",
+    "precision_reported": "int8_int4",
+    "sequence_contract": "current Core; full 254 content input reported as one window"
+  },
+  "model_asset": {
+    "blake3": "01f9d18d27b0aa289dbd10f76784ae5c8442f85542834853f15b4cf97ded96c6",
+    "bytes": 96296126,
+    "path": "/tmp/ark-wolf-memory-ab/assets-int8/onnx/int8_int4_embeddings/model.onnx"
+  },
+  "notes": [
+    "After-drop RSS does not by itself prove a leak: allocator-retained pages are not forcibly relieved.",
+    "Historical legacy global runtime pool uses historical defaults; Core before retains its natural implicit environment.",
+    "Requested session threads are identical; effective global-pool behavior is part of the before/after change, not silently normalized away.",
+    "No low-memory diagnostic flags are applied to either production loader.",
+    "Native L1 and HTTP are absent; compare model/session increments, not the historical 725MiB total adapter process."
+  ],
+  "optional_manifest_present": false,
+  "ort_runtime_info": "ORT Build Info: git-branch=rel-1.28.0, git-commit-id=da9b5e3, fp8-kv-cache=1, build type=Release",
+  "phases": [
+    {
+      "elapsed_ms": 1345.604375,
+      "phase": "process_before_any_runtime_initialization",
+      "rss_bytes": 5603328
+    },
+    {
+      "elapsed_ms": 10124.30925,
+      "phase": "constructor_returned_includes_empty_backend_warmup",
+      "rss_bytes": 244252672
+    },
+    {
+      "elapsed_ms": 15960.089915999999,
+      "phase": "after_short_inference",
+      "rss_bytes": 244269056
+    },
+    {
+      "elapsed_ms": 21646.634625000002,
+      "phase": "after_254_content_input",
+      "rss_bytes": 244432896
+    },
+    {
+      "elapsed_ms": 23376.50125,
+      "phase": "after_drop_immediate",
+      "rss_bytes": 244449280
+    },
+    {
+      "elapsed_ms": 25363.238500000003,
+      "phase": "after_drop_100ms_no_allocator_relief",
+      "rss_bytes": 244449280
+    }
+  ],
+  "process_id": 69325,
+  "runtime_policy": "current Core natural constructor, no forced warmup",
+  "settings": {
+    "batch": 1,
+    "environment_ort_dylib_path": null,
+    "environment_rayon_num_threads": "1",
+    "graph_optimization": "Level3",
+    "http": false,
+    "native_detectors": false,
+    "probe_flags": "",
+    "provider": "cpu",
+    "requested_session_inter_threads": 1,
+    "requested_session_intra_threads": 1,
+    "spinning": false
+  },
+  "tokenizer_asset": {
+    "blake3": "c0ce68fa4a728f7afcadedaca908f674c0dc53f2ce5096dc4340e3709858f25b",
+    "bytes": 9463304,
+    "path": "/tmp/ark-wolf-memory-ab/assets-int8/tokenizer.mmbpe"
+  },
+  "diagnostic_flags": "",
+  "default_profile": true,
+  "peak_rss_bytes": 244449280,
+  "vmmap_reports": [
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-0-after_tokenizer_before_session.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-1-after_session_before_warmup.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-2-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-3-after_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-4-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-5-after_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-6-before_ort_run.txt",
+    "/tmp/ark-wolf-memory-probe/vmmap-core-69325-7-after_ort_run.txt"
+  ],
+  "memory_summary": {
+    "post_commit": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-core-69325-1-after_session_before_warmup.txt",
+      "physical_footprint": "127.3M",
+      "physical_footprint_peak": "184.5M",
+      "writable_regions": "Writable regions: Total=857.0M written=466K(0%) resident=219.0M(26%) swapped_out=0K(0%) unallocated=638.0M(74%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE             46.9M    46.9M       0K       0K       0K       0K       0K        1         see MALLOC ZONE table below",
+      "total": "TOTAL                              1.8G   349.3M   127.4M       0K       0K       0K       0K     1391"
+    },
+    "full_input": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-core-69325-7-after_ort_run.txt",
+      "physical_footprint": "125.0M",
+      "physical_footprint_peak": "184.5M",
+      "writable_regions": "Writable regions: Total=857.0M written=466K(0%) resident=219.2M(26%) swapped_out=0K(0%) unallocated=637.8M(74%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE             46.9M    46.9M       0K       0K       0K       0K       0K        1         see MALLOC ZONE table below",
+      "total": "TOTAL                              1.8G   362.1M   125.0M       0K       0K       0K       0K     1391"
+    },
+    "after_drop": {
+      "file": "/tmp/ark-wolf-memory-probe/vmmap-main-69325-after_drop_100ms_no_allocator_relief.txt",
+      "physical_footprint": "45.0M",
+      "physical_footprint_peak": "184.5M",
+      "writable_regions": "Writable regions: Total=857.0M written=466K(0%) resident=219.2M(26%) swapped_out=0K(0%) unallocated=637.8M(74%)",
+      "malloc_large_reusable": "MALLOC_LARGE_REUSABLE             93.8M    93.8M       0K       0K       0K       0K       0K        2         see MALLOC ZONE table below",
+      "total": "TOTAL                              1.8G   363.1M    45.0M       0K       0K       0K       0K     1391"
+    }
+  }
+}

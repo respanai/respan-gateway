@@ -854,3 +854,40 @@ async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
         );
     }
 }
+
+#[cfg(feature = "ark")]
+#[test]
+fn ark_configuration_is_optional_and_parses_native_policy() {
+    let config = Config::parse(
+        r#"
+[providers.local]
+formats=["openai-chat"]
+base_url="http://127.0.0.1:12345/v1"
+[plugins.ark]
+pii="redact"
+dlp="redact"
+pii_sources=["user_input", "tool_result"]
+dlp_sources=["tool_call"]
+pi_sources=["tool_result"]
+max_queued=2
+[plugins.ark.scanner]
+max_input_bytes=4096
+max_findings=32
+"#,
+    )
+    .expect("valid Ark configuration");
+    let ark = config.plugins.ark.expect("configured Ark");
+    assert!(matches!(ark.pii, respan_gateway_plugin_ark::Action::Mask));
+    assert!(matches!(ark.dlp, respan_gateway_plugin_ark::Action::Mask));
+    assert_eq!(ark.pii_sources.len(), 2);
+    assert_eq!(
+        ark.dlp_sources,
+        vec![respan_gateway_plugin_ark::ScanSource::ToolCall]
+    );
+    assert_eq!(
+        ark.pi_sources,
+        vec![respan_gateway_plugin_ark::ScanSource::ToolResult]
+    );
+    assert_eq!(ark.scanner.max_input_bytes, 4096);
+    assert_eq!(ark.max_queued, 2);
+}

@@ -1,0 +1,8 @@
+# Build with --features ark. PII, DLP and native PI run without loading a model.
+[plugins.ark]
+pii = "redact"
+dlp = "redact"
+
+[plugins.ark.scanner]
+pii_mode = "strict"
+dlp_mode = "strict"

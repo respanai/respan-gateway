@@ -1,0 +1,14 @@
+# Add this fragment to your gateway.toml. Build with --features ark-wolf.
+[plugins.ark]
+pii = "block"
+dlp = "block"
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8 # Example: calibrate for your traffic.
+backend = "cpu"
+precision = "auto"

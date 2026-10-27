@@ -1,0 +1,14 @@
+# Redact sensitive data; prompt-injection detections still block.
+[plugins.ark]
+pii = "redact"
+dlp = "redact"
+
+[plugins.ark.warmup]
+download = "missing"
+download_timeout_ms = 600000
+
+[plugins.ark.scanner.wolf]
+bundle_dir = "/srv/models/wolf-defender"
+threshold = 0.8
+backend = "cpu"
+precision = "auto"

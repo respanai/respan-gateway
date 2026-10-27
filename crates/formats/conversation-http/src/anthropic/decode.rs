@@ -236,7 +236,7 @@ impl AnthropicDecoder {
     }
 
     /// The events of a stream that ended well.
-    fn end_stream(&mut self, _out: &mut Vec<Output>) -> Result<(), Fault> {
+    fn end_stream(&mut self, _out: &mut [Output]) -> Result<(), Fault> {
         ended(self.done)
     }
 

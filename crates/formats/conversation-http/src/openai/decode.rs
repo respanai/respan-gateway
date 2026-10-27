@@ -304,7 +304,7 @@ impl OpenAiDecoder {
 
     /// The events of a stream that ended well: whole once it said its
     /// finish and usage, else cut short.
-    fn end_stream(&mut self, _out: &mut Vec<Output>) -> Result<(), Fault> {
+    fn end_stream(&mut self, _out: &mut [Output]) -> Result<(), Fault> {
         ended(self.done || self.finished && self.counted)
     }
 
