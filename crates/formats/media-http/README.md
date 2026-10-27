@@ -108,6 +108,16 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   it; another id is not found, 404. An operation not done is `in_progress`,
   done with videos `completed`, done with an error, or with none as when
   Veo's filters took them all, `failed`.
+- A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews
+  (shut down 2026-10-22), is created by `POST /interactions`: its prompt,
+  after its reference image if any, the `input`, its `size` the
+  `response_format`'s `aspect_ratio` and `resolution`, its `gemini-veo`
+  native fields the body's own; it chooses its length, so `seconds` is
+  dropped. Its video is a file of the Files API, asked at a URI, and the
+  file is its job: its name, `files/{id}`, spelled as an operation's,
+  retrieved by `GET /files/{id}`, `in_progress` until the file is `ACTIVE`,
+  `completed` then with the file's download URI as its video, `failed` if
+  `FAILED` or if the answer held no video.
 - Content is a `GET` of the URL its job names at the provider's base, its
   path after the version, so the key goes to no other host. The Gemini API
   may redirect it to storage: the transport follows only if told to

@@ -128,7 +128,7 @@ function Failure({ title, message, onRetry }: { title: string; message: string; 
 }
 
 export function VideoTab() {
-  const choice = useModelChoice("video", "veo-3.0-generate-001");
+  const choice = useModelChoice("video", "gemini-omni-1.1-flash");
   const api = useApiChoice("video", videoApis);
   const call = useLastCall();
   const [prompt, setPrompt] = useState("");

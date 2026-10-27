@@ -44,7 +44,7 @@ describe("VideoTab", () => {
     const bar = await screen.findByRole("progressbar", { name: "Video progress" });
     await waitFor(() => expect(bar).toHaveAttribute("aria-valuenow", "40"));
     expect(JSON.parse(String(calls.find((c) => c.key === "POST /v1/videos")?.init.body))).toEqual({
-      model: "veo-3.0-generate-001",
+      model: "gemini-omni-1.1-flash",
       prompt: "a paper boat",
       seconds: "4",
     });
@@ -109,14 +109,14 @@ describe("VideoTab", () => {
   it("points at the providers page when no provider serves video", async () => {
     serve({
       "GET /v1/models": models,
-      "POST /v1/videos": () => json({ error: { message: "no provider for veo-3.0-generate-001" } }, 404),
+      "POST /v1/videos": () => json({ error: { message: "no provider for gemini-omni-1.1-flash" } }, 404),
     });
     create();
     expect(await screen.findByText("No provider serves video yet")).toBeInTheDocument();
   });
 
   it("speaks Gemini Veo: an operation polled by its name, its video at the gateway", async () => {
-    const name = "models/veo-3.0-generate-001/operations/veo_op1";
+    const name = "models/gemini-omni-1.1-flash/operations/veo_op1";
     const operation = (extra: object = {}) => () => json({ name, ...extra });
     const uri = "http://gateway.example/v1beta/files/veo_op1:download?alt=media";
     const calls = serve({
@@ -130,7 +130,7 @@ describe("VideoTab", () => {
           routes: [],
           defaults: [],
         }),
-      "POST /v1beta/models/veo-3.0-generate-001:predictLongRunning": operation(),
+      "POST /v1beta/models/gemini-omni-1.1-flash:predictLongRunning": operation(),
       [`GET /v1beta/${name}`]: poll(
         operation(),
         operation({ done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri } }] } } }),

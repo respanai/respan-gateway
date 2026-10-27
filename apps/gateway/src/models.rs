@@ -288,7 +288,7 @@ pub(crate) fn kind_of(id: &str) -> &'static str {
         _ if has(&["realtime", "-live", "live-", "native-audio"]) => kind::REALTIME,
         _ if has(&["whisper", "transcribe"]) => kind::TRANSCRIPTION,
         _ if has(&["tts"]) => kind::SPEECH,
-        _ if has(&["sora", "veo"]) => kind::VIDEO,
+        _ if has(&["sora", "veo", "gemini-omni"]) => kind::VIDEO,
         _ if has(&["jev", "clef", "span-02", "decision", "systemone"]) => kind::DECISION,
         _ => kind::CHAT,
     }
@@ -423,6 +423,8 @@ mod tests {
         assert_eq!(kind("gpt-4o-mini-tts"), "speech");
         assert_eq!(kind("sora-2"), "video");
         assert_eq!(kind("veo-3.0-generate-001"), "video");
+        assert_eq!(kind("gemini-omni-1.1-flash"), "video");
+        assert_eq!(kind("omni-moderation-latest"), "chat");
         assert_eq!(kind("gpt-realtime"), "realtime");
         assert_eq!(kind("voxtral-mini-transcribe-realtime-2602"), "realtime");
         assert_eq!(kind("gemini-live-2.5-flash-preview"), "realtime");

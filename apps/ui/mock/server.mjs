@@ -261,7 +261,7 @@ const allModels = [
   ["whisper-1", "openai", "transcription"],
   ["whisper-large-v3", "groq", "transcription"],
   ["gpt-4o-mini-tts", "openai", "speech"],
-  ["veo-3.0-generate-001", "gemini", "video"],
+  ["gemini-omni-1.1-flash", "gemini", "video"],
   ["text-embedding-3-small", "openai", "embedding"],
 ].map(([id, owned_by, kind]) => ({ id, object: "model", owned_by, kind }));
 // A route named for one model is a model clients may ask for, as `/v1/models` lists it.
@@ -1032,7 +1032,7 @@ async function videos(req, res, path) {
     const job = {
       id: `veo_${Math.random().toString(36).slice(2, 10)}`,
       created: Date.now(),
-      model: body.model ?? "veo-3.0-generate-001",
+      model: body.model ?? "gemini-omni-1.1-flash",
       seconds: body.seconds ?? "4",
       fail: /fail/i.test(body.prompt ?? ""),
     };

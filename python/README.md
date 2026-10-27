@@ -54,7 +54,7 @@ client.audio.speech.create(model="tts-1", voice="alloy", input="hi").read()   # 
 client.embeddings.create(model="text-embedding-3-small", input="hi").data[0].embedding
 # (the SDK asks for base64 and decodes it; the gateway passes it through)
 
-job = client.videos.create(model="veo-3.0-generate-001", prompt="waves")  # Veo; then poll:
+job = client.videos.create(model="gemini-omni-1.1-flash", prompt="waves")  # then poll:
 job = client.videos.retrieve(job.id)                             # queued -> completed
 client.videos.download_content(job.id).read()                    # mp4 bytes
 ```
