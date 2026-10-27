@@ -24,3 +24,5 @@ respan-gateway-sse.workspace = true
 respan-gateway-vendor-kit.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

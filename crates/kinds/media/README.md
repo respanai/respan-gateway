@@ -45,6 +45,9 @@ removed on 2026-09-24; a compatible provider's), Veo's `veo_`.
 a `List` after one) to its job's provider by that spelling. Providers that
 spell ids alike, such as two deployments of one vendor, have their ids
 wrapped on the way out as `<provider>~<id>`, and unwrapped before the call.
+An id that does not match its maker's configured spelling is also wrapped;
+uniquely spelled ids that match remain unchanged. This applies to individual
+jobs, jobs in a page, and deleted ids.
 
 Some providers serve a finished job's content only at the URLs the job
 names (`Job::videos`), as Veo does: `video::LocateContent`, given those

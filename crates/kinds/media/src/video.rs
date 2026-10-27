@@ -18,8 +18,8 @@ use bytes::Bytes;
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_core::futures::StreamExt;
 use respan_gateway_core::{
-    ClientContext, ErrorCode, Fault, FormatId, NativeFields, NativeValue, Plugin, Response,
-    async_trait,
+    ClientContext, ErrorCode, Fault, FormatId, NativeFields, NativeValue, Plugin, ProviderContext,
+    Response, async_trait,
 };
 use serde_json::Value;
 
@@ -394,8 +394,9 @@ struct Maker {
 /// `List` after it) to the provider that made the job, which only the job's
 /// id says: by its
 /// spelling (OpenAI's start `video_`, Veo's `veo_`), or, when several
-/// providers spell their ids alike, by the provider's name it wraps them in
-/// on the way out, `<provider>~<id>`, and unwraps on the way in. An id
+/// providers spell their ids alike or an id does not match its maker's
+/// spelling, by the provider's name it wraps them in on the way out,
+/// `<provider>~<id>`, and unwraps on the way in. An id
 /// spelled as several providers' goes to the target if it is one of them,
 /// else to the first. Register it after the router that picks the target.
 #[derive(Debug, Clone, Default)]
@@ -473,16 +474,20 @@ impl Plugin for VideoJobs {
                 })?;
             }
         }
-        let target = cx.target();
-        let maker = self.makers.iter().find(|m| target == Some(&m.internal));
-        if let Some(maker) = maker.filter(|m| m.shared) {
-            let provider = maker.provider.clone();
-            cx.filter(move |output: &mut Output| {
-                wrap_ids(output, &provider);
+        Ok(None)
+    }
+
+    async fn on_provider(&self, px: &mut ProviderContext) -> Result<(), Fault> {
+        if px.is_kind::<Input>()
+            && let Some(maker) = self.makers.iter().find(|m| m.internal == px.provider())
+        {
+            let maker = maker.clone();
+            px.filter(move |output: &mut Output| {
+                wrap_ids(output, &maker);
                 Ok(())
             })?;
         }
-        Ok(None)
+        Ok(())
     }
 }
 
@@ -508,8 +513,12 @@ fn set_job_id(input: &mut Input, inner: &str) {
     }
 }
 
-fn wrap_ids(output: &mut Output, provider: &str) {
-    let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
+fn wrap_ids(output: &mut Output, maker: &Maker) {
+    let wrap = |id: &mut String| {
+        if maker.shared || !id.starts_with(&maker.spelling) {
+            *id = format!("{}{SEPARATOR}{id}", maker.provider);
+        }
+    };
     match output {
         Output::Job(job) => wrap(&mut job.id),
         Output::Jobs(jobs) => jobs.jobs.iter_mut().for_each(|job| wrap(&mut job.id)),
@@ -558,13 +567,66 @@ mod tests {
     #[test]
     fn ids_are_wrapped_in_their_provider() {
         let mut deleted = Output::Deleted("video_1".into());
-        wrap_ids(&mut deleted, "east");
+        wrap_ids(&mut deleted, &jobs().makers[0]);
         assert_eq!(deleted, Output::Deleted("east~video_1".into()));
         let mut input = Input::Retrieve {
             id: "east~video_1".into(),
         };
         set_job_id(&mut input, "video_1");
         assert_eq!(input.job_id(), Some("video_1"));
+    }
+
+    #[test]
+    fn opaque_ids_and_shared_spellings_are_wrapped_in_jobs_and_pages() {
+        let jobs = jobs();
+        let unique = &jobs.makers[2];
+        let mut page = Output::Jobs(Jobs::new(
+            vec![
+                Job::new("opaque", Status::Queued),
+                Job::new("veo_123", Status::Queued),
+            ],
+            false,
+        ));
+        wrap_ids(&mut page, unique);
+        let Output::Jobs(page) = page else {
+            unreachable!()
+        };
+        assert_eq!(page.jobs[0].id, "gemini~opaque");
+        assert_eq!(page.jobs[1].id, "veo_123");
+        let mut job = Output::Job(Job::new("video_123", Status::Queued));
+        wrap_ids(&mut job, &jobs.makers[0]);
+        let Output::Job(job) = job else {
+            unreachable!()
+        };
+        assert_eq!(job.id, "east~video_123");
+        let mut deleted = Output::Deleted("opaque".into());
+        wrap_ids(&mut deleted, unique);
+        assert_eq!(deleted, Output::Deleted("gemini~opaque".into()));
+        for input in [
+            Input::Retrieve {
+                id: page.jobs[0].id.clone(),
+            },
+            Input::Content {
+                id: page.jobs[0].id.clone(),
+                variant: Variant::Video,
+                url: None,
+            },
+            Input::List {
+                after: Some(page.jobs[0].id.clone()),
+                limit: None,
+                order: None,
+            },
+        ] {
+            let id = followed(&input).expect("followed job id");
+            let (maker, inner) = jobs
+                .maker(id, Some("east:openai-videos"))
+                .expect("job owner");
+            assert_eq!((maker.provider.as_str(), inner), ("gemini", "opaque"));
+            let inner = inner.to_owned();
+            let mut input = input;
+            set_job_id(&mut input, &inner);
+            assert_eq!(followed(&input), Some("opaque"));
+        }
     }
 
     /// Regression: a page's `after` kept the wrapping its id was given out

@@ -37,7 +37,7 @@ Each vendor is in one of two tiers:
 |:-:|---|---|---|---|
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat` |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
@@ -107,3 +107,23 @@ How each vendor's quirks are handled, and how to add one, is in
 
 Logos are each vendor's trademark, shown only to identify it. Most are from
 [LobeHub Icons](https://github.com/lobehub/lobe-icons) (MIT).
+
+## OpenRouter media
+
+OpenRouter's [Images API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation)
+is served to OpenAI image clients through `/images`: edit images become
+`input_references`; masks fail before sending. Image streams remain incremental,
+including partial images, with reported MIME types, token counts and native cost.
+
+[Transcription](https://openrouter.ai/docs/guides/overview/multimodal/stt)
+uses its supported OpenAI multipart upload. [Speech](https://openrouter.ai/docs/guides/overview/multimodal/tts)
+uses raw audio; an omitted format explicitly requests MP3 to match OpenAI's
+default, since OpenRouter defaults to PCM. Requested speech events are framed
+at the client edge.
+
+[Videos](https://openrouter.ai/docs/guides/overview/multimodal/video-generation)
+support create, retrieve and video content. Seconds become integer `duration`,
+and a reference image becomes the first `frame_images` entry. Conflicting
+`seconds` and `duration`, list, remix, delete, thumbnails and spritesheets fail
+before sending. Pending jobs are queued; cancelled and expired jobs are failed.
+The job retains reported `usage.cost` as native data.
