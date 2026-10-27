@@ -35,9 +35,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
+    Asked, Keep, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
+    decode_content, decode_message, encode_content, encode_message, kept_fields, merge_details,
+    merge_fields, merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
     unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
@@ -169,7 +169,7 @@ fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
             "Anthropic has no place for a system message after the conversation starts",
         ));
     }
-    if system.iter().any(|m| !m.native.is_empty()) {
+    if !system.iter().all(unsaid) {
         return Err(Fault::bad_request(
             "Anthropic's system prompt has no place for a message's other fields",
         ));
@@ -199,10 +199,18 @@ fn writable(m: &Message) -> std::borrow::Cow<'_, Message> {
     m
 }
 
-/// Whether a message says nothing: no content, or only empty text.
+/// Whether a message says nothing: no content, or only empty text, and no
+/// fields but those another format drops.
 fn is_empty(m: &Message) -> bool {
     let empty = |c: &Content| matches!(c, Content::Text { text, .. } if text.is_empty());
-    m.native.is_empty() && m.content.iter().all(empty)
+    m.content.iter().all(empty) && unsaid(m)
+}
+
+/// Whether a message's fields are none Anthropic writes or refuses.
+fn unsaid(m: &Message) -> bool {
+    let what = |_: &str| String::new();
+    let kept = kept_fields(ANTHROPIC, &m.native, what, Keep::CACHE_MARKER);
+    kept.is_ok_and(|f| f.is_empty())
 }
 
 /// Anthropic counts no reasoning apart from the output.

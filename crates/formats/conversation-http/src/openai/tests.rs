@@ -6,6 +6,7 @@ use respan_gateway_http::{Decoder, Sse};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
 use crate::anthropic::AnthropicMessages;
+use crate::responses::OpenAiResponses;
 use crate::schema::Held;
 use respan_gateway_conversation::{Content, Media, MediaSource, Message, Tool, ToolChoice};
 use respan_gateway_core::NativeFields;
@@ -306,15 +307,15 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":{\"usage\""), "{stream}");
     assert!(stream.contains("\"reasoning_content\":\"hm\""), "{stream}");
-    // A request's reasoning is a message field like any other.
+    // A request's reasoning is an inert message field.
     let body = json!({ "model": "m", "messages": [
         { "role": "assistant", "content": "ok", "reasoning_content": "hm" },
     ]});
     let chat = OpenAiChat.decode_json(&body);
     assert_eq!(chat.messages[0].content, [Content::from("ok")]);
     assert_eq!(
-        chat.messages[0].native.fields().get("reasoning_content"),
-        Some(&json!("hm"))
+        chat.messages[0].native.fields().get(crate::schema::INERT),
+        Some(&json!({ "reasoning_content": "hm" }))
     );
     assert_eq!(
         written(body, |_| {})
@@ -977,10 +978,10 @@ fn what_a_conversation_cannot_hold_is_kept_or_refused() {
     assert_eq!(chat.tools, [Tool::new("f", Value::Null)]);
     assert_eq!(chat.messages[0].text(), "hi");
     assert_eq!(
-        chat.messages[0].native.fields().get("name"),
-        Some(&json!("alice"))
+        chat.messages[0].native.fields().get(crate::schema::INERT),
+        Some(&json!({ "name": "alice" }))
     );
-    // To another format it is refused; to OpenAI it is kept.
+    // To another format it is refused, for its `seed`; to OpenAI it is kept.
     let err = AnthropicMessages.encode_request(&chat).err();
     assert_eq!(
         err.map(|e| respan_gateway_http_faults::status(&e).as_u16()),
@@ -1665,4 +1666,78 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
         // Gemini has no thinking level above `high`, and does not get one.
         assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
     }
+}
+
+/// What vendors of Chat Completions add to a message: dropped by another
+/// format, written back as it came by this one.
+#[test]
+fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one() {
+    let fields = [
+        ("name", json!("bot")),
+        ("reasoning_content", json!("hm")),
+        ("reasoning", json!("hm")),
+        (
+            "reasoning_details",
+            json!([{ "type": "reasoning.text", "text": "hm", "format": "anthropic-claude-v1" }]),
+        ),
+        (
+            "thinking_blocks",
+            json!([{ "type": "thinking", "thinking": "hm", "signature": "sig" }]),
+        ),
+        ("cache_control", json!({ "type": "ephemeral" })),
+    ];
+    for (key, value) in fields {
+        let mut assistant = json!({ "role": "assistant", "content": "ok" });
+        assistant[key] = value.clone();
+        let body = json!({ "model": "m", "messages": [
+            { "role": "user", "content": "hi" },
+            assistant,
+            { "role": "user", "content": "more" },
+        ]});
+        let chat = OpenAiChat.decode_json(&body);
+        let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
+        let input = sent.map(|v| v["input"][1].clone()).ok();
+        assert_eq!(
+            input,
+            Some(json!({ "role": "assistant", "content": "ok" })),
+            "{key}"
+        );
+        let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+        let message = sent.map(|v| v["messages"][1].clone()).ok();
+        assert_eq!(
+            message,
+            Some(json!({ "role": "assistant", "content": "ok" })),
+            "{key}"
+        );
+        let back = written(body.clone(), |_| {}).ok();
+        assert_eq!(
+            back.map(|v| v["messages"][1][key].clone()),
+            Some(value),
+            "{key}"
+        );
+    }
+    // On a user's message too, and on a tool result's.
+    let body = json!({ "model": "m", "messages": [
+        { "role": "user", "name": "alice", "content": "hi" },
+        { "role": "assistant", "content": null, "tool_calls": [
+            { "id": "t", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
+        { "role": "tool", "tool_call_id": "t", "name": "f", "content": "42" },
+    ]});
+    let chat = OpenAiChat.decode_json(&body);
+    assert!(OpenAiResponses.encode_request(&chat).is_ok());
+    assert!(AnthropicMessages.encode_request(&chat).is_ok());
+    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
+}
+
+#[test]
+fn a_messages_unknown_field_is_still_refused_by_another_format() {
+    let body = json!({ "model": "m", "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": "ok", "reasoning_content": "hm", "x_vendor": 1 },
+        { "role": "user", "content": "more" },
+    ]});
+    let chat = OpenAiChat.decode_json(&body);
+    assert!(OpenAiResponses.encode_request(&chat).is_err());
+    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
 }

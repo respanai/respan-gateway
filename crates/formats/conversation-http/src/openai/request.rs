@@ -5,9 +5,9 @@
 //! request, the message or the tool.
 
 use crate::schema::{
-    Keep, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
-    encode_message, encode_native, kept_fields, merge_missing, native_fields, only, own_native,
-    reasoning_of, remainder, rest_of, set, source_url, tool_field, untranslatable,
+    INERT, Keep, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
+    encode_message, encode_native, kept_fields, merge_missing, message_fields, native_fields, only,
+    own_native, reasoning_of, remainder, rest_of, set, source_url, tool_field, untranslatable,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -70,7 +70,7 @@ fn openai_choice(choice: &Value) -> Option<ToolChoice> {
 }
 
 /// How a refusal names a message's fields.
-fn message_fields(_: &str) -> String {
+fn refused_fields(_: &str) -> String {
     "messages with fields the kind has no place for".into()
 }
 
@@ -115,12 +115,39 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
     Ok(())
 }
 
+/// A message's fields of Chat Completions' vendors that no other format has
+/// a place for and that it can leave out: a participant's `name`, the
+/// reasoning an assistant sends back (`reasoning_content`, `reasoning`,
+/// `reasoning_details`, `thinking_blocks`), which a provider takes back only
+/// from the format it came in, and a message's `cache_control`, a hint.
+const INERT_FIELDS: &[&str] = &[
+    "name",
+    "reasoning_content",
+    "reasoning",
+    "reasoning_details",
+    "thinking_blocks",
+    "cache_control",
+];
+
 /// An OpenAI message read as the kind's
 /// ([`decode_message`](crate::schema::decode_message)) with what it says
 /// beside its content: a tool message as a user message of one result; an
-/// assistant's `tool_calls` as calls after its content. What the kind cannot
-/// say of them stays in the message's `native`.
+/// assistant's `tool_calls` as calls after its content. Its
+/// [`INERT_FIELDS`] are [`INERT`]: written back as they came by this format,
+/// dropped by another. What else the kind cannot say of them stays in the
+/// message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
+    if let Some(native) = &mut message.native {
+        let mut inert = Map::new();
+        for key in INERT_FIELDS {
+            if let Some(value) = native.fields.shift_remove(*key) {
+                inert.insert((*key).into(), value);
+            }
+        }
+        if !inert.is_empty() {
+            native.fields.insert(INERT.into(), inert.into());
+        }
+    }
     if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
         let Some(id) = m["tool_call_id"].as_str() else {
             return;
@@ -239,7 +266,7 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     }
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
-        encode_native(OPENAI, &m.native, only, message_fields, Keep::default())?;
+        only.extend(message_fields(OPENAI, &m.native, refused_fields)?);
         return Ok(out.into_iter().map(Value::Object).collect());
     }
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();

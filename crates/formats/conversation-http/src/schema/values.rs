@@ -98,6 +98,21 @@ pub(crate) fn kept_fields(
     Ok(fields)
 }
 
+/// The fields of a message's `native` to write in `format`, as
+/// [`kept_fields`] says, the [`INERT`] ones written as they came by their
+/// own format.
+pub(crate) fn message_fields(
+    format: &str,
+    native: &Option<NativeFields>,
+    what: impl FnOnce(&str) -> String,
+) -> Result<Map<String, Value>, Fault> {
+    let mut fields = kept_fields(format, native, what, Keep::default())?;
+    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
+        fields.extend(inert);
+    }
+    Ok(fields)
+}
+
 /// Write the fields of `native` into `v` as [`kept_fields`] says.
 pub(crate) fn encode_native(
     format: &str,
@@ -377,7 +392,7 @@ pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Res
     v.insert("role".into(), role_of(C::NAME, m, roles)?);
     v.insert("content".into(), encode_content::<C>(&m.content)?);
     let fields = |_: &str| "messages with fields the kind has no place for".to_owned();
-    encode_native(C::NAME, &m.native, &mut v, fields, Keep::default())?;
+    v.extend(message_fields(C::NAME, &m.native, fields)?);
     Ok(v.into())
 }
 
