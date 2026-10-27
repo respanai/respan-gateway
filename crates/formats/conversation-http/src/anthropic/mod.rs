@@ -76,6 +76,8 @@ const FINISH: Names<Finish> = Names(
 fn finish_of(reason: &str) -> Finish {
     match reason {
         "model_context_window_exceeded" => Finish::native_or(ANTHROPIC, reason, Finish::Length),
+        // A tool loop Anthropic paused, such as a long web search: incomplete.
+        "pause_turn" => Finish::native_or(ANTHROPIC, reason, Finish::Length),
         _ => FINISH.finish(reason),
     }
 }

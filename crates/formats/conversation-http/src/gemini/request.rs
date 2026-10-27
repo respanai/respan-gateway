@@ -6,8 +6,8 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Effort, Input, Media, MediaSource, Message, Reasoning, ResponseFormat, Role, Tool,
-    ToolChoice,
+    Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
+    Role, Tool, ToolChoice,
 };
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
     Keep, NativeFieldsExt, arguments_object, effort_name, kept_fields, merge_fields, merge_missing,
-    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable,
+    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -452,11 +452,16 @@ pub(super) fn json_schema(schema: &Value) -> Value {
     }
 }
 
-/// The function declarations of `tools`, if all of it is that; else the
-/// whole `tools` stays native.
-fn declarations(tools: &Value) -> Option<Vec<Tool>> {
+/// The function declarations of `tools` and an empty `googleSearch`, if all
+/// of it is that; else the whole `tools` stays native.
+fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
     let mut out = Vec::new();
+    let mut provided = Vec::new();
     for tool in tools.as_array()? {
+        if *tool == json!({ "googleSearch": {} }) {
+            provided.push(ProviderTool::WebSearch { native: None });
+            continue;
+        }
         let clean = tool
             .as_object()
             .is_some_and(|o| o.keys().all(|k| k == "functionDeclarations"));
@@ -489,7 +494,7 @@ fn declarations(tools: &Value) -> Option<Vec<Tool>> {
             out.push(tool);
         }
     }
-    Some(out)
+    Some((out, provided))
 }
 
 /// The tool choice `toolConfig` says, if the kind has it all.
@@ -520,8 +525,9 @@ fn choice_of(config: &Value) -> Option<ToolChoice> {
 /// The request's tools and their choice, if the kind can say them: then they
 /// leave the request's `native`.
 pub(super) fn read_tools(v: &Value, chat: &mut Input) {
-    if let Some(tools) = declarations(&v["tools"]) {
+    if let Some((tools, provided)) = declarations(&v["tools"]) {
         chat.tools = tools;
+        chat.provider_tools = provided;
     } else if says(&v["tools"]) {
         chat.native
             .fields_mut(GEMINI)
@@ -575,10 +581,17 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         d.extend(kept_fields(GEMINI, &t.native, what, Keep::CACHE_MARKER)?);
         declarations.push(Value::Object(d));
     }
-    let tools = match declarations.is_empty() {
-        true => native("tools"),
-        false => Some(json!([{ "functionDeclarations": declarations }])),
-    };
+    let mut tools = Vec::new();
+    if !declarations.is_empty() {
+        tools.push(json!({ "functionDeclarations": declarations }));
+    }
+    for provided in &chat.provider_tools {
+        write_search(GEMINI, provided)?;
+        tools.push(json!({ "googleSearch": {} }));
+    }
+    let tools = (!tools.is_empty())
+        .then(|| tools.into())
+        .or_else(|| native("tools"));
     set(v, "tools", tools);
     if chat.options.parallel_tool_calls == Some(false) {
         return Err(untranslatable("one tool call at a time"));

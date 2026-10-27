@@ -161,6 +161,8 @@ pub struct Input {
     pub user: Option<String>,
     /// The tools the model may call.
     pub tools: Vec<Tool>,
+    /// The tools the provider runs itself while it answers.
+    pub provider_tools: Vec<ProviderTool>,
     /// The request's fields the kind has no place for, such as tools a
     /// provider runs itself.
     pub native: Option<NativeFields>,
@@ -388,6 +390,18 @@ impl Tool {
             native: None,
         }
     }
+}
+
+/// A tool the provider runs itself while it answers.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum ProviderTool {
+    /// A search of the web. What bounds it, such as its domains, is its
+    /// format's `native`, which only that format sends.
+    WebSearch {
+        /// Its fields the kind has no place for.
+        native: Option<NativeFields>,
+    },
 }
 
 /// Whether, or which, tool the model must call.

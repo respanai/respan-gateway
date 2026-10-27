@@ -5,7 +5,7 @@
 use crate::fields;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Block, Content, Delta, Finish, Input, Message, Output, Role, Tool, ToolChoice,
+    Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
@@ -415,13 +415,14 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
 /// `chat.native`.
 pub(crate) fn decode_tools(
     chat: &mut Input,
-    tools: Option<Vec<Tool>>,
+    tools: Option<(Vec<Tool>, Vec<ProviderTool>)>,
     choice: Option<Option<ToolChoice>>,
     parallel: Option<Option<bool>>,
     keys: [&str; 3],
 ) {
-    if let Some(tools) = tools {
+    if let Some((tools, provided)) = tools {
         chat.tools = tools;
+        chat.provider_tools = provided;
         if let Some(native) = &mut chat.native {
             native.fields.shift_remove(keys[0]);
         }
@@ -442,13 +443,54 @@ pub(crate) fn decode_tools(
     }
 }
 
-/// The tools of `v`, if each is one the kind can say, by `tool`.
-pub(crate) fn each_tool(v: &Value, tool: fn(&Value) -> Option<Tool>) -> Option<Vec<Tool>> {
-    match v {
-        Value::Null => Some(Vec::new()),
-        Value::Array(tools) => tools.iter().map(tool).collect(),
-        _ => None,
+/// The tools of `v`, each by `tool` or else by `provided`, if the kind can
+/// say each.
+pub(crate) fn each_tool(
+    v: &Value,
+    tool: fn(&Value) -> Option<Tool>,
+    provided: fn(&Value) -> Option<ProviderTool>,
+) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
+    let mut out = (Vec::new(), Vec::new());
+    for t in v.as_array().map_or(&[][..], Vec::as_slice) {
+        match tool(t) {
+            Some(t) => out.0.push(t),
+            None => out.1.push(provided(t)?),
+        }
     }
+    (v.is_null() || v.is_array()).then_some(out)
+}
+
+/// A web search of `format`, `fields` its native, those named `hints` set
+/// aside, as they only hint and another format drops them.
+pub(crate) fn read_search(
+    format: &str,
+    mut fields: Map<String, Value>,
+    hints: &[&str],
+) -> ProviderTool {
+    let inert: Map<String, Value> = hints
+        .iter()
+        .filter_map(|h| Some(((*h).into(), fields.shift_remove(*h)?)))
+        .collect();
+    fields.insert(INERT.into(), inert.into());
+    ProviderTool::WebSearch {
+        native: native_fields(format, fields),
+    }
+}
+
+/// The fields of a provider tool to write in `format`: a web search's own,
+/// its hints among them; another format's that bound it are refused.
+pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
+    let ProviderTool::WebSearch { native } = tool else {
+        return Err(untranslatable(
+            "a provider tool this format has no form for",
+        ));
+    };
+    let what = |k: &str| format!("a web search's '{k}'");
+    let mut fields = kept_fields(format, native, what, Keep::CACHE_MARKER)?;
+    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
+        fields.extend(inert);
+    }
+    Ok(fields)
 }
 
 /// How a refusal names a tool's field `key`.

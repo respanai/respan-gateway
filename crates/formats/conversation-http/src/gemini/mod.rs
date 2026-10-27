@@ -32,8 +32,9 @@
 //! What the kind has no form for is this format's `native`, where it
 //! appeared, and refused in another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
-//! fields, tools Google runs, a `toolConfig` the kind has no choice for,
-//! video parts, and a part's `thoughtSignature` (which another format drops).
+//! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
+//! the kind has no choice for, video parts, and a part's `thoughtSignature`
+//! (which another format drops).
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!

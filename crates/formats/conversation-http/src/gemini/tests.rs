@@ -226,7 +226,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
             { "videoMetadata": { "startOffset": "1s" }, "fileData": { "mimeType": "video/mp4", "fileUri": "gs://v" } },
         ] }],
         "safetySettings": [{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" }],
-        "tools": [{ "googleSearch": {} }],
+        "tools": [{ "codeExecution": {} }],
         "toolConfig": { "functionCallingConfig": { "mode": "VALIDATED" } },
         "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });

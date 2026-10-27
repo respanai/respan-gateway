@@ -5,9 +5,12 @@ use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
     INERT, Keep, NativeFieldsExt, decode_tools, each_tool, effort_name, kept_fields, native_fields,
-    only, own_native, parse_effort, reasoning_of, rest_of, set, tool_field, untranslatable,
+    only, own_native, parse_effort, read_search, reasoning_of, rest_of, set, tool_field,
+    untranslatable, write_search,
 };
-use respan_gateway_conversation::{Content, Input, Reasoning, ResponseFormat, Tool, ToolChoice};
+use respan_gateway_conversation::{
+    Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
+};
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
@@ -16,7 +19,7 @@ use serde_json::{Map, Value, json};
 /// Function tools, the choice and whether calls may be parallel, as the
 /// kind's.
 pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], function_tool);
+    let tools = each_tool(&v["tools"], function_tool, web_search);
     let choice = match &v["tool_choice"] {
         Value::Null => Some(None),
         choice => read_choice(choice).map(Some),
@@ -46,6 +49,15 @@ fn function_tool(tool: &Value) -> Option<Tool> {
     }
     kind.native = native_fields(RESPONSES, fields);
     Some(kind)
+}
+
+/// A web search tool, of any dated or preview `type`.
+fn web_search(tool: &Value) -> Option<ProviderTool> {
+    let kind = tool["type"].as_str()?;
+    let search = kind == "web_search" || kind.starts_with("web_search_");
+    let hints = ["type", "search_context_size"];
+    (search && kind != "web_search_call")
+        .then(|| read_search(RESPONSES, rest_of(tool, &[]), &hints))
 }
 
 fn read_choice(choice: &Value) -> Option<ToolChoice> {
@@ -96,7 +108,12 @@ pub(in crate::responses) fn write_tools(
         }
         Ok(Value::Object(tool))
     };
-    let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    for provided in &chat.provider_tools {
+        let mut search = Map::from_iter([("type".into(), "web_search".into())]);
+        search.extend(write_search(RESPONSES, provided)?);
+        tools.push(search.into());
+    }
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
     let choice = match &chat.options.tool_choice {
         None => None,

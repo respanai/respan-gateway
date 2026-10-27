@@ -7,20 +7,23 @@
 use crate::schema::{
     INERT, Keep, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
     encode_message, encode_native, kept_fields, merge_missing, message_fields, native_fields, only,
-    own_native, reasoning_of, remainder, rest_of, set, source_url, tool_field, untranslatable,
+    own_native, read_search, reasoning_of, remainder, rest_of, set, source_url, tool_field,
+    untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
+    Content, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
+    ToolChoice,
 };
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
 use crate::openai::{OPENAI, OpenAiChat};
 
-/// OpenAI's function tools, choice and `parallel_tool_calls`, as the kind's.
+/// OpenAI's function tools, choice, `parallel_tool_calls` and
+/// `web_search_options`, as the kind's.
 pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], openai_tool);
+    let tools = each_tool(&v["tools"], openai_tool, |_| None);
     let choice = match &v["tool_choice"] {
         Value::Null => Some(None),
         choice => openai_choice(choice).map(Some),
@@ -31,6 +34,14 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
     decode_tools(chat, tools, choice, parallel, keys);
+    // Any object asks for a search, an empty one too.
+    if let Some(Value::Object(options)) = v.get("web_search_options") {
+        let search = read_search(OPENAI, options.clone(), &["search_context_size"]);
+        chat.provider_tools.push(search);
+        chat.native
+            .fields_mut(OPENAI)
+            .shift_remove("web_search_options");
+    }
 }
 
 fn openai_tool(tool: &Value) -> Option<Tool> {
@@ -96,6 +107,18 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
+    // Most providers that speak Chat ignore `web_search_options`, so only a
+    // search a client of Chat asked for is written.
+    match chat.provider_tools.as_slice() {
+        [] => {}
+        [search @ ProviderTool::WebSearch { native }] if native.format() == Some(OPENAI) => {
+            v.insert(
+                "web_search_options".into(),
+                write_search(OPENAI, search)?.into(),
+            );
+        }
+        _ => return Err(untranslatable("another format's web search in OpenAI Chat")),
+    }
     let choice = match &chat.options.tool_choice {
         None => None,
         Some(ToolChoice::Auto) => Some("auto".into()),

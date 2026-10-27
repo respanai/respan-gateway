@@ -261,7 +261,10 @@ fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
         ("truncation", json!("auto")),
         ("reasoning", json!({ "summary": "concise" })),
         ("metadata", json!({ "k": "v" })),
-        ("tools", json!([{ "type": "web_search_preview" }])),
+        (
+            "tools",
+            json!([{ "type": "file_search", "vector_store_ids": ["vs_1"] }]),
+        ),
         ("tool_choice", json!({ "type": "web_search_preview" })),
     ] {
         let mut v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }] });

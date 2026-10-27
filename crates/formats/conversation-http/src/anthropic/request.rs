@@ -6,11 +6,12 @@
 use crate::schema::{
     Keep, NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool,
     encode_content, encode_native, kept_fields, merge_missing, native_fields, only, own_native,
-    remainder, rest_of, set, take_native, tool_field, untranslatable,
+    read_search, remainder, rest_of, set, take_native, tool_field, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Effort, Input, Media, MediaSource, Reasoning, ResponseFormat, Tool, ToolChoice,
+    Content, Effort, Input, Media, MediaSource, ProviderTool, Reasoning, ResponseFormat, Tool,
+    ToolChoice,
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
@@ -21,7 +22,7 @@ use crate::anthropic::{ANTHROPIC, AnthropicMessages};
 /// Anthropic's custom tools and choice, with whether calls may be
 /// parallel, as the kind's.
 pub(crate) fn read_tools_of(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], anthropic_tool);
+    let tools = each_tool(&v["tools"], anthropic_tool, web_search);
     let choice = match &v["tool_choice"] {
         Value::Null => Some((None, None)),
         choice => anthropic_choice(choice),
@@ -44,6 +45,13 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
     let rest = rest_of(tool, &["type", "name", "description", "input_schema"]);
     kind.native = native_fields(ANTHROPIC, rest);
     Some(kind)
+}
+
+/// Anthropic's web search tool, of any dated `type`.
+fn web_search(tool: &Value) -> Option<ProviderTool> {
+    let dated = tool["type"].as_str()?.starts_with("web_search_");
+    let fields = rest_of(tool, &["name"]);
+    (dated && tool["name"] == "web_search").then(|| read_search(ANTHROPIC, fields, &["type"]))
 }
 
 /// Anthropic's `tool_choice`, and whether calls may be parallel if it says.
@@ -82,7 +90,14 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         encode_native(ANTHROPIC, &t.native, &mut tool, tool_field, Keep::default())?;
         Ok(Value::Object(tool))
     };
-    let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    for provided in &chat.provider_tools {
+        let mut search = Map::new();
+        search.insert("type".into(), "web_search_20250305".into());
+        search.insert("name".into(), "web_search".into());
+        search.extend(write_search(ANTHROPIC, provided)?);
+        tools.push(search.into());
+    }
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
     let one_at_a_time = chat.options.parallel_tool_calls == Some(false);
     let mut choice = match &chat.options.tool_choice {
