@@ -91,6 +91,10 @@ needs = ["tools"]
 [routes."claude-*"]
 to = "anthropic/{model}"
 
+# Veo's previews are gone (2026-10-22): their clients get Gemini Omni.
+# [routes."veo-3.1-*"]
+# to = "gemini/gemini-omni-1.1-flash"
+
 # Only for some client keys (needs named client_keys):
 # [routes.internal]
 # to   = "openai/gpt-6-luna"
