@@ -223,7 +223,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
     let mut names = Vec::new();
     let mut parts = Vec::new();
     for m in system {
-        if !m.native.is_empty() {
+        if !unsaid(m) {
             return Err(Fault::bad_request(
                 "Gemini's system instruction has no place for a message's other fields",
             ));
@@ -234,6 +234,14 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
     }
     let instruction = (!parts.is_empty()).then(|| json!({ "parts": parts }));
     Ok((instruction, rest))
+}
+
+/// Whether a message's fields are none Gemini writes or refuses: none, or
+/// another format's it drops.
+fn unsaid(m: &Message) -> bool {
+    let what = |_: &str| String::new();
+    let kept = kept_fields(GEMINI, &m.native, what, Keep::default());
+    kept.is_ok_and(|f| f.is_empty())
 }
 
 /// The messages as `contents`: the results of one turn's calls are one user
@@ -262,7 +270,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         let what = |_: &str| "messages with fields the kind has no place for".to_owned();
         content.extend(kept_fields(GEMINI, &m.native, what, Keep::default())?);
         let answers = !m.content.is_empty()
-            && m.native.is_empty()
+            && unsaid(m)
             && m.content
                 .iter()
                 .all(|c| matches!(c, Content::ToolResult { .. }));

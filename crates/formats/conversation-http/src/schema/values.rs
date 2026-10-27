@@ -73,7 +73,7 @@ impl Keep {
 /// needs: the id and status of an item a stateful API stored (a `msg_..` or
 /// `fc_..` of Responses), or a default the format left unsaid. Any other
 /// format drops it instead of refusing.
-pub(crate) const INERT: &str = "inert";
+pub const INERT: &str = "inert";
 
 /// The fields of `native` to write in `format`: all but the `own` keys if they
 /// are in `format`; if they are another's, none if each is droppable (or

@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use respan_gateway_conversation::{Block, Delta, Input, Output};
-use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_conversation_http::{INERT, Schema};
 use respan_gateway_core::{Filter, Result};
 use serde_json::{Map, Value};
 
@@ -41,18 +41,27 @@ impl Dialect for Cerebras {
 }
 
 /// Each assistant message's reasoning as its `reasoning`, as Cerebras
-/// takes it back.
+/// takes it back: the kind's, and a client's own `reasoning_content`, which
+/// the format keeps [`INERT`].
 fn write_reasoning(input: &mut Input) -> Result<()> {
     chat::write_reasoning(input)?;
     for message in &mut input.messages {
-        let fields = message.native.as_mut().map(|n| &mut n.fields);
-        if let Some(fields) = fields
-            && let Some(text) = fields.shift_remove("reasoning_content")
-        {
-            fields.insert("reasoning".into(), text);
+        let Some(fields) = message.native.as_mut().map(|n| &mut n.fields) else {
+            continue;
+        };
+        rename_reasoning(fields);
+        if let Some(Value::Object(inert)) = fields.get_mut(INERT) {
+            rename_reasoning(inert);
         }
     }
     Ok(())
+}
+
+/// `reasoning_content` of `fields` as `reasoning`.
+fn rename_reasoning(fields: &mut Map<String, Value>) {
+    if let Some(text) = fields.shift_remove("reasoning_content") {
+        fields.insert("reasoning".into(), text);
+    }
 }
 
 /// Reads a response's `reasoning` as reasoning blocks of its own numbers, counting down from the last, which the format never gives: one
@@ -195,5 +204,19 @@ mod tests {
         let fields = &input.messages[0].native.as_ref().expect("native").fields;
         assert_eq!(fields.get("reasoning"), Some(&json!("hm")));
         assert_eq!(fields.get("reasoning_content"), None);
+    }
+
+    #[test]
+    fn a_clients_reasoning_content_is_sent_as_reasoning() {
+        let body = json!({ "model": "m", "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "ok", "reasoning_content": "hm" },
+        ]});
+        let mut input = OpenAiChat.decode_json(&body);
+        write_reasoning(&mut input).expect("written");
+        let sent = OpenAiChat.encode_request(&input).map(Value::from);
+        let message = sent.map(|v| v["messages"][1].clone()).ok();
+        let reasoning = json!({ "role": "assistant", "content": "ok", "reasoning": "hm" });
+        assert_eq!(message, Some(reasoning));
     }
 }

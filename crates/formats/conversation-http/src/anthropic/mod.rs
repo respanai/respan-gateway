@@ -209,7 +209,7 @@ fn is_empty(m: &Message) -> bool {
 /// Whether a message's fields are none Anthropic writes or refuses.
 fn unsaid(m: &Message) -> bool {
     let what = |_: &str| String::new();
-    let kept = kept_fields(ANTHROPIC, &m.native, what, Keep::CACHE_MARKER);
+    let kept = kept_fields(ANTHROPIC, &m.native, what, Keep::default());
     kept.is_ok_and(|f| f.is_empty())
 }
 

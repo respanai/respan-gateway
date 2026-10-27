@@ -32,8 +32,9 @@ pub use exchange::Asked;
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
+pub use values::INERT;
 pub(crate) use values::{
-    INERT, Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
+    Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
     encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
     message_fields, native_fields, only, own_fields, remainder, set, source_url, stop_json, tidy,
