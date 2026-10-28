@@ -150,48 +150,14 @@ tokens in the input. A stream with no `finishReason` was cut. Errors are
 
 ## Amazon Bedrock Converse
 
-`bedrock::BedrockConverse`, named `bedrock-converse`: a `POST` to
-`/model/{modelId}/converse` or `/converse-stream`; its provider base URL is a
-region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, with a
-Bedrock API key as a bearer token. It is a provider's format only: no client
-speaks it to the gateway.
-
-The model is in the path, escaped whole, so an inference profile's id
-(`us.anthropic.claude-sonnet-4-20250514-v1:0`) or an ARN is one segment. A
-stream is `application/vnd.amazon.eventstream`, not SSE: its messages
-(`respan-gateway-eventstream`) are checked against their CRCs, an
-`exception` or `error` message is an upstream fault of its type (with the
-HTTP status Bedrock gives it), and a body that ends inside a message or
-before `messageStop` was cut.
-
-`system` is the leading system messages; `messages` alternate `user` and
-`assistant`, so consecutive turns of a role are joined and blank text is left
-out. A part is `text`; `image` (png, jpeg, gif, webp) or `document` (pdf,
-csv, doc, docx, xls, xlsx, html, txt, md), as bytes only, so a remote URL is
-refused before any call and an image is sent as a data URL; `toolUse` and
-`toolResult` (`status: "error"` for a failed one; blank text is left out,
-and a result with none says `(no output)`); or `reasoningContent`,
-which Bedrock must have signed or redacted to take it back, and is otherwise
-left out. A part, tool or system block with a cache marker, Anthropic's
-`cache_control`, is followed by a `cachePoint`. `inferenceConfig` is the output limit, `temperature`, `topP` and
-stop sequences; `toolConfig` the tools and the choice (`auto`, `any`, or one
-`tool`; a choice of `None` offers no tools). Bedrock names reasoning and
-`top_k` per model, in `additionalModelRequestFields`: a [reasoning
-budget](#reasoning-and-sampling) is `thinking`, and `top_k`, an effort, JSON
-without a schema, an end user's id and one tool call at a time are refused,
-as are the fields of another format. A JSON schema is `outputConfig`'s
-`textFormat`, the schema as text.
-
-A response's blocks are the kind's: `text`, `toolUse` (its input whole) and
-`reasoningContent` (its `signature` or `redactedContent` the block's fields).
-A stream sends no start for text or reasoning, so the first delta opens the
-block. `stopReason` is the finish: `end_turn` and `stop_sequence` stop,
-`max_tokens` is the token limit, `content_filtered` and
-`guardrail_intervened` are filtered (the latter native to this format), and
-others stay native. Usage counts the cache reads and writes as parts of the
-input. Converse names neither an id nor a model, so the response's are empty;
-its metrics, trace and model-specific fields, and a block of another type,
-stay native, which another format drops.
+`bedrock::BedrockConverse`, named `bedrock-converse`, at the provider edge
+only: a `POST` to `/model/{modelId}/converse` or `/converse-stream` at a
+region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, its key a
+Bedrock API key as a bearer token. The model is escaped whole into the path,
+so a profile's id or an ARN is one segment. A stream is the AWS event stream
+(`respan-gateway-eventstream`), not SSE; an `exception` message in it is an
+upstream fault of its type. The module says how each part, option and event
+maps; what Converse has no field for is refused.
 
 ## Reasoning and sampling
 

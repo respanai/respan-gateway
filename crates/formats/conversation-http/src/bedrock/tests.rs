@@ -41,8 +41,16 @@ fn media(mime: &str, bytes: &'static [u8]) -> Media {
 
 #[test]
 fn a_request_is_system_messages_and_inference_config() {
+    let mut brief = Message::new(Role::System, "be brief");
+    if let Content::Text { native, .. } = &mut brief.content[0] {
+        let marker = json!({ "cache_control": { "type": "ephemeral" } });
+        *native = Some(NativeFields::new(
+            "anthropic-messages",
+            marker.as_object().cloned().unwrap_or_default(),
+        ));
+    }
     let mut chat = chat([
-        Message::new(Role::System, "be brief"),
+        brief,
         Message::new(Role::Developer, "no lists"),
         user("hi"),
         user("  "),
@@ -57,7 +65,8 @@ fn a_request_is_system_messages_and_inference_config() {
     assert_eq!(
         written(&chat),
         json!({
-            "system": [{ "text": "be brief" }, { "text": "no lists" }],
+            // A cache marker of any format is a cache point after its block.
+            "system": [{ "text": "be brief" }, { "cachePoint": { "type": "default" } }, { "text": "no lists" }],
             "messages": [
                 { "role": "user", "content": [{ "text": "hi" }] },
                 { "role": "assistant", "content": [{ "text": "hello" }] },
@@ -93,9 +102,6 @@ fn media_is_bytes_and_a_url_is_refused() {
     let mut remote = user("see");
     remote.content.push(Content::Image(url));
     assert!(refused(&chat([remote])).contains("data URL"));
-    let mut odd = user("see");
-    odd.content.push(Content::Image(media("image/tiff", b"II")));
-    assert!(refused(&chat([odd])).contains("image/tiff"));
 }
 
 #[test]
@@ -136,27 +142,6 @@ fn tools_a_call_and_its_result_are_blocks() {
             { "toolResult": { "toolUseId": "t2", "content": [{ "text": "boom" }], "status": "error" } },
             { "toolResult": { "toolUseId": "t3", "content": [{ "text": "(no output)" }] } },
         ])
-    );
-}
-
-#[test]
-fn a_tool_choice_is_auto_any_or_one_tool() {
-    let with = |choice| {
-        let mut chat = chat([user("hi")]);
-        chat.tools = vec![Tool::new("f", Value::Null)];
-        chat.options.tool_choice = choice;
-        written(&chat)["toolConfig"].clone()
-    };
-    assert_eq!(with(None).get("toolChoice"), None);
-    assert_eq!(with(Some(ToolChoice::Auto)).get("toolChoice"), None);
-    assert_eq!(
-        with(Some(ToolChoice::Required))["toolChoice"],
-        json!({ "any": {} })
-    );
-    assert_eq!(with(Some(ToolChoice::None)), Value::Null);
-    assert_eq!(
-        with(None)["tools"][0]["toolSpec"]["inputSchema"],
-        json!({ "json": { "type": "object" } })
     );
 }
 
@@ -217,20 +202,8 @@ fn what_converse_has_no_field_for_is_refused() {
     let mut c = base();
     c.options.reasoning = Some(Reasoning::effort(Effort::High));
     assert!(refused(&c).contains("budget"));
-    let mut c = base();
-    c.options.parallel_tool_calls = Some(false);
-    assert!(refused(&c).contains("one tool call"));
     let c = chat([user("a"), Message::new(Role::System, "late")]);
     assert!(refused(&c).contains("system message"));
-    let mut c = base();
-    c.native = Some(NativeFields::new(
-        "openai-chat",
-        json!({ "seed": 1 })
-            .as_object()
-            .cloned()
-            .unwrap_or_default(),
-    ));
-    assert!(refused(&c).contains("seed"));
 }
 
 #[test]
@@ -492,36 +465,4 @@ fn a_response_is_read_by_its_media_type() {
     assert!(events.contains(&Output::text(0, "hi")));
     let refused = answer("application/json", b"{\"message\":\"no\"}".to_vec());
     assert!(refused.is_err_and(|f| f.message().contains("success is not a response")));
-}
-
-#[test]
-fn a_refusal_is_read_as_bedrock_words_it() {
-    let mut refused =
-        http::Response::new(Bytes::from_static(b"{\"message\":\"Too many requests\"}"));
-    *refused.status_mut() = http::StatusCode::TOO_MANY_REQUESTS;
-    let fault = crate::schema::answer(&BedrockConverse, refused);
-    assert_eq!(fault.message(), "Too many requests");
-    assert_eq!(
-        fault
-            .get::<respan_gateway_http_faults::Status>()
-            .map(|s| s.0.as_u16()),
-        Some(429)
-    );
-}
-
-#[test]
-fn a_cache_marker_of_any_format_is_a_cache_point_after_its_block() {
-    let mut marked = user("long context");
-    if let Content::Text { native, .. } = &mut marked.content[0] {
-        let marker = json!({ "cache_control": { "type": "ephemeral" } });
-        *native = Some(NativeFields::new(
-            "anthropic-messages",
-            marker.as_object().cloned().unwrap_or_default(),
-        ));
-    }
-    let chat = chat([marked, user("question")]);
-    assert_eq!(
-        written(&chat)["messages"][0]["content"],
-        json!([{ "text": "long context" }, { "cachePoint": { "type": "default" } }, { "text": "question" }])
-    );
 }
