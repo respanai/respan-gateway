@@ -1,13 +1,12 @@
-//! Amazon Bedrock: Claude's Messages at its Invoke API, in a region's
-//! `bedrock-runtime`, authenticated by a Bedrock API key or signed (SigV4)
-//! by an AWS key pair.
+//! Amazon Bedrock, at a region's `bedrock-runtime`, authenticated by a
+//! Bedrock API key or signed (SigV4) by an AWS key pair: Claude on
+//! Bedrock's Anthropic Messages (`/anthropic/v1/messages`), every other
+//! model on Converse ([`BedrockConverse`]), which serves Claude too.
 //!
-//! The Messages body goes to `/model/{id}/invoke`, or
-//! `invoke-with-response-stream`, without its `model` and `stream`, with
-//! Bedrock's `anthropic_version` and the `anthropic-beta` header's betas as
-//! `anthropic_beta`. A whole answer is Anthropic's own; a stream is an AWS
-//! event stream whose `chunk` events each carry one Anthropic event, read
-//! as Anthropic's SSE.
+//! Its models are the region's: the control plane (`bedrock.{region}`)
+//! lists the foundation models Converse serves whole and streamed, called
+//! on demand by their own id, and each active inference profile (`us.`,
+//! `global.`, an application's ARN) as the model it routes to.
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -16,144 +15,190 @@ use aws_credential_types::Credentials;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
 use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::identity::Identity;
-use base64::Engine as _;
 use respan_gateway_conversation::{Input, Output};
+use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
+use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_core::Fault;
-use respan_gateway_eventstream::{Message, Parser};
-use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderName, HeaderValue};
+use respan_gateway_http::http::header::{HeaderName, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::escape;
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
-    BoxFuture, Dialect, Dialected, KeyIn, Models, Rewrite, Sign, Transcode, Vendor, VendorProvider,
+    Ask, Body, BoxFuture, Capability, Dialect, Dialected, HttpTransport, KeyIn, Modality, Model,
+    Models, Sign, Vendor, VendorProvider, built_wrong, http, json, time,
 };
 
 /// Where a region's runtime is: `AWS_REGION`'s, unless a host says.
 const BASE_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com";
 
+/// Its Anthropic Messages, which take Anthropic's body as it is.
+const MESSAGES_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com/anthropic";
+
 /// The name Bedrock signs as, not its host's `bedrock-runtime`.
 const SIGNING_NAME: &str = "bedrock";
-
-/// The Messages version Bedrock takes.
-const ANTHROPIC_VERSION: &str = "bedrock-2023-05-31";
-
-const BETA_HEADER: &str = "anthropic-beta";
-const EVENT_STREAM: &str = "application/vnd.amazon.eventstream";
 
 /// Amazon Bedrock: its key a Bedrock API key, else each call signed by the
 /// environment's AWS key pair.
 pub const VENDOR: Vendor = Vendor {
     id: "bedrock",
     key_env: &["AWS_BEARER_TOKEN_BEDROCK"],
-    formats: &[(&Dialected::new(AnthropicMessages, Bedrock), Some(BASE_URL))],
-    models: no_models,
+    formats: &[
+        (&BedrockConverse, Some(BASE_URL)),
+        (
+            &Dialected::new(AnthropicMessages, Bearer),
+            Some(MESSAGES_URL),
+        ),
+    ],
+    models: list_models,
+    format_for: Some(format_for),
     signer: Some(environment_signer),
-    ..Vendor::DEFAULT
 };
 
-/// Bedrock's Messages, as it departs from Anthropic's.
+/// Anthropic's Messages with the key as a bearer token, as Bedrock takes it.
 #[derive(Debug, Clone, Copy)]
-pub struct Bedrock;
+pub struct Bearer;
 
-impl Dialect for Bedrock {
+impl Dialect for Bearer {
     type Input = Input;
     type Output = Output;
 
     fn key(&self) -> Option<KeyIn> {
         Some(KeyIn::Bearer)
     }
+}
 
-    fn request(
-        &self,
-        head: &mut RequestHead,
-        body: Option<&Bytes>,
-    ) -> Result<Option<Rewrite>, Fault> {
-        let call: Map<String, Value> = body
-            .and_then(|body| serde_json::from_slice(body).ok())
-            .ok_or_else(|| Fault::internal("a Messages call has a whole JSON body"))?;
-        let model = call["model"].as_str().unwrap_or_default();
-        if model.is_empty() {
-            return Err(Fault::bad_request("a Bedrock call names its model"));
+/// Claude goes to Messages, whatever the client speaks; any other model to
+/// Converse.
+fn format_for(_: &Ask, model: &Model) -> Option<&'static str> {
+    let claude = model.maker.as_deref() == Some("anthropic") || model.id.contains("anthropic.");
+    Some(match claude {
+        true => AnthropicMessages::NAME,
+        false => BedrockConverse::NAME,
+    })
+}
+
+/// Its models, as the module says. A key that may not list the profiles
+/// still lists the models.
+fn list_models(p: &VendorProvider) -> BoxFuture<'_, Models> {
+    Box::pin(async move {
+        let parts = p.parts()?;
+        let base = parts
+            .first()
+            .map_or(BASE_URL, |part| part.base_url.as_str());
+        let control = p.client_at(&base.replacen("bedrock-runtime.", "bedrock.", 1))?;
+        let models = get(&control, "/foundation-models".to_owned()).await?;
+        let profiles = profiles(&control).await.unwrap_or_default();
+        Ok(cards(&models, &profiles))
+    })
+}
+
+/// The answer to `GET path` on the control plane.
+async fn get(control: &HttpTransport, path: String) -> Result<Value, Fault> {
+    let call = http::Request::get(path).body(Body::default());
+    let (answer, _) = control.send(call.map_err(built_wrong)?).await?;
+    json(answer).await
+}
+
+/// Every inference profile, a page at a time.
+async fn profiles(control: &HttpTransport) -> Result<Vec<Value>, Fault> {
+    let mut all = Vec::new();
+    let mut next: Option<String> = None;
+    loop {
+        let mut path = "/inference-profiles?maxResults=1000".to_owned();
+        if let Some(token) = &next {
+            path += &format!("&nextToken={}", escape(token));
         }
-        let invoke = match call.get("stream") == Some(&Value::Bool(true)) {
-            true => "invoke-with-response-stream",
-            false => "invoke",
+        let page = get(control, path).await?;
+        let listed = page["inferenceProfileSummaries"].as_array();
+        all.extend(listed.into_iter().flatten().cloned());
+        next = page["nextToken"].as_str().map(str::to_owned);
+        if next.is_none() {
+            return Ok(all);
+        }
+    }
+}
+
+/// The chat models a call can name, as the module says; a model only
+/// provisioned throughput serves is left out.
+fn cards(models: &Value, profiles: &[Value]) -> Vec<Model> {
+    let summaries: Vec<&Value> = names_of(&models["modelSummaries"]).collect();
+    let on_demand = |m: &Value| names(&m["inferenceTypesSupported"]).any(|t| t == "ON_DEMAND");
+    let mut cards: Vec<Model> = (summaries.iter())
+        .filter(|m| on_demand(m))
+        .filter_map(|m| card(m, m["modelId"].as_str()?))
+        .collect();
+    for profile in profiles.iter().filter(|p| p["status"] == "ACTIVE") {
+        let Some(id) = (profile["inferenceProfileId"].as_str())
+            .or_else(|| profile["inferenceProfileArn"].as_str())
+        else {
+            continue;
         };
-        head.uri = format!("/model/{}/{invoke}", escape(model))
-            .parse()
-            .map_err(|_| Fault::bad_request("the model's id makes no path"))?;
-        let betas: Vec<Value> = (head.headers.get_all(BETA_HEADER).iter())
-            .filter_map(|value| value.to_str().ok())
-            .flat_map(|value| value.split(','))
-            .map(str::trim)
-            .filter(|beta| !beta.is_empty())
-            .map(Value::from)
-            .collect();
-        head.headers.remove(BETA_HEADER);
-        head.headers.remove("anthropic-version");
-        Ok(Some(Box::new(move |_| {
-            let mut call = call;
-            call.remove("model");
-            call.remove("stream");
-            call.entry("anthropic_version")
-                .or_insert(ANTHROPIC_VERSION.into());
-            if !betas.is_empty() {
-                call.entry("anthropic_beta").or_insert(betas.into());
+        let routed = profile["models"][0]["modelArn"]
+            .as_str()
+            .unwrap_or_default();
+        let routed = routed.rsplit_once("foundation-model/").map(|(_, id)| id);
+        let summary = summaries.iter().find(|m| m["modelId"].as_str() == routed);
+        if let Some(mut card) = summary.and_then(|m| card(m, id)) {
+            if let Some(name) = profile["inferenceProfileName"].as_str() {
+                card.display_name = Some(name.to_owned());
             }
-            serde_json::to_vec(&call)
-                .map(Bytes::from)
-                .map_err(|e| Fault::internal(e.to_string()))
-        })))
-    }
-
-    fn stream(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Transcode> {
-        let content_type = head.headers.get(CONTENT_TYPE)?.to_str().ok()?;
-        if !content_type.starts_with(EVENT_STREAM) {
-            return None;
+            cards.push(card);
         }
-        head.headers
-            .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-        head.headers.remove(CONTENT_LENGTH);
-        let mut parser = Parser::new(None);
-        Some(Box::new(move |piece| {
-            let sse: String = parser.push(piece)?.iter().filter_map(as_sse).collect();
-            Ok(Bytes::from(sse))
-        }))
     }
+    cards
 }
 
-/// One message of Bedrock's stream as Anthropic's SSE: a `chunk`'s
-/// event, or an exception as an `error` event.
-fn as_sse(message: &Message) -> Option<String> {
-    let event = match message.text(":message-type") {
-        Some("event") if message.text(":event-type") == Some("chunk") => {
-            let payload: Value = serde_json::from_slice(&message.payload).ok()?;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(payload["bytes"].as_str()?)
-                .ok()?;
-            serde_json::from_slice::<Value>(&bytes).ok()?
-        }
-        Some("exception" | "error") => {
-            let kind = (message.text(":exception-type"))
-                .or_else(|| message.text(":error-code"))
-                .unwrap_or("error");
-            let said: Value = serde_json::from_slice(&message.payload).unwrap_or_default();
-            let text = said["message"].as_str().unwrap_or(kind);
-            json!({ "type": "error", "error": { "type": kind, "message": text } })
-        }
-        _ => return None,
-    };
-    let name = event["type"].as_str()?.to_owned();
-    Some(format!("event: {name}\ndata: {event}\n\n"))
+/// The card of a foundation model's summary, called as `id`, if it answers
+/// in text on Converse, whole and streamed.
+fn card(m: &Value, id: &str) -> Option<Model> {
+    let served = &m["inferenceAPIsSupported"]["converse"];
+    let chats = names(&m["outputModalities"]).any(|o| o == "TEXT")
+        && served["sync"] == true
+        && served["streaming"] == true;
+    if !chats {
+        return None;
+    }
+    let mut model = Model::new(id);
+    model.kind = Some("chat".to_owned());
+    let model_id = m["modelId"].as_str().unwrap_or(id);
+    model.maker = model_id.split_once('.').map(|(maker, _)| maker.to_owned());
+    model.display_name = m["modelName"].as_str().map(str::to_owned);
+    let lifecycle = &m["modelLifecycle"];
+    model.created = lifecycle["startOfLifeTime"].as_str().and_then(time);
+    model.retires_at = lifecycle["endOfLifeTime"].as_str().and_then(time);
+    for input in names(&m["inputModalities"]) {
+        let read = match input {
+            "IMAGE" => Modality::Image,
+            "AUDIO" | "SPEECH" => Modality::Audio,
+            "VIDEO" => Modality::Video,
+            _ => continue,
+        };
+        model.reads(read);
+    }
+    let converse = &m["converse"];
+    if names(&converse["userDocumentTypesSupported"])
+        .next()
+        .is_some()
+    {
+        model.reads(Modality::Document);
+    }
+    model.max_output_tokens = converse["maxTokensMaximum"].as_u64();
+    if converse["reasoningSupported"].is_object() {
+        model.can(Capability::Reasoning);
+    }
+    Some(model)
 }
 
-/// Bedrock's models are its account's: none are listed.
-fn no_models(_: &VendorProvider) -> BoxFuture<'_, Models> {
-    Box::pin(async { Ok(Vec::new()) })
+/// The values a list holds at `v`.
+fn names_of(v: &Value) -> impl Iterator<Item = &Value> {
+    v.as_array().into_iter().flatten()
+}
+
+/// The names a list holds at `v`.
+fn names(v: &Value) -> impl Iterator<Item = &str> {
+    names_of(v).filter_map(Value::as_str)
 }
 
 /// The environment's AWS key pair (`AWS_ACCESS_KEY_ID`,
@@ -233,47 +278,112 @@ impl Sign for SigV4 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_eventstream::Header;
-    use respan_gateway_http::http;
+    use respan_gateway_http::bytes::Bytes;
+    use serde_json::json;
 
-    fn call(stream: bool) -> (RequestHead, Bytes) {
-        let body = json!({ "model": "anthropic.claude-haiku-5-5-v1:0", "stream": stream,
-            "max_tokens": 8, "messages": [{ "role": "user", "content": "hi" }] });
-        let head = http::Request::builder()
-            .method("POST")
-            .uri("/v1/messages")
-            .header("anthropic-version", "2023-06-01")
-            .header(BETA_HEADER, "a-1, b-2")
-            .body(())
-            .expect("a call");
-        (head.into_parts().0, Bytes::from(body.to_string()))
+    fn summary(id: &str, outputs: Value, converse: Value, types: Value) -> Value {
+        json!({
+            "modelId": id, "modelName": "Name", "outputModalities": outputs,
+            "inputModalities": ["TEXT", "IMAGE"], "inferenceTypesSupported": types,
+            "inferenceAPIsSupported": { "converse": converse },
+            "converse": { "maxTokensMaximum": 64000, "reasoningSupported": { "embedded": false },
+                          "userDocumentTypesSupported": ["pdf"] },
+            "modelLifecycle": { "startOfLifeTime": "2025-04-01T00:00:00Z",
+                                "endOfLifeTime": "2027-04-01T00:00:00Z" },
+        })
     }
 
     #[test]
-    fn a_call_is_its_models_invoke_with_bedrocks_body() {
-        let (mut head, body) = call(true);
-        let rewrite = Bedrock.request(&mut head, Some(&body)).expect("a call");
+    fn a_chat_model_is_one_converse_serves_whole_and_streamed_by_its_id_or_profile() {
+        let both = json!({ "sync": true, "streaming": true });
+        let on_demand = json!(["ON_DEMAND"]);
+        let models = json!({ "modelSummaries": [
+            summary("amazon.nova-lite-v1:0", json!(["TEXT"]), both.clone(), on_demand.clone()),
+            summary("anthropic.claude-haiku-4-5-20251001-v1:0", json!(["TEXT"]), both.clone(),
+                    json!(["INFERENCE_PROFILE"])),
+            summary("amazon.nova-2-sonic-v1:0", json!(["SPEECH", "TEXT"]),
+                    json!({ "sync": false, "streaming": true }), on_demand.clone()),
+            summary("cohere.embed-v4:0", json!(["EMBEDDING"]), json!({}), on_demand),
+        ]});
+        let profile = |id: &str, model: &str, status: &str| {
+            json!({ "inferenceProfileId": id, "inferenceProfileName": format!("US {model}"),
+                    "status": status, "models": [{ "modelArn":
+                    format!("arn:aws:bedrock:us-east-1::foundation-model/{model}") }] })
+        };
+        let claude = "anthropic.claude-haiku-4-5-20251001-v1:0";
+        let profiles = [
+            profile(
+                "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+                claude,
+                "ACTIVE",
+            ),
+            profile(
+                "eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+                claude,
+                "INACTIVE",
+            ),
+        ];
+        let cards = cards(&models, &profiles);
+        let ids: Vec<&str> = cards.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(
-            head.uri.path(),
-            "/model/anthropic.claude-haiku-5-5-v1%3A0/invoke-with-response-stream"
+            ids,
+            [
+                "amazon.nova-lite-v1:0",
+                "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+            ]
         );
-        assert!(!head.headers.contains_key(BETA_HEADER));
-        assert!(!head.headers.contains_key("anthropic-version"));
-        let sent = rewrite.expect("a rewrite")(body).expect("a body");
-        let sent: Value = serde_json::from_slice(&sent).expect("JSON");
-        assert_eq!(sent.get("model"), None);
-        assert_eq!(sent.get("stream"), None);
-        assert_eq!(sent["anthropic_version"], ANTHROPIC_VERSION);
-        assert_eq!(sent["anthropic_beta"], json!(["a-1", "b-2"]));
-        let (mut head, body) = call(false);
-        Bedrock.request(&mut head, Some(&body)).expect("a call");
-        assert!(head.uri.path().ends_with("/invoke"));
+        let nova = &cards[0];
+        assert_eq!(nova.kind.as_deref(), Some("chat"));
+        assert_eq!(nova.maker.as_deref(), Some("amazon"));
+        assert_eq!(nova.max_output_tokens, Some(64000));
+        assert_eq!(nova.capabilities, [Capability::Reasoning]);
+        assert_eq!(nova.input_modalities, [Modality::Image, Modality::Document]);
+        assert_eq!(nova.retires_at, time("2027-04-01"));
+        assert_eq!(cards[1].maker.as_deref(), Some("anthropic"));
+        assert_eq!(
+            cards[1].display_name.as_deref(),
+            Some(&*format!("US {claude}"))
+        );
+    }
+
+    #[test]
+    fn claude_goes_to_messages_and_any_other_model_to_converse() {
+        let ask = Ask {
+            kind: "chat",
+            format: "openai-chat",
+            model: None,
+            client: None,
+        };
+        let format = |id: &str, maker: Option<&str>| {
+            let mut model = Model::new(id);
+            model.maker = maker.map(str::to_owned);
+            format_for(&ask, &model)
+        };
+        let messages = Some(AnthropicMessages::NAME);
+        assert_eq!(
+            format("global.anthropic.claude-haiku-4-5-20251001-v1:0", None),
+            messages
+        );
+        // An application's profile, whose maker its listing names.
+        let arn = "arn:aws:bedrock:us-east-1:1:application-inference-profile/abc";
+        assert_eq!(format(arn, Some("anthropic")), messages);
+        assert_eq!(
+            format("amazon.nova-micro-v1:0", None),
+            Some(BedrockConverse::NAME)
+        );
+    }
+
+    fn call() -> (RequestHead, Bytes) {
+        let head = http::Request::post("/anthropic/v1/messages")
+            .body(())
+            .expect("a call");
+        (head.into_parts().0, Bytes::from_static(b"{}"))
     }
 
     #[test]
     fn a_key_pair_signs_the_call_as_sent() {
-        let (mut head, body) = call(false);
-        head.uri = "https://bedrock-runtime.us-east-1.amazonaws.com/model/m/invoke"
+        let (mut head, body) = call();
+        head.uri = "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages"
             .parse()
             .expect("a URL");
         let signer = signer(
@@ -291,71 +401,5 @@ mod tests {
         assert!(auth.contains("/us-east-1/bedrock/aws4_request"), "{auth}");
         assert!(head.headers.contains_key("x-amz-date"));
         assert_eq!(head.headers["x-amz-security-token"], "token");
-    }
-
-    fn message(headers: &[(&str, &str)], payload: Value) -> Bytes {
-        let headers = headers.iter();
-        let headers = headers.map(|(n, v)| (n.to_string(), Header::String(v.to_string())));
-        Message {
-            headers: headers.collect(),
-            payload: Bytes::from(payload.to_string()),
-        }
-        .encode()
-    }
-
-    fn chunk(event: &Value) -> Bytes {
-        let bytes = base64::engine::general_purpose::STANDARD.encode(event.to_string());
-        let headers = [(":message-type", "event"), (":event-type", "chunk")];
-        message(&headers, json!({ "bytes": bytes }))
-    }
-
-    fn transcoded(pieces: &[Bytes]) -> (ResponseHead, String) {
-        let answer = http::Response::builder()
-            .header(CONTENT_TYPE, EVENT_STREAM)
-            .body(())
-            .expect("an answer");
-        let mut head = answer.into_parts().0;
-        let sent = http::Request::new(()).into_parts().0;
-        let mut transcode = Bedrock.stream(&sent, &mut head).expect("a transcoder");
-        let mut sse = Vec::new();
-        for piece in pieces {
-            sse.extend_from_slice(&transcode(piece.clone()).expect("read"));
-        }
-        (head, String::from_utf8(sse).expect("text"))
-    }
-
-    #[test]
-    fn a_stream_is_anthropics_sse_wherever_the_network_cuts_it() {
-        let start = json!({ "type": "message_start", "message": { "id": "m" } });
-        let stop = json!({ "type": "message_stop" });
-        let wire = [chunk(&start), chunk(&stop)].concat();
-        let pieces: Vec<Bytes> = wire.chunks(7).map(Bytes::copy_from_slice).collect();
-        let (head, sse) = transcoded(&pieces);
-        assert_eq!(head.headers[CONTENT_TYPE], "text/event-stream");
-        assert_eq!(
-            sse,
-            format!("event: message_start\ndata: {start}\n\nevent: message_stop\ndata: {stop}\n\n")
-        );
-    }
-
-    #[test]
-    fn an_exception_in_the_stream_is_anthropics_error_event() {
-        let headers = [
-            (":message-type", "exception"),
-            (":exception-type", "throttlingException"),
-        ];
-        let (_, sse) = transcoded(&[message(&headers, json!({ "message": "slow down" }))]);
-        let error = json!({ "type": "error",
-            "error": { "type": "throttlingException", "message": "slow down" } });
-        assert_eq!(sse, format!("event: error\ndata: {error}\n\n"));
-    }
-
-    #[test]
-    fn an_answer_that_is_no_event_stream_is_read_as_it_came() {
-        let mut head = http::Response::new(()).into_parts().0;
-        head.headers
-            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        let sent = http::Request::new(()).into_parts().0;
-        assert!(Bedrock.stream(&sent, &mut head).is_none());
     }
 }

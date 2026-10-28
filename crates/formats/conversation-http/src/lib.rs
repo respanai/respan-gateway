@@ -7,6 +7,7 @@
 //! - [`anthropic`]: Anthropic Messages.
 //! - [`responses`]: OpenAI Responses.
 //! - [`gemini`]: Google Gemini's `generateContent`.
+//! - [`bedrock`]: Amazon Bedrock's Converse.
 //!
 //! A format is its spec: what a provider sends beyond it is kept native, at
 //! the place it appeared, for a plugin to read (each module says where), or
@@ -16,9 +17,12 @@
 
 pub mod fields;
 mod schema;
-pub use schema::{Asked, INERT, Schema, StreamResponse, merge_details, read_provider_error};
+pub use schema::{
+    Asked, Framing, INERT, Schema, StreamResponse, merge_details, read_provider_error,
+};
 
 pub mod anthropic;
+pub mod bedrock;
 pub mod gemini;
 pub mod openai;
 pub mod responses;

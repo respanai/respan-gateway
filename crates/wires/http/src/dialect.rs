@@ -25,7 +25,7 @@ use bytes::Bytes;
 use http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_core::{Connection, Fault, Filter, Format, Provider};
 
-use crate::{Connect, KeyIn, ProviderIo, Reach, Rewrite, Transcode, Upstream};
+use crate::{Connect, KeyIn, ProviderIo, Reach, Rewrite, Upstream};
 
 /// How a vendor departs from a format it speaks. What it does not say is
 /// the format's.
@@ -66,15 +66,6 @@ pub trait Dialect: Clone + Send + Sync + 'static {
     /// format reads it: its head edited, and its whole body rewritten if
     /// this says how. Every answer, a refusal too.
     fn response(&self, sent: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let _ = (sent, head);
-        None
-    }
-
-    /// The answer to the call `sent` transcoded as it streams, before the
-    /// format reads it, if this says how: its head edited to match, such as
-    /// a vendor's own framing read as the format's. Every answer, before
-    /// [`Dialect::response`].
-    fn stream(&self, sent: &RequestHead, head: &mut ResponseHead) -> Option<Transcode> {
         let _ = (sent, head);
         None
     }
@@ -140,10 +131,8 @@ where
     /// wire, and its inputs and outputs through it as values.
     fn bind(&self, io: ProviderIo) -> Result<Connection<D::Output, D::Input>, Fault> {
         let (request, response) = (self.dialect.clone(), self.dialect.clone());
-        let stream = self.dialect.clone();
         let io = io
             .with_request(move |head, body| request.request(head, body))
-            .with_stream(move |sent, head| stream.stream(sent, head))
             .with_response(move |sent, head| response.response(sent, head));
         let (opening, sink) = self.format.bind(io)?;
         let sink = match self.dialect.inputs() {
@@ -258,13 +247,6 @@ mod tests {
             })))
         }
 
-        fn stream(&self, sent: &RequestHead, _: &mut ResponseHead) -> Option<Transcode> {
-            assert_eq!(sent.uri.path(), "/echo");
-            Some(Box::new(|piece: Bytes| {
-                Ok(piece.to_ascii_uppercase().into())
-            }))
-        }
-
         fn response(&self, sent: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
             // The call as the format wrote it.
             assert_eq!(sent.uri.path(), "/echo");
@@ -299,8 +281,7 @@ mod tests {
         let read: Vec<_> = read.into_iter().map(|b| b.expect("read")).collect();
         assert_eq!(
             read,
-            // Transcoded as it streamed, then rewritten whole.
-            [Bytes::from_static(b"<ANSWER"), Bytes::from_static(b"+")]
+            [Bytes::from_static(b"<answer"), Bytes::from_static(b"+")]
         );
         let called = called.lock().expect("lock").clone();
         assert_eq!(

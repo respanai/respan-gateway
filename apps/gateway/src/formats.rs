@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use respan_gateway_conversation as conversation;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
+use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -225,6 +226,10 @@ mod endpoints {
         "GET /v1/videos/{id}/content",
         "POST /v1/videos/{id}/remix",
     ];
+    pub const CONVERSE: &[&str] = &[
+        "POST /model/{model}/converse",
+        "POST /model/{model}/converse-stream",
+    ];
     pub const VEO: &[&str] = &[
         "POST /v1beta/models/{model}:predictLongRunning",
         "GET /v1beta/{operation}",
@@ -264,6 +269,7 @@ pub fn formats() -> Vec<KnownFormat> {
         )),
         KnownFormat::of(kind::CHAT, endpoints::MESSAGES, AnthropicMessages).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
+        KnownFormat::of(kind::CHAT, endpoints::CONVERSE, BedrockConverse).model(chat()),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,

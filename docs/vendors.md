@@ -43,7 +43,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions` |
-| | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`, else `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (SigV4); `AWS_REGION` | `anthropic-messages` (Claude) |
+| | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`, else `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (SigV4); `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude) |
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |

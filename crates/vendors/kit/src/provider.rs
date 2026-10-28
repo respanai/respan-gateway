@@ -247,16 +247,14 @@ impl VendorProvider {
     /// API over HTTP, with its key as that format takes it.
     pub fn client(&self) -> Result<HttpTransport, Fault> {
         let part = self.api()?;
-        self.keyless_client_at(&part.base_url)?
-            .with_headers(part.headers)
+        self.keyed_client_at(&part.base_url, part.headers)
     }
 
     /// A client of it at `base_url`, such as an API beside the one its
     /// formats are at, with its key as its first format of an API over HTTP
     /// takes it.
     pub fn client_at(&self, base_url: &str) -> Result<HttpTransport, Fault> {
-        self.keyless_client_at(base_url)?
-            .with_headers(self.api()?.headers)
+        self.keyed_client_at(base_url, self.api()?.headers)
     }
 
     /// A client of it at the base URL of its format `format`, if it speaks
@@ -266,7 +264,7 @@ impl VendorProvider {
             .parts()?
             .into_iter()
             .find(|p| p.format.name() == format);
-        let client = |p: Part| self.keyless_client_at(&p.base_url)?.with_headers(p.headers);
+        let client = |p: Part| self.keyed_client_at(&p.base_url, p.headers);
         part.map(client).transpose()
     }
 
@@ -289,6 +287,15 @@ impl VendorProvider {
             Some(client) => Ok(transport.with_client(client.clone())),
             None => transport.with_network(&self.network),
         }
+    }
+
+    /// A client of it at `base_url` with its key: `auth`, or its signer.
+    fn keyed_client_at(&self, base_url: &str, auth: HeaderMap) -> Result<HttpTransport, Fault> {
+        let mut client = self.keyless_client_at(base_url)?;
+        if let Key::Signed(signer) = &self.key {
+            client = client.with_signer(signer.clone());
+        }
+        client.with_headers(auth)
     }
 
     /// Its first format of an API over HTTP.
@@ -330,14 +337,11 @@ impl VendorProvider {
             }
             Reach::Http { follow } => follow,
         };
-        let mut client = self.keyless_client_at(base)?;
+        let mut client = self.keyed_client_at(base, auth)?;
         if let Some(follow) = follow {
             client = client.follow_redirects(follow);
         }
-        if let Key::Signed(signer) = &self.key {
-            client = client.with_signer(signer.clone());
-        }
-        let client = Arc::new(client.with_headers(auth)?);
+        let client = Arc::new(client);
         let host = base.split_once("://").map_or(base, |(_, rest)| rest);
         let host = host.split('/').next().unwrap_or_default();
         let who: Arc<str> = format!("provider '{}' at {host}", self.name).into();

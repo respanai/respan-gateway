@@ -27,7 +27,7 @@ pub use models::{BoxFuture, Capability, ListModels, Modality, Model, Models, Pri
 pub use provider::{Part, VendorProvider};
 pub use respan_gateway_http::call::{CallSigner, Sign};
 pub use respan_gateway_http::dialect::{Dialect, Dialected};
-pub use respan_gateway_http::{Body, Connect, KeyIn, Reach, Rewrite, Transcode, Upstream, http};
+pub use respan_gateway_http::{Body, Connect, KeyIn, Reach, Rewrite, Upstream, http};
 pub use respan_gateway_http_faults::built_wrong;
 pub use respan_gateway_http_transport::{HttpTransport, Network, json, reqwest};
 pub use respan_gateway_sdk::{Ask, FormatFor};
