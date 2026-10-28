@@ -143,13 +143,15 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// reasoning an assistant sends back (`reasoning_content`, `reasoning`,
 /// `reasoning_details`, `thinking_blocks`), which a provider takes back only
 /// from the format it came in. A message's `cache_control` stays a field of
-/// its own, a cache marker ([`Keep::CACHE_MARKER`]).
+/// its own, a cache marker ([`Keep::CACHE_MARKER`]). LiteLLM's
+/// `provider_specific_fields` rides along on a reply sent back as history.
 const INERT_FIELDS: &[&str] = &[
     "name",
     "reasoning_content",
     "reasoning",
     "reasoning_details",
     "thinking_blocks",
+    "provider_specific_fields",
 ];
 
 /// An OpenAI message read as the kind's
@@ -161,6 +163,11 @@ const INERT_FIELDS: &[&str] = &[
 /// message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
     if let Some(native) = &mut message.native {
+        // A reply sent back as history carries `refusal: null`, `annotations: []` and the
+        // like; an empty field says nothing, so it is absent.
+        native
+            .fields
+            .retain(|_, v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
         let mut inert = Map::new();
         for key in INERT_FIELDS {
             if let Some(value) = native.fields.shift_remove(*key) {

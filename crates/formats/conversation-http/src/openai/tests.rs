@@ -1821,3 +1821,31 @@ fn a_refusal_finish_is_a_filtered_response() {
     assert!(end.is_ok());
     assert_eq!(finish(out), Some(Finish::Filtered));
 }
+
+/// A reply sent back as history, with its empty response fields and LiteLLM's
+/// `provider_specific_fields`, crosses to another format.
+#[test]
+fn a_reply_sent_back_as_history_crosses_to_another_format() {
+    let call =
+        json!([{ "id": "t", "type": "function", "function": { "name": "f", "arguments": "{}" } }]);
+    let body = json!({ "model": "m", "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": null, "tool_calls": call, "refusal": null,
+          "annotations": [], "audio": null, "function_call": null,
+          "provider_specific_fields": { "x": 1 } },
+        { "role": "tool", "tool_call_id": "t", "content": "42" },
+    ]});
+    let chat = OpenAiChat.decode_json(&body);
+    let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.map(|v| v["input"][1]["type"].clone()).ok(),
+        Some(json!("function_call"))
+    );
+    assert!(AnthropicMessages.encode_request(&chat).is_ok());
+    let back = written(body, |_| {}).ok().map(|v| v["messages"][1].clone());
+    assert_eq!(
+        back.as_ref().map(|m| m["provider_specific_fields"].clone()),
+        Some(json!({ "x": 1 }))
+    );
+    assert_eq!(back.map(|m| m.get("refusal").is_none()), Some(true));
+}
