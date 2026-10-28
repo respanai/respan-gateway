@@ -997,6 +997,20 @@ fn what_a_conversation_cannot_hold_is_kept_or_refused() {
 }
 
 #[test]
+fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
+    let body = json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }],
+        "logprobs": true, "top_logprobs": 3 });
+    let chat = OpenAiChat.decode_json(&body);
+    // To Anthropic it is sent without them, not refused.
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    let sent = sent.unwrap_or_default();
+    assert!(sent.get("logprobs").is_none() && sent.get("top_logprobs").is_none());
+    assert_eq!(sent["messages"][0]["content"], json!("hi"));
+    // To OpenAI they go as they came.
+    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
+}
+
+#[test]
 fn several_choices_are_refused_as_a_bad_request() {
     let body = json!({ "model": "m", "messages": [], "n": 2 });
     let chat = OpenAiChat.decode_json(&body);
