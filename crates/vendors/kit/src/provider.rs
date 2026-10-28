@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use crate::{Connect, KeyIn, Models, Reach, Upstream, Vendor, located};
 use respan_gateway_core::{Fault, Gateway};
+use respan_gateway_http::call::Sign;
 use respan_gateway_http::http::HeaderMap;
 use respan_gateway_http::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
 use respan_gateway_http_transport::{HttpTransport, Network, reqwest, unreachable};
@@ -77,6 +78,8 @@ enum Key {
     Own(String),
     /// These headers, as they are.
     Headers(HeaderMap),
+    /// No key: each call signed ([`Sign`]).
+    Signed(Arc<dyn Sign>),
 }
 
 impl std::fmt::Debug for VendorProvider {
@@ -95,12 +98,13 @@ impl Vendor {
     /// client's.
     pub fn provider(&'static self, name: impl Into<String>) -> VendorProvider {
         let env = |var: &&str| std::env::var(var).ok().filter(|k| !k.trim().is_empty());
-        let key = self.key_env.iter().find_map(env);
+        let key = (self.key_env.iter().find_map(env).map(Key::Own))
+            .or_else(|| self.signer.and_then(|signer| signer()).map(Key::Signed));
         let at = |url: Option<&str>| url.and_then(|url| located(url).ok()).map(At::Own);
         VendorProvider {
             vendor: self,
             formats: self.formats.iter().map(|(f, url)| (*f, at(*url))).collect(),
-            key: key.map_or(Key::Client, Key::Own),
+            key: key.unwrap_or(Key::Client),
             ..VendorProvider::new(name)
         }
     }
@@ -296,7 +300,7 @@ impl VendorProvider {
     /// The headers its calls of a format that takes the key at `key` carry.
     fn auth(&self, key: KeyIn) -> Result<HeaderMap, Fault> {
         let (name, value) = match (&self.key, key) {
-            (Key::Client, _) => return Ok(HeaderMap::new()),
+            (Key::Client | Key::Signed(_), _) => return Ok(HeaderMap::new()),
             (Key::Headers(headers), _) => return Ok(headers.clone()),
             (Key::Own(key), KeyIn::Bearer) => (AUTHORIZATION, format!("Bearer {key}")),
             (Key::Own(key), KeyIn::Header(name)) => (HeaderName::from_static(name), key.clone()),
@@ -329,6 +333,9 @@ impl VendorProvider {
         let mut client = self.keyless_client_at(base)?;
         if let Some(follow) = follow {
             client = client.follow_redirects(follow);
+        }
+        if let Key::Signed(signer) = &self.key {
+            client = client.with_signer(signer.clone());
         }
         let client = Arc::new(client.with_headers(auth)?);
         let host = base.split_once("://").map_or(base, |(_, rest)| rest);

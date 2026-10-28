@@ -56,7 +56,7 @@ impl Dialect for Mistral {
         Some(Box::new(taken))
     }
 
-    fn request(&self, _: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+    fn request(&self, _: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
         Ok(Some(Box::new(unstreamed)))
     }
 

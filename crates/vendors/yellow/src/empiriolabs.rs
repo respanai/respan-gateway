@@ -80,7 +80,7 @@ impl Dialect for EmpirioLabsImages {
         Some(Box::new(taken_image))
     }
 
-    fn request(&self, _: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+    fn request(&self, _: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
         Ok(Some(Box::new(|body| crate::without(body, "stream"))))
     }
 }
@@ -136,7 +136,7 @@ impl Dialect for EmpirioLabsSpeech {
         Some(Box::new(taken_speech))
     }
 
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+    fn request(&self, head: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
         set_path(head, "/audio/speech:stream")?;
         Ok(Some(Box::new(|body| crate::without(body, "stream_format"))))
     }
@@ -424,7 +424,7 @@ mod tests {
     fn speech_is_asked_for_as_a_stream_and_read_whole() {
         let mut head = http::Request::new(()).into_parts().0;
         head.uri = http::Uri::from_static("/audio/speech");
-        let rewrite = EmpirioLabsSpeech.request(&mut head).expect("a call");
+        let rewrite = EmpirioLabsSpeech.request(&mut head, None).expect("a call");
         assert_eq!(head.uri.path(), "/audio/speech:stream");
         let call = Bytes::from_static(br#"{"input":"Hi.","stream_format":"sse"}"#);
         let call = rewrite.expect("a rewrite")(call).expect("a call");

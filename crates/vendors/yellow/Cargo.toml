@@ -17,6 +17,7 @@ respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true
 respan-gateway-decision-http.workspace = true
 respan-gateway-decision.workspace = true
+respan-gateway-eventstream.workspace = true
 respan-gateway-http.workspace = true
 respan-gateway-media.workspace = true
 respan-gateway-media-http.workspace = true
@@ -24,4 +25,7 @@ respan-gateway-realtime-ws.workspace = true
 respan-gateway-sse.workspace = true
 respan-gateway-vendor-kit.workspace = true
 serde_json.workspace = true
+aws-sigv4 = { version = "1.3.8", default-features = false, features = ["sign-http", "http1"] }
+aws-credential-types = { version = "1.2.11", default-features = false }
+aws-smithy-runtime-api = { version = "1.11.3", default-features = false, features = ["client"] }
 

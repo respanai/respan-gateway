@@ -13,6 +13,7 @@ use http_body_util::BodyExt;
 use respan_gateway_core::Fault;
 
 use respan_gateway_http::call::{CONNECT_TIMEOUT, MAX_BODY, invalid, own_headers};
+use respan_gateway_http::call::{Sign, signer_of};
 use respan_gateway_http::rules::{is_connection_header, remove_if};
 use respan_gateway_http::{Body, ProviderIo, Sent};
 use respan_gateway_http::{call::is_credential, call::prepare_call, call::strip_origin_headers};
@@ -41,6 +42,8 @@ pub struct HttpTransport {
     base: String,
     headers: HeaderMap,
     follow: Option<Arc<Allow>>,
+    /// What signs each call, unless the call has a signer of its own.
+    signer: Option<Arc<dyn Sign>>,
 }
 
 impl std::fmt::Debug for HttpTransport {
@@ -76,6 +79,7 @@ impl HttpTransport {
             base: respan_gateway_http::call::base_url(&base_url.into(), &["http", "https"])?,
             headers: HeaderMap::new(),
             follow: None,
+            signer: None,
         })
     }
 
@@ -91,6 +95,14 @@ impl HttpTransport {
     /// follows those it is told to ([`follow_redirects`](Self::follow_redirects)).
     pub fn with_client(mut self, client: reqwest::Client) -> Self {
         self.client = client;
+        self
+    }
+
+    /// Sign every call with `signer` after its headers are put on, unless
+    /// the call has a signer of its own
+    /// ([`CallSigner`](respan_gateway_http::call::CallSigner)).
+    pub fn with_signer(mut self, signer: Arc<dyn Sign>) -> Self {
+        self.signer = Some(signer);
         self
     }
 
@@ -119,6 +131,13 @@ impl HttpTransport {
     pub async fn send(&self, mut call: http::Request<Body>) -> Sent {
         prepare_call(&mut call, &self.base, &self.headers)?;
         let (mut parts, body) = call.into_parts();
+        if let Some(signer) = signer_of(&parts, self.signer.as_ref()) {
+            if body.is_streaming() {
+                return Err(Fault::internal("a signed call has no whole body to sign"));
+            }
+            let empty = Bytes::new();
+            signer.sign(&mut parts, body.full_bytes().unwrap_or(&empty))?;
+        }
         let no_body = !body.is_streaming() && body.full_bytes().is_none_or(|b| b.is_empty());
         let reads = matches!(parts.method, Method::GET | Method::HEAD);
         let follow = self.follow.as_ref().filter(|_| no_body && reads);

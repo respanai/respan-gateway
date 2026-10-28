@@ -39,6 +39,7 @@ where
         codings: false,
         request: None,
         response: None,
+        stream: None,
     }
 }
 
@@ -65,14 +66,25 @@ pub struct ProviderIo {
     /// What changes the answer before its format reads it
     /// ([`ProviderIo::with_response`]).
     response: Option<ResponseHook>,
+    /// What transcodes the answer's body as it streams
+    /// ([`ProviderIo::with_stream`]).
+    stream: Option<StreamHook>,
 }
 
 /// A whole body, rewritten: a call's before it is sent, or an answer's
 /// before it is read.
 pub type Rewrite = Box<dyn FnOnce(Bytes) -> Result<Bytes, Fault> + Send>;
 
+/// An answer's body transcoded as it streams: each piece the provider sent
+/// in, the bytes its format reads out, which may be none yet.
+pub type Transcode = Box<dyn FnMut(Bytes) -> Result<Bytes, Fault> + Send>;
+
+/// What transcodes an answer ([`ProviderIo::with_stream`]).
+type StreamHook = Box<dyn FnOnce(&RequestHead, &mut ResponseHead) -> Option<Transcode> + Send>;
+
 /// What changes a call ([`ProviderIo::with_request`]).
-type RequestHook = Box<dyn FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send>;
+type RequestHook =
+    Box<dyn FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault> + Send>;
 
 /// What changes an answer ([`ProviderIo::with_response`]).
 type ResponseHook = Box<dyn FnOnce(&RequestHead, &mut ResponseHead) -> Option<Rewrite> + Send>;
@@ -116,13 +128,15 @@ impl ProviderIo {
     }
 
     /// Change the call after its format wrote it, before it is sent:
-    /// `request` edits its head, and may rewrite its whole body, which a
-    /// call of live input, whose body streams, cannot have. `Err` fails the
-    /// call unsent. The format still reads its answer against the call as
-    /// it wrote it.
+    /// `request` edits its head, given its whole body (`None` for a call of
+    /// live input, whose body streams), and may rewrite that body. `Err`
+    /// fails the call unsent. The format still reads its answer against the
+    /// call as it wrote it.
     pub fn with_request(
         mut self,
-        request: impl FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send + 'static,
+        request: impl FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault>
+        + Send
+        + 'static,
     ) -> Self {
         self.request = Some(Box::new(request));
         self
@@ -137,6 +151,19 @@ impl ProviderIo {
         response: impl FnOnce(&RequestHead, &mut ResponseHead) -> Option<Rewrite> + Send + 'static,
     ) -> Self {
         self.response = Some(Box::new(response));
+        self
+    }
+
+    /// Transcode the answer's body piece by piece as it streams, before its
+    /// format reads it: `stream` edits its head, given the call's as its
+    /// format wrote it, and gives the [`Transcode`], if any, such as of a
+    /// vendor's own framing into the format's. It runs on every answer, a
+    /// refusal too, before [`with_response`](Self::with_response)'s hook.
+    pub fn with_stream(
+        mut self,
+        stream: impl FnOnce(&RequestHead, &mut ResponseHead) -> Option<Transcode> + Send + 'static,
+    ) -> Self {
+        self.stream = Some(Box::new(stream));
         self
     }
 
@@ -216,6 +243,7 @@ impl ProviderIo {
                 None => (head, body),
             };
             let response_hook = self.response;
+            let stream_hook = self.stream;
             let mut request = http::Request::from_parts(head, body);
             let relayed = self.extensions.get::<crate::raw::Relayed>().copied();
             let client_head = relayed
@@ -250,6 +278,10 @@ impl ProviderIo {
                     let (response, completion) = (self.send)(request).await?;
                     let (mut head, mut body) = response.into_parts();
                     let call = sent.clone().into_parts().0;
+                    if let Some(mut transcode) = stream_hook.and_then(|hook| hook(&call, &mut head)) {
+                        body = Body::stream(body.map(move |piece| piece.and_then(&mut transcode)));
+                        head.headers.remove(http::header::CONTENT_LENGTH);
+                    }
                     if let Some(rewrite) = response_hook.and_then(|hook| hook(&call, &mut head)) {
                         body = Body::full(rewrite(body.read_answer(limit).await?)?);
                         head.headers.remove(http::header::CONTENT_LENGTH);
@@ -331,12 +363,11 @@ fn changed(
     body: Body,
     request: RequestHook,
 ) -> Result<(RequestHead, Body), Fault> {
-    let Some(rewrite) = request(&mut head)? else {
+    let whole = body.full_bytes().cloned();
+    let Some(rewrite) = request(&mut head, whole.as_ref())? else {
         return Ok((head, body));
     };
-    let whole = body
-        .full_bytes()
-        .cloned()
+    let whole = whole
         .ok_or_else(|| Fault::internal("a call of live input has no whole body to rewrite"))?;
     head.headers.remove(http::header::CONTENT_LENGTH);
     Ok((head, Body::full(rewrite(whole)?)))

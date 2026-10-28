@@ -43,6 +43,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions` |
+| | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`, else `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (SigV4); `AWS_REGION` | `anthropic-messages` (Claude) |
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
@@ -98,7 +99,8 @@ provider of no vendor at TypeSafe's URL calls `/decisions` and is not found.
 Without a config file, `RESPAN_<VENDOR>_BASE_URL` moves a vendor's base URL
 (`OLLAMA_HOST` for `ollama`); with one, only the file's `base_url` counts
 (`respan-gateway init` writes the moved URL into it). `azure` and `vllm`
-need a `base_url`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, or one.
+need a `base_url`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, and `bedrock`
+`AWS_REGION`, or one.
 
 How each vendor's quirks are handled, and how to add one, is in
 [`crates/vendors`](../crates/vendors/README.md).

@@ -154,6 +154,36 @@ pub fn strip_origin_headers(headers: &mut HeaderMap) {
     }
 }
 
+/// What proves who sent a call by its whole content, such as AWS's SigV4: it
+/// edits the call's head, its URL, headers and `body` final.
+pub trait Sign: Send + Sync {
+    /// Sign the call `head` of `body`.
+    fn sign(&self, head: &mut http::request::Parts, body: &[u8]) -> Result<(), Fault>;
+}
+
+/// The signer of one call, in its extensions, in place of its transport's:
+/// it signs after its keys are put on ([`CallHeaders`]).
+#[derive(Clone)]
+pub struct CallSigner(pub Arc<dyn Sign>);
+
+impl std::fmt::Debug for CallSigner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CallSigner")
+    }
+}
+
+/// The signer of `call`: its own ([`CallSigner`]), else `fallback`.
+pub fn signer_of(
+    call: &http::request::Parts,
+    fallback: Option<&Arc<dyn Sign>>,
+) -> Option<Arc<dyn Sign>> {
+    let own = call.extensions.get::<Extensions>();
+    let own = own
+        .and_then(|e| e.get::<CallSigner>())
+        .map(|CallSigner(s)| s.clone());
+    own.or_else(|| fallback.cloned())
+}
+
 /// Headers for one call, replacing the transport's own of their names, such
 /// as a tenant's key set in `on_provider`.
 #[derive(Clone, Default)]
