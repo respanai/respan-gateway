@@ -154,11 +154,8 @@ tokens in the input. A stream with no `finishReason` was cut. Errors are
 `/model/{modelId}/converse` or `/converse-stream`; its provider base URL is a
 region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, with a
 Bedrock API key as a bearer token, or a call its transport signs (SigV4, as
-the `bedrock` vendor does). Its
-clients are the Bedrock Runtime SDKs with the gateway as their endpoint and
-a bearer token as their key (`AWS_BEARER_TOKEN_BEDROCK`), at a path that
-ends in `/model/{modelId}/converse` or `/converse-stream`, the model
-unescaped from it.
+the `bedrock` vendor does). It is a provider's format only: no client
+speaks it to the gateway.
 
 The model is in the path, escaped whole, so an inference profile's id
 (`us.anthropic.claude-sonnet-4-20250514-v1:0`) or an ARN is one segment. A
@@ -177,7 +174,7 @@ refused before any call and an image is sent as a data URL; `toolUse` and
 and a result with none says `(no output)`); or `reasoningContent`,
 which Bedrock must have signed or redacted to take it back, and is otherwise
 left out. A part, tool or system block with a cache marker, Anthropic's
-`cache_control` or a client's `cachePoint`, is followed by a `cachePoint`. `inferenceConfig` is the output limit, `temperature`, `topP` and
+`cache_control`, is followed by a `cachePoint`. `inferenceConfig` is the output limit, `temperature`, `topP` and
 stop sequences; `toolConfig` the tools and the choice (`auto`, `any`, or one
 `tool`; a choice of `None` offers no tools). Bedrock names reasoning and
 `top_k` per model, in `additionalModelRequestFields`: a [reasoning
@@ -195,20 +192,7 @@ block. `stopReason` is the finish: `end_turn` and `stop_sequence` stop,
 others stay native. Usage counts the cache reads and writes as parts of the
 input. Converse names neither an id nor a model, so the response's are empty;
 its metrics, trace and model-specific fields, and a block of another type,
-stay native: only a Converse client gets them.
-
-A client's request is read the same way back: a `cachePoint` marks the
-part, tool or system block before it, and what the kind has no form for (a
-guardrail, a service tier, request metadata, a guard or video block, media
-in S3, the model's own `additionalModelRequestFields`) stays native, so a
-Bedrock provider is sent it and another refuses it. Its answer is
-Converse's body, or for `converse-stream` the event stream: `messageStart`,
-each block's deltas by its index (a tool's `contentBlockStart`),
-`contentBlockStop`, then `messageStop` and `metadata`; usage's
-`inputTokens` is the input apart from the cache reads and writes, as
-Bedrock counts it. A failure in the stream is an `exception` message of
-Bedrock's type for its status; a refusal is `{"message"}` with its type in
-`x-amzn-errortype`, which the SDKs raise as their exceptions.
+stay native, which another format drops.
 
 ## Reasoning and sampling
 

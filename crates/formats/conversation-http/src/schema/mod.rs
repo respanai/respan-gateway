@@ -32,8 +32,7 @@ pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
-pub(crate) use exchange::refusal as refusal_body;
-pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event, whole_encoder};
+pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
 pub use values::INERT;
 pub(crate) use values::{

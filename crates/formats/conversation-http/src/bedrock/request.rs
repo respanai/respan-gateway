@@ -10,8 +10,11 @@ use respan_gateway_conversation::{
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
-use super::read::CACHE_MARKER;
 use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
+
+/// The cache marker of a block, Anthropic's `cache_control`, which Converse
+/// writes as a `cachePoint` after it.
+const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
     Keep, NativeFieldsExt, arguments_object, encode_native, kept_fields, reasoning_of, set,
     stop_json, tool_field, untranslatable, unwritable_content,
@@ -102,9 +105,8 @@ fn cache_point() -> Value {
     json!({ "cachePoint": { "type": "default" } })
 }
 
-/// Whether fields hold a cache marker, Anthropic's `cache_control` or one
-/// a `cachePoint` of this format's put there: the block they are on is
-/// cached up to, whichever format marked it.
+/// Whether fields hold a cache marker: the block they are on is cached up
+/// to.
 fn cached(native: &Option<NativeFields>) -> bool {
     native.fields().contains_key(CACHE_MARKER)
 }

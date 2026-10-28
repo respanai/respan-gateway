@@ -344,15 +344,6 @@ pub(crate) fn refusal<C: Schema>(fault: &Fault, head: &mut ResponseHead) -> Byte
     }
 }
 
-/// The encoder of a whole response in `schema`'s format, for a format that
-/// chooses its framing itself.
-pub(crate) fn whole_encoder<C: Schema>(schema: C) -> Box<dyn Encoder<Output>> {
-    Box::new(UnaryEncoder {
-        whole: Assembled::default(),
-        schema,
-    })
-}
-
 /// Writes one message at its end: the events collected into a whole body. A
 /// failure, before any byte, is refused.
 struct UnaryEncoder<C> {

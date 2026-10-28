@@ -226,10 +226,6 @@ mod endpoints {
         "GET /v1/videos/{id}/content",
         "POST /v1/videos/{id}/remix",
     ];
-    pub const CONVERSE: &[&str] = &[
-        "POST /model/{model}/converse",
-        "POST /model/{model}/converse-stream",
-    ];
     pub const VEO: &[&str] = &[
         "POST /v1beta/models/{model}:predictLongRunning",
         "GET /v1beta/{operation}",
@@ -269,7 +265,7 @@ pub fn formats() -> Vec<KnownFormat> {
         )),
         KnownFormat::of(kind::CHAT, endpoints::MESSAGES, AnthropicMessages).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
-        KnownFormat::of(kind::CHAT, endpoints::CONVERSE, BedrockConverse).model(chat()),
+        KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,

@@ -1,8 +1,7 @@
 //! Amazon Bedrock's Converse: `POST /model/{modelId}/converse` and
 //! `/converse-stream`, of the conversation kind, as a [`Schema`]
-//! ([`BedrockConverse`]), at both edges: a client of the Bedrock Runtime
-//! SDKs (its endpoint the gateway's, its key a bearer token) talks to any
-//! model the gateway routes to, and a provider is Bedrock.
+//! ([`BedrockConverse`]), at the provider edge only: Bedrock serves every
+//! model it hosts on Converse, and no client speaks it to the gateway.
 //!
 //! The model is in the path, escaped whole (an inference profile's id,
 //! `us.anthropic.claude-sonnet-4-20250514-v1:0`, or an ARN, is one segment),
@@ -14,8 +13,8 @@
 //! The leading system messages are the `system` blocks. `messages` are the
 //! rest, a message of the role before it joined to that one, as Converse needs
 //! the roles to alternate, and a blank text left out; a part, tool or
-//! system block with a cache marker (Anthropic's `cache_control`, or a
-//! client's `cachePoint`) is followed by a `cachePoint`. A part is a `text`,
+//! system block with a cache marker (Anthropic's `cache_control`) is
+//! followed by a `cachePoint`. A part is a `text`,
 //! an `image` or `document` (bytes only: a URL is refused, as the format has
 //! no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
 //! one), or `reasoningContent` that Bedrock signed or redacted, which is the
@@ -28,13 +27,6 @@
 //! Refused as having no field: `top_k`, an effort, JSON without a schema, an
 //! end user's id, one tool call at a time, audio, a system message after
 //! the conversation starts, and the fields of another format.
-//!
-//! A client's request is read the same way back; what the kind has no form
-//! for (a guardrail, a service tier, a guard or video block, media in S3,
-//! the model's own `additionalModelRequestFields`) stays native, so only a
-//! Bedrock provider is sent it. Its answer is Converse's body, or for
-//! `converse-stream` the event stream, its failures an `exception`
-//! message; a refusal is `{"message"}` with its type in `x-amzn-errortype`.
 //!
 //! # Responses as events
 //!
@@ -54,7 +46,7 @@
 //!   input.
 //! - What else a response says (`metrics`, `trace`, `serviceTier`, the
 //!   model's own response fields), and a block of another type (a citation,
-//!   a guard), is an [`Output::Native`], which only a Converse client gets.
+//!   a guard), is an [`Output::Native`], which another format drops.
 //!
 //! A failure in the stream (`:message-type` `exception` or `error`) is an
 //! upstream fault of its type; a stream that ends before `messageStop`, or
@@ -62,22 +54,16 @@
 //! unless the transport signs the call (SigV4).
 
 mod decode;
-mod encode;
-mod read;
 mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{Asked, Framing, Names, Schema, unwritable_content};
+use crate::schema::{Asked, Framing, Names, Schema, native_fields, rest_of, unwritable_content};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderName, HeaderValue};
-use respan_gateway_http::http::{
-    self, request::Parts as RequestHead, response::Parts as ResponseHead,
-};
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{ClientIo, Connect, Encoder, ProviderIo, Upstream};
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
 use serde_json::{Map, Value, json};
 
 use decode::ConverseDecoder;
@@ -146,18 +132,6 @@ impl Format<ProviderIo, Output, Input> for BedrockConverse {
     }
 }
 
-impl Format<ClientIo, Input, Output> for BedrockConverse {
-    fn name(&self) -> &str {
-        BEDROCK
-    }
-    fn matches(&self, io: &ClientIo) -> bool {
-        self.accepts(io.request())
-    }
-    fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        self.bind_client(io)
-    }
-}
-
 /// The image formats Converse takes, by media type.
 const IMAGES: &[(&str, &str)] = &[
     ("png", "image/png"),
@@ -185,11 +159,6 @@ const DOCUMENTS: &[(&str, &str)] = &[
     ("md", "text/markdown"),
 ];
 
-/// The media type of a Converse `format` in `table`.
-fn mime_of(table: &[(&str, &'static str)], format: &str) -> Option<&'static str> {
-    table.iter().find(|(f, _)| *f == format).map(|(_, m)| *m)
-}
-
 /// The Converse format of a media type in `table`.
 fn format_of(table: &[(&'static str, &str)], mime: &str) -> Option<&'static str> {
     table.iter().find(|(_, m)| *m == mime).map(|(f, _)| *f)
@@ -198,44 +167,11 @@ fn format_of(table: &[(&'static str, &str)], mime: &str) -> Option<&'static str>
 /// The media type of ConverseStream's answer.
 const EVENT_STREAM: &str = "application/vnd.amazon.eventstream";
 
-/// The header Bedrock names an error's type in, which its SDKs read.
-const ERROR_TYPE: HeaderName = HeaderName::from_static("x-amzn-errortype");
-
-/// The model, unescaped, and whether a stream is asked, of a Converse path:
-/// `.../model/{model}/converse` or `/converse-stream`.
-pub fn call_of(uri: &http::Uri) -> Option<(String, bool)> {
-    let mut segments = uri.path().rsplit('/');
-    let stream = match segments.next()? {
-        "converse" => false,
-        "converse-stream" => true,
-        _ => return None,
-    };
-    let model = segments.next().filter(|m| !m.is_empty())?;
-    (segments.next() == Some("model")).then(|| {
-        let model = percent_encoding::percent_decode_str(model).decode_utf8_lossy();
-        (model.into_owned(), stream)
-    })
-}
-
-/// The type Bedrock names an error of `status` by.
-fn error_type(status: http::StatusCode) -> &'static str {
-    match status.as_u16() {
-        400 | 413 | 422 => "ValidationException",
-        401 | 403 => "AccessDeniedException",
-        404 => "ResourceNotFoundException",
-        408 => "ModelTimeoutException",
-        424 => "ModelErrorException",
-        429 => "ThrottlingException",
-        503 => "ServiceUnavailableException",
-        _ => "InternalServerException",
-    }
-}
-
 impl Schema for BedrockConverse {
     const NAME: &'static str = BEDROCK;
     const PATH: &'static str = "/model/{model}/converse";
     const STREAM_FLAG: bool = false;
-    const FRAMING: Framing = Framing::Own("application/vnd.amazon.eventstream");
+    const FRAMING: Framing = Framing::Own(EVENT_STREAM);
     type Decoding = ConverseDecoder;
 
     fn decoder(&self) -> ConverseDecoder {
@@ -244,63 +180,6 @@ impl Schema for BedrockConverse {
 
     fn decode_body(&self, v: &Value, out: &mut Vec<Output>) -> Result<(), Fault> {
         self.decoder().body(v, out)
-    }
-
-    fn accepts<B>(&self, request: &http::Request<B>) -> bool {
-        request.method() == http::Method::POST && call_of(request.uri()).is_some()
-    }
-
-    fn streams(uri: &http::Uri) -> bool {
-        call_of(uri).is_some_and(|(_, stream)| stream)
-    }
-
-    /// A client's request: its body, and the model its path names.
-    fn read_request(&self, head: &RequestHead) -> Box<dyn respan_gateway_http::Decoder<Input>> {
-        let (schema, head) = (*self, head.clone());
-        Box::new(move |raw: Bytes, out: &mut Vec<Input>| {
-            let v = match serde_json::from_slice::<Value>(&raw) {
-                Ok(v) if v.is_object() => v,
-                _ => return Err(Fault::bad_request("request body is not a JSON object")),
-            };
-            let mut chat = schema.decode_json(&v);
-            chat.model = call_of(&head.uri).map(|(model, _)| model);
-            out.push(chat);
-            Ok(())
-        })
-    }
-
-    /// The client's framing, by its path: ConverseStream's event stream for
-    /// a success it streams, else JSON.
-    fn response_encoder(
-        &self,
-        head: &mut ResponseHead,
-        request: &http::Request<Bytes>,
-    ) -> Box<dyn Encoder<Output>> {
-        let stream = Self::streams(request.uri()) && head.status.is_success();
-        let media = if stream {
-            EVENT_STREAM
-        } else {
-            "application/json"
-        };
-        head.headers
-            .insert(CONTENT_TYPE, HeaderValue::from_static(media));
-        match stream {
-            true => self.stream_encoder(Asked::default()),
-            false => crate::schema::whole_encoder(*self),
-        }
-    }
-
-    /// Bedrock's error: `{"message"}`, its type in `x-amzn-errortype`.
-    fn refusal(
-        &self,
-        fault: &Fault,
-        _request: &http::Request<Bytes>,
-        head: &mut ResponseHead,
-    ) -> Bytes {
-        let body = crate::schema::refusal_body::<Self>(fault, head);
-        let kind = HeaderValue::from_static(error_type(head.status));
-        head.headers.insert(ERROR_TYPE, kind);
-        body
     }
 
     fn decode_part(_: &Value) -> Option<Content> {
@@ -365,20 +244,37 @@ impl Schema for BedrockConverse {
         Ok(v)
     }
 
+    /// Not read: the request stays native, so only Bedrock is sent it.
     fn decode_json(&self, v: &Value) -> Input {
-        read::read(v)
+        let mut chat = Input::default();
+        chat.native = native_fields(BEDROCK, rest_of(v, &[]));
+        chat
     }
 
-    fn encode_whole(&self, whole: &Assembled) -> Result<Value, Fault> {
-        encode::whole(whole)
+    fn encode_whole(&self, _: &Assembled) -> Result<Value, Fault> {
+        Err(no_client())
     }
 
     fn stream_encoder(&self, _: Asked) -> Box<dyn Encoder<Output>> {
-        Box::new(encode::EventStream::default())
+        Box::new(Unwritten)
     }
 
     /// Bedrock's error body: `{"message": ..}`.
     fn error_body(fault: &Fault) -> Value {
         json!({ "message": fault.message() })
+    }
+}
+
+/// What a client would be answered in: none, as no client speaks Converse.
+fn no_client() -> Fault {
+    Fault::internal("Converse answers no client")
+}
+
+/// The encoder of an answer to a client, which Converse has none of.
+struct Unwritten;
+
+impl Encoder<Output> for Unwritten {
+    fn encode(&mut self, _: &Output, _: &mut Vec<Bytes>) -> Result<(), Fault> {
+        Err(no_client())
     }
 }
