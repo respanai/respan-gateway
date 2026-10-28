@@ -708,7 +708,8 @@ fn response_encoder(
 /// the request names it, and its path up to the version segment.
 fn gateway_base(request: &http::Request<Bytes>) -> String {
     let header = |name: &str| request.headers().get(name).and_then(|v| v.to_str().ok());
-    let host = header("host").unwrap_or("localhost");
+    let authority = request.uri().authority().map(|a| a.as_str());
+    let host = header("host").or(authority).unwrap_or("localhost");
     let scheme = header("x-forwarded-proto").unwrap_or("http");
     let path = forwarded_path(request.uri().path());
     let at = ["/models/", "/operations/", "/files/"]
@@ -867,6 +868,28 @@ mod tests {
         for size in ["1024x1024", "1024x768", "big", "0x0"] {
             assert!(aspect_of(size).is_err(), "{size}");
         }
+    }
+
+    #[test]
+    fn a_base_falls_back_to_the_requests_authority_without_a_host_header() {
+        let named = |uri: &str, host: Option<&str>| {
+            let mut builder = http::Request::post(uri);
+            if let Some(host) = host {
+                builder = builder.header("host", host);
+            }
+            let request = builder.body(Bytes::new()).unwrap_or_default();
+            gateway_base(&request)
+        };
+        let path = "/v1beta/models/veo-3:predictLongRunning";
+        assert_eq!(
+            named(&format!("http://gw.example:8080{path}"), None),
+            "http://gw.example:8080/v1beta"
+        );
+        assert_eq!(
+            named(&format!("http://other.example{path}"), Some("gw.example")),
+            "http://gw.example/v1beta"
+        );
+        assert_eq!(named(path, None), "http://localhost/v1beta");
     }
 
     #[test]
