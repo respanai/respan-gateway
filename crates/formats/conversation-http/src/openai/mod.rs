@@ -106,6 +106,8 @@ const FINISH: Names<Finish> = Names(
         ("tool_calls", Finish::ToolUse),
         ("function_call", Finish::ToolUse),
         ("content_filter", Finish::Filtered),
+        // Sent by OpenAI-shaped resellers of Anthropic models; read, never written.
+        ("refusal", Finish::Filtered),
     ],
     OPENAI,
 );
