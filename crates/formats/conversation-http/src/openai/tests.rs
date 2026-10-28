@@ -1781,3 +1781,29 @@ fn a_messages_unknown_field_is_still_refused_by_another_format() {
     assert!(GeminiGenerate.encode_request(&chat).is_err());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
 }
+
+/// Regression: an OpenAI-shaped reseller of Anthropic models finishes a
+/// refusal as "refusal"; read as a native reason, no other format could write
+/// it and the response failed as a 502.
+#[test]
+fn a_refusal_finish_is_a_filtered_response() {
+    let finish = |out: Vec<Output>| {
+        out.into_iter().find_map(|o| match o {
+            Output::Finish(f) => Some(f),
+            _ => None,
+        })
+    };
+    let body = json!({ "id": "c1", "object": "chat.completion", "model": "m",
+        "choices": [{ "index": 0, "finish_reason": "refusal",
+            "message": { "role": "assistant", "content": "I can't help with that." } }] });
+    let out = decode_body(&body);
+    assert_eq!(finish(out.clone()), Some(Finish::Filtered));
+    let written = body_of(&out).expect("writes");
+    assert_eq!(written["choices"][0]["finish_reason"], "content_filter");
+
+    let chunk = json!({ "id": "c1", "model": "m", "choices": [{ "index": 0,
+        "delta": { "content": "no" }, "finish_reason": "refusal" }] });
+    let (out, end) = decode_all(&[&format!("data: {chunk}\n\n"), "data: [DONE]\n\n"]);
+    assert!(end.is_ok());
+    assert_eq!(finish(out), Some(Finish::Filtered));
+}
