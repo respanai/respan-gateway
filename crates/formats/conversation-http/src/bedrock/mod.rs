@@ -50,8 +50,7 @@
 //!
 //! A failure in the stream (`:message-type` `exception` or `error`) is an
 //! upstream fault of its type; a stream that ends before `messageStop`, or
-//! inside a message, was cut. The key is a bearer token (a Bedrock API key),
-//! unless the transport signs the call (SigV4).
+//! inside a message, was cut. The key is a bearer token (a Bedrock API key).
 
 mod decode;
 mod request;

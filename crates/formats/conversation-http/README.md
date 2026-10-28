@@ -153,8 +153,7 @@ tokens in the input. A stream with no `finishReason` was cut. Errors are
 `bedrock::BedrockConverse`, named `bedrock-converse`: a `POST` to
 `/model/{modelId}/converse` or `/converse-stream`; its provider base URL is a
 region's runtime, `https://bedrock-runtime.{region}.amazonaws.com`, with a
-Bedrock API key as a bearer token, or a call its transport signs (SigV4, as
-the `bedrock` vendor does). It is a provider's format only: no client
+Bedrock API key as a bearer token. It is a provider's format only: no client
 speaks it to the gateway.
 
 The model is in the path, escaped whole, so an inference profile's id

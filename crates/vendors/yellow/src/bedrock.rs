@@ -1,71 +1,63 @@
-//! Amazon Bedrock, at a region's `bedrock-runtime`, authenticated by a
-//! Bedrock API key or signed (SigV4) by an AWS key pair: Claude on
-//! Bedrock's Anthropic Messages (`/anthropic/v1/messages`), every other
-//! model on Converse ([`BedrockConverse`]), which serves Claude too.
+//! Amazon Bedrock, at a region's `bedrock-runtime`, with a Bedrock API key:
+//! Claude on Bedrock's Anthropic Messages (`/anthropic/v1/messages`), every
+//! other model on Converse ([`BedrockConverse`]), which serves Claude too.
+//! An AWS key pair signs calls outside the gateway, by a SigV4 proxy at the
+//! base URL, as an HTTP proxy is.
 //!
 //! Its models are the region's: the control plane (`bedrock.{region}`)
 //! lists the foundation models Converse serves whole and streamed, called
 //! on demand by their own id, and each active inference profile (`us.`,
 //! `global.`, an application's ARN) as the model it routes to.
 
-use std::sync::Arc;
-use std::time::SystemTime;
-
-use aws_credential_types::Credentials;
-use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
-use aws_sigv4::sign::v4;
-use aws_smithy_runtime_api::client::identity::Identity;
 use respan_gateway_conversation::{Input, Output};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_core::Fault;
-use respan_gateway_http::http::header::{HeaderName, HeaderValue};
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::path::escape;
+use respan_gateway_http::path::{escape, set_path};
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
     Ask, Body, BoxFuture, Capability, Dialect, Dialected, HttpTransport, KeyIn, Modality, Model,
-    Models, Sign, Vendor, VendorProvider, built_wrong, http, json, time,
+    Models, Rewrite, Vendor, VendorProvider, built_wrong, http, json, time,
 };
 
 /// Where a region's runtime is: `AWS_REGION`'s, unless a host says.
 const BASE_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com";
 
-/// Its Anthropic Messages, which take Anthropic's body as it is.
-const MESSAGES_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com/anthropic";
+/// Where its Anthropic Messages are, which take Anthropic's body as it is.
+const MESSAGES_PATH: &str = "/anthropic/v1/messages";
 
-/// The name Bedrock signs as, not its host's `bedrock-runtime`.
-const SIGNING_NAME: &str = "bedrock";
-
-/// Amazon Bedrock: its key a Bedrock API key, else each call signed by the
-/// environment's AWS key pair.
+/// Amazon Bedrock: its key a Bedrock API key.
 pub const VENDOR: Vendor = Vendor {
     id: "bedrock",
     key_env: &["AWS_BEARER_TOKEN_BEDROCK"],
     formats: &[
         (&BedrockConverse, Some(BASE_URL)),
-        (
-            &Dialected::new(AnthropicMessages, Bearer),
-            Some(MESSAGES_URL),
-        ),
+        (&Dialected::new(AnthropicMessages, Messages), Some(BASE_URL)),
     ],
     models: list_models,
     format_for: Some(format_for),
-    signer: Some(environment_signer),
 };
 
-/// Anthropic's Messages with the key as a bearer token, as Bedrock takes it.
+/// Anthropic's Messages as Bedrock serves them: under `/anthropic`, the key a
+/// bearer token.
 #[derive(Debug, Clone, Copy)]
-pub struct Bearer;
+pub struct Messages;
 
-impl Dialect for Bearer {
+impl Dialect for Messages {
     type Input = Input;
     type Output = Output;
 
     fn key(&self) -> Option<KeyIn> {
         Some(KeyIn::Bearer)
+    }
+
+    fn request(&self, head: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
+        set_path(head, MESSAGES_PATH)?;
+        Ok(None)
     }
 }
 
@@ -201,84 +193,9 @@ fn names(v: &Value) -> impl Iterator<Item = &str> {
     names_of(v).filter_map(Value::as_str)
 }
 
-/// The environment's AWS key pair (`AWS_ACCESS_KEY_ID`,
-/// `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) in `AWS_REGION`, if set.
-fn environment_signer() -> Option<Arc<dyn Sign>> {
-    let env = |name| std::env::var(name).ok().filter(|v: &String| !v.is_empty());
-    Some(signer(
-        env("AWS_ACCESS_KEY_ID")?,
-        env("AWS_SECRET_ACCESS_KEY")?,
-        env("AWS_SESSION_TOKEN"),
-        env("AWS_REGION")?,
-    ))
-}
-
-/// The signer of Bedrock calls in `region` by an AWS key pair, for a host
-/// with a tenant's own (`CallSigner`).
-pub fn signer(
-    access_key_id: String,
-    secret_access_key: String,
-    session_token: Option<String>,
-    region: String,
-) -> Arc<dyn Sign> {
-    let credentials = Credentials::new(
-        access_key_id,
-        secret_access_key,
-        session_token,
-        None,
-        SIGNING_NAME,
-    );
-    Arc::new(SigV4 {
-        identity: credentials.into(),
-        region,
-    })
-}
-
-/// SigV4 by an AWS key pair, in a region.
-struct SigV4 {
-    identity: Identity,
-    region: String,
-}
-
-impl Sign for SigV4 {
-    fn sign(&self, head: &mut RequestHead, body: &[u8]) -> Result<(), Fault> {
-        let refused = |e: &dyn std::fmt::Display| Fault::internal(format!("SigV4: {e}"));
-        let params = v4::SigningParams::builder()
-            .identity(&self.identity)
-            .region(&self.region)
-            .name(SIGNING_NAME)
-            .time(SystemTime::now())
-            .settings(SigningSettings::default())
-            .build()
-            .map_err(|e| refused(&e))?
-            .into();
-        let headers = (head.headers.iter())
-            .filter_map(|(name, value)| Some((name.as_str(), value.to_str().ok()?)));
-        let uri = head.uri.to_string();
-        let request = SignableRequest::new(
-            head.method.as_str(),
-            uri.as_str(),
-            headers,
-            SignableBody::Bytes(body),
-        )
-        .map_err(|e| refused(&e))?;
-        let (signed, _) = sign(request, &params)
-            .map_err(|e| refused(&e))?
-            .into_parts();
-        for (name, value) in signed.headers() {
-            let name = HeaderName::try_from(name).map_err(|e| refused(&e))?;
-            let mut value = HeaderValue::try_from(value).map_err(|e| refused(&e))?;
-            value.set_sensitive(true);
-            head.headers.insert(name, value);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_http::bytes::Bytes;
     use serde_json::json;
 
     fn summary(id: &str, outputs: Value, converse: Value, types: Value) -> Value {
@@ -347,6 +264,16 @@ mod tests {
     }
 
     #[test]
+    fn bedrocks_messages_are_under_anthropic() {
+        let call = http::Request::post("/v1/messages")
+            .body(())
+            .expect("a call");
+        let mut head = call.into_parts().0;
+        Messages.request(&mut head, None).expect("a path");
+        assert_eq!(head.uri.path(), MESSAGES_PATH);
+    }
+
+    #[test]
     fn claude_goes_to_messages_and_any_other_model_to_converse() {
         let ask = Ask {
             kind: "chat",
@@ -371,35 +298,5 @@ mod tests {
             format("amazon.nova-micro-v1:0", None),
             Some(BedrockConverse::NAME)
         );
-    }
-
-    fn call() -> (RequestHead, Bytes) {
-        let head = http::Request::post("/anthropic/v1/messages")
-            .body(())
-            .expect("a call");
-        (head.into_parts().0, Bytes::from_static(b"{}"))
-    }
-
-    #[test]
-    fn a_key_pair_signs_the_call_as_sent() {
-        let (mut head, body) = call();
-        head.uri = "https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages"
-            .parse()
-            .expect("a URL");
-        let signer = signer(
-            "AKID".into(),
-            "secret".into(),
-            Some("token".into()),
-            "us-east-1".into(),
-        );
-        signer.sign(&mut head, &body).expect("signed");
-        let auth = head.headers["authorization"].to_str().expect("text");
-        assert!(
-            auth.starts_with("AWS4-HMAC-SHA256 Credential=AKID/"),
-            "{auth}"
-        );
-        assert!(auth.contains("/us-east-1/bedrock/aws4_request"), "{auth}");
-        assert!(head.headers.contains_key("x-amz-date"));
-        assert_eq!(head.headers["x-amz-security-token"], "token");
     }
 }

@@ -20,12 +20,9 @@ mod formats;
 pub mod models;
 mod provider;
 
-use std::sync::Arc;
-
 pub use formats::{FORMATS, format};
 pub use models::{BoxFuture, Capability, ListModels, Modality, Model, Models, Price, time};
 pub use provider::{Part, VendorProvider};
-pub use respan_gateway_http::call::{CallSigner, Sign};
 pub use respan_gateway_http::dialect::{Dialect, Dialected};
 pub use respan_gateway_http::{Body, Connect, KeyIn, Reach, Rewrite, Upstream, http};
 pub use respan_gateway_http_faults::built_wrong;
@@ -63,13 +60,7 @@ pub struct Vendor {
     /// The format a request for a model goes in, if not the usual: the
     /// client's own, else its first of the kind.
     pub format_for: Option<FormatFor>,
-    /// What signs its calls when no key in `key_env` is set, if it signs
-    /// them, such as by an AWS key pair the environment holds.
-    pub signer: Option<Signer>,
 }
-
-/// What a vendor's calls are signed by, read from the environment.
-pub type Signer = fn() -> Option<Arc<dyn Sign>>;
 
 impl std::fmt::Debug for Vendor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,7 +80,6 @@ impl Vendor {
         formats: &[],
         models: models::openai,
         format_for: None,
-        signer: None,
     };
 
     /// Its format `name`, and that format's base URL, if it speaks it.
