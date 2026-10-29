@@ -18,6 +18,8 @@ pub mod together;
 pub mod vllm;
 pub mod xai;
 
+use base64::Engine as _;
+use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_vendor_kit::Vendor;
@@ -52,4 +54,16 @@ fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
     serde_json::to_vec(&call)
         .map(Bytes::from)
         .map_err(unwritten)
+}
+
+/// An image as a URL: its own, or a data URL of its bytes.
+fn linked(media: &Media) -> String {
+    match &media.source {
+        MediaSource::Url(url) => url.clone(),
+        MediaSource::Bytes(bytes) => format!(
+            "data:{};base64,{}",
+            media.mime_type,
+            base64::engine::general_purpose::STANDARD.encode(bytes)
+        ),
+    }
 }

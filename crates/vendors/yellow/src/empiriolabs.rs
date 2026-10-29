@@ -3,7 +3,6 @@
 //! and Respan serve them, images and speech in its dialect.
 
 use base64::Engine as _;
-use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
@@ -97,24 +96,12 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
     fields.entry("sync").or_insert(true.into());
     fields.entry("response_format").or_insert("b64_json".into());
     if !input.images.is_empty() {
-        let images = input.images.iter().map(|m| Value::from(linked(m)));
+        let images = input.images.iter().map(|m| Value::from(crate::linked(m)));
         fields.insert("image".into(), images.collect::<Vec<_>>().into());
     }
     input.images.clear();
     input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
-}
-
-/// An image as it takes one: its URL, or a data URL of its bytes.
-fn linked(media: &Media) -> String {
-    match &media.source {
-        MediaSource::Url(url) => url.clone(),
-        MediaSource::Bytes(bytes) => format!(
-            "data:{};base64,{}",
-            media.mime_type,
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        ),
-    }
 }
 
 /// EmpirioLabs AI's speech, as it departs from OpenAI's: its
@@ -284,6 +271,7 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_conversation::{Media, MediaSource};
     use respan_gateway_core::NativeFields;
     use serde_json::json;
 
