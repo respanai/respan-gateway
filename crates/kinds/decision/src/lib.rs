@@ -110,6 +110,9 @@ pub enum Ask {
         /// The levels.
         levels: Vec<Value>,
     },
+    /// A question of a type the kind has no form for, whole, as `format`
+    /// has it. Asked only in that format.
+    Native(NativeValue),
 }
 
 /// The kind's output: one event of a response.

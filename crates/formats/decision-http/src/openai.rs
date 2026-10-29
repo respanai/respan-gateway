@@ -553,6 +553,14 @@ mod tests {
     }
 
     #[test]
+    fn a_question_of_another_formats_own_type_is_refused() {
+        let number = json!({"type": "number", "instructions": "How many?"});
+        let ask = Ask::Native(NativeValue::new("decisions", number));
+        let input = Input::new(json!("s"), vec![Question::new("days_late", ask)]);
+        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+    }
+
+    #[test]
     fn a_request_is_read_and_written_back() {
         let raw = json!({
             "model": "deployment",

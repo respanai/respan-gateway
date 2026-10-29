@@ -11,8 +11,9 @@
 //! `{"model", "answers": {id: answer}, "usage"}`, each answer
 //! `{"type", ..}`: `noul` the probability of yes, `choice` with
 //! `probabilities` and `confidence`, `score` with `probabilities` by level
-//! and `legend`. An answer of a type the kind has no form for is kept as
-//! the format's own and written back where it was.
+//! and `legend`. A question or an answer of a type the kind has no form for
+//! (a provider's own, such as `number`) is kept as the format's own and
+//! written back where it was; a format that cannot ask it refuses it.
 
 use respan_gateway_conversation_http::fields::{
     invalid, kept, merge_missing, native_of, rest_of, set,
@@ -20,7 +21,7 @@ use respan_gateway_conversation_http::fields::{
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeValue};
 use respan_gateway_decision::{
     Answer, Ask, ChoiceValue, Input, Output, Question, Start, Usage, Verdict,
 };
@@ -40,6 +41,8 @@ const NAME: &str = "decisions";
 const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
 const SYSTEM_ONE_PATH: &str = "/systemone";
+/// The question types the kind has a form for; any other is the format's own.
+const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -150,6 +153,12 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
     let Value::Object(mut q) = v else {
         return Err(invalid(&param, "must be an object"));
     };
+    let is_native =
+        (q.get("type").and_then(Value::as_str)).is_some_and(|kind| !KNOWN_TYPES.contains(&kind));
+    if is_native {
+        let ask = Ask::Native(NativeValue::new(NAME, Value::Object(q)));
+        return Ok(Question::new(id, ask));
+    }
     let criteria = q.remove("criteria").unwrap_or_default();
     let ask = match q.remove("type").as_ref().and_then(Value::as_str) {
         Some("noul") => match criteria {
@@ -198,12 +207,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             Value::Array(levels) => Ask::Score { levels },
             _ => return Err(invalid(&param, "has criteria other than a list of levels")),
         },
-        _ => {
-            return Err(invalid(
-                &param,
-                "has a type other than noul, choice or score",
-            ));
-        }
+        _ => return Err(invalid(&param, "has no type")),
     };
     let mut question = Question::new(id, ask);
     question.instructions = q.remove("instructions").filter(|v| !v.is_null());
@@ -215,6 +219,12 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
 fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     let mut questions = Map::new();
     for q in &input.questions {
+        if let Ask::Native(native) = &q.ask
+            && &*native.format == NAME
+        {
+            questions.insert(q.id.clone(), (*native.value).clone());
+            continue;
+        }
         let mut v = Map::new();
         let (kind, criteria) = match &q.ask {
             Ask::Noul { yes, no } => {
@@ -487,7 +497,7 @@ mod tests {
         assert!(refused(json!({"questions": {}})));
         assert!(refused(json!({"state": 1, "questions": {}})));
         assert!(refused(
-            json!({"state": "s", "questions": {"q": {"type": "vibes"}}})
+            json!({"state": "s", "questions": {"q": {"instructions": "No type?"}}})
         ));
         assert!(refused(
             json!({"state": "s", "questions": {"q": {"type": "noul", "criteria": {"true": "x", "maybe": "y"}}}})
@@ -495,6 +505,22 @@ mod tests {
         assert!(refused(
             json!({"state": "s", "questions": {"q": {"type": "score", "criteria": {}}}})
         ));
+    }
+
+    /// span-02's `number` question, which the kind has no form for.
+    #[test]
+    fn a_question_of_a_providers_own_type_is_asked_as_it_came() {
+        let raw = json!({
+            "model": "span-02",
+            "state": {"order": {"id": 123, "days_late": 4}},
+            "questions": {
+                "days_late": {"type": "number", "instructions": "How many days late?", "range": [0, 30]},
+                "spam": {"type": "noul"},
+            },
+        });
+        let input = decode_request(raw.to_string().as_bytes()).expect("input");
+        assert!(matches!(&input.questions[0].ask, Ask::Native(n) if &*n.format == NAME));
+        assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
     }
 
     #[test]
