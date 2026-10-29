@@ -1,6 +1,7 @@
 //! Amazon Bedrock, at a region's `bedrock-runtime`, with a Bedrock API key:
 //! Claude on Bedrock's Anthropic Messages (`/anthropic/v1/messages`), every
-//! other model on Converse ([`BedrockConverse`]), which serves Claude too.
+//! other model on Converse ([`BedrockConverse`]), which serves Claude too,
+//! and Cohere and Titan embeddings on InvokeModel ([`BedrockEmbeddings`]).
 //! An AWS key pair signs calls outside the gateway, by a SigV4 proxy at the
 //! base URL, as an HTTP proxy is. Its models are its account's: none are
 //! listed.
@@ -12,6 +13,7 @@ use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_core::Fault;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
+use respan_gateway_media_http::bedrock::BedrockEmbeddings;
 
 use respan_gateway_vendor_kit::{
     Ask, BoxFuture, Dialect, Dialected, KeyIn, Model, Models, Rewrite, Vendor, VendorProvider,
@@ -30,6 +32,7 @@ pub const VENDOR: Vendor = Vendor {
     formats: &[
         (&BedrockConverse, Some(BASE_URL)),
         (&Dialected::new(AnthropicMessages, Messages), Some(BASE_URL)),
+        (&BedrockEmbeddings, Some(BASE_URL)),
     ],
     models: no_models,
     format_for: Some(format_for),
@@ -56,7 +59,10 @@ impl Dialect for Messages {
 
 /// Claude (`anthropic.claude-…`, or a profile of it such as `us.anthropic.…`)
 /// goes to Messages, whatever the client speaks; any other model to Converse.
-fn format_for(_: &Ask, model: &Model) -> Option<&'static str> {
+fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
+    if ask.kind != "chat" {
+        return None;
+    }
     Some(match model.id.contains("anthropic.") {
         true => AnthropicMessages::NAME,
         false => BedrockConverse::NAME,
@@ -97,6 +103,15 @@ mod tests {
         assert_eq!(
             format("amazon.nova-micro-v1:0"),
             Some(BedrockConverse::NAME)
+        );
+        // An embedding goes to the one format of its kind.
+        let embedding = Ask {
+            kind: "embedding",
+            ..ask
+        };
+        assert_eq!(
+            format_for(&embedding, &Model::new("cohere.embed-v4:0")),
+            None
         );
     }
 }

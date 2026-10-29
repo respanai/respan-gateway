@@ -17,6 +17,7 @@ use respan_gateway_decision as decision;
 use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
+use respan_gateway_media_http::bedrock::BedrockEmbeddings;
 use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -266,6 +267,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::MESSAGES, AnthropicMessages).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
+        KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
