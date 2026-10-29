@@ -554,9 +554,16 @@ mod tests {
 
     #[test]
     fn a_question_of_another_formats_own_type_is_refused() {
-        let number = json!({"type": "number", "instructions": "How many?"});
-        let ask = Ask::Native(NativeValue::new("decisions", number));
-        let input = Input::new(json!("s"), vec![Question::new("days_late", ask)]);
+        let date = json!({"type": "date", "instructions": "When?"});
+        let ask = Ask::Native(NativeValue::new("decisions", date));
+        let input = Input::new(json!("s"), vec![Question::new("when", ask)]);
+        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+    }
+
+    /// OpenAI's decisions contract has no number type.
+    #[test]
+    fn a_number_question_is_refused() {
+        let input = Input::new(json!("s"), vec![Question::new("days_late", Ask::Number)]);
         assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
     }
 

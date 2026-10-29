@@ -7,13 +7,14 @@
 //! A request is `{"model", "state", "questions": {id: question}}`, each
 //! question `{"type", "instructions", "criteria"}`: `noul` with criteria
 //! `{"true", "false"}`, `choice` with criteria `{option: description}`,
-//! `score` with criteria a list of levels. A response is
+//! `score` with criteria a list of levels, `number` with none. A response is
 //! `{"model", "answers": {id: answer}, "usage"}`, each answer
 //! `{"type", ..}`: `noul` the probability of yes, `choice` with
 //! `probabilities` and `confidence`, `score` with `probabilities` by level
-//! and `legend`. A question or an answer of a type the kind has no form for
-//! (a provider's own, such as `number`) is kept as the format's own and
-//! written back where it was; a format that cannot ask it refuses it.
+//! and `legend`, `number` the number and the `text` it was read from. A
+//! question or an answer of a type the kind has no form for is kept as the
+//! format's own and written back where it was; a format that cannot ask it
+//! refuses it.
 
 use respan_gateway_conversation_http::fields::{
     invalid, kept, merge_missing, native_of, rest_of, set,
@@ -42,7 +43,7 @@ const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
 const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
-const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
+const KNOWN_TYPES: [&str; 4] = ["noul", "choice", "score", "number"];
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -207,6 +208,13 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             Value::Array(levels) => Ask::Score { levels },
             _ => return Err(invalid(&param, "has criteria other than a list of levels")),
         },
+        // The kind takes no criteria for a number; any sent ride as the format's own.
+        Some("number") => {
+            if !criteria.is_null() {
+                q.insert("criteria".into(), criteria);
+            }
+            Ask::Number
+        }
         _ => return Err(invalid(&param, "has no type")),
     };
     let mut question = Question::new(id, ask);
@@ -248,6 +256,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
                 ("choice", Some(Value::Object(options)))
             }
             Ask::Score { levels } => ("score", Some(Value::from(levels.clone()))),
+            Ask::Number => ("number", None),
             _ => {
                 return Err(Fault::bad_request(format!(
                     "{NAME} cannot ask question '{}'",
@@ -332,6 +341,13 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
                 &["score", "probabilities"],
             )
         }
+        "number" => (
+            Verdict::Number {
+                number: number("number")?,
+                text: a["text"].as_str().map(Into::into),
+            },
+            &["number", "text"],
+        ),
         _ => return None,
     };
     let mut answer = Answer::new(id, verdict);
@@ -423,6 +439,11 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
             let by_level = by_level.map(|(i, p)| (i.to_string(), (*p).into()));
             v.insert("probabilities".into(), Value::Object(by_level.collect()));
         }
+        Verdict::Number { number, text } => {
+            v.insert("type".into(), "number".into());
+            v.insert("number".into(), (*number).into());
+            set(&mut v, "text", text.clone().map(Value::from));
+        }
         _ => {
             return Err(Fault::new(format!(
                 "{NAME} cannot write answer '{}'",
@@ -507,20 +528,51 @@ mod tests {
         ));
     }
 
-    /// span-02's `number` question, which the kind has no form for.
     #[test]
-    fn a_question_of_a_providers_own_type_is_asked_as_it_came() {
+    fn a_number_question_is_read_and_written_back_with_its_criteria() {
         let raw = json!({
             "model": "span-02",
             "state": {"order": {"id": 123, "days_late": 4}},
             "questions": {
-                "days_late": {"type": "number", "instructions": "How many days late?", "range": [0, 30]},
+                "days_late": {"type": "number", "instructions": "How many days late?"},
+                "bounded": {"type": "number", "criteria": {"min": 0, "max": 10}},
+            },
+        });
+        let input = decode_request(raw.to_string().as_bytes()).expect("input");
+        assert!(matches!(input.questions[0].ask, Ask::Number));
+        assert!(matches!(input.questions[1].ask, Ask::Number));
+        assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
+    }
+
+    #[test]
+    fn a_question_of_a_providers_own_type_is_asked_as_it_came() {
+        let raw = json!({
+            "state": "s",
+            "questions": {
+                "when": {"type": "date", "instructions": "When did it ship?", "range": ["2026-01-01", null]},
                 "spam": {"type": "noul"},
             },
         });
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
         assert!(matches!(&input.questions[0].ask, Ask::Native(n) if &*n.format == NAME));
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
+    }
+
+    #[test]
+    fn a_number_answer_is_read_and_written_back() {
+        let raw = json!({
+            "model": "span-02",
+            "answers": {"days_late": {"type": "number", "number": 4.0, "text": "4", "confidence": 0.99}},
+            "usage": {"input_tokens": 207, "output_tokens": 2},
+        });
+        let mut events = Vec::new();
+        decode_response(Bytes::from(raw.to_string()), &mut events).expect("events");
+        assert!(events.iter().any(|e| matches!(e,
+            Output::Answer(Answer { verdict: Verdict::Number { number, text: Some(text) }, .. })
+                if *number == 4.0 && text == "4")));
+        let written: Value =
+            serde_json::from_slice(&encode_response(&events).expect("body")).unwrap_or_default();
+        assert_eq!(written, raw);
     }
 
     #[test]

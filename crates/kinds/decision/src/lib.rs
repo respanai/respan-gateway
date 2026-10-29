@@ -110,6 +110,8 @@ pub enum Ask {
         /// The levels.
         levels: Vec<Value>,
     },
+    /// A number, such as a count or an amount.
+    Number,
     /// A question of a type the kind has no form for, whole, as `format`
     /// has it. Asked only in that format.
     Native(NativeValue),
@@ -205,5 +207,12 @@ pub enum Verdict {
         score: f64,
         /// Each level's probability.
         probabilities: Vec<f64>,
+    },
+    /// The number, and the text it was read from, if the provider says.
+    Number {
+        /// The number.
+        number: f64,
+        /// The text it was read from.
+        text: Option<String>,
     },
 }
