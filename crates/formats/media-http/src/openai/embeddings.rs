@@ -27,6 +27,7 @@ const EMBEDDINGS: &str = "/embeddings";
 /// relayed as written; a single item is written as it is, several as a
 /// list. A vector
 /// is decoded from a list of numbers or from base64 (little-endian `f32`s),
+/// refusing non-finite components rather than writing them as JSON nulls,
 /// whichever the provider answers, and written as the client's
 /// `encoding_format` asks, `float` unless it says `base64`. The field is
 /// relayed to the provider as the client wrote it.
@@ -194,7 +195,7 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 
 /// A vector, as a list of numbers or as base64 of little-endian `f32`s.
 fn vector_of(v: &Value) -> Result<Vec<f32>, Fault> {
-    match v {
+    let vector: Vec<f32> = match v {
         Value::Array(numbers) => numbers
             .iter()
             .map(|n| n.as_f64().map(|n| n as f32))
@@ -208,7 +209,11 @@ fn vector_of(v: &Value) -> Result<Vec<f32>, Fault> {
             })
             .ok_or_else(|| unreadable(NAME, "holds a vector not in base64 of `f32`s")),
         _ => Err(unreadable(NAME, "holds an item with no vector")),
+    }?;
+    if vector.iter().any(|number| !number.is_finite()) {
+        return Err(unreadable(NAME, "holds a vector with non-finite numbers"));
     }
+    Ok(vector)
 }
 
 /// The encoder of a response to a client's `request`, with the vectors
@@ -350,6 +355,48 @@ mod tests {
         assert_eq!(vector_of(&floats).expect("floats"), vector);
         assert_eq!(vector_of(&base64).expect("base64"), vector);
         assert!(vector_of(&json!("AAA=")).is_err());
+    }
+
+    #[test]
+    fn non_finite_base64_vectors_are_refused_before_json_conversion() {
+        for number in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let raw = json!({"data": [{"index": 0,
+                "embedding": b64(&number.to_le_bytes())}]});
+            let result = decode_whole(Bytes::from(raw.to_string()), &mut Vec::new());
+            assert!(result.is_err_and(|f| f.is(FaultKind::Provider)), "{number}");
+        }
+    }
+
+    #[test]
+    fn json_vectors_outside_f32_range_are_refused() {
+        for number in [1e100, -1e100] {
+            let raw = json!({"data": [{"index": 0, "embedding": [number]}]});
+            let result = decode_whole(Bytes::from(raw.to_string()), &mut Vec::new());
+            assert!(result.is_err_and(|f| f.is(FaultKind::Provider)), "{number}");
+        }
+    }
+
+    #[test]
+    fn finite_f32_boundary_values_survive_either_encoding() {
+        let vector = [
+            f32::MIN,
+            f32::MAX,
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            0.0,
+        ];
+        for base64 in [false, true] {
+            let raw = json!({"data": [{"index": 0,
+                "embedding": vector_json(&vector, base64)}]});
+            let mut events = Vec::new();
+            decode_whole(Bytes::from(raw.to_string()), &mut events).expect("finite vector");
+            let encoded = encode_whole(&events, base64).expect("JSON response");
+            let response: Value = serde_json::from_slice(&encoded).expect("JSON");
+            assert_eq!(
+                vector_of(&response["data"][0]["embedding"]).expect("vector"),
+                vector
+            );
+        }
     }
 
     #[test]

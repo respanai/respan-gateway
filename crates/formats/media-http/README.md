@@ -45,6 +45,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - Usage `{"type": "tokens"}` is `Usage`, `{"type": "duration"}` `Seconds`; a
   usage object's other fields, such as `input_token_details`, stay native.
 - A stream that ends before its end event fails `truncated`.
+- An embedding vector with a non-finite component, including a JSON number
+  outside the range of `f32`, is refused as an unreadable provider response
+  instead of being rewritten with JSON `null` components.
 - A client body without its required field (`prompt`, an edit's `image`,
   `file`, `input`) is refused, 400, before any call. A provider's error is
   read leniently, as compatible servers write it, and a client's is written
