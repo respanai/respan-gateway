@@ -25,6 +25,8 @@ each server behind it, opened with the client's and ended with it.
   or tool turned off in the `ToolSwitches` is neither listed nor callable,
   at once.
 - Resources keep their URIs under `mcp://{server}/{uri}`.
+- Turning a server off also withholds its prompts, resources and resource
+  templates, and refuses prompt and resource requests through `/mcp`.
 - Lists are merged in the order the servers are given, with a cursor that
   pages the servers that have more. Each server's cursor is passed back
   unchanged, including an empty string; an absent cursor ends its list.

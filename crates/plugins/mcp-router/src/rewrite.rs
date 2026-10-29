@@ -14,7 +14,7 @@ pub(super) fn by_name(tool: bool) -> impl Fn(&Run, &mut Value) -> Result<String,
             |name: &str| format!("unknown {} '{name}'", if tool { "tool" } else { "prompt" });
         let name = params["name"].as_str().unwrap_or_default().to_owned();
         let (server, own) = split(&run.inner.servers, &name).ok_or_else(|| unknown(&name))?;
-        if tool && !run.offers(server, own, &name) {
+        if !run.inner.switches.server_on(server) || (tool && !run.offers(server, own, &name)) {
             return Err(unknown(&name));
         }
         let (server, own) = (server.to_owned(), own.to_owned());
@@ -27,6 +27,7 @@ pub(super) fn by_name(tool: bool) -> impl Fn(&Run, &mut Value) -> Result<String,
 pub(super) fn by_uri(run: &Run, params: &mut Value) -> Result<String, String> {
     let uri = params["uri"].as_str().unwrap_or_default().to_owned();
     let (server, own) = unprefix(&run.inner.servers, &uri)
+        .filter(|(server, _)| run.inner.switches.server_on(server))
         .ok_or_else(|| format!("unknown resource '{uri}': it is `{SCHEME}<server>/<uri>`"))?;
     let (server, own) = (server.to_owned(), own.to_owned());
     params["uri"] = json!(own);
