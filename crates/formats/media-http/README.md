@@ -138,3 +138,18 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   operation's `error`, or, filtered, a response of
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
   message, status}}`. Veo reports no progress: an operation is done or not.
+
+`bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
+embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
+only, its key a Bedrock API key as a bearer token.
+
+- Cohere Embed (`cohere.embed-*`) embeds every text in one call, as the
+  client's `input_type` (an `openai-embeddings` field) says, else
+  `search_document`; v4 takes `dimensions` as `output_dimension`.
+- Titan Text (`amazon.titan-embed-text-*`) and Titan Multimodal's texts
+  (`amazon.titan-embed-image-v1`) embed one text per call, so a request of
+  several is refused, 400; v2 and Multimodal take `dimensions`.
+- Usage is the input tokens Bedrock counts: Titan's `inputTextTokenCount`,
+  else the `x-amzn-bedrock-input-token-count` header.
+- Token ids, parts, an end user's id, a `dimensions` the model takes none
+  of, and other fields of another format are refused, 400, before the call.
