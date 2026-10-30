@@ -7,8 +7,10 @@ and what vendors share. The vendors themselves are
 - `Vendor`: where its key comes from (`key_env`), the formats it speaks,
   its dialects of a spec among them, each at the base URL its docs give
   (where a `{NAME}` is that environment variable, `located`), and how it
-  lists its models if not as OpenAI does (`models`). What it does not say
-  is `Vendor::DEFAULT`'s.
+  lists its models if not as OpenAI does (`models`), and how its base URLs
+  take their names from the environment if a name changes more than its
+  place (`locate`, as Vertex AI's `global` location changes its host).
+  What it does not say is `Vendor::DEFAULT`'s.
 - A format is any core `Format` that says how its spec has it reached
   (`Upstream`, in `respan-gateway-http`): where it takes the key
   (`KeyIn`), over HTTP or as a WebSocket session and what redirects it

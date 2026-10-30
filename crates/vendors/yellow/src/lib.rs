@@ -15,6 +15,7 @@ pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
 pub mod together;
+pub mod vertex;
 pub mod vllm;
 pub mod xai;
 
@@ -41,6 +42,8 @@ pub const ALL: &[&Vendor] = &[
     &cerebras::VENDOR,
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
+    &vertex::VENDOR,
+    &vertex::EXPRESS,
     &deepinfra::VENDOR,
 ];
 
