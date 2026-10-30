@@ -362,9 +362,10 @@ where
     }
 }
 
-/// How the model of a chat request is named.
+/// How the model of a chat request is named, and whether it offers tools.
 fn chat() -> Model {
     Model::of(conversation::Input::model, conversation::Input::set_model)
+        .tools(|input: &conversation::Input| !input.tools.is_empty())
 }
 
 /// How a realtime session names its model: at `?model=` on its handshake,

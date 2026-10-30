@@ -19,14 +19,28 @@ fn written(native: &Option<NativeFields>, what: &str) -> Result<Map<String, Valu
     Ok(fields)
 }
 
+/// The key, set aside in a request's native ([`INERT`]), that says its
+/// leading system message was its `instructions`.
+pub(in crate::responses) const INSTRUCTIONS: &str = "instructions";
+
 /// The request's `instructions` and `input`: a leading system message of
-/// one plain text is the instructions.
+/// one plain text is the instructions if it came so; another's system
+/// message, such as Chat Completions', is an input item, where OpenAI reads
+/// it as it would have there (its check that a JSON answer is asked for in
+/// words reads only the input).
 pub(in crate::responses) fn write_input(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
+    let instructed = chat.native.format() == Some(RESPONSES)
+        && chat
+            .native
+            .fields()
+            .get(INERT)
+            .is_some_and(|i| i[INSTRUCTIONS] == true);
     let mut rest = &chat.messages[..];
-    if let Some((first, after)) = rest.split_first()
+    if instructed
+        && let Some((first, after)) = rest.split_first()
         && first.role == Role::System
         && first.native.is_empty()
         && let [

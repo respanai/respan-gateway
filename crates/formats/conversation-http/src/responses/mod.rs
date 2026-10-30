@@ -4,7 +4,8 @@
 //! # Requests
 //!
 //! `instructions` is a leading system message and `input` the messages after
-//! it: a string is one user message, and an array's items are messages
+//! it; a leading system message is written back as `instructions` only if it
+//! came so, any other as a message item of its role. A string is one user message, and an array's items are messages
 //! (`input_text`, `input_image` and `input_file` parts), an assistant's
 //! function calls and reasoning, and function call outputs as the results of
 //! a user message. Consecutive items of an assistant are one assistant
@@ -177,8 +178,9 @@ impl Schema for OpenAiResponses {
     const PATH: &'static str = "/responses";
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
-    /// The structured output requirement is in `text`.
-    const OWN: &'static [&'static str] = &["text", "reasoning"];
+    /// The structured output requirement is in `text`; whether the request
+    /// had `instructions` is said by [`request::write_input`].
+    const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     /// Chat Completions' fields Responses has too, OpenAI's both.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[
         (crate::openai::OPENAI, "metadata", "metadata"),
@@ -231,10 +233,11 @@ impl Schema for OpenAiResponses {
         // Not to store a response is OpenAI's to honour; another provider
         // stores nothing anyway.
         if let Some(store) = chat.native.fields_mut(RESPONSES).shift_remove("store") {
-            let inert = serde_json::json!({ "store": store });
-            chat.native
-                .fields_mut(RESPONSES)
-                .insert(INERT.into(), inert);
+            set_aside(&mut chat, "store", store);
+        }
+        // Its leading system message goes back as `instructions` alone.
+        if crate::schema::says(&v["instructions"]) {
+            set_aside(&mut chat, request::INSTRUCTIONS, true.into());
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
@@ -297,6 +300,14 @@ impl Schema for OpenAiResponses {
             json!({ "message": fault.message(), "type": code, "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
+}
+
+/// Sets `key` aside as this format's alone ([`INERT`]): another format
+/// drops it.
+fn set_aside(chat: &mut Input, key: &str, value: Value) {
+    let fields = chat.native.fields_mut(RESPONSES);
+    let inert = fields.entry(INERT).or_insert_with(|| json!({}));
+    inert[key] = value;
 }
 
 /// A response's usage, as the kind counts it, from its usage object `u`.

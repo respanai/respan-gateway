@@ -634,6 +634,7 @@ async fn explain(State(admin): State<Arc<Admin>>, Query(q): Query<Explain>) -> R
         format,
         model,
         client: q.client.as_deref(),
+        tools: true,
     };
     let Some(planned) = admin.routes.plan(&ask) else {
         return Json(json!({ "by": null })).into_response();
