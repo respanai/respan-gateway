@@ -53,7 +53,9 @@ client ◄─ outputs ◄─ the format reads the answer ◄─ response ◄─ 
 
 `inputs` and `outputs` are core `Filter`s of the kind's values, as they
 stream. `request` and `response` see the call and its answer on the wire,
-their heads and, if they say how (`Rewrite`), their whole bodies: they are
+their heads and, if they say how (`Rewrite`), their whole bodies, which
+`request` is also given to read, as a vendor that names the model in its
+path needs: they are
 `ProviderIo::with_request` and `ProviderIo::with_response`, which run on a
 call after its format wrote it and on an answer before its format reads it.
 `key` says where the vendor takes its key, if not where the format does. A

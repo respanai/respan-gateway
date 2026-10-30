@@ -72,7 +72,8 @@ pub struct ProviderIo {
 pub type Rewrite = Box<dyn FnOnce(Bytes) -> Result<Bytes, Fault> + Send>;
 
 /// What changes a call ([`ProviderIo::with_request`]).
-type RequestHook = Box<dyn FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send>;
+type RequestHook =
+    Box<dyn FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault> + Send>;
 
 /// What changes an answer ([`ProviderIo::with_response`]).
 type ResponseHook = Box<dyn FnOnce(&RequestHead, &mut ResponseHead) -> Option<Rewrite> + Send>;
@@ -116,13 +117,15 @@ impl ProviderIo {
     }
 
     /// Change the call after its format wrote it, before it is sent:
-    /// `request` edits its head, and may rewrite its whole body, which a
-    /// call of live input, whose body streams, cannot have. `Err` fails the
-    /// call unsent. The format still reads its answer against the call as
-    /// it wrote it.
+    /// `request` edits its head, given its whole body (`None` for a call of
+    /// live input, whose body streams), and may rewrite that body. `Err`
+    /// fails the call unsent. The format still reads its answer against the
+    /// call as it wrote it.
     pub fn with_request(
         mut self,
-        request: impl FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send + 'static,
+        request: impl FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault>
+        + Send
+        + 'static,
     ) -> Self {
         self.request = Some(Box::new(request));
         self
@@ -331,12 +334,11 @@ fn changed(
     body: Body,
     request: RequestHook,
 ) -> Result<(RequestHead, Body), Fault> {
-    let Some(rewrite) = request(&mut head)? else {
+    let whole = body.full_bytes().cloned();
+    let Some(rewrite) = request(&mut head, whole.as_ref())? else {
         return Ok((head, body));
     };
-    let whole = body
-        .full_bytes()
-        .cloned()
+    let whole = whole
         .ok_or_else(|| Fault::internal("a call of live input has no whole body to rewrite"))?;
     head.headers.remove(http::header::CONTENT_LENGTH);
     Ok((head, Body::full(rewrite(whole)?)))

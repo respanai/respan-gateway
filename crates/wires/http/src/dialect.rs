@@ -21,6 +21,7 @@
 //! ([`Dialect::request`], [`Dialect::response`]), their heads, and a whole
 //! body if it rewrites one.
 
+use bytes::Bytes;
 use http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_core::{Connection, Fault, Filter, Format, Provider};
 
@@ -49,10 +50,15 @@ pub trait Dialect: Clone + Send + Sync + 'static {
     }
 
     /// The call as the format wrote it, before it is sent and before its
-    /// transport puts the key on it: its head edited, and its whole body
-    /// rewritten if this says how. `Err` fails it unsent.
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        let _ = head;
+    /// transport puts the key on it: its head edited, as its whole `body`
+    /// says if need be (`None` for live input, which streams), and that
+    /// body rewritten if this says how. `Err` fails it unsent.
+    fn request(
+        &self,
+        head: &mut RequestHead,
+        body: Option<&Bytes>,
+    ) -> Result<Option<Rewrite>, Fault> {
+        let _ = (head, body);
         Ok(None)
     }
 
@@ -126,7 +132,7 @@ where
     fn bind(&self, io: ProviderIo) -> Result<Connection<D::Output, D::Input>, Fault> {
         let (request, response) = (self.dialect.clone(), self.dialect.clone());
         let io = io
-            .with_request(move |head| request.request(head))
+            .with_request(move |head, body| request.request(head, body))
             .with_response(move |sent, head| response.response(sent, head));
         let (opening, sink) = self.format.bind(io)?;
         let sink = match self.dialect.inputs() {
@@ -228,7 +234,12 @@ mod tests {
             Some(Box::new(Ended))
         }
 
-        fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        fn request(
+            &self,
+            head: &mut RequestHead,
+            body: Option<&Bytes>,
+        ) -> Result<Option<Rewrite>, Fault> {
+            assert_eq!(body.map(|b| &b[..]), Some(&b"HI"[..]));
             head.uri = http::Uri::from_static("/loud");
             Ok(Some(Box::new(|body: Bytes| {
                 Ok([&body[..], b"!"].concat().into())
