@@ -1,10 +1,14 @@
 //! OpenRouter: Chat Completions and Responses, for many vendors' models.
 
-use respan_gateway_conversation::Output;
+use std::borrow::Cow;
+
+use respan_gateway_conversation::{Input, Output};
+use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::dialect::{Call, Dialect, Dialected};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::Filter;
+use respan_gateway_core::{Filter, NativeFields, Result};
+use serde_json::{Map, json};
 
 use respan_gateway_vendor_kit::{Vendor, chat};
 
@@ -24,12 +28,41 @@ pub const VENDOR: Vendor = Vendor {
     ..Vendor::DEFAULT
 };
 
-/// OpenRouter's Chat Completions: a choice's `native_finish_reason` only
-/// describes it.
+/// OpenRouter's Chat Completions: a thinking budget, such as Anthropic's
+/// clients send, is its `reasoning.max_tokens`; a choice's
+/// `native_finish_reason` only describes it.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenRouter;
 
 impl Dialect for OpenRouter {
+    fn input<'a>(&self, input: &'a Input, _: &Call) -> Result<Cow<'a, Input>> {
+        let budget = input
+            .options
+            .reasoning
+            .as_ref()
+            .and_then(|r| r.budget_tokens);
+        // Another format's fields leave no room for its own.
+        let own = input
+            .native
+            .as_ref()
+            .is_none_or(|n| n.is_empty() || &*n.format == OpenAiChat::NAME);
+        let (Some(budget), true) = (budget, own) else {
+            return Ok(Cow::Borrowed(input));
+        };
+        let mut input = input.clone();
+        let withheld = input.options.reasoning.take().and_then(|r| r.summary) == Some(false);
+        let mut reasoning = json!({ "max_tokens": budget });
+        if withheld {
+            reasoning["exclude"] = true.into();
+        }
+        let native = input
+            .native
+            .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()));
+        native.format = OpenAiChat::NAME.into();
+        native.fields.entry("reasoning").or_insert(reasoning);
+        Ok(Cow::Owned(input))
+    }
+
     fn output(&self, call: &Call) -> Option<Box<dyn Filter<Output>>> {
         chat::read(call, &["native_finish_reason"], false)
     }
@@ -38,8 +71,7 @@ impl Dialect for OpenRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation_http::Schema;
-    use serde_json::json;
+    use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 
     #[test]
     fn it_speaks_chat_first_and_responses_beside_it() {
@@ -75,5 +107,29 @@ mod tests {
             usage.map(|u| (u.input_tokens, u.output_tokens)),
             Some((5, 2))
         );
+    }
+
+    #[test]
+    fn a_thinking_budget_is_its_reasoning_limit() {
+        let messages = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9000,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "enabled", "budget_tokens": 2048 },
+        }));
+        let call = Call::new;
+        let taken = OpenRouter.input(&messages, &call(true)).expect("taken");
+        assert!(taken.options.reasoning.is_none());
+        let sent = OpenAiChat.encode_request(&taken).expect("written");
+        assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
+        assert!(sent.get("reasoning_effort").is_none());
+        // Without a budget the input is as it came.
+        let plain = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9,
+            "messages": [{ "role": "user", "content": "hi" }],
+        }));
+        assert!(matches!(
+            OpenRouter.input(&plain, &call(true)),
+            Ok(Cow::Borrowed(_))
+        ));
     }
 }

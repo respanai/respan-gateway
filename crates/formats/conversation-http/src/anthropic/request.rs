@@ -418,11 +418,15 @@ pub(crate) fn read_thinking(input: &mut Input) {
     });
 }
 
-/// The request's `thinking`: the kind's reasoning, else the request's own.
+/// The request's `thinking`: the kind's reasoning, else the request's own,
+/// or a Chat Completions request's, which Anthropic adopts.
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s
 /// ([`write_output`]), and it returns its thinking whenever it thinks.
 pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
-    let own = || own_native(input, ANTHROPIC, "thinking");
+    let own = || {
+        own_native(input, ANTHROPIC, "thinking")
+            .or_else(|| own_native(input, crate::openai::OPENAI, "thinking"))
+    };
     let Some(r) = &input.options.reasoning else {
         return Ok(own());
     };

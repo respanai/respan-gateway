@@ -1038,3 +1038,33 @@ fn a_chats_json_output_is_written_as_anthropic_takes_it() {
         } } } })
     );
 }
+
+#[test]
+fn a_chats_thinking_is_adopted_as_anthropics() {
+    let chat = |thinking: Value| {
+        OpenAiChat.decode_json(&json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": thinking,
+        }))
+    };
+    let budget = json!({ "type": "enabled", "budget_tokens": 10_000 });
+    let sent = AnthropicMessages
+        .encode_request(&chat(budget.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], budget);
+    assert_eq!(
+        sent["max_tokens"],
+        10_000 + DEFAULT_MAX_TOKENS,
+        "room to answer"
+    );
+    let adaptive = json!({ "type": "adaptive" });
+    let sent = AnthropicMessages
+        .encode_request(&chat(adaptive.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], adaptive);
+    // Chat Completions keeps it as it came.
+    let sent = OpenAiChat
+        .encode_request(&chat(adaptive.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], adaptive);
+}

@@ -221,6 +221,10 @@ impl Schema for AnthropicMessages {
     const CARRIED: &'static [&'static str] = &["anthropic-version", "anthropic-beta"];
     const CARRIED_QUERY: &'static [&'static str] = &["beta"];
     const OWN: &'static [&'static str] = &["metadata", "output_config", "thinking"];
+    /// A Chat Completions request's `thinking`, as its clients send for
+    /// Claude, is Anthropic's.
+    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] =
+        &[(crate::openai::OPENAI, "thinking", "thinking")];
     type Decoding = AnthropicDecoder;
 
     fn decoder(&self) -> AnthropicDecoder {

@@ -1289,15 +1289,16 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_refused() {
         Some(pdf)
     );
     // The same holds for the fields of a request.
-    let thinking = json!({ "thinking": { "type": "enabled" } });
-    let fields = thinking.as_object().cloned().unwrap_or_default();
+    let servers =
+        json!({ "mcp_servers": [{ "type": "url", "url": "https://x.test", "name": "x" }] });
+    let fields = servers.as_object().cloned().unwrap_or_default();
     chat.native = Some(NativeFields::new(OPENAI, fields.clone()));
     assert!(AnthropicMessages.encode_request(&chat).is_err());
     chat.native = Some(NativeFields::new("anthropic-messages", fields));
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
-        sent.map(|v| v["thinking"].clone()).ok(),
-        Some(json!({ "type": "enabled" }))
+        sent.map(|v| v["mcp_servers"].clone()).ok(),
+        Some(servers["mcp_servers"].clone())
     );
 }
 

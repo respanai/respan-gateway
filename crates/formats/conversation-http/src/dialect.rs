@@ -60,6 +60,14 @@ pub struct Call {
     pub translated: bool,
 }
 
+impl Call {
+    /// A call whose client speaks another format than the spec, if
+    /// `translated`.
+    pub const fn new(translated: bool) -> Self {
+        Self { translated }
+    }
+}
+
 /// Spec `S` as a vendor speaks it, in its dialect `D`: a provider format of
 /// the spec's name.
 #[derive(Debug, Clone, Copy)]
