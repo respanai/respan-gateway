@@ -1,8 +1,10 @@
-//! OpenRouter: Chat Completions, for many vendors' models, and images.
+//! OpenRouter: Chat Completions and Responses, for many vendors' models,
+//! and images.
 
 use respan_gateway_conversation::Usage;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter, NativeValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
@@ -16,12 +18,14 @@ use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// OpenRouter. Its models' names are `<vendor>/<model>`: a configured
-/// provider named `<vendor>` takes the name first.
+/// provider named `<vendor>` takes the name first. A chat goes in its
+/// client's format, Chat Completions for a client of another.
 pub const VENDOR: Vendor = Vendor {
     id: "openrouter",
     key_env: &["OPENROUTER_API_KEY"],
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
+        (&OpenAiResponses, Some(BASE_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
             Some(BASE_URL),
@@ -114,6 +118,7 @@ impl Filter<image::Output> for Counted {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_conversation_http::Schema;
 
     #[test]
     fn an_edits_images_are_its_input_references() {
@@ -148,6 +153,43 @@ mod tests {
         assert!(matches!(&out[0], image::Output::Usage(u) if *u == Usage::new(6, 1290)));
         assert!(
             matches!(&out[1], image::Output::Native(n) if *n.value == json!({ "usage": { "cost": 0.04 } }))
+        );
+    }
+
+    #[test]
+    fn it_speaks_chat_first_and_responses_beside_it() {
+        let names: Vec<_> = VENDOR.formats.iter().map(|(f, _)| f.name()).collect();
+        assert_eq!(names[..2], [OpenAiChat::NAME, OpenAiResponses::NAME]);
+        assert!(
+            VENDOR
+                .formats
+                .iter()
+                .all(|(_, base)| *base == Some(BASE_URL))
+        );
+    }
+
+    #[test]
+    fn its_responses_usage_reads_with_its_own_fields_beside() {
+        use respan_gateway_conversation::Output;
+        let body = json!({
+            "id": "gen-1", "object": "response", "created_at": 1, "status": "completed",
+            "model": "openai/gpt-5.5-codex",
+            "output": [{ "id": "msg_1", "type": "message", "status": "completed", "role": "assistant",
+                "content": [{ "type": "output_text", "text": "hi", "annotations": [] }] }],
+            "usage": { "input_tokens": 5, "output_tokens": 2, "total_tokens": 7,
+                "input_tokens_details": { "cached_tokens": 1 },
+                "output_tokens_details": { "reasoning_tokens": 0 },
+                "cost": 0.0001, "is_byok": false },
+        });
+        let mut out = Vec::new();
+        OpenAiResponses.decode_body(&body, &mut out).expect("read");
+        let usage = out.iter().find_map(|o| match o {
+            Output::Usage(u) => Some(*u),
+            _ => None,
+        });
+        assert_eq!(
+            usage.map(|u| (u.input_tokens, u.output_tokens)),
+            Some((5, 2))
         );
     }
 
