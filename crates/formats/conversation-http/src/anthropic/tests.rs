@@ -2,6 +2,7 @@ use super::*;
 
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
+use crate::openai::OpenAiChat;
 use respan_gateway_conversation::ToolChoice;
 use respan_gateway_core::NativeFields;
 use respan_gateway_http::http::{HeaderValue, header::CONTENT_TYPE};
@@ -1017,7 +1018,6 @@ fn large_content_in_another_order_is_written_in_that_order() {
 
 #[test]
 fn every_output_effort_is_the_kinds_and_reaches_openai() {
-    use crate::openai::OpenAiChat;
     for name in ["low", "medium", "high", "xhigh", "max"] {
         let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": name },
             "messages": [{ "role": "user", "content": "hi" }] });
@@ -1034,4 +1034,34 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
             Some(json!(name))
         );
     }
+}
+
+#[test]
+fn a_chats_json_output_is_written_as_anthropic_takes_it() {
+    let chat = |format: Value| {
+        OpenAiChat.decode_json(&json!({
+            "messages": [{ "role": "user", "content": "JSON please" }],
+            "response_format": format,
+        }))
+    };
+    // A JSON object without a schema asks for nothing the prompt does not.
+    let sent = AnthropicMessages
+        .encode_request(&chat(json!({ "type": "json_object" })))
+        .expect("written");
+    assert!(sent.get("output_config").is_none(), "{sent:?}");
+    // A wrapper's description and strictness are dropped, and the schema's
+    // constraints become its descriptions.
+    let format = json!({ "type": "json_schema", "json_schema": {
+        "name": "r", "description": "a reply", "strict": false,
+        "schema": { "type": "object", "properties": { "tags": { "type": "array", "maxItems": 2 } } },
+    } });
+    let sent = AnthropicMessages
+        .encode_request(&chat(format))
+        .expect("written");
+    assert_eq!(
+        sent["output_config"],
+        json!({ "format": { "type": "json_schema", "schema": { "type": "object", "properties": {
+            "tags": { "description": "Note: maximum number of items: 2.", "type": "array" },
+        } } } })
+    );
 }
