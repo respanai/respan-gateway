@@ -64,6 +64,11 @@ path ending in `/v1/messages`; its provider base URL leaves the version out,
 such as `https://api.anthropic.com`, and `anthropic-version: 2023-06-01` is
 sent if the request names none.
 
+An inline `system` message is read as instructions at that point in the
+conversation. Targets keep their placement rules: Anthropic takes leading
+instructions in its system prompt and refuses them after the conversation
+starts.
+
 Thinking is the kind's reasoning; its signature, and what else the kind has
 no form for, stays native to this format. Reasoning without its signature,
 which Anthropic refuses, is left out of a request. A full context window

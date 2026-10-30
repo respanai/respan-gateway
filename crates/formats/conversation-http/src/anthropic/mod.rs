@@ -149,9 +149,14 @@ const KNOWN: &[&str] = &[
     "metadata",
 ];
 
-/// Roles a message can have; system prompts have their own field.
+/// Roles read from messages, including inline instructions from clients.
+/// When writing, `split_system` moves leading instructions to the system prompt.
 const ROLES: Names<Role> = Names(
-    &[("user", Role::User), ("assistant", Role::Assistant)],
+    &[
+        ("system", Role::System),
+        ("user", Role::User),
+        ("assistant", Role::Assistant),
+    ],
     ANTHROPIC,
 );
 

@@ -299,6 +299,66 @@ fn a_system_message_goes_in_the_system_prompt_only_before_the_conversation() {
 }
 
 #[test]
+fn an_inline_system_message_keeps_its_place_in_openai_chat() {
+    let body = json!({
+        "model": "claude", "max_tokens": 10, "system": "be brief",
+        "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "system", "content": [{ "type": "text", "text": "use the repo" }] },
+            { "role": "assistant", "content": "hello" },
+        ],
+    });
+    let chat = AnthropicMessages.decode_json(&body);
+    let translated = crate::openai::OpenAiChat
+        .encode_request(&chat)
+        .expect("an inline system message can be written as OpenAI Chat");
+    assert_eq!(
+        translated["messages"],
+        json!([
+            { "role": "system", "content": "be brief" },
+            { "role": "user", "content": "hi" },
+            { "role": "system", "content": "use the repo" },
+            { "role": "assistant", "content": "hello" },
+        ])
+    );
+}
+
+#[test]
+fn a_leading_inline_system_message_joins_the_system_prompt() {
+    let body = json!({
+        "model": "claude", "max_tokens": 10, "system": "be brief",
+        "messages": [
+            { "role": "system", "content": "use the repo" },
+            { "role": "user", "content": "hi" },
+        ],
+    });
+    let translated = written(body, |_| {}).expect("leading instructions form one system prompt");
+    assert_eq!(
+        translated["system"],
+        json!([
+            { "type": "text", "text": "be brief" },
+            { "type": "text", "text": "use the repo" },
+        ])
+    );
+    assert_eq!(
+        translated["messages"],
+        json!([{ "role": "user", "content": "hi" }])
+    );
+}
+
+#[test]
+fn a_later_inline_system_message_is_refused_by_anthropic() {
+    let body = json!({
+        "model": "claude", "max_tokens": 10,
+        "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "system", "content": "later" },
+        ],
+    });
+    assert!(written(body, |_| {}).is_err());
+}
+
+#[test]
 fn a_temperature_above_1_is_refused() {
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.temperature = Some(1.5);
