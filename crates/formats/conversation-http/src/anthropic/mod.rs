@@ -30,6 +30,7 @@
 
 mod decode;
 mod encode;
+mod output_schema;
 mod request;
 #[cfg(test)]
 mod tests;

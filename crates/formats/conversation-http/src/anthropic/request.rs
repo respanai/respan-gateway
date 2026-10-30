@@ -16,6 +16,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
 use serde_json::{Map, Value, json};
 
+use crate::anthropic::output_schema::output_schema;
 use crate::anthropic::{ANTHROPIC, AnthropicMessages};
 
 /// Anthropic's custom tools and choice, with whether calls may be
@@ -381,29 +382,12 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
         }
         config["effort"] = effort.into();
     }
+    // A JSON object without a schema has no format here: the prompt asks
+    // for JSON. A schema wrapper's description and strictness have no field,
+    // and Anthropic always holds the answer to the schema.
     let schema = match &input.options.response_format {
-        None | Some(ResponseFormat::Text) => None,
-        Some(ResponseFormat::JsonObject) => {
-            return Err(untranslatable(
-                "unconstrained JSON object output in Anthropic; supply a schema",
-            ));
-        }
-        Some(ResponseFormat::JsonSchema {
-            schema,
-            description,
-            strict,
-            ..
-        }) => {
-            // OpenAI uses the wrapper description to instruct the model, and
-            // Anthropic always constrains the result. Do not silently discard
-            // those requests when there is no equivalent target field.
-            if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
-                    "a schema wrapper description or non-strict schema output in Anthropic",
-                ));
-            }
-            Some(schema)
-        }
+        None | Some(ResponseFormat::Text | ResponseFormat::JsonObject) => None,
+        Some(ResponseFormat::JsonSchema { schema, .. }) => Some(output_schema(schema)),
     };
     if let Some(schema) = schema {
         let config = config.get_or_insert_with(|| json!({}));
