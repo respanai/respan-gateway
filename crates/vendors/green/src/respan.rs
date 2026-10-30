@@ -18,7 +18,7 @@ use respan_gateway_vendor_kit::{
     built_wrong, chat, http, json, time,
 };
 
-use crate::openai::responses_only;
+use crate::openai::in_responses;
 
 /// Where its API is: Chat Completions and Responses at its root, the
 /// others under their vendor's name.
@@ -50,10 +50,11 @@ pub const VENDOR: Vendor = Vendor {
 
 /// The format a request for `model` goes in: the client's own if it is
 /// the native one of the model's maker, else Chat Completions, which serves
-/// any; an OpenAI model only Responses serves well, as OpenAI's, Responses.
+/// any; a chat OpenAI's Chat Completions does not serve well, Responses
+/// ([`in_responses`]).
 fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
     let native = match model.maker.as_deref().unwrap_or_default() {
-        "openai" if responses_only(&model.id) => return Some(OpenAiResponses::NAME),
+        "openai" if in_responses(&model.id, ask.tools) => return Some(OpenAiResponses::NAME),
         "openai" => OpenAiResponses::NAME,
         "anthropic" => AnthropicMessages::NAME,
         "google" => GeminiGenerate::NAME,

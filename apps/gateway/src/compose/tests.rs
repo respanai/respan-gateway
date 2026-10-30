@@ -803,15 +803,20 @@ fn bad_routes_and_retired_settings_are_errors() {
 async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
     let text = "providers = { a = { vendor = \"openai\", base_url = \"https://a.test/v1\", key = \"k\" } }\nformats = [\"openai-chat\"]\n";
     let (gateway, a, _) = local(text).await;
-    // gpt-5.4 and later, and a model only Responses serves, whatever the
-    // chat carries.
-    for (model, path) in [
-        ("gpt-5-mini", "/v1/chat/completions"),
-        ("gpt-6-luna", "/v1/responses"),
-        ("o3-pro", "/v1/responses"),
+    // gpt-5.4 and later offered function tools, and a model only Responses
+    // serves, whatever the chat carries.
+    let tools = serde_json::json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }]);
+    for (model, offers, path) in [
+        ("gpt-5-mini", true, "/v1/chat/completions"),
+        ("gpt-6-luna", false, "/v1/chat/completions"),
+        ("gpt-6-luna", true, "/v1/responses"),
+        ("o3-pro", false, "/v1/responses"),
     ] {
         a.answer(Answer::text("a"));
-        let body = serde_json::json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        let mut body = serde_json::json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        if offers {
+            body["tools"] = tools.clone();
+        }
         let (response, _) = serve(&gateway, post("/v1/chat/completions", body.to_string())).await;
         let (status, _, body) = read_whole(response).await;
         gateway.idle().await;

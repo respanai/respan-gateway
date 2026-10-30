@@ -179,6 +179,7 @@ impl Routes {
             format,
             model,
             client: None,
+            tools: true,
         };
         self.plan(&ask)?.to.into_iter().next()
     }
@@ -333,6 +334,7 @@ impl Routes {
                 format: &s.format,
                 model: None,
                 client: None,
+                tools: true,
             };
             Some((s.kind, self.plan(&ask)?.to.swap_remove(0).provider))
         };
@@ -343,6 +345,7 @@ impl Routes {
 type Read = dyn Fn(&ClientContext) -> Result<Option<String>, Fault> + Send + Sync;
 type Write = dyn Fn(&mut ClientContext, String) -> Result<(), Fault> + Send + Sync;
 type CallWrite = dyn Fn(&mut ProviderContext, String) -> Result<(), Fault> + Send + Sync;
+type Tools = dyn Fn(&ClientContext) -> bool + Send + Sync;
 
 /// How a format's requests name their model.
 #[derive(Clone)]
@@ -351,6 +354,8 @@ pub struct Model {
     write: Arc<Write>,
     /// Rewrites one call's, so each candidate of a route gets its own.
     call: Option<Arc<CallWrite>>,
+    /// Whether a request offers the model tools, if it reads that.
+    tools: Option<Arc<Tools>>,
 }
 
 impl std::fmt::Debug for Model {
@@ -386,7 +391,15 @@ impl Model {
                     Ok(())
                 })
             })),
+            tools: None,
         }
+    }
+
+    /// Reads whether a request offers the model tools with `tools`, of
+    /// inputs of type `I` ([`Ask::tools`]); without it, any request may.
+    pub fn tools<I: Send + Sync + 'static>(mut self, tools: fn(&I) -> bool) -> Self {
+        self.tools = Some(Arc::new(move |cx| cx.input::<I>().ok().is_none_or(tools)));
+        self
     }
 
     /// The model `read` reads of a request, and `write` asks for, for a
@@ -400,6 +413,7 @@ impl Model {
             read: Arc::new(move |cx| Ok(read(cx))),
             write: Arc::new(write),
             call: None,
+            tools: None,
         }
     }
 
@@ -409,6 +423,7 @@ impl Model {
             read: Arc::new(|_| Ok(None)),
             write: Arc::new(|_, _| Ok(())),
             call: None,
+            tools: None,
         }
     }
 
@@ -457,6 +472,7 @@ pub struct Routing {
     formats: HashMap<String, (&'static str, Model)>,
     default: Option<String>,
     client: Option<Arc<Client>>,
+    tools_added: bool,
 }
 
 impl std::fmt::Debug for Routing {
@@ -476,6 +492,7 @@ impl Routing {
             formats: HashMap::new(),
             default: None,
             client: None,
+            tools_added: false,
         }
     }
 
@@ -489,6 +506,13 @@ impl Routing {
     /// Routes the requests of format `name`, of `kind`, by their `model`.
     pub fn format(mut self, name: impl Into<String>, kind: &'static str, model: Model) -> Self {
         self.formats.insert(name.into(), (kind, model));
+        self
+    }
+
+    /// Tells it a plugin after it may offer the model tools, as a tool loop
+    /// does, so any request may carry them ([`Ask::tools`]).
+    pub fn tools_added(mut self) -> Self {
+        self.tools_added = true;
         self
     }
 
@@ -511,11 +535,13 @@ impl Plugin for Routing {
         };
         let asked = (model.read)(cx)?;
         let client = self.client.as_ref().and_then(|client| client(cx));
+        let tools = model.tools.as_ref();
         let ask = Ask {
             kind,
             format: cx.format(),
             model: asked.as_deref(),
             client: client.as_deref(),
+            tools: self.tools_added || tools.is_none_or(|tools| tools(cx)),
         };
         let Some(mut planned) = self.routes.plan(&ask) else {
             return Err(Fault::not_found(format!(
@@ -772,6 +798,7 @@ mod tests {
             format,
             model: Some("smart"),
             client: None,
+            tools: false,
         };
         let planned = routes.plan(&ask("openai-chat")).expect("planned");
         assert!(matches!(&planned.by, By::Rule(r) if r.name == "smart"));
@@ -808,6 +835,7 @@ mod tests {
             format: "openai-realtime",
             model: Some("voice"),
             client: None,
+            tools: false,
         };
         let planned = routes.plan(&ask).expect("planned");
         assert_eq!(planned.to.len(), 1);
@@ -832,6 +860,7 @@ mod tests {
             format: "openai-chat",
             model: Some("gpt-4o"),
             client,
+            tools: false,
         };
         let first = |a| routes.plan(&a).expect("planned").to[0].provider.clone();
         assert_eq!(first(ask(Some("ops"))), "groq");
@@ -974,6 +1003,7 @@ mod tests {
             format: "openai-chat",
             model: Some(model),
             client: None,
+            tools: false,
         };
         let kimi = routes.plan(&ask("kimi-k2")).expect("planned");
         assert!(matches!(kimi.by, By::Listed));
@@ -996,6 +1026,7 @@ mod tests {
             format: "openai-realtime",
             model: Some("kimi-k2"),
             client: None,
+            tools: false,
         };
         assert!(matches!(
             routes.plan(&live).expect("planned").by,

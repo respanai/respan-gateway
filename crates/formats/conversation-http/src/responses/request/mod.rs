@@ -21,7 +21,7 @@ pub(super) use settings::{
     decode_part, encode_part, read_format, read_reasoning, read_tools, write_format,
     write_reasoning, write_tools,
 };
-pub(super) use write::write_input;
+pub(super) use write::{INSTRUCTIONS, write_input};
 
 use super::RESPONSES;
 use crate::schema::Names;

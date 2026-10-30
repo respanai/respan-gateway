@@ -211,9 +211,11 @@ pub trait Schema: Copy + Send + Sync + 'static {
             }
         }
         let mut native = kept_fields(Self::NAME, &rest, in_the_request, keep)?;
-        // What only this format needs is written as it came.
+        // What only this format needs is written as it came, but what it
+        // writes itself.
         if let Some(Value::Object(inert)) = native.shift_remove(INERT) {
-            native.extend(inert);
+            let written = |key: &String| Self::OWN.contains(&key.as_str());
+            native.extend(inert.into_iter().filter(|(key, _)| !written(key)));
         }
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));

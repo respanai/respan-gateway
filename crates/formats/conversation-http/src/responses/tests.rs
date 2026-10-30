@@ -156,10 +156,12 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
         Some(ResponseFormat::JsonSchema { .. })
     ));
     assert_eq!(chat.tools[0].name, "f");
-    assert!(
-        chat.native.is_none(),
-        "everything is the kind's: {:?}",
-        chat.native
+    assert_eq!(
+        chat.native.fields(),
+        json!({ "inert": { "instructions": true } })
+            .as_object()
+            .expect("fields"),
+        "everything is the kind's, but that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -362,8 +364,8 @@ fn another_formats_conversation_is_written_as_responses() {
         v,
         json!({
             "model": "m",
-            "instructions": "be brief",
             "input": [
+                { "role": "system", "content": "be brief" },
                 { "role": "user", "content": "weather?" },
                 { "role": "assistant", "content": "checking" },
                 { "type": "function_call", "call_id": "c1", "name": "get", "arguments": "{\"a\":1}" },
@@ -991,4 +993,49 @@ fn a_foreign_value_it_cannot_write_is_named_in_its_refusal() {
             fault.message()
         );
     }
+}
+
+#[test]
+fn a_chats_system_message_is_an_input_item_and_only_instructions_are_instructions() {
+    let chat = OpenAiChat.decode_json(&json!({
+        "messages": [
+            { "role": "system", "content": "Answer in JSON." },
+            { "role": "user", "content": "hi" },
+        ],
+        "response_format": { "type": "json_object" },
+    }));
+    let v = OpenAiResponses.encode_request(&chat).expect("a request");
+    assert!(v.get("instructions").is_none(), "{v:?}");
+    assert_eq!(
+        v["input"],
+        json!([
+            { "role": "system", "content": "Answer in JSON." },
+            { "role": "user", "content": "hi" },
+        ])
+    );
+    // A system item of Responses' own input stays one.
+    let item = json!({ "model": "m", "input": [{ "role": "system", "content": "s" }, { "role": "user", "content": "u" }] });
+    assert_eq!(round_trip(&item), item);
+}
+
+#[test]
+fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
+    let v = json!({
+        "model": "m",
+        "instructions": "be brief",
+        "input": [{ "role": "user", "content": "hi" }],
+        "store": false,
+        "max_output_tokens": 9,
+    });
+    let chat = decode_request(&v);
+    let anthropic = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(anthropic["system"], "be brief");
+    assert!(anthropic.get("instructions").is_none() && anthropic.get("inert").is_none());
+    let openai = OpenAiChat.encode_request(&chat).expect("chat");
+    assert_eq!(
+        openai["messages"],
+        json!([{ "role": "system", "content": "be brief" }, { "role": "user", "content": "hi" }])
+    );
+    assert!(openai.get("instructions").is_none() && openai.get("inert").is_none());
+    assert_eq!(round_trip(&v), v);
 }
