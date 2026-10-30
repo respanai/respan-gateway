@@ -42,6 +42,13 @@ pub trait Dialect: Send + Sync + 'static {
     fn key(&self) -> Option<KeyIn> {
         None
     }
+
+    /// Whether a call spells a field the spec spells two ways as its client
+    /// did ([`Schema::respell`]): `false` for a vendor that takes only the
+    /// spec's own spelling.
+    fn respells(&self) -> bool {
+        true
+    }
 }
 
 /// One call of a [`Dialect`].
@@ -119,7 +126,15 @@ where
             move |head, input| {
                 // Its path, from the input as the vendor takes it, and its body.
                 let taken = input.map(|i| writes.input(i, &call)).transpose()?;
-                let encoder = post(spec, head, taken.as_deref(), original.as_ref(), stream)?;
+                let respell = writes.respells();
+                let encoder = post(
+                    spec,
+                    head,
+                    taken.as_deref(),
+                    original.as_ref(),
+                    stream,
+                    respell,
+                )?;
                 Ok(Box::new(Written {
                     encoder,
                     dialect: writes,

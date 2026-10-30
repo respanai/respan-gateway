@@ -4,6 +4,7 @@
 use respan_gateway_conversation::Content;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode};
+use respan_gateway_http::raw::Original;
 use serde_json::json;
 
 use crate::Schema;
@@ -100,4 +101,36 @@ fn usage_is_written_only_where_each_count_has_a_field() {
     );
     huge.output_tokens = 0;
     assert!(check_usage(&huge, has(true, true)).is_ok());
+}
+
+#[test]
+fn a_call_spells_the_limit_as_its_client_did_unless_told_not_to() {
+    let body =
+        json!({"model": "m", "max_tokens": 7, "messages": [{"role": "user", "content": "hi"}]});
+    let request = http::Request::post("/v1/chat/completions").body(Bytes::from(body.to_string()));
+    let original = Original::new(request.expect("request"));
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(body.to_string()))
+        .expect("chat");
+    let sent = |respell| {
+        let mut head = http::Request::new(()).into_parts().0;
+        let mut encoder = crate::schema::post(
+            OpenAiChat,
+            &mut head,
+            Some(&chat),
+            Some(&original),
+            None,
+            respell,
+        )
+        .expect("post");
+        let mut frames = Vec::new();
+        encoder.encode(&chat, &mut frames).expect("encoded");
+        serde_json::from_slice::<serde_json::Value>(&frames.concat()).expect("json")
+    };
+    let respelled = sent(true);
+    assert_eq!(respelled["max_tokens"], 7);
+    assert!(respelled.get("max_completion_tokens").is_none());
+    let canonical = sent(false);
+    assert_eq!(canonical["max_completion_tokens"], 7);
+    assert!(canonical.get("max_tokens").is_none());
 }

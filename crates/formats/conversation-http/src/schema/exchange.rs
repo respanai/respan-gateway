@@ -36,14 +36,16 @@ use super::{Schema, StreamResponse};
 /// [`StreamResponse`] says, else as the client's original request
 /// ([`Original`]) did, else for one. The client's request, if of this format,
 /// carries its spec's headers and query parameters ([`Schema::CARRIED`],
-/// [`Schema::CARRIED_QUERY`]) and gives its spelling of a field the format
-/// spells two ways ([`Schema::respell`]). `Err` with `config` for live input.
+/// [`Schema::CARRIED_QUERY`]) and, if `respell`, gives its spelling of a
+/// field the format spells two ways ([`Schema::respell`]). `Err` with
+/// `config` for live input.
 pub(crate) fn post<C: Schema>(
     schema: C,
     head: &mut RequestHead,
     input: Option<&Input>,
     original: Option<&Original>,
     stream: Option<StreamResponse>,
+    respell: bool,
 ) -> Result<Box<dyn Encoder<Input>>, Fault> {
     if input.is_none() {
         return Err(Fault::config(format!(
@@ -95,6 +97,7 @@ pub(crate) fn post<C: Schema>(
         schema,
         stream,
         original,
+        respell,
     }))
 }
 
@@ -115,6 +118,7 @@ struct RequestEncoder<C> {
     schema: C,
     stream: bool,
     original: Option<Value>,
+    respell: bool,
 }
 
 impl<C: Schema> RequestEncoder<C> {
@@ -130,7 +134,8 @@ impl<C: Schema> RequestEncoder<C> {
             v.insert("stream".into(), true.into());
         }
         match &self.original {
-            Some(original) => C::respell(original, &mut v),
+            Some(original) if self.respell => C::respell(original, &mut v),
+            Some(_) => {}
             None => C::translated(&mut v),
         }
         C::prepare_call(&mut v);

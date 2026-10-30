@@ -4,6 +4,7 @@
 //! format stays, as what clients send for any provider of video.
 
 use respan_gateway_conversation_http::Schema;
+use respan_gateway_conversation_http::dialect::{Dialect, Dialected};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_media_http::openai::{
@@ -22,7 +23,7 @@ pub const VENDOR: Vendor = Vendor {
     id: "openai",
     key_env: &["OPENAI_API_KEY"],
     formats: &[
-        (&OpenAiChat, Some(BASE_URL)),
+        (&Dialected::new(OpenAiChat, OpenAi), Some(BASE_URL)),
         (&OpenAiResponses, Some(BASE_URL)),
         (&OpenAiRealtime, Some(BASE_URL)),
         (&ResponsesWs, Some(BASE_URL)),
@@ -34,6 +35,17 @@ pub const VENDOR: Vendor = Vendor {
     format_for: Some(format_for),
     ..Vendor::DEFAULT
 };
+
+/// OpenAI's Chat Completions: its limit is `max_completion_tokens`, as its
+/// reasoning models take no `max_tokens`, whatever the client spelled.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenAi;
+
+impl Dialect for OpenAi {
+    fn respells(&self) -> bool {
+        false
+    }
+}
 
 fn format_for(_: &Ask, model: &Model) -> Option<&'static str> {
     responses_only(&model.id).then_some(OpenAiResponses::NAME)
@@ -58,5 +70,15 @@ pub fn responses_only(model: &str) -> bool {
     match (major.parse::<u32>(), minor.parse::<u32>()) {
         (Ok(major), Ok(minor)) => (major, minor) >= (5, 4),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn its_chat_limit_is_spelled_its_own_way() {
+        assert!(!OpenAi.respells());
     }
 }

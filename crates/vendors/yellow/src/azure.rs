@@ -16,8 +16,9 @@ pub const VENDOR: Vendor = Vendor {
     ..Vendor::DEFAULT
 };
 
-/// Azure's Chat Completions: its key in `api-key`, and a choice's
-/// moderation results only describe it.
+/// Azure's Chat Completions: its key in `api-key`, its limit
+/// `max_completion_tokens`, as its reasoning models take no `max_tokens`,
+/// and a choice's moderation results only describe it.
 #[derive(Debug, Clone, Copy)]
 pub struct Azure;
 
@@ -32,5 +33,22 @@ impl Dialect for Azure {
 
     fn key(&self) -> Option<KeyIn> {
         Some(KeyIn::Header("api-key"))
+    }
+
+    fn respells(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::deepseek::DeepSeek;
+    use crate::openrouter::OpenRouter;
+
+    #[test]
+    fn its_limit_is_spelled_its_own_way_as_a_compatible_servers_is_not() {
+        assert!(!Azure.respells());
+        assert!(DeepSeek.respells() && OpenRouter.respells());
     }
 }
