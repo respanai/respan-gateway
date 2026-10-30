@@ -13,12 +13,14 @@
 //! dialect of a spec. The kit runs nothing of a vendor's beside its
 //! formats. What vendors share is here too: every spec's format, as a
 //! provider of no vendor speaks it ([`FORMATS`]), and what vendors of Chat
-//! Completions share in their dialects ([`chat`]).
+//! Completions share in their dialects ([`chat`]), and of Gemini's
+//! transcriptions ([`transcription`]).
 
 pub mod chat;
 mod formats;
 pub mod models;
 mod provider;
+pub mod transcription;
 
 pub use formats::{FORMATS, format};
 pub use models::{BoxFuture, Capability, ListModels, Modality, Model, Models, Price, time};

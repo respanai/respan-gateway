@@ -2,8 +2,8 @@
 //! a format of the [`image`](respan_gateway_media::image) kind,
 //! [`GeminiImages`].
 
-use super::{is_segment, refusal};
-use crate::edge::{bind_provider, sends};
+use super::{config_of, generate, model_of, refusal};
+use crate::edge::bind_provider;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
@@ -105,41 +105,21 @@ const ASPECTS: [(&str, u32, u32); 10] = [
 /// Gemini's image sizes above 1K, and how many times 1K each is.
 const SIZES: [(&str, u32); 3] = [("1K", 1), ("2K", 2), ("4K", 4)];
 
-/// The call of `input`: one user turn of its images and prompt.
+/// The call of `input`: one user turn of its images and prompt, its
+/// `generationConfig`, and its native fields.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
-    let model = input.model.as_deref().unwrap_or_default();
-    let model = model.strip_prefix("models/").unwrap_or(model);
-    if !is_segment(model) {
-        return Err(Fault::bad_request(
-            "a Gemini image needs a model, such as gemini-2.5-flash-image",
-        ));
-    }
+    let needs = "a Gemini image needs a model, such as gemini-2.5-flash-image";
+    let model = model_of(input.model.as_deref(), needs)?;
     if input.mask.is_some() {
         return Err(
             Fault::bad_request("Gemini edits by prompt, and takes no mask")
                 .with(ErrorCode("unsupported".into())),
         );
     }
-    head.uri = format!("/models/{model}:generateContent")
-        .parse()
-        .map_err(|e| Fault::internal("a call's path is no path").with_source(e))?;
-    let json = HeaderValue::from_static("application/json");
-    head.headers.insert(CONTENT_TYPE, json);
-    let body = serde_json::to_vec(&body_of(input)?)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))?;
-    Ok(sends(Bytes::from(body)))
-}
-
-/// A call's body: its turn, its `generationConfig`, and its native fields.
-fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
     let mut native = kept(NAME, &input.native)?;
     let mut parts: Vec<Value> = input.images.iter().map(part_of).collect();
     parts.push(json!({ "text": input.prompt }));
-    let mut config = match native.remove("generationConfig") {
-        Some(Value::Object(config)) => config,
-        None => Map::new(),
-        Some(_) => return Err(invalid("generationConfig", "must be an object")),
-    };
+    let mut config = config_of(&mut native)?;
     if let Some(count) = input.count {
         config.insert("candidateCount".into(), count.into());
     }
@@ -150,18 +130,7 @@ fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
             image["imageSize"] = size.into();
         }
     }
-    let mut v = Map::new();
-    v.insert(
-        "contents".into(),
-        json!([{ "role": "user", "parts": parts }]),
-    );
-    if !config.is_empty() {
-        v.insert("generationConfig".into(), config.into());
-    }
-    for (key, value) in native {
-        v.entry(key).or_insert(value);
-    }
-    Ok(v)
+    generate(head, model, parts.into(), config, native)
 }
 
 /// An image as a part: its bytes inline, or its URL as a file's.
