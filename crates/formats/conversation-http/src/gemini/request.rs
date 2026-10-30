@@ -296,20 +296,36 @@ pub fn needs_signatures(model: Option<&str>) -> bool {
     !(model.starts_with("gemini-1") || model.starts_with("gemini-2"))
 }
 
-/// The first call of each `model` content in request `v` signed with the
-/// placeholder, unless it has a signature of its own.
+/// Request `v` with the placeholder on each call Gemini checks that has no
+/// signature of its own: in the current turn (from the last `user` content
+/// that answers no call), the first call of each run of calls in a `model`
+/// content, as Gemini signs only the first of parallel calls but again each
+/// call after text.
 pub(super) fn sign_calls(v: &mut Map<String, Value>) {
     let Some(Value::Array(contents)) = v.get_mut("contents") else {
         return;
     };
-    for content in contents.iter_mut().filter(|c| c["role"] == "model") {
+    let answers = |c: &Value| {
+        c["parts"]
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|p| p.get("functionResponse").is_some()))
+    };
+    let turn = contents
+        .iter()
+        .rposition(|c| c["role"] == "user" && !answers(c))
+        .unwrap_or(0);
+    for content in contents[turn..].iter_mut().filter(|c| c["role"] == "model") {
         let Some(parts) = content["parts"].as_array_mut() else {
             continue;
         };
-        let first = parts.iter_mut().find(|p| p.get("functionCall").is_some());
-        if let Some(Value::Object(call)) = first {
-            call.entry("thoughtSignature")
-                .or_insert_with(|| super::SIGNATURE_PLACEHOLDER.into());
+        let mut after_call = false;
+        for part in parts.iter_mut() {
+            let call = part.get("functionCall").is_some();
+            if let (true, false, Value::Object(part)) = (call, after_call, part) {
+                part.entry("thoughtSignature")
+                    .or_insert_with(|| super::SIGNATURE_PLACEHOLDER.into());
+            }
+            after_call = call;
         }
     }
 }

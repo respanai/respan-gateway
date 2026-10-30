@@ -643,6 +643,66 @@ fn a_gemini_3_turns_first_call_without_a_signature_takes_the_placeholder() {
     assert!(parts[0].get("thoughtSignature").is_none(), "{parts}");
 }
 
+/// The signatures of the `model` contents of `contents`, written for a Gemini 3
+/// or later model: each content's parts as their signature, or `-` for none.
+fn signatures(contents: Value) -> Vec<Vec<String>> {
+    let body = json!({ "contents": contents });
+    let v = written(body, |chat| chat.model = Some("gemini-4-argon".into())).expect("a request");
+    let sig = |p: &Value| {
+        p.get("thoughtSignature")
+            .and_then(Value::as_str)
+            .unwrap_or("-")
+            .to_owned()
+    };
+    v["contents"]
+        .as_array()
+        .expect("contents")
+        .iter()
+        .filter(|c| c["role"] == "model")
+        .map(|c| {
+            c["parts"]
+                .as_array()
+                .expect("parts")
+                .iter()
+                .map(sig)
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_call_after_text_takes_the_placeholder_too() {
+    // Gemini 3.8 and 4 refuse [call, text, call] with only the first call signed.
+    let call = |n: &str| json!({ "functionCall": { "name": n, "args": {} } });
+    let answer = |n: &str| json!({ "functionResponse": { "name": n, "response": {} } });
+    let got = signatures(json!([
+        { "role": "user", "parts": [{ "text": "go" }] },
+        { "role": "model", "parts": [call("f"), call("g"), { "text": "and" }, call("h"), call("i")] },
+        { "role": "user", "parts": [answer("f"), answer("g"), answer("h"), answer("i")] },
+    ]));
+    let p = SIGNATURE_PLACEHOLDER;
+    assert_eq!(got, [[p, "-", "-", p, "-"]]);
+}
+
+#[test]
+fn only_the_current_turn_is_signed() {
+    // A turn starts at the last user content that answers no call.
+    let call = json!({ "functionCall": { "name": "f", "args": {} } });
+    let answer = json!({ "functionResponse": { "name": "f", "response": {} } });
+    let got = signatures(json!([
+        { "role": "user", "parts": [{ "text": "first" }] },
+        { "role": "model", "parts": [call] },
+        { "role": "user", "parts": [answer] },
+        { "role": "model", "parts": [{ "text": "done" }] },
+        { "role": "user", "parts": [{ "text": "second" }] },
+        { "role": "model", "parts": [call] },
+        { "role": "user", "parts": [answer] },
+        { "role": "model", "parts": [call] },
+    ]));
+    let p = SIGNATURE_PLACEHOLDER;
+    assert_eq!(got, [vec!["-"], vec!["-"], vec![p], vec![p]]);
+}
+
 /// Writes each value as one event whose data spans two lines.
 struct TwoLines;
 

@@ -38,11 +38,13 @@
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!
-//! A Gemini 3 model refuses a function call in the history that has no
-//! `thoughtSignature`, as a call made in another format has none: written
-//! for one, the first call of each `model` content without a signature of
-//! its own takes Google's placeholder ([`SIGNATURE_PLACEHOLDER`]), as Gemini
-//! signs only the first of a turn's parallel calls. A model before Gemini 3
+//! A Gemini 3 or later model refuses a function call in the current turn
+//! that has no `thoughtSignature`, as a call made in another format has
+//! none: written for one, the first call of each run of calls in a `model`
+//! content of the current turn, without a signature of its own, takes
+//! Google's placeholder ([`SIGNATURE_PLACEHOLDER`]). Gemini signs only the
+//! first of parallel calls, but again a call after text. Earlier turns go
+//! as they are, as the placeholder costs quality. A model before Gemini 3
 //! takes none.
 //!
 //! # Responses as events
