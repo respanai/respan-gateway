@@ -34,8 +34,9 @@ pub(super) fn output_schema(schema: &Value) -> Value {
 }
 
 /// Replaces each `$ref` with a copy of its definition, by its last segment,
-/// and drops the definitions; a `$ref` it cannot resolve, or one inside its
-/// own definition, stays. `None` if the expansion grows too large.
+/// and drops the definitions; the keywords beside a `$ref` (a `description`)
+/// are kept over the definition's. A `$ref` it cannot resolve, or one inside
+/// its own definition, stays. `None` if the expansion grows too large.
 fn expand_refs(schema: &mut Value) -> Option<()> {
     let mut defs = Map::new();
     if let Some(fields) = schema.as_object_mut() {
@@ -67,9 +68,17 @@ fn expand(
                     return None;
                 }
                 let mut resolved = target.clone();
+                let mut beside = std::mem::take(fields);
+                beside.shift_remove("$ref");
+                for child in beside.values_mut() {
+                    expand(child, defs, chain, budget)?;
+                }
                 chain.push(name);
                 expand(&mut resolved, defs, chain, budget)?;
                 chain.pop();
+                if let Value::Object(fields) = &mut resolved {
+                    fields.extend(beside);
+                }
                 *node = resolved;
                 return Some(());
             }
@@ -175,6 +184,31 @@ mod tests {
             out["properties"]["n"]["properties"]["next"],
             json!({ "$ref": "#/definitions/Node" })
         );
+    }
+
+    #[test]
+    fn the_keywords_beside_a_ref_are_kept_over_its_definitions() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "a": { "$ref": "#/$defs/A", "description": "Mine." },
+                "b": { "$ref": "#/$defs/A", "properties": { "c": { "$ref": "#/$defs/B" } } },
+            },
+            "$defs": {
+                "A": { "type": "string", "description": "Theirs.", "maxLength": 3 },
+                "B": { "type": "integer" },
+            },
+        });
+        let out = output_schema(&schema);
+        assert_eq!(
+            out["properties"]["a"],
+            json!({ "description": "Mine. Note: maximum length: 3.", "type": "string" })
+        );
+        assert_eq!(
+            out["properties"]["b"]["properties"]["c"],
+            json!({ "type": "integer" })
+        );
+        assert_eq!(out["properties"]["b"]["type"], "string");
     }
 
     #[test]
