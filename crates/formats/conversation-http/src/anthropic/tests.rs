@@ -1159,3 +1159,70 @@ fn a_chats_reasoning_object_is_dropped_for_anthropic() {
         json!({ "effort": "high" })
     );
 }
+
+/// The call a chat `body` to `model` becomes for Claude, with the thinking a
+/// translated effort adds.
+fn claude_call(model: &str, body: Value) -> Value {
+    let mut chat = json!({ "model": model, "reasoning_effort": "low",
+        "messages": [{ "role": "user", "content": "hi" }] });
+    if let (Some(chat), Some(body)) = (chat.as_object_mut(), body.as_object()) {
+        chat.extend(body.clone());
+    }
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(chat.to_string()))
+        .expect("chat");
+    let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+    AnthropicMessages::translated(&chat, &mut v);
+    Value::Object(v)
+}
+
+#[test]
+fn a_chats_effort_adds_no_thinking_beside_what_anthropic_refuses_with_it() {
+    let tool = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }]);
+    let calls =
+        json!([{ "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }]);
+    let refused = [
+        json!({ "temperature": 0.2 }),
+        json!({ "top_p": 0.5 }),
+        json!({ "tools": tool, "tool_choice": "required" }),
+        json!({ "tools": tool, "tool_choice": { "type": "function", "function": { "name": "f" } } }),
+        // A tool loop whose turn of the assistant's has no thinking to open with.
+        json!({ "tools": tool, "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+        ] }),
+        // A last turn of the assistant's to continue.
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "The answer is" },
+        ] }),
+    ];
+    for extra in refused {
+        // Claude 4.6 and later keeps the effort alone.
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert!(v.get("thinking").is_none(), "{extra}: {v}");
+        assert_eq!(v["output_config"], json!({ "effort": "low" }), "{extra}");
+        // A budgeted Claude has no effort of its own to keep.
+        let v = claude_call("claude-sonnet-4-5", extra.clone());
+        assert!(
+            v.get("thinking").is_none() && v.get("output_config").is_none(),
+            "{extra}: {v}"
+        );
+    }
+    // A temperature of 1, an auto choice, or a finished tool loop think.
+    for extra in [
+        json!({ "temperature": 1.0, "top_p": 0.95 }),
+        json!({ "tools": tool, "tool_choice": "auto" }),
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+            { "role": "assistant", "content": "done" },
+            { "role": "user", "content": "thanks" },
+        ] }),
+    ] {
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{extra}: {v}");
+    }
+}

@@ -476,11 +476,48 @@ fn thinks(model: &str) -> Thinks {
     }
 }
 
+/// Whether the call `v` can think: Anthropic refuses thinking beside a
+/// temperature but 1, a `top_k`, a `top_p` under 0.95, a forced tool
+/// (`any` or `tool`), a last turn of the assistant's to continue, and a
+/// tool loop's turn of the assistant's that does not open with its thinking.
+fn can_think(v: &Map<String, Value>) -> bool {
+    let number = |key: &str| v.get(key).and_then(Value::as_f64);
+    let forced = v.get("tool_choice").and_then(|c| c["type"].as_str());
+    let forced = matches!(forced, Some("any" | "tool"));
+    if number("temperature").is_some_and(|t| t != 1.0)
+        || number("top_p").is_some_and(|p| p < 0.95)
+        || v.contains_key("top_k")
+        || forced
+    {
+        return false;
+    }
+    let messages = v.get("messages").and_then(Value::as_array);
+    let messages = messages.map(Vec::as_slice).unwrap_or_default();
+    let blocks = |m: &Value| m["content"].as_array().cloned().unwrap_or_default();
+    // The turn in progress: what follows the user's last message of its own.
+    let of_user =
+        |m: &Value| m["role"] == "user" && blocks(m).iter().all(|b| b["type"] != "tool_result");
+    let turn = messages.iter().rposition(of_user).map_or(0, |at| at + 1);
+    let turn = &messages[turn..];
+    let assistant = |m: &&Value| m["role"] == "assistant";
+    let opens_with_thinking = |m: &Value| {
+        let first = blocks(m).first().map(|b| b["type"].clone());
+        matches!(
+            first.as_ref().and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        )
+    };
+    turn.last().is_none_or(|last| last["role"] != "assistant")
+        && turn.iter().filter(assistant).all(opens_with_thinking)
+}
+
 /// A Claude call whose reasoning is an effort alone (`output_config.effort`)
 /// and no `thinking`, as a client of another format names it: beside the
 /// effort, adaptive thinking on Claude 4.6 and later; in its place, a
 /// thinking budget on Claude 3.7 to 4.5, `max_tokens` above it; on another
-/// Claude 3, neither. Another model's call stays as written.
+/// Claude 3, neither. A call that cannot think ([`can_think`]) keeps the
+/// effort alone on Claude 4.6 and later, and has none on the others. Another
+/// model's call stays as written.
 pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
     let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
     let model = model.to_ascii_lowercase();
@@ -492,9 +529,9 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
         return;
     };
     let thinks = thinks(&model);
-    let thinking = match thinks {
-        Thinks::Adaptively => Some(json!({ "type": "adaptive" })),
-        Thinks::ToBudget => {
+    let thinking = match (&thinks, can_think(v)) {
+        (Thinks::Adaptively, true) => Some(json!({ "type": "adaptive" })),
+        (Thinks::ToBudget, true) => {
             let Some(&(_, budget)) = EFFORT_BUDGETS.iter().find(|(e, _)| *e == effort) else {
                 return;
             };
@@ -505,7 +542,7 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
             }
             Some(json!({ "type": "enabled", "budget_tokens": budget }))
         }
-        Thinks::Never => None,
+        _ => None,
     };
     if !matches!(thinks, Thinks::Adaptively)
         && let Some(Value::Object(config)) = v.get_mut("output_config")
