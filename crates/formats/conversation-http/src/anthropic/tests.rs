@@ -1095,3 +1095,67 @@ fn a_chats_thinking_is_adopted_as_anthropics() {
         .expect("written");
     assert_eq!(sent["thinking"], adaptive);
 }
+
+#[test]
+fn a_chats_effort_thinks_as_its_claude_does() {
+    let sent = |model: &str, extra: Value| {
+        let mut body = json!({ "model": model, "reasoning_effort": "high",
+            "messages": [{ "role": "user", "content": "hi" }] });
+        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+            body.extend(extra.clone());
+        }
+        let chat = OpenAiChat
+            .decode_request(Bytes::from(body.to_string()))
+            .expect("chat");
+        let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+        AnthropicMessages::translated(&mut v);
+        Value::Object(v)
+    };
+    // Adaptive, beside the effort, from Claude 4.6.
+    for model in ["claude-sonnet-4-6", "claude-opus-5", "claude-sonnet-5"] {
+        let v = sent(model, json!({}));
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{model}");
+        assert_eq!(v["output_config"], json!({ "effort": "high" }), "{model}");
+    }
+    // A budget in its place before, with room to answer.
+    for model in [
+        "claude-sonnet-4-5-20250929",
+        "claude-3-7-sonnet-latest",
+        "claude-opus-4-1-20250805",
+    ] {
+        let v = sent(model, json!({}));
+        assert_eq!(
+            v["thinking"],
+            json!({ "type": "enabled", "budget_tokens": 4096 }),
+            "{model}"
+        );
+        assert!(v.get("output_config").is_none(), "{model}");
+        assert_eq!(v["max_tokens"], 4096 + DEFAULT_MAX_TOKENS, "{model}");
+    }
+    // Claude 3 thinks not at all.
+    let v = sent("claude-3-5-haiku-latest", json!({}));
+    assert!(v.get("thinking").is_none() && v.get("output_config").is_none());
+    // Thinking the client named, and another model, stay as written.
+    let v = sent(
+        "claude-sonnet-4-5",
+        json!({ "thinking": { "type": "enabled", "budget_tokens": 2048 } }),
+    );
+    assert_eq!(v["thinking"]["budget_tokens"], 2048);
+    let v = sent("kimi-k2", json!({}));
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["output_config"], json!({ "effort": "high" }));
+}
+
+#[test]
+fn a_chats_reasoning_object_is_dropped_for_anthropic() {
+    let chat = OpenAiChat.decode_json(&json!({
+        "messages": [{ "role": "user", "content": "hi" }],
+        "reasoning": { "effort": "high" },
+    }));
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert!(sent.get("reasoning").is_none());
+    assert_eq!(
+        OpenAiChat.encode_request(&chat).expect("written")["reasoning"],
+        json!({ "effort": "high" })
+    );
+}

@@ -54,8 +54,8 @@ use serde_json::{Map, Value, json};
 use decode::AnthropicDecoder;
 use encode::EventStream;
 use request::{
-    read_effort, read_output, read_thinking, read_tools_of, write_output, write_thinking,
-    write_tools,
+    effort_thinking, read_effort, read_output, read_thinking, read_tools_of, write_output,
+    write_thinking, write_tools,
 };
 
 /// The `max_tokens` of a translated request without one, as it is required.
@@ -234,7 +234,17 @@ impl Schema for AnthropicMessages {
     /// Claude, is Anthropic's.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] =
         &[(crate::openai::OPENAI, "thinking", "thinking")];
+    /// A Chat Completions request's `reasoning`, another vendor's control of
+    /// its thinking, which Claude's is not.
+    const DROPPED: &'static [(&'static str, &'static str)] =
+        &[(crate::openai::OPENAI, "reasoning")];
     type Decoding = AnthropicDecoder;
+
+    /// A client of another format names its reasoning by an effort alone:
+    /// Claude thinks as its model does for it ([`effort_thinking`]).
+    fn translated(v: &mut Map<String, Value>) {
+        effort_thinking(v);
+    }
 
     fn decoder(&self) -> AnthropicDecoder {
         AnthropicDecoder::default()

@@ -109,6 +109,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// goes, such as Chat Completions' `verbosity` as Responses'
     /// `text.verbosity`.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[];
+    /// Fields of another format's `native` this format drops, as asking
+    /// nothing it can say: `(format, key)`.
+    const DROPPED: &'static [(&'static str, &'static str)] = &[];
     /// Decodes the events of a streamed response into events.
     type Decoding: respan_gateway_http::Decoder<Output>;
 
@@ -201,6 +204,11 @@ pub trait Schema: Copy + Send + Sync + 'static {
         let mut adopted = Vec::new();
         let mut rest = chat.native.clone();
         if let Some(n) = rest.as_mut() {
+            for (format, key) in Self::DROPPED {
+                if *n.format == **format {
+                    n.fields.shift_remove(*key);
+                }
+            }
             for (format, key, path) in Self::ADOPTED {
                 if *n.format != **format {
                     continue;

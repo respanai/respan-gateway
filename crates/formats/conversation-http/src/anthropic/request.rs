@@ -436,6 +436,90 @@ pub(crate) fn read_thinking(input: &mut Input) {
     });
 }
 
+/// The thinking budget an effort buys a Claude that thinks to a budget.
+const EFFORT_BUDGETS: &[(&str, u64)] = &[
+    ("low", 1024),
+    ("medium", 2048),
+    ("high", 4096),
+    ("xhigh", 8192),
+    ("max", 16384),
+];
+
+/// How a Claude model thinks.
+enum Thinks {
+    /// Adaptively, to an effort: Claude 4.6 and later.
+    Adaptively,
+    /// To a token budget: Claude 3.7 to 4.5.
+    ToBudget,
+    /// Not at all: Claude 3 but 3.7.
+    Never,
+}
+
+fn thinks(model: &str) -> Thinks {
+    let budgeted = [
+        "-4-0", "-4.0", "-4-1", "-4.1", "-4-5", "-4.5", "-4-2025", "-4@",
+    ];
+    let family = |family: &str| {
+        model.ends_with(&format!("{family}-4"))
+            || budgeted
+                .iter()
+                .any(|v| model.contains(&format!("{family}{v}")))
+    };
+    if model.contains("claude-3-7") || model.contains("3-7-sonnet") {
+        Thinks::ToBudget
+    } else if model.contains("claude-3") {
+        Thinks::Never
+    } else if ["opus", "sonnet", "haiku"].iter().any(|f| family(f)) {
+        Thinks::ToBudget
+    } else {
+        Thinks::Adaptively
+    }
+}
+
+/// A Claude call whose reasoning is an effort alone (`output_config.effort`)
+/// and no `thinking`, as a client of another format names it: beside the
+/// effort, adaptive thinking on Claude 4.6 and later; in its place, a
+/// thinking budget on Claude 3.7 to 4.5, `max_tokens` above it; on another
+/// Claude 3, neither. Another model's call stays as written.
+pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
+    let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
+    let model = model.to_ascii_lowercase();
+    if !model.contains("claude") || v.contains_key("thinking") {
+        return;
+    }
+    let effort = v.get("output_config").and_then(|c| c.get("effort"));
+    let Some(effort) = effort.and_then(Value::as_str).map(str::to_owned) else {
+        return;
+    };
+    let thinks = thinks(&model);
+    let thinking = match thinks {
+        Thinks::Adaptively => Some(json!({ "type": "adaptive" })),
+        Thinks::ToBudget => {
+            let Some(&(_, budget)) = EFFORT_BUDGETS.iter().find(|(e, _)| *e == effort) else {
+                return;
+            };
+            let limit = v.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
+            if limit <= budget {
+                let limit = budget.saturating_add(crate::anthropic::DEFAULT_MAX_TOKENS);
+                v.insert("max_tokens".into(), limit.into());
+            }
+            Some(json!({ "type": "enabled", "budget_tokens": budget }))
+        }
+        Thinks::Never => None,
+    };
+    if !matches!(thinks, Thinks::Adaptively)
+        && let Some(Value::Object(config)) = v.get_mut("output_config")
+    {
+        config.remove("effort");
+        if config.is_empty() {
+            v.remove("output_config");
+        }
+    }
+    if let Some(thinking) = thinking {
+        v.insert("thinking".into(), thinking);
+    }
+}
+
 /// The request's `thinking`: the kind's reasoning, else the request's own,
 /// or a Chat Completions request's, which Anthropic adopts.
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s

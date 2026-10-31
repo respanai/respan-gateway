@@ -3,6 +3,7 @@
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
+use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -35,8 +36,8 @@ pub const VENDOR: Vendor = Vendor {
     ..Vendor::DEFAULT
 };
 
-/// OpenRouter's Chat Completions: a thinking budget, such as Anthropic's
-/// clients send, is its `reasoning.max_tokens`.
+/// OpenRouter's Chat Completions: Claude's thinking, as Anthropic's clients
+/// ask for it, is its `reasoning`.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenRouter;
 
@@ -45,13 +46,30 @@ impl Dialect for OpenRouter {
     type Output = Output;
 
     fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
-        Some(Box::new(reasoning_limit))
+        Some(Box::new(reasoning))
     }
 }
 
-/// `input` with a thinking budget as its `reasoning.max_tokens`, unless
-/// another format's fields leave no room for its own.
-fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
+/// `input` with a thinking budget as its `reasoning.max_tokens`, and
+/// adaptive thinking, Anthropic's own and its only field, as
+/// `reasoning.enabled`; unless another format's other fields leave no room
+/// for its own.
+fn reasoning(input: &mut Input) -> Result<(), Fault> {
+    let adaptive = input.native.as_ref().is_some_and(|n| {
+        &*n.format == AnthropicMessages::NAME
+            && n.fields.len() == 1
+            && n.fields
+                .get("thinking")
+                .is_some_and(|t| t["type"] == "adaptive")
+    });
+    if adaptive {
+        let reasoning = [("reasoning".to_owned(), json!({ "enabled": true }))];
+        input.native = Some(NativeFields::new(
+            OpenAiChat::NAME,
+            Map::from_iter(reasoning),
+        ));
+        return Ok(());
+    }
     let budget = input
         .options
         .reasoning
@@ -236,14 +254,13 @@ mod tests {
     }
 
     #[test]
-    fn a_thinking_budget_is_its_reasoning_limit() {
-        use respan_gateway_conversation_http::anthropic::AnthropicMessages;
+    fn claudes_thinking_is_its_reasoning() {
         let mut messages = AnthropicMessages.decode_json(&json!({
             "max_tokens": 9000,
             "messages": [{ "role": "user", "content": "hi" }],
             "thinking": { "type": "enabled", "budget_tokens": 2048 },
         }));
-        reasoning_limit(&mut messages).expect("taken");
+        reasoning(&mut messages).expect("taken");
         assert!(messages.options.reasoning.is_none());
         let sent = OpenAiChat.encode_request(&messages).expect("written");
         assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
@@ -254,8 +271,18 @@ mod tests {
             "messages": [{ "role": "user", "content": "hi" }],
         }));
         let mut taken = plain.clone();
-        reasoning_limit(&mut taken).expect("taken");
+        reasoning(&mut taken).expect("taken");
         assert_eq!(taken, plain);
+        let mut adaptive = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "high" },
+        }));
+        reasoning(&mut adaptive).expect("taken");
+        let sent = OpenAiChat.encode_request(&adaptive).expect("written");
+        assert_eq!(sent["reasoning"], json!({ "enabled": true }));
+        assert_eq!(sent["reasoning_effort"], "high");
     }
 
     #[test]
