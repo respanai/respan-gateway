@@ -100,8 +100,8 @@ use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
 pub use request::needs_signatures;
 use request::{
-    read_config, read_messages, read_tools, sign_calls, split_system, write_config, write_messages,
-    write_tools,
+    effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
+    write_config, write_messages, write_tools,
 };
 
 /// This format's name.
@@ -424,6 +424,12 @@ impl Schema for GeminiGenerate {
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         body.finish(whole.start.as_ref(), parts, finish, &whole.usage)
+    }
+
+    /// A client of another format names its reasoning by an effort: Gemini
+    /// thinks as its model does for it ([`effort_thinking`]).
+    fn translated(input: &Input, v: &mut Map<String, Value>) {
+        effort_thinking(input.model.as_deref().unwrap_or_default(), v);
     }
 
     fn error_body(fault: &Fault) -> Value {

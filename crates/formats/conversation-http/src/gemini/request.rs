@@ -777,6 +777,95 @@ fn read_thinking(config: &mut Map<String, Value>) -> Option<Reasoning> {
     (r != Reasoning::default()).then_some(r)
 }
 
+/// Thinking budgets per effort on Gemini 2.5; `minimal`'s is per model.
+const EFFORT_BUDGETS: &[(&str, u64)] = &[("low", 1024), ("medium", 2048), ("high", 4096)];
+
+/// The least thinking budget of a Gemini 2.5 `model`.
+fn minimal_budget(model: &str) -> u64 {
+    if model.contains("flash-lite") {
+        512
+    } else if model.contains("2.5-pro") || model.contains("2-5-pro") {
+        128
+    } else if model.contains("flash") {
+        1
+    } else {
+        128
+    }
+}
+
+/// The major version of a Gemini `model`, if its name says one.
+fn gemini_version(model: &str) -> Option<u32> {
+    let (_, after) = model.split_once("gemini-")?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// A call whose `thinkingConfig` is an effort the kind wrote, its level or
+/// a budget of 0 for none, as a client of another format names it: on
+/// Gemini 3 and later, the level the model has for it (the flash line has
+/// `minimal` and `medium`, Gemini 3.1 Pro `medium`; others round to `low` or
+/// `high`, and none is the least level without thoughts); on Gemini 2.5 a
+/// thinking budget for it (none is 0); before 2.5, which does not think,
+/// none. Thoughts are included but for none.
+pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
+    let model = model.to_ascii_lowercase();
+    let Some(version) = gemini_version(&model) else {
+        return;
+    };
+    let Some(Value::Object(config)) = v.get_mut("generationConfig") else {
+        return;
+    };
+    let Some(Value::Object(thinking)) = config.get_mut("thinkingConfig") else {
+        return;
+    };
+    let effort = match (
+        thinking.get("thinkingLevel"),
+        thinking.get("thinkingBudget"),
+    ) {
+        (Some(level), None) => level.as_str().unwrap_or_default().to_owned(),
+        (None, Some(budget)) if budget.as_u64() == Some(0) => "none".to_owned(),
+        _ => return,
+    };
+    let none = effort == "none";
+    let older = version < 2 || model.contains("gemini-2.0") || model.contains("gemini-2-0");
+    if older {
+        thinking.shift_remove("thinkingLevel");
+        thinking.shift_remove("thinkingBudget");
+    } else if version >= 3 {
+        let flash = model.contains("gemini-3-flash") || model.contains("gemini-3.1-flash");
+        let medium = flash || model.contains("gemini-3.1-pro-preview");
+        let floor = if flash { "minimal" } else { "low" };
+        let level = match effort.as_str() {
+            "minimal" | "none" => floor,
+            "low" => "low",
+            "medium" if medium => "medium",
+            _ => "high",
+        };
+        thinking.shift_remove("thinkingBudget");
+        thinking.insert("thinkingLevel".into(), level.into());
+    } else {
+        let budget = match effort.as_str() {
+            "none" => 0,
+            "minimal" => minimal_budget(&model),
+            effort => EFFORT_BUDGETS
+                .iter()
+                .find(|(e, _)| *e == effort)
+                .map_or(EFFORT_BUDGETS[2].1, |(_, budget)| *budget),
+        };
+        thinking.shift_remove("thinkingLevel");
+        thinking.insert("thinkingBudget".into(), budget.into());
+    }
+    if !older {
+        thinking.entry("includeThoughts").or_insert((!none).into());
+    }
+    if thinking.is_empty() {
+        config.shift_remove("thinkingConfig");
+    }
+    if config.is_empty() {
+        v.shift_remove("generationConfig");
+    }
+}
+
 /// Gemini's `thinkingLevel` of a named `effort`, which has none for `Off`
 /// (a budget of 0) or above `high`.
 fn level_name(effort: Effort) -> Option<&'static str> {

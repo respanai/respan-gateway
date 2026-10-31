@@ -242,7 +242,7 @@ impl Schema for AnthropicMessages {
 
     /// A client of another format names its reasoning by an effort alone:
     /// Claude thinks as its model does for it ([`effort_thinking`]).
-    fn translated(v: &mut Map<String, Value>) {
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
         effort_thinking(v);
     }
 

@@ -146,9 +146,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// Prepare the request sent to a provider: add what the gateway needs of it,
     /// such as usage in a stream.
     fn prepare_call(_v: &mut Map<String, Value>) {}
-    /// Prepare a call whose client speaks another format: say what the
-    /// format must for a client that can name nothing it keeps.
-    fn translated(_v: &mut Map<String, Value>) {}
+    /// Prepare a call of `input` whose client speaks another format: say
+    /// what the format must for a client that can name nothing it keeps.
+    fn translated(_input: &Input, _v: &mut Map<String, Value>) {}
     /// Spell the fields of `v` as `original`, the client's request in this
     /// format, did, where the format has two spellings of one field.
     fn respell(_original: &Value, _v: &mut Map<String, Value>) {}

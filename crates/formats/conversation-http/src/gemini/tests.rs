@@ -689,3 +689,48 @@ fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
         assert!(sent.is_err(), "{effort:?}");
     }
 }
+
+/// What a chat's `reasoning_effort` of `effort` to `model` asks of Gemini's
+/// thinking, as a translated call writes it.
+fn effort_thinking(model: &str, effort: &str) -> Result<Value, Fault> {
+    let body = json!({ "model": model, "reasoning_effort": effort,
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let chat = crate::openai::OpenAiChat.decode_request(Bytes::from(body.to_string()))?;
+    let mut v = GeminiGenerate.encode_request(&chat)?;
+    GeminiGenerate::translated(&chat, &mut v);
+    Ok(Value::Object(v)["generationConfig"]["thinkingConfig"].clone())
+}
+
+#[test]
+fn a_chats_effort_is_the_thinking_its_gemini_has() {
+    let budget = |n: u64, shown: bool| json!({ "thinkingBudget": n, "includeThoughts": shown });
+    let level = |l: &str, shown: bool| json!({ "thinkingLevel": l, "includeThoughts": shown });
+    let cases = [
+        ("gemini-2.5-flash-lite", "none", budget(0, false)),
+        ("gemini-2.5-flash-lite", "minimal", budget(512, true)),
+        ("gemini-2.5-flash", "minimal", budget(1, true)),
+        ("gemini-2.5-pro", "minimal", budget(128, true)),
+        ("gemini-2.5-flash-lite", "low", budget(1024, true)),
+        ("gemini-2.5-flash-lite", "medium", budget(2048, true)),
+        ("gemini-2.5-flash-lite", "high", budget(4096, true)),
+        ("gemini-3.5-flash-lite", "none", level("low", false)),
+        ("gemini-3.5-flash-lite", "minimal", level("low", true)),
+        ("gemini-3.5-flash-lite", "low", level("low", true)),
+        ("gemini-3.5-flash-lite", "medium", level("high", true)),
+        ("gemini-3.5-flash-lite", "high", level("high", true)),
+        ("gemini-3-flash-preview", "none", level("minimal", false)),
+        ("gemini-3-flash-preview", "minimal", level("minimal", true)),
+        ("gemini-3-flash-preview", "medium", level("medium", true)),
+        ("gemini-3.1-pro-preview", "minimal", level("low", true)),
+        ("gemini-3.1-pro-preview", "medium", level("medium", true)),
+        ("gemini-2.0-flash", "high", Value::Null),
+    ];
+    for (model, effort, want) in cases {
+        assert_eq!(
+            effort_thinking(model, effort).ok(),
+            Some(want),
+            "{model} {effort}"
+        );
+    }
+    assert!(effort_thinking("gemini-2.5-flash", "xhigh").is_err());
+}

@@ -201,7 +201,7 @@ impl Schema for OpenAiResponses {
 
     /// A client of another format can name no response: none is stored,
     /// and its reasoning comes encrypted, to be carried to a later call.
-    fn translated(v: &mut Map<String, Value>) {
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
         v.entry("store").or_insert(false.into());
         let include = v.entry("include").or_insert_with(|| json!([]));
         if let Some(include) = include.as_array_mut() {

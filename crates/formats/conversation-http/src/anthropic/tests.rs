@@ -1108,7 +1108,7 @@ fn a_chats_effort_thinks_as_its_claude_does() {
             .decode_request(Bytes::from(body.to_string()))
             .expect("chat");
         let mut v = AnthropicMessages.encode_request(&chat).expect("written");
-        AnthropicMessages::translated(&mut v);
+        AnthropicMessages::translated(&chat, &mut v);
         Value::Object(v)
     };
     // Adaptive, beside the effort, from Claude 4.6.

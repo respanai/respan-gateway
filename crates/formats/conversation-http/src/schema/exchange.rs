@@ -131,7 +131,7 @@ impl<C: Schema> RequestEncoder<C> {
         }
         match &self.original {
             Some(original) => C::respell(original, &mut v),
-            None => C::translated(&mut v),
+            None => C::translated(chat, &mut v),
         }
         C::prepare_call(&mut v);
         out.extend_from_slice(&to_bytes(&v)?);
