@@ -1090,3 +1090,19 @@ fn a_chats_own_inert_field_does_not_break_what_is_set_aside() {
         Some(&json!({ "store": true }))
     );
 }
+
+/// OpenRouter has reported 87 reasoning tokens of 76 output: the answer is
+/// served, its counts within their totals, and the stream can still end.
+#[test]
+fn a_providers_parts_beyond_their_totals_stay_within_them() {
+    let usage = usage_of(&json!({
+        "input_tokens": 15, "output_tokens": 76,
+        "input_tokens_details": { "cached_tokens": 20, "cache_write_tokens": 3 },
+        "output_tokens_details": { "reasoning_tokens": 87 },
+    }))
+    .expect("read");
+    assert_eq!(usage.reasoning_tokens, 76);
+    assert_eq!(usage.cached_input_tokens, 15);
+    assert_eq!(usage.cache_write_input_tokens, 0);
+    assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
+}

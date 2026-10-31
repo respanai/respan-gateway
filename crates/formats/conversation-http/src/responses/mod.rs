@@ -78,7 +78,7 @@ mod tests;
 
 use crate::schema::{
     Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    set_aside, unsupported_fields, unwritable_content, usage_extra,
+    parts_within_totals, set_aside, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -313,7 +313,7 @@ pub(crate) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/input_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/input_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/output_tokens_details/reasoning_tokens")?;
-    Ok(usage)
+    Ok(parts_within_totals(usage))
 }
 
 /// What a usage object `u` says that has no unit.

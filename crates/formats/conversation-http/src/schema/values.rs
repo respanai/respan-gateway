@@ -203,6 +203,16 @@ pub(crate) fn check_usage(usage: &Usage, fields: UsageFields) -> Result<(), Faul
     Ok(())
 }
 
+/// A provider's counts with each part within its whole: some report more
+/// reasoning than output, and an answer already given is not failed for it.
+pub(crate) fn parts_within_totals(mut usage: Usage) -> Usage {
+    usage.reasoning_tokens = usage.reasoning_tokens.min(usage.output_tokens);
+    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
+    let uncached = usage.input_tokens - usage.cached_input_tokens;
+    usage.cache_write_input_tokens = usage.cache_write_input_tokens.min(uncached);
+    usage
+}
+
 /// A provider's usage count at `v`: `None` if it says none (absent or
 /// null); a whole number even when written as a float (`12.0`); else a
 /// failure, so a count that cannot be one is never metered as zero.

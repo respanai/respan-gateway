@@ -1850,3 +1850,14 @@ fn a_reply_sent_back_as_history_crosses_to_another_format() {
     );
     assert_eq!(back.map(|m| m.get("refusal").is_none()), Some(true));
 }
+
+#[test]
+fn a_providers_reasoning_beyond_its_output_stays_within_it() {
+    let usage = usage_of(&json!({
+        "prompt_tokens": 15, "completion_tokens": 76,
+        "completion_tokens_details": { "reasoning_tokens": 87 },
+    }))
+    .expect("read");
+    assert_eq!((usage.reasoning_tokens, usage.output_tokens), (76, 76));
+    assert!(check_usage(&usage, USAGE).is_ok());
+}
