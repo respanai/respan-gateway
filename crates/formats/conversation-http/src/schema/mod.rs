@@ -37,9 +37,9 @@ pub(crate) use values::{
     Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
     encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
-    message_fields, native_fields, only, own_fields, read_search, remainder, set, source_url,
-    stop_json, tidy, tool_field, unsupported_fields, untranslatable, unwritable_content,
-    usage_extra, write_search,
+    message_fields, native_fields, only, own_fields, read_search, remainder, set, set_aside,
+    source_url, stop_json, tidy, tool_field, unsupported_fields, untranslatable,
+    unwritable_content, usage_extra, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 

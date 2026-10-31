@@ -77,8 +77,8 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, INERT, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields,
-    native_fields, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
+    set_aside, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -233,11 +233,15 @@ impl Schema for OpenAiResponses {
         // Not to store a response is OpenAI's to honour; another provider
         // stores nothing anyway.
         if let Some(store) = chat.native.fields_mut(RESPONSES).shift_remove("store") {
-            set_aside(&mut chat, "store", store);
+            set_aside(chat.native.fields_mut(RESPONSES), "store", store);
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
-            set_aside(&mut chat, request::INSTRUCTIONS, true.into());
+            set_aside(
+                chat.native.fields_mut(RESPONSES),
+                request::INSTRUCTIONS,
+                true.into(),
+            );
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
@@ -300,14 +304,6 @@ impl Schema for OpenAiResponses {
             json!({ "message": fault.message(), "type": code, "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
-}
-
-/// Sets `key` aside as this format's alone ([`INERT`]): another format
-/// drops it.
-fn set_aside(chat: &mut Input, key: &str, value: Value) {
-    let fields = chat.native.fields_mut(RESPONSES);
-    let inert = fields.entry(INERT).or_insert_with(|| json!({}));
-    inert[key] = value;
 }
 
 /// A response's usage, as the kind counts it, from its usage object `u`.

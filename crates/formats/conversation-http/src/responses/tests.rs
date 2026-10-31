@@ -1066,3 +1066,27 @@ fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
     assert!(openai.get("instructions").is_none() && openai.get("inert").is_none());
     assert_eq!(round_trip(&v), v);
 }
+
+#[test]
+fn a_clients_own_inert_field_does_not_break_what_is_set_aside() {
+    for inert in [json!(1), json!("x"), json!([1]), json!(null), json!(true)] {
+        let v = json!({ "model": "gpt-5", "instructions": "s", "input": "hi", "store": false, "inert": inert });
+        let chat = OpenAiResponses.decode_json(&v);
+        assert_eq!(
+            chat.native.fields().get("inert"),
+            Some(&json!({ "store": false, "instructions": true })),
+            "{inert}"
+        );
+        // Another format drops what is set aside; it is written to no one else.
+        assert!(AnthropicMessages.encode_request(&chat).is_ok(), "{inert}");
+    }
+}
+
+#[test]
+fn a_chats_own_inert_field_does_not_break_what_is_set_aside() {
+    let chat = OpenAiChat.decode_json(&json!({ "store": true, "inert": 1, "messages": [] }));
+    assert_eq!(
+        chat.native.fields().get("inert"),
+        Some(&json!({ "store": true }))
+    );
+}

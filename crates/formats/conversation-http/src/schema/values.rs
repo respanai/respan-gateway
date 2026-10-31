@@ -75,6 +75,17 @@ impl Keep {
 /// format drops it instead of refusing.
 pub const INERT: &str = "inert";
 
+/// Sets `value` aside under `key` in the [`INERT`] object of a format's
+/// native `fields`: a client's own `inert` field that is no object is
+/// replaced, as the format could not write it back.
+pub(crate) fn set_aside(fields: &mut Map<String, Value>, key: &str, value: Value) {
+    let inert = fields.entry(INERT).or_insert(Value::Null);
+    if !inert.is_object() {
+        *inert = Value::Object(Map::new());
+    }
+    inert[key] = value;
+}
+
 /// The fields of `native` to write in `format`: all but the `own` keys if they
 /// are in `format`; if they are another's, none if each is droppable (or
 /// [`INERT`]), else an `Err` naming the first that is not, by `what`.

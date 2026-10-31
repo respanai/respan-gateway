@@ -60,8 +60,8 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
-    merge_details, merge_fields, merge_into, native_fields, parse_effort, set, stop_json,
-    take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
+    merge_details, merge_fields, merge_into, native_fields, parse_effort, set, set_aside,
+    stop_json, take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -242,11 +242,7 @@ impl Schema for OpenAiChat {
         // no place for.
         for key in OPENAI_ONLY.iter().chain(ANSWER_EXTRAS) {
             if let Some(value) = chat.native.fields_mut(OPENAI).shift_remove(*key) {
-                let fields = chat.native.fields_mut(OPENAI);
-                let inert = fields
-                    .entry(crate::schema::INERT)
-                    .or_insert_with(|| json!({}));
-                inert[*key] = value;
+                set_aside(chat.native.fields_mut(OPENAI), key, value);
             }
         }
         for m in v["messages"].as_array().into_iter().flatten() {
