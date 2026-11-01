@@ -96,6 +96,7 @@ mod tests {
             format: "openai-chat",
             model: None,
             client: None,
+            tools: false,
         };
         let format = |id: &str| format_for(&ask, &Model::new(id));
         let claude = "global.anthropic.claude-haiku-4-5-20251001-v1:0";

@@ -180,15 +180,23 @@ impl Built {
 
 /// Routing by the plan's routes, of each format, knowing each request's
 /// client key by name.
-fn routing(plan: &Plan, formats: &[KnownFormat]) -> Routing {
+fn routing(plan: &Plan, formats: &[KnownFormat], tool_loop: bool) -> Routing {
     let client = |cx: &respan_gateway_core::ClientContext| {
         let name = cx.extensions().get::<crate::auth::KeyName>();
         name.map(|n| n.0.clone())
     };
-    formats.iter().filter(|f| f.kind != kind::MCP).fold(
-        Routing::new(plan.routes.clone()).client(client),
-        |routing, f| routing.format(&f.name, f.kind, f.model.clone()),
-    )
+    let routing = Routing::new(plan.routes.clone()).client(client);
+    // The tool loop, after it, may offer any request tools.
+    let routing = match tool_loop {
+        true => routing.tools_added(),
+        false => routing,
+    };
+    formats
+        .iter()
+        .filter(|f| f.kind != kind::MCP)
+        .fold(routing, |routing, f| {
+            routing.format(&f.name, f.kind, f.model.clone())
+        })
 }
 
 /// The gateway with the binary's plugins, and what ends the sessions of the
@@ -250,7 +258,7 @@ fn with_plugins(
     };
     let gateway = gateway
         .plugin(Recorder::new(log.clone(), formats, names.clone()))
-        .plugin(routing(plan, formats))
+        .plugin(routing(plan, formats, tool_loop.is_some()))
         .plugin(mcp_router);
     let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
     // A provider without a key of its own gets the client's.

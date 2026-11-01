@@ -32,6 +32,9 @@ pub struct Ask<'a> {
     pub model: Option<&'a str>,
     /// The client key it came with, by name, if any.
     pub client: Option<&'a str>,
+    /// Whether it offers the model tools to call, or may by the time it is
+    /// sent, as a tool loop adds them; a router that cannot tell says it may.
+    pub tools: bool,
 }
 
 /// Which of its formats a provider is sent a request in: given the request
