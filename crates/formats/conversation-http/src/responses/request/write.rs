@@ -231,7 +231,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
                 if !run.is_empty() && native.fields().contains_key(MESSAGE) {
-                    flush_assistant(&mut run, items)?;
+                    flush_assistant(&mut run, items);
                 }
                 run.push(c);
             }
@@ -243,7 +243,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 native,
                 ..
             } => {
-                flush_assistant(&mut run, items)?;
+                flush_assistant(&mut run, items);
                 let arguments = match arguments.trim().is_empty() {
                     true => "{}",
                     false => arguments.as_str(),
@@ -257,7 +257,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 items.push(v.into());
             }
             Content::Reasoning { text, native } => {
-                flush_assistant(&mut run, items)?;
+                flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {
                     true => json!([]),
                     false => json!([{ "type": "summary_text", "text": text }]),
@@ -275,7 +275,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
             _ => return Err(untranslatable("an unsupported kind of part")),
         }
     }
-    flush_assistant(&mut run, items)?;
+    flush_assistant(&mut run, items);
     if items.len() == before {
         items.push(json!({ "role": "assistant", "content": "" }));
     }
@@ -284,10 +284,10 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
 
 /// The message item of a run of an assistant's text: by its text alone if
 /// it keeps nothing of an item, else in full.
-fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<(), Fault> {
+fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) {
     let parts = std::mem::take(run);
     if parts.is_empty() {
-        return Ok(());
+        return;
     }
     let mut item = Map::new();
     let mut plain = true;
@@ -320,7 +320,7 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     }
     if plain && item.is_empty() {
         items.push(json!({ "role": "assistant", "content": texts }));
-        return Ok(());
+        return;
     }
     let mut v = Map::new();
     v.insert("type".into(), "message".into());
@@ -329,5 +329,4 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     v.entry("status").or_insert_with(|| "completed".into());
     v.extend(item);
     items.push(v.into());
-    Ok(())
 }
