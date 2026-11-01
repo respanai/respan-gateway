@@ -39,6 +39,5 @@ const ROLES: Names<Role> = Names(
 /// The role of a message that holds an item the kind has no form for.
 const ITEM_ROLE: &str = "item";
 
-/// The key of an assistant message item's fields beyond its inert ones, on
-/// its first text part.
+/// The key of an assistant message item's fields, on its first text part.
 const MESSAGE: &str = "message";

@@ -25,8 +25,8 @@
 //! `additionalModelRequestFields.thinking`, and `Off` its disabling.
 //!
 //! Refused as having no field: `top_k`, an effort, JSON without a schema, an
-//! end user's id, one tool call at a time, audio, a system message after
-//! the conversation starts, and the fields of another format.
+//! end user's id, one tool call at a time, audio, and a system message after
+//! the conversation starts. The fields of another format are dropped.
 //!
 //! # Responses as events
 //!

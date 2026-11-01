@@ -13,8 +13,8 @@
 //!
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; another drops it with a warning. A request that asks for several choices (`n > 1`) cannot be
-//! written and is refused.
+//! only by that format; another drops it with a warning. A request that asks
+//! for several choices (`n > 1`) cannot be written and is refused.
 
 mod errors;
 mod exchange;
