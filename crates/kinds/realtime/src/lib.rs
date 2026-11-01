@@ -14,8 +14,7 @@
 //!
 //! What the kind has no form for stays as its format has it ([`NativeFields`],
 //! [`Input::Native`], [`Output::Native`]). It is sent only in that format.
-//! Crossing to another format, it is refused if it could change the answer,
-//! and dropped if it cannot.
+//! Crossing to another format, it is dropped.
 //!
 //! The crate is the kind's types alone, with no I/O; its formats over
 //! WebSocket are `respan-gateway-realtime-ws`'s.

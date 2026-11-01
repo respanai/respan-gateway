@@ -177,17 +177,8 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});
-    merge(
-        &mut v,
-        own(NAME, &m.native, || refuse("another format's message"))?,
-    );
+    merge(&mut v, own(&m.native));
     Ok(v)
-}
-
-/// `event` with the fields of other formats' natives that OpenAI drops
-/// dropped, as its writer does; refused if one could change the answer.
-pub(super) fn admit(event: &Input) -> Result<Input, Fault> {
-    foreign::admit(NAME, event)
 }
 
 /// The client's events written to the provider.
@@ -220,7 +211,9 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let event = foreign::admit(NAME, event)?;
+        let Some(event) = foreign::admit(NAME, event) else {
+            return Ok(());
+        };
         if let Some(v) = self.encode(&event)? {
             out.push(json::frame(&v)?);
         }
@@ -248,10 +241,7 @@ impl Provider {
                 }
                 let session = session::encode(&s, refuse)?;
                 let mut v = json!({"type": "session.update", "session": session});
-                merge(
-                    &mut v,
-                    own(NAME, &s.native, || refuse("another format's session"))?,
-                );
+                merge(&mut v, own(&s.native));
                 if v["session"].get("type").is_none() {
                     let kind = if self.transcribing {
                         "transcription"
@@ -304,15 +294,9 @@ impl Provider {
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 return Ok(Some(Value::clone(value)));
             }
-            Input::Native(native) => {
-                return foreign::native_input(NAME, native, true).map(|()| None);
-            }
             _ => return Err(refuse("another format's event")),
         };
-        merge(
-            &mut v,
-            own(NAME, native, || refuse("another format's event"))?,
-        );
+        merge(&mut v, own(native));
         Ok(Some(v))
     }
 }

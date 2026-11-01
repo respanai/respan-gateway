@@ -149,14 +149,9 @@ fn a_commit_flushes_and_the_end_of_events_ends_the_audio() {
 }
 
 #[test]
-fn another_formats_events_are_dropped_or_refused() {
-    let dropped = Input::native(
-        "openai-realtime",
-        json!({"type": "conversation.item.truncate"}),
-    );
+fn another_formats_events_are_dropped() {
+    let dropped = Input::native("openai-realtime", json!({"type": "response.create"}));
     assert_eq!(sent(&[dropped]).expect("dropped"), Vec::<Value>::new());
-    let refused = Input::native("openai-realtime", json!({"type": "response.create"}));
-    assert_eq!(sent(&[refused]).expect_err("refused").code(), "bad_request");
     let own = json!({"type": "input_audio.flush"});
     assert_eq!(
         sent(&[Input::native(NAME, own.clone())]).expect("own"),
@@ -431,24 +426,6 @@ fn a_client_at_its_path_is_its_own_and_a_transcription_not_openais() {
     let transcribes = |at: &str| crate::session::transcribes_at(&at.parse().expect("a URI"));
     assert!(transcribes(mistral));
     assert!(!transcribes("/v1/realtime?model=m"));
-}
-
-#[test]
-fn what_is_harmless_once_a_turn_is_committed_is_dropped() {
-    // An OpenAI client clears its buffer, empty since its commit.
-    let clear = Input::native(
-        "openai-realtime",
-        json!({"type": "input_audio_buffer.clear"}),
-    );
-    let frames = sent(&[
-        audio(vec![0; 320], 16_000),
-        Input::Commit { native: None },
-        clear.clone(),
-    ])
-    .expect("dropped");
-    assert_eq!(frames.last(), Some(&json!({"type": "input_audio.flush"})));
-    let unheard = sent(&[audio(vec![0; 320], 16_000), clear]);
-    assert!(unheard.is_err(), "audio not yet committed would be cleared");
 }
 
 #[test]

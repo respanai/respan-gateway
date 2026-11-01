@@ -82,7 +82,7 @@ fn openai_choice(choice: &Value) -> Option<ToolChoice> {
 
 /// The kind's tools as OpenAI's fields of a request `v`.
 pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut function = Map::new();
         function.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -95,9 +95,9 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
             function.insert("strict".into(), true.into());
         }
         function.extend(t.native.fields_for(OPENAI));
-        Ok(json!({ "type": "function", "function": function }))
+        json!({ "type": "function", "function": function })
     };
-    let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
     match chat.provider_tools.as_slice() {
         [] => {}
@@ -134,13 +134,6 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// assistant's `tool_calls` as calls after its content. What else the kind
 /// cannot say of them stays in the message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
-    if let Some(native) = &mut message.native {
-        // A reply sent back as history carries `refusal: null`, `annotations: []` and the
-        // like; an empty field says nothing, so it is absent.
-        native
-            .fields
-            .retain(|_, v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
-    }
     if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
         let Some(id) = m["tool_call_id"].as_str() else {
             return;
@@ -180,7 +173,7 @@ fn openai_call(call: &Value) -> Option<Content> {
 }
 
 /// The kind's calls as OpenAI's `tool_calls`.
-fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
+fn openai_calls(calls: &[&Content]) -> Vec<Value> {
     let mut out = Vec::new();
     for c in calls {
         if let Content::ToolCall {
@@ -198,7 +191,7 @@ fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
             out.push(call);
         }
     }
-    Ok(out)
+    out
 }
 
 /// A tool message answering call `id` with `content`.
@@ -266,7 +259,7 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
         if !calls.is_empty() {
-            v["tool_calls"] = openai_calls(&calls)?.into();
+            v["tool_calls"] = openai_calls(&calls).into();
             if said.content.is_empty() {
                 v["content"] = Value::Null;
             }

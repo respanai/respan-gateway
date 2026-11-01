@@ -77,7 +77,7 @@ pub(in crate::responses) fn write_tools(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut tool = Map::new();
         tool.insert("type".into(), "function".into());
         tool.insert("name".into(), t.name.as_str().into());
@@ -89,9 +89,9 @@ pub(in crate::responses) fn write_tools(
             tool.insert("strict".into(), strict.into());
         }
         tool.extend(t.native.fields_for(RESPONSES));
-        Ok(Value::Object(tool))
+        Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     for provided in &chat.provider_tools {
         let mut search = Map::from_iter([("type".into(), "web_search".into())]);
         search.extend(write_search(RESPONSES, provided)?);
@@ -162,6 +162,27 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
 
 /// The request's `text`: its own fields, with the format the kind's
 /// structured output requirement says.
+/// Its `text.verbosity`, which Chat Completions says at the top, out of its
+/// `native`.
+pub(in crate::responses) fn read_verbosity(chat: &mut Input) {
+    let Some(native) = chat.native.as_mut() else {
+        return;
+    };
+    let Some(Value::Object(text)) = native.fields.get_mut("text") else {
+        return;
+    };
+    if !text.get("verbosity").is_some_and(Value::is_string) {
+        return;
+    }
+    chat.options.verbosity = text
+        .shift_remove("verbosity")
+        .and_then(|v| v.as_str().map(str::to_owned));
+    if text.is_empty() {
+        native.fields.shift_remove("text");
+    }
+    chat.native.take_if(|n| n.is_empty());
+}
+
 pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Value>) {
     let own = input.native.format() == Some(RESPONSES);
     let mut text = own
@@ -188,6 +209,9 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
             Some(spec)
         }
     };
+    if let (Some(verbosity), Some(text)) = (&input.options.verbosity, text.as_object_mut()) {
+        text.insert("verbosity".into(), verbosity.as_str().into());
+    }
     if let (Some(format), Some(text)) = (format, text.as_object_mut()) {
         text.insert("format".into(), format);
     }

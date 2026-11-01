@@ -132,7 +132,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 
 /// A call's body: its turn, its `generationConfig`, and its native fields.
 fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
-    let mut native = kept(NAME, &input.native)?;
+    let mut native = kept(NAME, &input.native);
     let mut parts: Vec<Value> = input.images.iter().map(part_of).collect();
     parts.push(json!({ "text": input.prompt }));
     let mut config = match native.remove("generationConfig") {
