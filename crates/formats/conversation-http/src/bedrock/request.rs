@@ -16,8 +16,8 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    Keep, NativeFieldsExt, arguments_object, encode_native, kept_fields, reasoning_of, set,
-    stop_json, tool_field, untranslatable, unwritable_content,
+    Keep, NativeFieldsExt, arguments_object, encode_native, kept_fields, reasoning_of,
+    refuse_strict, set, stop_json, tool_field, untranslatable, unwritable_content,
 };
 
 /// The leading system messages as `system` blocks, and the rest; a later
@@ -298,6 +298,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         spec.insert("inputSchema".into(), json!({ "json": schema }));
+        refuse_strict(t)?;
         let mut fields = kept_fields(BEDROCK, &t.native, tool_field, Keep::CACHE_MARKER)?;
         fields.shift_remove(CACHE_MARKER);
         spec.extend(fields);

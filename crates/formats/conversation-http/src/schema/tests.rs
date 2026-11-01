@@ -197,3 +197,67 @@ fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     let back = AnthropicMessages.encode_whole(&whole).expect("anthropic");
     assert_eq!(back["stop_reason"], "pause_turn");
 }
+
+/// A Chat request whose tool says `strict` as `strict`.
+fn strict_tool_request(strict: serde_json::Value) -> respan_gateway_conversation::Input {
+    OpenAiChat.decode_json(&json!({
+        "messages": [{ "role": "user", "content": "x" }],
+        "tools": [{ "type": "function", "function": {
+            "name": "lookup", "strict": strict, "parameters": { "type": "object" } } }],
+    }))
+}
+
+#[test]
+fn a_strict_tool_is_refused_where_nothing_can_promise_it() {
+    let chat = strict_tool_request(json!(true));
+    let refused = |refusal: respan_gateway_core::Fault| {
+        assert!(
+            refusal.to_string().contains("a tool's 'strict'"),
+            "{refusal}"
+        );
+    };
+    refused(GeminiGenerate.encode_request(&chat).expect_err("a refusal"));
+    refused(
+        AnthropicMessages
+            .encode_request(&chat)
+            .expect_err("a refusal"),
+    );
+    refused(
+        crate::bedrock::BedrockConverse
+            .encode_request(&chat)
+            .expect_err("a refusal"),
+    );
+}
+
+#[test]
+fn not_asking_for_a_strict_tool_says_nothing_to_another_format() {
+    let chat = strict_tool_request(json!(false));
+    let gemini = GeminiGenerate.encode_request(&chat).expect("a request");
+    let declaration = &gemini["tools"][0]["functionDeclarations"][0];
+    assert_eq!(declaration["name"], "lookup");
+    assert!(declaration.get("strict").is_none());
+    let claude = AnthropicMessages.encode_request(&chat).expect("a request");
+    assert!(claude["tools"][0].get("strict").is_none());
+    assert!(
+        crate::bedrock::BedrockConverse
+            .encode_request(&chat)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_strict_tool_keeps_its_promise_in_openais_formats() {
+    let chat = strict_tool_request(json!(true));
+    let responses = OpenAiResponses.encode_request(&chat).expect("a request");
+    assert_eq!(responses["tools"][0]["strict"], true);
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], true);
+}
+
+#[test]
+fn a_strict_that_is_no_boolean_stays_native() {
+    let chat = strict_tool_request(json!("yes"));
+    assert_eq!(chat.tools[0].strict, None);
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], "yes");
+}

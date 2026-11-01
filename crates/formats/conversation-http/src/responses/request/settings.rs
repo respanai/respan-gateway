@@ -5,8 +5,8 @@ use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
     INERT, Keep, NativeFieldsExt, decode_tools, each_tool, effort_name, kept_fields, native_fields,
-    only, own_native, parse_effort, read_search, reasoning_of, rest_of, set, tool_field,
-    untranslatable, write_search,
+    only, own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict,
+    tool_field, untranslatable, write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -47,7 +47,7 @@ fn function_tool(tool: &Value) -> Option<Tool> {
     if !tool.as_object()?.contains_key("strict") {
         fields.insert(INERT.into(), json!({ "strict": "unsaid" }));
     }
-    kind.native = native_fields(RESPONSES, fields);
+    (kind.strict, kind.native) = take_strict(native_fields(RESPONSES, fields));
     Some(kind)
 }
 
@@ -88,16 +88,10 @@ pub(in crate::responses) fn write_tools(
             tool.insert("description".into(), text.as_str().into());
         }
         tool.insert("parameters".into(), t.parameters.clone());
-        // Chat Completions' `strict` is Responses' own: OpenAI's, and the same.
-        let mut native = t.native.clone();
-        if let Some(n) = native
-            .as_mut()
-            .filter(|n| &*n.format == crate::openai::OPENAI)
-            && let Some(strict) = n.fields.shift_remove("strict")
-        {
-            tool.insert("strict".into(), strict);
+        if let Some(strict) = t.strict {
+            tool.insert("strict".into(), strict.into());
         }
-        let mut fields = kept_fields(RESPONSES, &native, tool_field, Keep::CACHE_MARKER)?;
+        let mut fields = kept_fields(RESPONSES, &t.native, tool_field, Keep::CACHE_MARKER)?;
         let unsaid = fields
             .shift_remove(INERT)
             .is_some_and(|inert| inert["strict"] == "unsaid");

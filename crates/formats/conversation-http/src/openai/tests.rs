@@ -923,11 +923,8 @@ fn an_edited_tool_call_and_result_are_written_into_the_request() {
         )]
     );
     assert_eq!(chat.options.tool_choice, Some(ToolChoice::Required));
-    assert_eq!(
-        chat.tools[0].native.fields().get("strict"),
-        Some(&json!(true))
-    );
-    assert_eq!(chat.tools[0].native.format(), Some(OPENAI));
+    assert_eq!(chat.tools[0].strict, Some(true));
+    assert!(chat.tools[0].native.is_none());
     assert!(chat.native.is_empty());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body.clone()));
     let mut expected = body.clone();
