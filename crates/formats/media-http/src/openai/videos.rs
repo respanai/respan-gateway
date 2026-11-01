@@ -5,9 +5,9 @@
 
 use super::multipart::{self, Writer};
 use super::{
-    Fields, Form, bind_client, bytes_of, file_name, foreign, invalid, json_bytes, kept,
-    merge_missing, missing, native_of, rest_of, sends, set, take_count, take_string, unreadable,
-    whole_json, write_field,
+    Fields, Form, bind_client, bytes_of, file_name, invalid, json_bytes, kept, merge_missing,
+    missing, native_of, rest_of, sends, set, take_count, take_string, unreadable, whole_json,
+    write_field,
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
@@ -221,7 +221,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         Input::Remix { id, prompt, native } => {
             let mut v = Map::new();
             v.insert("prompt".into(), prompt.clone().into());
-            merge_missing(&mut v, &kept(NAME, native)?);
+            merge_missing(&mut v, &kept(NAME, native));
             let body = (json_bytes(&v)?, "application/json".to_owned());
             (Method::POST, path(id, "/remix"), Some(body))
         }
@@ -280,7 +280,7 @@ fn create_body(create: &Create) -> Result<(Bytes, String), Fault> {
     v.insert("prompt".into(), create.prompt.clone().into());
     set(&mut v, "seconds", create.seconds.map(|s| s.to_string()));
     set(&mut v, "size", create.size.clone());
-    merge_missing(&mut v, &kept(NAME, &create.native)?);
+    merge_missing(&mut v, &kept(NAME, &create.native));
     let Some(reference) = &create.reference else {
         return Ok((json_bytes(&v)?, "application/json".to_owned()));
     };
@@ -415,11 +415,9 @@ fn response_encoder(
         },
     );
     Box::new(|event: &Output, out: &mut Vec<Bytes>| {
-        match event {
-            Output::Content(bytes) => out.push(bytes.clone()),
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
-            // The content's bytes have no place for anything else.
-            _ => {}
+        // The content's bytes have no place for anything else.
+        if let Output::Content(bytes) = event {
+            out.push(bytes.clone());
         }
         Ok(())
     })
@@ -436,7 +434,6 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
                 let v = json!({"id": id, "object": "video.deleted", "deleted": true});
                 body = v.as_object().cloned();
             }
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
             // A body has no place for another event.
             _ => {}
         }
@@ -444,9 +441,9 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     json_bytes(&body.ok_or_else(|| Fault::upstream("the provider's answer said no video"))?)
 }
 
-/// A 502 for a status `what`, which this format cannot write.
-fn unwritable_status(what: &str) -> Fault {
-    Fault::new(format!("a video status {what} cannot be written in {NAME}"))
+/// A 502 for a status this format cannot write.
+fn unwritable_status() -> Fault {
+    Fault::new(format!("a video status cannot be written in {NAME}"))
         .with(ErrorCode("untranslatable".into()))
         .with(respan_gateway_http_faults::Status(
             http::StatusCode::BAD_GATEWAY,
@@ -461,10 +458,7 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         Status::Completed => "completed",
         Status::Failed => "failed",
         Status::Native { format, status, .. } if &**format == NAME => status,
-        Status::Native { format, .. } => {
-            return Err(unwritable_status(&format!("of format {format}")));
-        }
-        _ => return Err(unwritable_status("the format has no form for")),
+        _ => return Err(unwritable_status()),
     };
     let error = job
         .error
@@ -484,7 +478,7 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         "error": error,
     });
     let mut v = v.as_object().cloned().unwrap_or_default();
-    merge_missing(&mut v, &kept(NAME, &job.native)?);
+    merge_missing(&mut v, &kept(NAME, &job.native));
     v.entry("remixed_from_video_id").or_insert(Value::Null);
     Ok(v)
 }
@@ -501,7 +495,7 @@ fn jobs_json(page: &Jobs) -> Result<Map<String, Value>, Fault> {
         "has_more": page.has_more,
     });
     let mut v = v.as_object().cloned().unwrap_or_default();
-    merge_missing(&mut v, &kept(NAME, &page.native)?);
+    merge_missing(&mut v, &kept(NAME, &page.native));
     Ok(v)
 }
 

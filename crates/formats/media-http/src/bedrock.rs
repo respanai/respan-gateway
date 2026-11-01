@@ -6,7 +6,7 @@
 
 use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::Usage;
-use respan_gateway_conversation_http::fields::invalid;
+use respan_gateway_conversation_http::fields::{invalid, warn_dropped};
 use respan_gateway_core::{Connection, Fault, Format, NativeFields, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
@@ -14,7 +14,7 @@ use respan_gateway_http::http::{self, request::Parts as RequestHead};
 use respan_gateway_http::path::{escape, set_path};
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole};
 use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::edge::{bind_provider, sends};
 use crate::openai::OpenAiEmbeddings;
@@ -39,7 +39,8 @@ const SEARCH_DOCUMENT: &str = "search_document";
 /// `x-amzn-bedrock-input-token-count` header.
 ///
 /// Token ids, parts, an end user's id, a `dimensions` the model takes none
-/// of, and other fields of another format are refused, 400, before the call.
+/// of are refused, 400, before the call; other fields of another format are
+/// dropped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BedrockEmbeddings;
 
@@ -167,20 +168,16 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 }
 
 /// The client's `input_type`, an OpenAI Embeddings field Cohere reads; its
-/// `encoding_format` is its own edge's. Any other field is refused.
+/// `encoding_format` is its own edge's. Any other field is dropped.
 fn input_type(native: &Option<NativeFields>) -> Result<Option<&str>, Fault> {
-    let Some(native) = native.as_ref().filter(|n| !n.is_empty()) else {
+    let Some(native) = native.as_ref() else {
         return Ok(None);
     };
-    let fields: &Map<String, Value> = &native.fields;
     let own = &*native.format == OpenAiEmbeddings::NAME;
-    let other = fields
-        .keys()
-        .find(|k| !own || !["input_type", "encoding_format"].contains(&k.as_str()));
-    if let Some(key) = other {
-        return Err(invalid(key, "has no field on Bedrock"));
-    }
-    match fields.get("input_type") {
+    let read = |k: &&str| !own || !["input_type", "encoding_format"].contains(k);
+    let other = native.fields.keys().map(String::as_str).filter(read);
+    warn_dropped(NAME, &native.format, other);
+    match native.fields.get("input_type").filter(|_| own) {
         None => Ok(None),
         Some(Value::String(kind)) => Ok(Some(kind)),
         Some(_) => Err(invalid("input_type", "must be a string")),
@@ -311,7 +308,7 @@ mod tests {
         let foreign = call("cohere.embed-v4:0", &["a"], |i| {
             i.native = openai(json!({ "seed": 1 }))
         });
-        assert!(foreign.is_err_and(|f| f.message().contains("seed")));
+        assert!(foreign.is_ok());
         let titan = call("amazon.titan-embed-text-v2:0", &["a"], |i| {
             i.native = openai(json!({ "input_type": "search_query" }))
         });

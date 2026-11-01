@@ -6,9 +6,9 @@
 use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, bind_client, bind_provider, bytes_of, event_json, file_name,
-    foreign, invalid, is_true, json_bytes, kept, merge_missing, missing, native_of, post_to,
-    read_usage, rest_of, seconds_json, sends, set, sse_event, streams, take_number, take_string,
-    unreadable, usage_extras, whole_json, write_field, write_usage,
+    invalid, is_true, json_bytes, kept, merge_missing, missing, native_of, post_to, read_usage,
+    rest_of, seconds_json, sends, set, sse_event, streams, take_number, take_string, unreadable,
+    usage_extras, whole_json, write_field, write_usage,
 };
 use crate::edge::ended_events;
 use respan_gateway_conversation::Usage;
@@ -142,7 +142,7 @@ fn post(
     set(&mut v, "language", input.language.clone());
     set(&mut v, "prompt", input.prompt.clone());
     set(&mut v, "temperature", input.temperature);
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, &kept(NAME, &input.native));
     if stream {
         v.insert("stream".into(), true.into());
     }
@@ -293,30 +293,27 @@ struct Folded {
 }
 
 impl Folded {
-    /// Fold `event`; an event of another format is refused, and an event a
-    /// body has no place for is dropped.
-    fn push(&mut self, event: &Output) -> Result<(), Fault> {
+    /// Fold `event`; an event a body has no place for is dropped.
+    fn push(&mut self, event: &Output) {
         match event {
             Output::Delta(delta) => self.deltas.push_str(&delta.text),
             Output::Transcript(t) => self.transcript = Some(t.clone()),
             Output::Rendered(text) => self.rendered = Some(text.clone()),
             Output::Usage(u) => *self.tokens.get_or_insert_with(Usage::default) += u,
             Output::Seconds(s) => *self.seconds.get_or_insert(0.0) += s,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
-            Output::Native(n) => {
+            Output::Native(n) if &*n.format == NAME => {
                 if let Some(more) = as_usage_extras(&n.value) {
                     merge_missing(&mut self.extras, more);
                 }
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn of(events: &[Output]) -> Result<Self, Fault> {
+    fn of(events: &[Output]) -> Self {
         let mut folded = Self::default();
-        events.iter().try_for_each(|e| folded.push(e))?;
-        Ok(folded)
+        events.iter().for_each(|e| folded.push(e));
+        folded
     }
 
     /// All of the transcript's text.
@@ -352,7 +349,7 @@ impl Folded {
 
 /// A whole JSON response of `events`.
 fn encode_json(events: &[Output]) -> Result<Bytes, Fault> {
-    let mut folded = Folded::of(events)?;
+    let mut folded = Folded::of(events);
     let mut body = Map::new();
     body.insert("text".into(), folded.text().into());
     let usage = folded.usage();
@@ -360,44 +357,44 @@ fn encode_json(events: &[Output]) -> Result<Bytes, Fault> {
         set(&mut body, "language", t.language.clone());
         set(&mut body, "duration", t.duration.map(seconds_json));
         if !t.segments.is_empty() {
-            let segments: Result<Vec<Value>, Fault> = t.segments.iter().map(segment_json).collect();
-            body.insert("segments".into(), segments?.into());
+            let segments: Vec<Value> = t.segments.iter().map(segment_json).collect();
+            body.insert("segments".into(), segments.into());
         }
         if !t.words.is_empty() {
-            let words: Result<Vec<Value>, Fault> = t.words.iter().map(word_json).collect();
-            body.insert("words".into(), words?.into());
+            let words: Vec<Value> = t.words.iter().map(word_json).collect();
+            body.insert("words".into(), words.into());
         }
     }
     set(&mut body, "usage", usage);
     if let Some(t) = &folded.transcript {
-        merge_missing(&mut body, &kept(NAME, &t.native)?);
+        merge_missing(&mut body, &kept(NAME, &t.native));
     }
     json_bytes(&body)
 }
 
-fn segment_json(s: &Segment) -> Result<Value, Fault> {
+fn segment_json(s: &Segment) -> Value {
     let mut v = Map::new();
     v.insert("start".into(), s.start.into());
     v.insert("end".into(), s.end.into());
     v.insert("text".into(), s.text.clone().into());
     set(&mut v, "speaker", s.speaker.clone());
-    merge_missing(&mut v, &kept(NAME, &s.native)?);
-    Ok(v.into())
+    merge_missing(&mut v, &kept(NAME, &s.native));
+    v.into()
 }
 
-fn word_json(w: &Word) -> Result<Value, Fault> {
+fn word_json(w: &Word) -> Value {
     let mut v = Map::new();
     v.insert("word".into(), w.word.clone().into());
     v.insert("start".into(), w.start.into());
     v.insert("end".into(), w.end.into());
-    merge_missing(&mut v, &kept(NAME, &w.native)?);
-    Ok(v.into())
+    merge_missing(&mut v, &kept(NAME, &w.native));
+    v.into()
 }
 
 /// A response of `events` rendered as `format` asks: as the provider
 /// rendered it, else from the transcript.
 fn render(events: &[Output], format: &str) -> Result<String, Fault> {
-    let folded = Folded::of(events)?;
+    let folded = Folded::of(events);
     if let Some(rendered) = folded.rendered {
         return Ok(rendered);
     }
@@ -459,7 +456,7 @@ impl StreamEncoder {
                 let mut v = Map::new();
                 v.insert("type".into(), "transcript.text.delta".into());
                 v.insert("delta".into(), delta.text.clone().into());
-                merge_missing(&mut v, &kept(NAME, &delta.native)?);
+                merge_missing(&mut v, &kept(NAME, &delta.native));
                 out.extend_from_slice(sse_event(&v.into()).as_bytes());
             }
             Output::Native(n) if &*n.format == NAME && as_usage_extras(&n.value).is_none() => {
@@ -467,7 +464,8 @@ impl StreamEncoder {
             }
             _ => {}
         }
-        self.folded.push(event)
+        self.folded.push(event);
+        Ok(())
     }
 
     fn end_into(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
@@ -477,7 +475,7 @@ impl StreamEncoder {
         v.insert("text".into(), self.folded.text().into());
         set(&mut v, "usage", self.folded.usage());
         if let Some(t) = &self.folded.transcript {
-            merge_missing(&mut v, &kept(NAME, &t.native)?);
+            merge_missing(&mut v, &kept(NAME, &t.native));
         }
         out.extend_from_slice(sse_event(&v.into()).as_bytes());
         Ok(())

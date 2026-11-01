@@ -86,7 +86,7 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
             format!("data:{};base64,{data}", reference.mime_type)
         }
     };
-    let mut fields = kept(OpenAiVideos::NAME, &create.native)?;
+    let mut fields = kept(OpenAiVideos::NAME, &create.native);
     fields.entry("image_url").or_insert_with(|| url.into());
     create.native = native_of(OpenAiVideos::NAME, fields);
     Ok(())

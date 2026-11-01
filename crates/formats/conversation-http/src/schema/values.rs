@@ -2,7 +2,7 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields;
+use crate::fields::{self, warn_dropped};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
@@ -47,12 +47,6 @@ pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSour
 /// A request body that is not a JSON object.
 pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
-}
-
-/// Says what of `from`'s, by name alone, a request in `format` goes without.
-fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a str>) {
-    let what: Vec<&str> = what.into_iter().collect();
-    eprintln!("warning: a request in {format} drops {from}'s {what:?}");
 }
 
 /// Whether `format` writes `part`: another format's shape it cannot.
@@ -603,8 +597,7 @@ pub(crate) trait NativeFieldsExt {
     fn fields(&self) -> &Map<String, Value>;
     /// The fields to edit, made of `format` if there are none.
     fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
-    /// The fields to write in `format`. A native field means something only
-    /// to its own format: another format's are dropped, with a warning.
+    /// The fields to write in `format` ([`fields::kept`]).
     fn fields_for(&self, format: &str) -> Map<String, Value>;
     /// The format the fields are of.
     fn format(&self) -> Option<&str>;
@@ -625,14 +618,7 @@ impl NativeFieldsExt for Option<NativeFields> {
             .fields
     }
     fn fields_for(&self, format: &str) -> Map<String, Value> {
-        match self {
-            Some(n) if *n.format == *format => n.fields.clone(),
-            Some(n) => {
-                warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
-                Map::new()
-            }
-            None => Map::new(),
-        }
+        fields::kept(format, self)
     }
     fn format(&self) -> Option<&str> {
         self.as_ref().map(|n| n.format.as_ref())

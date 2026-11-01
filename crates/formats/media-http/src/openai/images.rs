@@ -5,9 +5,9 @@
 use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, b64, bind_client, bind_provider, bytes_of, event_json,
-    file_name, foreign, invalid, is_true, json_bytes, kept, merge_missing, mime_of, missing,
-    native_of, post_to, read_usage, rest_of, sends, set, sniff, sse_event, streams, take_count,
-    take_string, unb64, unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
+    file_name, invalid, is_true, json_bytes, kept, merge_missing, mime_of, missing, native_of,
+    post_to, read_usage, rest_of, sends, set, sniff, sse_event, streams, take_count, take_string,
+    unb64, unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
 };
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_core::Provider;
@@ -176,16 +176,16 @@ fn post(
             return Err(Fault::bad_request("a mask needs an image to edit"));
         }
         post_to(head, GENERATIONS, "application/json")?;
-        return Ok(sends(json_bytes(&fields(input, stream)?)?));
+        return Ok(sends(json_bytes(&fields(input, stream))?));
     }
     let mut files = input.images.iter().chain(&input.mask);
     if !files.all(|media| bytes_of(media).is_some()) {
         post_to(head, EDITS, "application/json")?;
-        return Ok(sends(json_bytes(&linked_edit(input, stream)?)?));
+        return Ok(sends(json_bytes(&linked_edit(input, stream))?));
     }
     let mut form = Writer::with_boundary(multipart::random_boundary());
     post_to(head, EDITS, &form.content_type())?;
-    for (name, value) in &fields(input, stream)? {
+    for (name, value) in &fields(input, stream) {
         write_field(&mut form, name, value);
     }
     let name = match input.images.len() {
@@ -202,7 +202,7 @@ fn post(
 
 /// The fields of a call but its images: its typed fields, then its native
 /// ones.
-fn fields(input: &Input, stream: bool) -> Result<Map<String, Value>, Fault> {
+fn fields(input: &Input, stream: bool) -> Map<String, Value> {
     let mut v = Map::new();
     set(&mut v, "model", input.model.clone());
     v.insert("prompt".into(), input.prompt.clone().into());
@@ -211,15 +211,15 @@ fn fields(input: &Input, stream: bool) -> Result<Map<String, Value>, Fault> {
     set(&mut v, "quality", input.quality.clone());
     set(&mut v, "output_format", input.output_format.clone());
     set(&mut v, "user", input.user.clone());
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, &kept(NAME, &input.native));
     if stream {
         v.insert("stream".into(), true.into());
     }
-    Ok(v)
+    v
 }
 
 /// A JSON edit, its images named by URL.
-fn linked_edit(input: &Input, stream: bool) -> Result<Map<String, Value>, Fault> {
+fn linked_edit(input: &Input, stream: bool) -> Map<String, Value> {
     let link = |media: &Media| {
         let url = match &media.source {
             MediaSource::Url(url) => url.clone(),
@@ -227,13 +227,13 @@ fn linked_edit(input: &Input, stream: bool) -> Result<Map<String, Value>, Fault>
         };
         json!({ "image_url": url })
     };
-    let mut v = fields(input, stream)?;
+    let mut v = fields(input, stream);
     v.insert(
         "images".into(),
         input.images.iter().map(link).collect::<Vec<_>>().into(),
     );
     set(&mut v, "mask", input.mask.as_ref().map(link));
-    Ok(v)
+    v
 }
 
 /// The decoder of a provider's answer of `head`: a stream of events, or one
@@ -409,14 +409,14 @@ fn response_encoder(
 }
 
 /// An image's data item or event fields: its bytes, or its URL.
-fn image_fields(media: &Media, native: &Option<NativeFields>) -> Result<Map<String, Value>, Fault> {
+fn image_fields(media: &Media, native: &Option<NativeFields>) -> Map<String, Value> {
     let mut v = Map::new();
     match &media.source {
         MediaSource::Bytes(bytes) => v.insert("b64_json".into(), b64(bytes).into()),
         MediaSource::Url(url) => v.insert("url".into(), url.clone().into()),
     };
-    merge_missing(&mut v, &kept(NAME, native)?);
-    Ok(v)
+    merge_missing(&mut v, &kept(NAME, native));
+    v
 }
 
 /// A whole response of `events`.
@@ -427,14 +427,13 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
             Output::Start(s) => start = Some(s),
             Output::Partial(_) => {}
             Output::Image(image) => {
-                let mut item = image_fields(&image.media, &image.native)?;
+                let mut item = image_fields(&image.media, &image.native);
                 set(&mut item, "revised_prompt", image.revised_prompt.clone());
                 data.push(Value::Object(item));
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
             // A body has no place for another event.
-            Output::Native(n) => {
+            Output::Native(n) if &*n.format == NAME => {
                 if let Some(more) = as_usage_extras(&n.value) {
                     merge_missing(&mut extras, more);
                 }
@@ -452,7 +451,7 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
         body.insert("usage".into(), u.into());
     }
     if let Some(start) = start {
-        merge_missing(&mut body, &kept(NAME, &start.native)?);
+        merge_missing(&mut body, &kept(NAME, &start.native));
     }
     json_bytes(&body)
 }
@@ -475,14 +474,14 @@ impl StreamEncoder {
         step: &str,
         media: &Media,
         native: &Option<NativeFields>,
-    ) -> Result<Map<String, Value>, Fault> {
+    ) -> Map<String, Value> {
         let mut v = Map::new();
         v.insert("type".into(), format!("{}.{step}", self.prefix).into());
-        merge_missing(&mut v, &image_fields(media, native)?);
+        merge_missing(&mut v, &image_fields(media, native));
         let created = *self.created.get_or_insert_with(unix_now);
         v.insert("created_at".into(), created.into());
         merge_missing(&mut v, &self.shared);
-        Ok(v)
+        v
     }
 
     fn flush(&mut self, out: &mut BytesMut) {
@@ -503,23 +502,22 @@ impl StreamEncoder {
         match event {
             Output::Start(start) => {
                 self.created = start.created.or(self.created);
-                self.shared = kept(NAME, &start.native)?;
+                self.shared = kept(NAME, &start.native);
             }
             Output::Partial(partial) => {
                 self.flush(out);
-                let mut v = self.event("partial_image", &partial.media, &partial.native)?;
+                let mut v = self.event("partial_image", &partial.media, &partial.native);
                 v.insert("partial_image_index".into(), partial.index.into());
                 out.extend_from_slice(sse_event(&Value::Object(v)).as_bytes());
             }
             Output::Image(image) => {
                 self.flush(out);
-                let mut v = self.event("completed", &image.media, &image.native)?;
+                let mut v = self.event("completed", &image.media, &image.native);
                 set(&mut v, "revised_prompt", image.revised_prompt.clone());
                 self.pending = Some(v);
             }
             Output::Usage(u) => *self.usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
-            Output::Native(n) => match as_usage_extras(&n.value) {
+            Output::Native(n) if &*n.format == NAME => match as_usage_extras(&n.value) {
                 Some(more) => merge_missing(&mut self.extras, more),
                 None => {
                     self.flush(out);
