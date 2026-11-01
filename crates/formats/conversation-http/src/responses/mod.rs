@@ -4,11 +4,13 @@
 //! # Requests
 //!
 //! `instructions` is a leading system message and `input` the messages after
-//! it: a string is one user message, and an array's items are messages
-//! (`input_text`, `input_image` and `input_file` parts), an assistant's
-//! function calls and reasoning, and function call outputs as the results of
-//! a user message. Consecutive items of an assistant are one assistant
-//! message (`request` says how an item's own fields are kept). Function
+//! it; a leading system message is written back as `instructions` only if it
+//! came so, any other as a message item of its role. A string is one user
+//! message, and an array's items are messages (`input_text`, `input_image`
+//! and `input_file` parts), an assistant's function calls and reasoning, and
+//! function call outputs as the results of a user message. Consecutive items
+//! of an assistant are one assistant message (`request` says how an item's own
+//! fields are kept). Function
 //! tools, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`,
 //! `temperature`, `top_p`, `user`, `text.format` and `reasoning` (its `effort`,
 //! and a `summary` of `auto`) are the kind's.
@@ -174,8 +176,9 @@ impl Schema for OpenAiResponses {
     const PATH: &'static str = "/responses";
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
-    /// The structured output requirement is in `text`.
-    const OWN: &'static [&'static str] = &["text", "reasoning"];
+    /// The structured output requirement is in `text`; whether the request
+    /// had `instructions` is said by [`request::write_input`].
+    const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
@@ -208,6 +211,12 @@ impl Schema for OpenAiResponses {
         chat.native = native_fields(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
             chat.native.fields_mut(RESPONSES).shift_remove("user");
+        }
+        // Its leading system message goes back as `instructions` alone.
+        if crate::schema::says(&v["instructions"]) {
+            chat.native
+                .fields_mut(RESPONSES)
+                .insert(request::INSTRUCTIONS.into(), true.into());
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
