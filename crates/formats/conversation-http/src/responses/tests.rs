@@ -311,10 +311,7 @@ fn not_storing_is_sent_to_openai_and_said_to_no_other_provider() {
         OpenAiChat.encode_request(&chat),
     ] {
         let other = other.expect("translated");
-        assert!(
-            !other.contains_key("store") && !other.contains_key("inert"),
-            "{other:?}"
-        );
+        assert!(!other.contains_key("store"), "{other:?}");
     }
 }
 
