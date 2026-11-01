@@ -2,22 +2,11 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{
-    INERT, Keep, NativeFieldsExt, encode_native, kept_fields, merge_missing, untranslatable,
-};
+use crate::schema::{NativeFieldsExt, merge_missing, untranslatable};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
-
-fn written(native: &Option<NativeFields>, what: &str) -> Result<Map<String, Value>, Fault> {
-    let what = |key: &str| format!("{what} '{key}'");
-    let mut fields = kept_fields(RESPONSES, native, what, Keep::CACHE_MARKER)?;
-    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
-        fields.extend(inert);
-    }
-    Ok(fields)
-}
 
 /// The request's `instructions` and `input`: a leading system message of
 /// one plain text is the instructions.
@@ -54,7 +43,6 @@ fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
             return write_opaque(m, items);
         }
         Role::Native { format, name, .. } if **format == *RESPONSES => name.as_str(),
-        Role::Native { .. } => return Err(no_role()),
         role => ROLES.name(role).ok_or_else(no_role)?,
     };
     match m.role {
@@ -77,7 +65,7 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
 /// message item, each result an output item of its own.
 fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fault> {
     let before = items.len();
-    let mut extras = written(&m.native, "a message's")?;
+    let mut extras = m.native.fields_for(RESPONSES);
     let mut parts: Vec<Value> = Vec::new();
     for c in &m.content {
         match c {
@@ -145,16 +133,14 @@ fn only_keys(v: &Value, keys: &[&str]) -> bool {
 fn write_input_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Text { text, native, .. } => {
-            let what = |k: &str| format!("a text part's '{k}'");
             let mut part = Map::new();
             part.insert("type".into(), "input_text".into());
             part.insert("text".into(), text.as_str().into());
-            encode_native(RESPONSES, native, &mut part, what, Keep::CACHE_MARKER)?;
+            part.extend(native.fields_for(RESPONSES));
             Ok(part.into())
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
         Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Native(n) => Err(untranslatable(&format!("a part in {}'s shape", n.format))),
         Content::Audio(_) => Err(untranslatable("audio in Responses")),
         _ => Err(untranslatable("an unsupported kind of part")),
     }
@@ -165,8 +151,7 @@ pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
     if image && media.name.is_some() {
         return Err(untranslatable("a display name on image content"));
     }
-    let what = |k: &str| format!("media field '{k}'");
-    let native = kept_fields(RESPONSES, &media.native, what, Keep::CACHE_MARKER)?;
+    let native = media.native.fields_for(RESPONSES);
     let url = || match &media.source {
         MediaSource::Url(url) => url.clone(),
         MediaSource::Bytes(data) => {
@@ -215,7 +200,7 @@ fn write_result(
     v.insert("type".into(), "function_call_output".into());
     v.insert("call_id".into(), id.into());
     v.insert("output".into(), output);
-    v.extend(written(native, "a tool part's")?);
+    v.extend(native.fields_for(RESPONSES));
     Ok(v.into())
 }
 
@@ -236,10 +221,7 @@ impl AsText for Content {
 /// An assistant message: its text runs are message items, its calls and
 /// reasoning items of their own.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    // Another format's inert fields and cache marker are dropped; any other, or its own,
-    // have no place here.
-    let what = |_: &str| "an assistant message's fields".to_owned();
-    if !kept_fields(RESPONSES, &m.native, what, Keep::CACHE_MARKER)?.is_empty() {
+    if !m.native.fields_for(RESPONSES).is_empty() {
         return Err(untranslatable("an assistant message's fields"));
     }
     let before = items.len();
@@ -248,7 +230,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
         match c {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
-                if !run.is_empty() && native.fields().contains_key(INERT) {
+                if !run.is_empty() && native.fields().contains_key(MESSAGE) {
                     flush_assistant(&mut run, items)?;
                 }
                 run.push(c);
@@ -271,7 +253,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.insert("call_id".into(), id.as_str().into());
                 v.insert("name".into(), name.as_str().into());
                 v.insert("arguments".into(), arguments.into());
-                v.extend(written(native, "a tool part's")?);
+                v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
             Content::Reasoning { text, native } => {
@@ -287,7 +269,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 if native.format() != Some(RESPONSES) {
                     return Err(untranslatable("reasoning from another format"));
                 }
-                v.extend(written(native, "reasoning field")?);
+                v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
             _ => return Err(untranslatable("an unsupported kind of part")),
@@ -314,15 +296,11 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     for (i, c) in parts.iter().enumerate() {
         match c {
             Content::Text { text, native, .. } => {
-                let what = |k: &str| format!("a text part's '{k}'");
-                let mut fields = kept_fields(RESPONSES, native, what, Keep::CACHE_MARKER)?;
-                if i == 0 {
-                    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
-                        item.extend(inert);
-                    }
-                    if let Some(Value::Object(more)) = fields.shift_remove(MESSAGE) {
-                        item.extend(more);
-                    }
+                let mut fields = native.fields_for(RESPONSES);
+                if i == 0
+                    && let Some(Value::Object(more)) = fields.shift_remove(MESSAGE)
+                {
+                    item.extend(more);
                 }
                 plain &= fields.is_empty();
                 texts.push_str(text);

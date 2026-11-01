@@ -8,8 +8,8 @@ use serde_json::{Map, Value};
 pub type FormatId = Arc<str>;
 
 /// Additional semantic fields understood only by their originating format.
-/// A foreign encoder must translate these fields or refuse them; callers can
-/// explicitly remove them when they accept the loss of their meaning.
+/// A foreign encoder drops them: a field whose meaning other formats share
+/// belongs in the kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeFields {
     /// The wire format that defines these fields.

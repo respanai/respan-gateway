@@ -13,8 +13,7 @@
 //!
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; translating it is refused where it could change the
-//! answer. A request that asks for several choices (`n > 1`) cannot be
+//! only by that format; another drops it with a warning. A request that asks for several choices (`n > 1`) cannot be
 //! written and is refused.
 
 mod errors;
@@ -32,14 +31,12 @@ pub use exchange::Asked;
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
-pub use values::INERT;
 pub(crate) use values::{
-    Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
-    encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
-    message_fields, native_fields, only, own_fields, read_search, refuse_strict, remainder, set,
-    source_url, stop_json, take_strict, tidy, tool_field, unsupported_fields, untranslatable,
-    unwritable_content, usage_extra, write_search,
+    Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
+    decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
+    fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
+    read_search, remainder, set, source_url, stop_json, take_strict, tidy, unsupported_fields,
+    untranslatable, unwritable_content, usage_extra, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -104,11 +101,6 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// The keys of a conversation's `native` this format writes itself, from
     /// the conversation and the native together.
     const OWN: &'static [&'static str] = &[];
-    /// Fields of another format's `native` this format writes as its own,
-    /// meaning the same: `(format, key, path)`, its dotted `path` where it
-    /// goes, such as Chat Completions' `verbosity` as Responses'
-    /// `text.verbosity`.
-    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[];
     /// Decodes the events of a streamed response into events.
     type Decoding: respan_gateway_http::Decoder<Output>;
 
@@ -119,7 +111,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// A JSON request as a conversation, noting what it has no place for.
     fn decode_json(&self, v: &Value) -> Input;
     /// A conversation as a request, but for its own `native` fields and the
-    /// model, refusing what this format cannot say.
+    /// model, refusing what the kind says that this format cannot.
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault>;
     /// A message part the kind has a form for beyond text, such as media or
     /// a tool block; `None` keeps the part this format's own.
@@ -188,57 +180,16 @@ pub trait Schema: Copy + Send + Sync + 'static {
         Ok(chat)
     }
 
-    /// A conversation as a request's JSON body, if nothing is lost: its
-    /// fields the kind has no place for are written only if they are this
-    /// format's.
+    /// A conversation as a request's JSON body: its fields the kind has no
+    /// place for are written only if they are this format's.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = Keep {
-            own: Self::OWN,
-            droppable: &[],
-        };
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        // Another format's fields this one writes as its own leave its native.
-        let mut adopted = Vec::new();
-        let mut rest = chat.native.clone();
-        if let Some(n) = rest.as_mut() {
-            for (format, key, path) in Self::ADOPTED {
-                if *n.format != **format {
-                    continue;
-                }
-                // As it came, or set aside as that format's alone.
-                let inert = match n.fields.get_mut(INERT) {
-                    Some(Value::Object(inert)) => inert.shift_remove(*key),
-                    _ => None,
-                };
-                if let Some(value) = n.fields.shift_remove(*key).or(inert) {
-                    adopted.push((*path, value));
-                }
-            }
-        }
-        let mut native = kept_fields(Self::NAME, &rest, in_the_request, keep)?;
-        // What only this format needs is written as it came.
-        if let Some(Value::Object(inert)) = native.shift_remove(INERT) {
-            native.extend(inert);
-        }
+        let chat = &*own_shapes(chat, Self::NAME);
+        let mut native = chat.native.fields_for(Self::NAME);
+        native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));
         v.extend(self.encode_json(chat)?);
         v.extend(native);
-        for (path, value) in adopted {
-            let mut at = &mut v;
-            let mut keys = path.split('.').peekable();
-            while let Some(key) = keys.next() {
-                if keys.peek().is_none() {
-                    at.entry(key).or_insert(value);
-                    break;
-                }
-                let next = at.entry(key).or_insert_with(|| Value::Object(Map::new()));
-                let Value::Object(next) = next else {
-                    return Err(untranslatable(&format!("'{path}' in the request")));
-                };
-                at = next;
-            }
-        }
         Ok(v)
     }
 

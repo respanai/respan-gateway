@@ -76,8 +76,8 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, INERT, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields,
-    native_fields, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -179,22 +179,6 @@ impl Schema for OpenAiResponses {
         &["openai-beta", "openai-organization", "openai-project"];
     /// The structured output requirement is in `text`.
     const OWN: &'static [&'static str] = &["text", "reasoning"];
-    /// Chat Completions' fields Responses has too, OpenAI's both.
-    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[
-        (crate::openai::OPENAI, "metadata", "metadata"),
-        (crate::openai::OPENAI, "service_tier", "service_tier"),
-        (
-            crate::openai::OPENAI,
-            "prompt_cache_key",
-            "prompt_cache_key",
-        ),
-        (
-            crate::openai::OPENAI,
-            "safety_identifier",
-            "safety_identifier",
-        ),
-        (crate::openai::OPENAI, "verbosity", "text.verbosity"),
-    ];
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
@@ -227,14 +211,6 @@ impl Schema for OpenAiResponses {
         chat.native = native_fields(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
             chat.native.fields_mut(RESPONSES).shift_remove("user");
-        }
-        // Not to store a response is OpenAI's to honour; another provider
-        // stores nothing anyway.
-        if let Some(store) = chat.native.fields_mut(RESPONSES).shift_remove("store") {
-            let inert = serde_json::json!({ "store": store });
-            chat.native
-                .fields_mut(RESPONSES)
-                .insert(INERT.into(), inert);
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);

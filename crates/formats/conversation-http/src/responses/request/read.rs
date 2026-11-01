@@ -2,25 +2,9 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{INERT, NativeFieldsExt, native_fields, only, remainder, says, source_url};
+use crate::schema::{NativeFieldsExt, native_fields, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use serde_json::{Map, Value, json};
-
-/// The fields of `item` beyond `taken` as a native: its `id` and `status`
-/// under [`INERT`].
-fn item_fields(item: &Value, taken: &[&str]) -> Map<String, Value> {
-    let mut rest = remainder(item, taken);
-    let mut inert = Map::new();
-    for key in ["id", "status"] {
-        if let Some(value) = rest.shift_remove(key) {
-            inert.insert(key.into(), value);
-        }
-    }
-    if !inert.is_empty() {
-        rest.insert(INERT.into(), inert.into());
-    }
-    rest
-}
 
 /// A text part of `text` with these fields of its own.
 fn text_part(text: &str, fields: Map<String, Value>) -> Content {
@@ -149,7 +133,7 @@ fn push_item(out: &mut Vec<Message>, item: &Value) {
 fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let name = item["role"].as_str()?;
     let mut content = read_content(&item["content"]);
-    let extras = item_fields(item, &["type", "role", "content"]);
+    let extras = remainder(item, &["type", "role", "content"]);
     match ROLES.value(name) {
         Some(Role::Assistant) => {
             // The item's own fields ride on its first text part.
@@ -158,15 +142,8 @@ fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
                 _ => None,
             })?;
             let mut fields = first.take().map(|n| n.fields).unwrap_or_default();
-            let mut item_level = Map::new();
-            for (key, value) in extras {
-                match key == INERT {
-                    true => fields.insert(key, value),
-                    false => item_level.insert(key, value),
-                };
-            }
-            if !item_level.is_empty() {
-                fields.insert(MESSAGE.into(), item_level.into());
+            if !extras.is_empty() {
+                fields.insert(MESSAGE.into(), extras.into());
             }
             *first = native_fields(RESPONSES, fields);
             assistant(out).content.extend(content);
@@ -187,7 +164,7 @@ fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];
-        *native = native_fields(RESPONSES, item_fields(item, &taken));
+        *native = native_fields(RESPONSES, remainder(item, &taken));
     }
     assistant(out).content.push(call);
     Some(())
@@ -202,7 +179,7 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut result = Content::tool_result(id, content, false);
     if let Content::ToolResult { native, .. } = &mut result {
         let taken = ["type", "call_id", "output"];
-        *native = native_fields(RESPONSES, item_fields(item, &taken));
+        *native = native_fields(RESPONSES, remainder(item, &taken));
     }
     let results = |m: &Message| {
         m.role == Role::User
@@ -230,7 +207,7 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             _ => return None,
         }
     }
-    let native = native_fields(RESPONSES, item_fields(item, &["type", "summary"]));
+    let native = native_fields(RESPONSES, remainder(item, &["type", "summary"]));
     let text = texts.join("\n\n");
     assistant(out)
         .content

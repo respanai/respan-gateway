@@ -144,15 +144,6 @@ impl Format<ProviderIo, Output, Input> for OpenAiChat {
     }
 }
 
-/// Keys a conversation has a place for, or that change no output; `user`
-/// too, when it is a string.
-/// A request's fields only OpenAI acts on, which another provider drops.
-const OPENAI_ONLY: &[&str] = &["store", "metadata", "prompt_cache_key", "safety_identifier"];
-
-/// Token probabilities asked for beside the answer, which change nothing in
-/// it: a provider without them answers the same, only without them.
-const ANSWER_EXTRAS: &[&str] = &["logprobs", "top_logprobs"];
-
 const KNOWN: &[&str] = &[
     "model",
     "messages",
@@ -235,19 +226,6 @@ impl Schema for OpenAiChat {
         chat.native = native_fields(OPENAI, unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
             chat.native.fields_mut(OPENAI).shift_remove("user");
-        }
-        // OpenAI's own: whether it keeps the completion, its tags for it,
-        // and hints for its cache and abuse checks. Another provider keeps
-        // nothing and needs no hint, so drops them; and the extras it has
-        // no place for.
-        for key in OPENAI_ONLY.iter().chain(ANSWER_EXTRAS) {
-            if let Some(value) = chat.native.fields_mut(OPENAI).shift_remove(*key) {
-                let fields = chat.native.fields_mut(OPENAI);
-                let inert = fields
-                    .entry(crate::schema::INERT)
-                    .or_insert_with(|| json!({}));
-                inert[*key] = value;
-            }
         }
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES);

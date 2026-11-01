@@ -308,15 +308,15 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":{\"usage\""), "{stream}");
     assert!(stream.contains("\"reasoning_content\":\"hm\""), "{stream}");
-    // A request's reasoning is an inert message field.
+    // A request's reasoning is the message's own field.
     let body = json!({ "model": "m", "messages": [
         { "role": "assistant", "content": "ok", "reasoning_content": "hm" },
     ]});
     let chat = OpenAiChat.decode_json(&body);
     assert_eq!(chat.messages[0].content, [Content::from("ok")]);
     assert_eq!(
-        chat.messages[0].native.fields().get(crate::schema::INERT),
-        Some(&json!({ "reasoning_content": "hm" }))
+        chat.messages[0].native.fields().get("reasoning_content"),
+        Some(&json!("hm"))
     );
     assert_eq!(
         written(body, |_| {})
@@ -965,7 +965,7 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
 }
 
 #[test]
-fn what_a_conversation_cannot_hold_is_kept_or_refused() {
+fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "name": "alice", "content": "hi" },
     ], "tools": [{ "type": "function", "function": { "name": "f" } }], "seed": 7 });
@@ -976,21 +976,13 @@ fn what_a_conversation_cannot_hold_is_kept_or_refused() {
     assert_eq!(chat.tools, [Tool::new("f", Value::Null)]);
     assert_eq!(chat.messages[0].text(), "hi");
     assert_eq!(
-        chat.messages[0].native.fields().get(crate::schema::INERT),
-        Some(&json!({ "name": "alice" }))
+        chat.messages[0].native.fields().get("name"),
+        Some(&json!("alice"))
     );
-    // To another format it is refused, for its `seed`; to OpenAI it is kept.
-    let err = AnthropicMessages.encode_request(&chat).err();
-    assert_eq!(
-        err.map(|e| respan_gateway_http_faults::status(&e).as_u16()),
-        Some(400)
-    );
+    // Another format drops its `seed`; OpenAI keeps it.
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert!(sent.expect("written").get("seed").is_none());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
-    // With the native fields cleared and only plain messages, it is sent.
-    let mut chat = chat;
-    chat.native = None;
-    chat.messages = vec![Message::new(Role::User, "hi")];
-    assert!(AnthropicMessages.encode_request(&chat).is_ok());
 }
 
 #[test]
@@ -1308,26 +1300,35 @@ fn an_edit_keeps_messages_a_conversation_cannot_hold() {
         edited.map(|v| v["messages"].clone()).ok(),
         Some(json!([{ "role": "user", "content": "HI" }, image]))
     );
-    // Removing it removes it; sending it in another format is refused.
+    // Removing it removes it; another format drops its `detail`.
     let removed = written(body.clone(), |c| drop(c.messages.pop()));
     assert_eq!(
         removed.map(|v| v["messages"].clone()).ok(),
         Some(json!([{ "role": "user", "content": "hi" }]))
     );
     let chat = OpenAiChat.decode_json(&body);
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    let image = json!({ "type": "image", "source": { "type": "url", "url": "u" } });
+    assert_eq!(
+        sent.map(|v| v["messages"][1]["content"].clone()).ok(),
+        Some(json!([image]))
+    );
     assert!(OpenAiChat.encode_request(&chat).is_ok());
 }
 
 #[test]
-fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_refused() {
+fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
     let pdf = json!({ "type": "document", "source": { "type": "base64",
         "media_type": "application/pdf", "data": "JVBERi0=" } });
     let mut chat = OpenAiChat.decode_json(&json!({ "model": "m", "messages": [
         { "role": "user", "content": [{ "type": "text", "text": "read" },
             { "type": "file", "file": { "file_data": "x" } }] }] }));
     // A part in OpenAI's shape does not reach Anthropic.
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.map(|v| v["messages"][0]["content"].clone()).ok(),
+        Some(json!("read"))
+    );
     // One rewritten into Anthropic's does, as it is.
     chat.messages[0].content[1] = Content::native("anthropic-messages", pdf.clone());
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
@@ -1339,7 +1340,8 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_refused() {
     let thinking = json!({ "thinking": { "type": "enabled" } });
     let fields = thinking.as_object().cloned().unwrap_or_default();
     chat.native = Some(NativeFields::new(OPENAI, fields.clone()));
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert!(sent.expect("written").get("thinking").is_none());
     chat.native = Some(NativeFields::new("anthropic-messages", fields));
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
@@ -1366,8 +1368,12 @@ fn fields_in_another_format_are_not_written_into_a_request() {
     let mut role = chat.clone();
     role.messages[0].role = Role::native("anthropic-messages", "critic");
     for chat in [foreign, message, tool, role] {
-        let sent = OpenAiChat.encode_request(&chat);
-        assert!(sent.is_err(), "sent: {:?}", sent.map(Value::from));
+        let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+        let sent = sent.expect("written").to_string();
+        assert!(
+            !sent.contains("thinking") && !sent.contains("critic"),
+            "{sent}"
+        );
     }
     // Tagged for this format, the same is written.
     let mut own = chat;
@@ -1739,7 +1745,6 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
         fields.get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))
     );
-    assert!(!fields.contains_key(crate::schema::INERT));
     let sent = GeminiGenerate.encode_request(&chat).map(Value::from);
     let content = sent.map(|v| v["contents"][0].clone()).ok();
     assert_eq!(
@@ -1777,20 +1782,6 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
     let contents = sent.map(|v| v["contents"].clone()).unwrap_or_default();
     assert_eq!(contents.as_array().map(Vec::len), Some(3), "{contents}");
     assert_eq!(contents[2]["parts"].as_array().map(Vec::len), Some(2));
-}
-
-#[test]
-fn a_messages_unknown_field_is_still_refused_by_another_format() {
-    let body = json!({ "model": "m", "messages": [
-        { "role": "user", "content": "hi" },
-        { "role": "assistant", "content": "ok", "reasoning_content": "hm", "x_vendor": 1 },
-        { "role": "user", "content": "more" },
-    ]});
-    let chat = OpenAiChat.decode_json(&body);
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
-    assert!(GeminiGenerate.encode_request(&chat).is_err());
-    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
 }
 
 /// Regression: an OpenAI-shaped reseller of Anthropic models finishes a
