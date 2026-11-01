@@ -7,7 +7,7 @@
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
     merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, write_search,
+    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -229,7 +229,7 @@ fn openai_result(
 
 /// A message as OpenAI's: each result a tool message of its own, then, if
 /// it says more, the message and its calls in `tool_calls`. It has no field
-/// for reasoning.
+/// for reasoning, which is dropped.
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
     let results: Vec<&Content> = m.content.iter().filter(|p| is(p, true)).collect();
@@ -257,13 +257,13 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
         let calls: Vec<&Content> = rest.iter().copied().filter(call).collect();
         let mut said = m.clone();
         said.content = rest.into_iter().filter(|p| !call(p)).cloned().collect();
-        if said
-            .content
-            .iter()
-            .any(|p| matches!(p, Content::Reasoning { .. }))
-        {
-            return Err(untranslatable("reasoning in OpenAI Chat"));
-        }
+        said.content.retain(|p| match p {
+            Content::Reasoning { native, .. } => {
+                warn_reasoning(OPENAI, native);
+                false
+            }
+            _ => true,
+        });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
         if !calls.is_empty() {
             v["tool_calls"] = openai_calls(&calls)?.into();
@@ -340,9 +340,6 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        Content::Reasoning { .. } => {
-            return Err(untranslatable("reasoning outside an assistant message"));
-        }
         _ => return Err(untranslatable("an unsupported kind of part")),
     };
     if media.name.is_some() && kind != "document" {

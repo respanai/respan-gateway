@@ -19,7 +19,7 @@ pub fn write_reasoning(input: &mut Input) -> Result<()> {
     Ok(())
 }
 
-/// Reasoning but signed reasoning, which the format refuses.
+/// Reasoning but signed reasoning, which the format drops.
 fn plain(p: &Content) -> bool {
     matches!(p, Content::Reasoning { native, .. } if native.as_ref().is_none_or(NativeFields::is_empty))
 }
@@ -35,7 +35,7 @@ fn has_reasoning(message: &Message) -> bool {
 }
 
 /// An assistant message's reasoning, but signed reasoning, which the format
-/// refuses, as its native `reasoning_content`.
+/// drops, as its native `reasoning_content`.
 fn write_message_reasoning(message: &mut Message) {
     if !has_reasoning(message) {
         return;

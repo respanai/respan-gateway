@@ -2,7 +2,7 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, merge_missing, untranslatable};
+use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
@@ -256,6 +256,10 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
+            // Reasoning is only valid with the id of the item it was.
+            Content::Reasoning { native, .. } if native.format() != Some(RESPONSES) => {
+                warn_reasoning(RESPONSES, native);
+            }
             Content::Reasoning { text, native } => {
                 flush_assistant(&mut run, items)?;
                 let summary = match text.is_empty() {
@@ -265,10 +269,6 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 let mut v = Map::new();
                 v.insert("type".into(), "reasoning".into());
                 v.insert("summary".into(), summary);
-                // Reasoning is only valid with the id of the item it was.
-                if native.format() != Some(RESPONSES) {
-                    return Err(untranslatable("reasoning from another format"));
-                }
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
