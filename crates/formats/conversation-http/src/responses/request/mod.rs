@@ -6,9 +6,7 @@
 //! The input's items are the conversation's messages: consecutive items an
 //! assistant produced (messages, function calls, reasoning) are one assistant
 //! message, and consecutive function call outputs are one user message of
-//! results. A message item's `id` and `status` are inert (kept under
-//! [`INERT`], dropped by any other format); on an assistant message the item's
-//! other fields are under `message`, on the first text part, which opens a new
+//! results. On an assistant message the item's fields are under `message`, on the first text part, which opens a new
 //! message item when it carries them. An item the kind has no form for is a
 //! message of the native role `item`, holding the item as a native part.
 

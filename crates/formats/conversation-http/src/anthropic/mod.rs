@@ -36,9 +36,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Keep, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, kept_fields, merge_details,
-    merge_fields, merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
+    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
+    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
+    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
     unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
@@ -211,9 +211,7 @@ fn is_empty(m: &Message) -> bool {
 
 /// Whether a message's fields are none Anthropic writes or refuses.
 fn unsaid(m: &Message) -> bool {
-    let what = |_: &str| String::new();
-    let kept = kept_fields(ANTHROPIC, &m.native, what, Keep::CACHE_MARKER);
-    kept.is_ok_and(|f| f.is_empty())
+    m.native.format() != Some(ANTHROPIC)
 }
 
 /// Anthropic counts no reasoning apart from the output.
@@ -230,14 +228,6 @@ impl Schema for AnthropicMessages {
     const CARRIED: &'static [&'static str] = &["anthropic-version", "anthropic-beta"];
     const CARRIED_QUERY: &'static [&'static str] = &["beta"];
     const OWN: &'static [&'static str] = &["metadata", "output_config", "thinking"];
-    /// A Chat Completions request's `thinking`, as its clients send for
-    /// Claude, is Anthropic's.
-    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] =
-        &[(crate::openai::OPENAI, "thinking", "thinking")];
-    /// A Chat Completions request's `reasoning`, another vendor's control of
-    /// its thinking, which Claude's is not.
-    const DROPPED: &'static [(&'static str, &'static str)] =
-        &[(crate::openai::OPENAI, "reasoning")];
     type Decoding = AnthropicDecoder;
 
     /// A client of another format names its reasoning by an effort alone:

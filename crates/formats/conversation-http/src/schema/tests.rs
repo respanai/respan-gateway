@@ -120,13 +120,15 @@ fn a_web_search_is_asked_of_each_provider_in_its_own_terms() {
     assert_eq!(responses["tools"], json!([{ "type": "web_search" }]));
     let chat = OpenAiChat.encode_request(&input).expect("chat");
     assert_eq!(chat["web_search_options"], json!({}));
-    // Most providers that speak Chat would ignore another format's search.
     let anthropic = AnthropicMessages.decode_json(&anthropic.into());
-    assert!(OpenAiChat.encode_request(&anthropic).is_err());
+    assert_eq!(
+        OpenAiChat.encode_request(&anthropic).expect("chat")["web_search_options"],
+        json!({})
+    );
 }
 
 #[test]
-fn a_searchs_bounds_go_only_to_its_own_format_and_its_hints_are_dropped() {
+fn a_searchs_bounds_and_hints_go_only_to_its_own_format() {
     let search = json!({
         "type": "web_search_20260209", "name": "web_search", "max_uses": 3,
         "cache_control": { "type": "ephemeral" },
@@ -135,14 +137,8 @@ fn a_searchs_bounds_go_only_to_its_own_format_and_its_hints_are_dropped() {
     let input = AnthropicMessages.decode_json(&v);
     let back = AnthropicMessages.encode_request(&input).expect("anthropic");
     assert_eq!(back["tools"], json!([search]));
-    let refused = OpenAiResponses
-        .encode_request(&input)
-        .expect_err("max_uses");
-    assert!(
-        refused.message().contains("max_uses"),
-        "{}",
-        refused.message()
-    );
+    let responses = OpenAiResponses.encode_request(&input).expect("responses");
+    assert_eq!(responses["tools"], json!([{ "type": "web_search" }]));
     let v = json!({ "input": "hi", "tools": [{ "type": "web_search_preview", "search_context_size": "low" }] });
     let input = OpenAiResponses.decode_json(&v);
     assert_eq!(
@@ -196,4 +192,55 @@ fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     assert_eq!(chat["choices"][0]["finish_reason"], "length");
     let back = AnthropicMessages.encode_whole(&whole).expect("anthropic");
     assert_eq!(back["stop_reason"], "pause_turn");
+}
+
+/// A Chat request whose tool says `strict` as `strict`.
+fn strict_tool_request(strict: serde_json::Value) -> respan_gateway_conversation::Input {
+    OpenAiChat.decode_json(&json!({
+        "messages": [{ "role": "user", "content": "x" }],
+        "tools": [{ "type": "function", "function": {
+            "name": "lookup", "strict": strict, "parameters": { "type": "object" } } }],
+    }))
+}
+
+#[test]
+fn a_strict_tool_is_only_strict_where_a_format_can_say_it() {
+    let chat = strict_tool_request(json!(true));
+    let sent = GeminiGenerate.encode_request(&chat).expect("gemini");
+    assert!(!serde_json::Value::from(sent).to_string().contains("strict"));
+    let sent = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(sent["tools"][0]["strict"], true);
+}
+
+#[test]
+fn not_asking_for_a_strict_tool_says_nothing_to_another_format() {
+    let chat = strict_tool_request(json!(false));
+    let gemini = GeminiGenerate.encode_request(&chat).expect("a request");
+    let declaration = &gemini["tools"][0]["functionDeclarations"][0];
+    assert_eq!(declaration["name"], "lookup");
+    assert!(declaration.get("strict").is_none());
+    let claude = AnthropicMessages.encode_request(&chat).expect("a request");
+    assert!(claude["tools"][0].get("strict").is_none());
+    assert!(
+        crate::bedrock::BedrockConverse
+            .encode_request(&chat)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_strict_tool_keeps_its_promise_in_openais_formats() {
+    let chat = strict_tool_request(json!(true));
+    let responses = OpenAiResponses.encode_request(&chat).expect("a request");
+    assert_eq!(responses["tools"][0]["strict"], true);
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], true);
+}
+
+#[test]
+fn a_strict_that_is_no_boolean_stays_native() {
+    let chat = strict_tool_request(json!("yes"));
+    assert_eq!(chat.tools[0].strict, Some(false));
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], "yes");
 }

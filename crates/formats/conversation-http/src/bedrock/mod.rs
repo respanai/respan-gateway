@@ -57,7 +57,9 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{Asked, Framing, Names, Schema, native_fields, rest_of, unwritable_content};
+use crate::schema::{
+    Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of, unwritable_content,
+};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
@@ -195,9 +197,8 @@ impl Schema for BedrockConverse {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = crate::schema::Keep::default();
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        let mut native = crate::schema::kept_fields(BEDROCK, &chat.native, in_the_request, keep)?;
+        let chat = &*crate::schema::own_shapes(chat, BEDROCK);
+        let mut native = chat.native.fields_for(BEDROCK);
         let mut v = self.encode_json(chat)?;
         // The model's own fields beside the reasoning written from the kind.
         let fields = "additionalModelRequestFields";

@@ -158,9 +158,7 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
         chat.native.fields(),
-        json!({ "inert": { "instructions": true } })
-            .as_object()
-            .expect("fields"),
+        json!({ "instructions": true }).as_object().expect("fields"),
         "everything is the kind's, but that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
@@ -220,10 +218,11 @@ fn an_item_the_kind_has_no_form_for_stays_whole() {
     let chat = decode_request(&v);
     assert!(matches!(&chat.messages[1].role, Role::Native { name, .. } if name == "item"));
     assert_eq!(round_trip(&v), v);
-    let refused = AnthropicMessages
-        .encode_request(&chat)
-        .expect_err("an item");
-    assert!(refused.message().contains("role"), "{}", refused.message());
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["messages"],
+        json!([{ "role": "user", "content": "hi" }])
+    );
 }
 
 #[test]
@@ -255,7 +254,7 @@ fn media_and_reasoning_round_trip() {
 }
 
 #[test]
-fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
+fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
     for (field, value) in [
         ("previous_response_id", json!("resp_1")),
         ("conversation", json!("conv_1")),
@@ -274,12 +273,11 @@ fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
         let chat = decode_request(&v);
         assert_eq!(chat.native.fields().get(field), Some(&value), "{field}");
         assert_eq!(round_trip(&v), v, "{field}");
-        for refused in [
+        for sent in [
             AnthropicMessages.encode_request(&chat),
             OpenAiChat.encode_request(&chat),
         ] {
-            let message = refused.expect_err(field).message().to_owned();
-            assert!(message.contains(field), "{field}: {message}");
+            assert!(sent.expect("written").get(field).is_none(), "{field}");
         }
     }
 }
@@ -294,10 +292,7 @@ fn not_storing_is_sent_to_openai_and_said_to_no_other_provider() {
         OpenAiChat.encode_request(&chat),
     ] {
         let other = other.expect("translated");
-        assert!(
-            !other.contains_key("store") && !other.contains_key("inert"),
-            "{other:?}"
-        );
+        assert!(!other.contains_key("store"), "{other:?}");
     }
 }
 
@@ -386,12 +381,6 @@ fn a_failed_tool_result_and_audio_cannot_be_written() {
     let mut results = Message::new(Role::User, "");
     results.content = vec![Content::tool_result("c", vec!["boom".into()], true)];
     let chat = Input::new([results]);
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
-}
-
-#[test]
-fn a_native_role_of_another_format_is_refused() {
-    let chat = Input::new([Message::new(Role::native("openai-chat", "tool"), "x")]);
     assert!(OpenAiResponses.encode_request(&chat).is_err());
 }
 
@@ -939,31 +928,6 @@ fn a_chat_tools_strict_is_written_as_responses_own() {
 }
 
 #[test]
-fn chat_fields_responses_has_too_are_written_as_its_own() {
-    let body = json!({
-        "model": "m", "messages": [{ "role": "user", "content": "hi" }],
-        "store": false, "metadata": { "a": "b" }, "service_tier": "flex",
-        "prompt_cache_key": "k", "verbosity": "low",
-    });
-    let chat = OpenAiChat
-        .decode_request(Bytes::from(body.to_string()))
-        .expect("decoded");
-    let v = OpenAiResponses.encode_request(&chat).expect("translated");
-    // Whether OpenAI keeps a chat is Chat Completions' own: not carried.
-    assert!(v.get("store").is_none());
-    assert_eq!(v["metadata"], json!({ "a": "b" }));
-    assert_eq!(v["service_tier"], "flex");
-    assert_eq!(v["prompt_cache_key"], "k");
-    assert_eq!(v["text"]["verbosity"], "low");
-    // One Responses lacks is still refused.
-    let n = json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }], "n": 2 });
-    let chat = OpenAiChat
-        .decode_request(Bytes::from(n.to_string()))
-        .expect("decoded");
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
-}
-
-#[test]
 fn instructions_count_as_the_reader_reads_them() {
     for (body, instructed) in [
         (r#"{"instructions":"Be brief."}"#, true),
@@ -1057,38 +1021,14 @@ fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
     let chat = decode_request(&v);
     let anthropic = AnthropicMessages.encode_request(&chat).expect("anthropic");
     assert_eq!(anthropic["system"], "be brief");
-    assert!(anthropic.get("instructions").is_none() && anthropic.get("inert").is_none());
+    assert!(anthropic.get("instructions").is_none());
     let openai = OpenAiChat.encode_request(&chat).expect("chat");
     assert_eq!(
         openai["messages"],
         json!([{ "role": "system", "content": "be brief" }, { "role": "user", "content": "hi" }])
     );
-    assert!(openai.get("instructions").is_none() && openai.get("inert").is_none());
+    assert!(openai.get("instructions").is_none());
     assert_eq!(round_trip(&v), v);
-}
-
-#[test]
-fn a_clients_own_inert_field_does_not_break_what_is_set_aside() {
-    for inert in [json!(1), json!("x"), json!([1]), json!(null), json!(true)] {
-        let v = json!({ "model": "gpt-5", "instructions": "s", "input": "hi", "store": false, "inert": inert });
-        let chat = OpenAiResponses.decode_json(&v);
-        assert_eq!(
-            chat.native.fields().get("inert"),
-            Some(&json!({ "store": false, "instructions": true })),
-            "{inert}"
-        );
-        // Another format drops what is set aside; it is written to no one else.
-        assert!(AnthropicMessages.encode_request(&chat).is_ok(), "{inert}");
-    }
-}
-
-#[test]
-fn a_chats_own_inert_field_does_not_break_what_is_set_aside() {
-    let chat = OpenAiChat.decode_json(&json!({ "store": true, "inert": 1, "messages": [] }));
-    assert_eq!(
-        chat.native.fields().get("inert"),
-        Some(&json!({ "store": true }))
-    );
 }
 
 /// OpenRouter has reported 87 reasoning tokens of 76 output: the answer is

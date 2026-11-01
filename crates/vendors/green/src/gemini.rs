@@ -79,20 +79,12 @@ fn signed(input: &mut Input) -> Result<(), Fault> {
 /// each assistant message that has no signature of its own, as Gemini
 /// returns one only on the first of a turn's parallel calls.
 fn sign_calls(input: &mut Input) {
-    // Another format's fields a translation drops anyway, as a client's
-    // item id or cache marker, give way to the signature.
-    const DROPPED: &[&str] = &["inert", "cache_control", "thoughtSignature"];
+    // Another format's fields a translation drops anyway give way to the
+    // signature.
     let format = OpenAiChat::NAME;
     let signature = json!({ "google": { "thought_signature": SIGNATURE_PLACEHOLDER } });
-    let own = |native: &mut Option<NativeFields>| match native {
-        Some(n) if &*n.format != format => {
-            let dropped = n.fields.keys().all(|k| DROPPED.contains(&k.as_str()));
-            if dropped {
-                *native = None;
-            }
-            dropped
-        }
-        _ => true,
+    let own = |native: &mut Option<NativeFields>| {
+        native.take_if(|n| &*n.format != format);
     };
     for message in input
         .messages
@@ -106,9 +98,7 @@ fn sign_calls(input: &mut Input) {
         let Some(native) = first else {
             continue;
         };
-        if !own(native) {
-            continue;
-        }
+        own(native);
         let fields = native
             .get_or_insert_with(|| NativeFields::new(format, Map::new()))
             .fields

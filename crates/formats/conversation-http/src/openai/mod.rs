@@ -61,8 +61,7 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
     merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals, set,
-    set_aside, stop_json, take_native, tidy, unix_now, unsupported_fields, untranslatable,
-    usage_extra,
+    stop_json, take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -144,15 +143,6 @@ impl Format<ProviderIo, Output, Input> for OpenAiChat {
         self.bind_provider(io)
     }
 }
-
-/// Keys a conversation has a place for, or that change no output; `user`
-/// too, when it is a string.
-/// A request's fields only OpenAI acts on, which another provider drops.
-const OPENAI_ONLY: &[&str] = &["store", "metadata", "prompt_cache_key", "safety_identifier"];
-
-/// Token probabilities asked for beside the answer, which change nothing in
-/// it: a provider without them answers the same, only without them.
-const ANSWER_EXTRAS: &[&str] = &["logprobs", "top_logprobs"];
 
 const KNOWN: &[&str] = &[
     "model",
@@ -236,15 +226,6 @@ impl Schema for OpenAiChat {
         chat.native = native_fields(OPENAI, unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
             chat.native.fields_mut(OPENAI).shift_remove("user");
-        }
-        // OpenAI's own: whether it keeps the completion, its tags for it,
-        // and hints for its cache and abuse checks. Another provider keeps
-        // nothing and needs no hint, so drops them; and the extras it has
-        // no place for.
-        for key in OPENAI_ONLY.iter().chain(ANSWER_EXTRAS) {
-            if let Some(value) = chat.native.fields_mut(OPENAI).shift_remove(*key) {
-                set_aside(chat.native.fields_mut(OPENAI), key, value);
-            }
         }
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES);

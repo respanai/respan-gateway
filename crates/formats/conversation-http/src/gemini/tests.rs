@@ -348,12 +348,9 @@ fn what_gemini_cannot_say_is_refused_not_dropped() {
         m.role = Role::System;
         c.messages.push(m);
     }));
-    assert!(refused(
-        |c| c.messages[0].role = Role::native("anthropic-messages", "x")
-    ));
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
-    // Another format's native fields are refused, own ones kept.
-    assert!(refused(|c| {
+    // Another format's native fields are dropped.
+    assert!(!refused(|c| {
         c.native
             .fields_mut("openai-chat")
             .insert("seed".into(), 1.into());

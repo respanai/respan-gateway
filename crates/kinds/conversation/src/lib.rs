@@ -376,6 +376,9 @@ pub struct Tool {
     pub description: Option<String>,
     /// The JSON schema of its arguments.
     pub parameters: Value,
+    /// Whether its arguments must match the schema, `None` leaving it to the
+    /// format's default, which only a format with a default of its own says.
+    pub strict: Option<bool>,
     /// Its fields the kind has no place for, such as a cache marker.
     pub native: Option<NativeFields>,
 }
@@ -387,6 +390,7 @@ impl Tool {
             name: name.into(),
             description: None,
             parameters,
+            strict: Some(false),
             native: None,
         }
     }

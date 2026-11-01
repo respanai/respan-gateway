@@ -5,17 +5,16 @@
 //! request, the message or the tool.
 
 use crate::schema::{
-    INERT, Keep, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
-    encode_message, encode_native, kept_fields, merge_missing, message_fields, native_fields, only,
-    own_native, read_search, reasoning_of, remainder, rest_of, set, source_url, tool_field,
-    untranslatable, write_search,
+    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
+    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
+    set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
     ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
 use crate::openai::{OPENAI, OpenAiChat};
@@ -36,7 +35,7 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
     decode_tools(chat, tools, choice, parallel, keys);
     // Any object asks for a search, an empty one too.
     if let Some(Value::Object(options)) = v.get("web_search_options") {
-        let search = read_search(OPENAI, options.clone(), &["search_context_size"]);
+        let search = read_search(OPENAI, options.clone());
         chat.provider_tools.push(search);
         chat.native
             .fields_mut(OPENAI)
@@ -59,6 +58,7 @@ fn openai_tool(tool: &Value) -> Option<Tool> {
         OPENAI,
         rest_of(function, &["name", "description", "parameters"]),
     );
+    take_strict(&mut kind);
     Some(kind)
 }
 
@@ -80,11 +80,6 @@ fn openai_choice(choice: &Value) -> Option<ToolChoice> {
     })
 }
 
-/// How a refusal names a message's fields.
-fn refused_fields(_: &str) -> String {
-    "messages with fields the kind has no place for".into()
-}
-
 /// The kind's tools as OpenAI's fields of a request `v`.
 pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let tool = |t: &Tool| -> Result<Value, Fault> {
@@ -96,28 +91,23 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         if !t.parameters.is_null() {
             function.insert("parameters".into(), t.parameters.clone());
         }
-        encode_native(
-            OPENAI,
-            &t.native,
-            &mut function,
-            tool_field,
-            Keep::CACHE_MARKER,
-        )?;
+        if t.strict == Some(true) {
+            function.insert("strict".into(), true.into());
+        }
+        function.extend(t.native.fields_for(OPENAI));
         Ok(json!({ "type": "function", "function": function }))
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
-    // Most providers that speak Chat ignore `web_search_options`, so only a
-    // search a client of Chat asked for is written.
     match chat.provider_tools.as_slice() {
         [] => {}
-        [search @ ProviderTool::WebSearch { native }] if native.format() == Some(OPENAI) => {
+        [search @ ProviderTool::WebSearch { .. }] => {
             v.insert(
                 "web_search_options".into(),
                 write_search(OPENAI, search)?.into(),
             );
         }
-        _ => return Err(untranslatable("another format's web search in OpenAI Chat")),
+        _ => return Err(untranslatable("more than one search in OpenAI Chat")),
     }
     let choice = match &chat.options.tool_choice {
         None => None,
@@ -138,29 +128,11 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
     Ok(())
 }
 
-/// A message's fields of Chat Completions' vendors that no other format has
-/// a place for and that it can leave out: a participant's `name`, the
-/// reasoning an assistant sends back (`reasoning_content`, `reasoning`,
-/// `reasoning_details`, `thinking_blocks`), which a provider takes back only
-/// from the format it came in. A message's `cache_control` stays a field of
-/// its own, a cache marker ([`Keep::CACHE_MARKER`]). LiteLLM's
-/// `provider_specific_fields` rides along on a reply sent back as history.
-const INERT_FIELDS: &[&str] = &[
-    "name",
-    "reasoning_content",
-    "reasoning",
-    "reasoning_details",
-    "thinking_blocks",
-    "provider_specific_fields",
-];
-
 /// An OpenAI message read as the kind's
 /// ([`decode_message`](crate::schema::decode_message)) with what it says
 /// beside its content: a tool message as a user message of one result; an
-/// assistant's `tool_calls` as calls after its content. Its
-/// [`INERT_FIELDS`] are [`INERT`]: written back as they came by this format,
-/// dropped by another. What else the kind cannot say of them stays in the
-/// message's `native`.
+/// assistant's `tool_calls` as calls after its content. What else the kind
+/// cannot say of them stays in the message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
     if let Some(native) = &mut message.native {
         // A reply sent back as history carries `refusal: null`, `annotations: []` and the
@@ -168,15 +140,6 @@ pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
         native
             .fields
             .retain(|_, v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
-        let mut inert = Map::new();
-        for key in INERT_FIELDS {
-            if let Some(value) = native.fields.shift_remove(*key) {
-                inert.insert((*key).into(), value);
-            }
-        }
-        if !inert.is_empty() {
-            native.fields.insert(INERT.into(), inert.into());
-        }
     }
     if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
         let Some(id) = m["tool_call_id"].as_str() else {
@@ -228,8 +191,7 @@ fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
             ..
         } = c
         {
-            let what = |key: &str| format!("a tool call's '{key}'");
-            let own = kept_fields(OPENAI, native, what, Keep::CACHE_MARKER)?;
+            let own = native.fields_for(OPENAI);
             let function = json!({ "name": name, "arguments": arguments });
             let mut call = json!({ "id": id, "type": "function", "function": function });
             merge_missing(&mut call, own);
@@ -239,21 +201,12 @@ fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
     Ok(out)
 }
 
-/// OpenAI has no place for the fields of a tool result, but drops a cache
-/// marker.
-fn refuse_part_fields(native: &Option<NativeFields>) -> Result<(), Fault> {
-    let what = |key: &str| format!("a tool part's '{key}'");
-    kept_fields(OPENAI, native, what, Keep::CACHE_MARKER).map(drop)
-}
-
 /// A tool message answering call `id` with `content`.
 fn openai_result(
     id: &str,
     content: &[Content],
     is_error: bool,
-    native: &Option<NativeFields>,
 ) -> Result<Map<String, Value>, Fault> {
-    refuse_part_fields(native)?;
     // OpenAI's tool messages cannot say the call failed.
     if is_error {
         return Err(untranslatable("a tool result that is an error"));
@@ -287,16 +240,15 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             id,
             content,
             is_error,
-            native,
             ..
         } = result
         {
-            out.push(openai_result(id, content, *is_error, native)?);
+            out.push(openai_result(id, content, *is_error)?);
         }
     }
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
-        only.extend(message_fields(OPENAI, &m.native, refused_fields)?);
+        only.extend(m.native.fields_for(OPENAI));
         return Ok(out.into_iter().map(Value::Object).collect());
     }
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
@@ -396,8 +348,7 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
         return Err(untranslatable("a display name on image or audio content"));
     }
-    let what = |k: &str| format!("media field '{k}'");
-    let native = kept_fields(OPENAI, &media.native, what, Keep::CACHE_MARKER)?;
+    let native = media.native.fields_for(OPENAI);
     let url = || match &media.source {
         MediaSource::Url(url) => url.clone(),
         MediaSource::Bytes(data) => {
