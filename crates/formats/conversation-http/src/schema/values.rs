@@ -7,7 +7,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
-use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
+use respan_gateway_conversation::{
+    Effort, GenerationOptions, MediaSource, Reasoning, Start, Usage,
+};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
@@ -512,6 +514,53 @@ pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<Stri
         fields.extend(inert);
     }
     Ok(fields)
+}
+
+/// What OpenAI's formats both say at a request's top, out of its `native`;
+/// one of another type stays there.
+pub(crate) fn read_openai_options(input: &mut Input) {
+    let Some(native) = input.native.as_mut() else {
+        return;
+    };
+    let options = &mut input.options;
+    let mut text = |key: &str| match native.fields.get(key) {
+        Some(Value::String(_)) => match native.fields.shift_remove(key) {
+            Some(Value::String(text)) => Some(text),
+            _ => None,
+        },
+        _ => None,
+    };
+    options.service_tier = text("service_tier");
+    options.prompt_cache_key = text("prompt_cache_key");
+    options.safety_identifier = text("safety_identifier");
+    if native.fields.get("metadata").is_some_and(Value::is_object)
+        && let Some(Value::Object(metadata)) = native.fields.shift_remove("metadata")
+    {
+        options.metadata = Some(metadata);
+    }
+    if native.is_empty() {
+        input.native = None;
+    }
+}
+
+/// What OpenAI's formats both say at a request's top, into `v`.
+pub(crate) fn write_openai_options(options: &GenerationOptions, v: &mut Map<String, Value>) {
+    set(
+        v,
+        "service_tier",
+        options.service_tier.clone().map(Into::into),
+    );
+    set(
+        v,
+        "prompt_cache_key",
+        options.prompt_cache_key.clone().map(Into::into),
+    );
+    set(
+        v,
+        "safety_identifier",
+        options.safety_identifier.clone().map(Into::into),
+    );
+    set(v, "metadata", options.metadata.clone().map(Into::into));
 }
 
 /// A tool's `strict`, which OpenAI's formats say the same way, out of its

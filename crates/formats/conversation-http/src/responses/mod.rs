@@ -181,22 +181,6 @@ impl Schema for OpenAiResponses {
     /// The structured output requirement is in `text`; whether the request
     /// had `instructions` is said by [`request::write_input`].
     const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
-    /// Chat Completions' fields Responses has too, OpenAI's both.
-    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[
-        (crate::openai::OPENAI, "metadata", "metadata"),
-        (crate::openai::OPENAI, "service_tier", "service_tier"),
-        (
-            crate::openai::OPENAI,
-            "prompt_cache_key",
-            "prompt_cache_key",
-        ),
-        (
-            crate::openai::OPENAI,
-            "safety_identifier",
-            "safety_identifier",
-        ),
-        (crate::openai::OPENAI, "verbosity", "text.verbosity"),
-    ];
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
@@ -247,6 +231,8 @@ impl Schema for OpenAiResponses {
         request::read_tools(v, &mut chat);
         chat.native = native_fields(RESPONSES, std::mem::take(chat.native.fields_mut(RESPONSES)));
         request::read_format(v, &mut chat);
+        crate::schema::read_openai_options(&mut chat);
+        request::read_verbosity(&mut chat);
         request::read_reasoning(&mut chat);
         chat
     }
@@ -271,6 +257,7 @@ impl Schema for OpenAiResponses {
         crate::schema::set(&mut v, "top_p", chat.options.top_p.map(Into::into));
         crate::schema::set(&mut v, "user", chat.user.clone().map(Into::into));
         request::write_format(chat, &mut v);
+        crate::schema::write_openai_options(&chat.options, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
             return Err(crate::schema::untranslatable("top_k in Responses"));

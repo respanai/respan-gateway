@@ -18,8 +18,8 @@ mod write;
 
 pub(super) use read::read_input;
 pub(super) use settings::{
-    decode_part, encode_part, read_format, read_reasoning, read_tools, write_format,
-    write_reasoning, write_tools,
+    decode_part, encode_part, read_format, read_reasoning, read_tools, read_verbosity,
+    write_format, write_reasoning, write_tools,
 };
 pub(super) use write::{INSTRUCTIONS, write_input};
 

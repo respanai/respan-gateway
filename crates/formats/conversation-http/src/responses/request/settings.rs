@@ -202,8 +202,34 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
     if let (Some(format), Some(text)) = (format, text.as_object_mut()) {
         text.insert("format".into(), format);
     }
+    if let (Some(verbosity), Some(text)) = (&input.options.verbosity, text.as_object_mut()) {
+        text.insert("verbosity".into(), verbosity.as_str().into());
+    }
     let empty = text.as_object().is_none_or(Map::is_empty);
     set(out, "text", (!empty).then_some(text));
+}
+
+/// Its `text.verbosity`, what Chat Completions says at the top, out of its
+/// `native`.
+pub(in crate::responses) fn read_verbosity(chat: &mut Input) {
+    let Some(native) = chat.native.as_mut() else {
+        return;
+    };
+    let Some(Value::Object(text)) = native.fields.get_mut("text") else {
+        return;
+    };
+    if !text.get("verbosity").is_some_and(Value::is_string) {
+        return;
+    }
+    if let Some(Value::String(verbosity)) = text.shift_remove("verbosity") {
+        chat.options.verbosity = Some(verbosity);
+    }
+    if text.is_empty() {
+        native.fields.shift_remove("text");
+    }
+    if native.is_empty() {
+        chat.native = None;
+    }
 }
 
 /// A part the kind has a form for beyond text: an image or a file.

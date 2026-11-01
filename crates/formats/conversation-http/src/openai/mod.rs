@@ -60,9 +60,9 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
-    merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals, set,
-    set_aside, stop_json, take_native, tidy, unix_now, unsupported_fields, untranslatable,
-    usage_extra,
+    merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals,
+    read_openai_options, set, set_aside, stop_json, take_native, tidy, unix_now,
+    unsupported_fields, untranslatable, usage_extra, write_openai_options,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -237,6 +237,11 @@ impl Schema for OpenAiChat {
         if chat.user.is_some() {
             chat.native.fields_mut(OPENAI).shift_remove("user");
         }
+        read_openai_options(&mut chat);
+        if let Some(Value::String(verbosity)) = chat.native.fields().get("verbosity") {
+            chat.options.verbosity = Some(verbosity.clone());
+            chat.native.fields_mut(OPENAI).shift_remove("verbosity");
+        }
         // OpenAI's own: whether it keeps the completion, its tags for it,
         // and hints for its cache and abuse checks. Another provider keeps
         // nothing and needs no hint, so drops them; and the extras it has
@@ -293,6 +298,12 @@ impl Schema for OpenAiChat {
         set(&mut v, "user", chat.user.clone().map(Into::into));
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
+        write_openai_options(&chat.options, &mut v);
+        set(
+            &mut v,
+            "verbosity",
+            chat.options.verbosity.clone().map(Into::into),
+        );
         if chat.options.top_k.is_some() {
             return Err(untranslatable("top_k in OpenAI Chat"));
         }

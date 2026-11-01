@@ -38,9 +38,10 @@ pub(crate) use values::{
     Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
     encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
-    message_fields, native_fields, only, own_fields, read_search, refuse_strict, remainder, set,
-    set_aside, source_url, stop_json, take_strict, tidy, tool_field, unsupported_fields,
-    untranslatable, unwritable_content, usage_extra, write_search,
+    message_fields, native_fields, only, own_fields, read_openai_options, read_search,
+    refuse_strict, remainder, set, set_aside, source_url, stop_json, take_strict, tidy, tool_field,
+    unsupported_fields, untranslatable, unwritable_content, usage_extra, write_openai_options,
+    write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -107,8 +108,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
     const OWN: &'static [&'static str] = &[];
     /// Fields of another format's `native` this format writes as its own,
     /// meaning the same: `(format, key, path)`, its dotted `path` where it
-    /// goes, such as Chat Completions' `verbosity` as Responses'
-    /// `text.verbosity`.
+    /// goes, such as Chat Completions' `thinking` as Anthropic's.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[];
     /// Fields of another format's `native` this format drops, as asking
     /// nothing it can say: `(format, key)`.

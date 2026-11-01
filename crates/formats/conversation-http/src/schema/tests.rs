@@ -261,3 +261,68 @@ fn a_strict_that_is_no_boolean_stays_native() {
     let back = OpenAiChat.encode_request(&chat).expect("a request");
     assert_eq!(back["tools"][0]["function"]["strict"], "yes");
 }
+
+/// The fields OpenAI's formats share, as each says them.
+const CHAT_OPTIONS: &str = r#"{ "messages": [{ "role": "user", "content": "x" }],
+    "service_tier": "flex", "prompt_cache_key": "k", "safety_identifier": "s",
+    "verbosity": "low", "metadata": { "a": "b" } }"#;
+
+#[test]
+fn openais_shared_options_cross_its_formats_both_ways() {
+    let chat: serde_json::Value = serde_json::from_str(CHAT_OPTIONS).expect("json");
+    let responses = OpenAiResponses
+        .encode_request(&OpenAiChat.decode_json(&chat))
+        .expect("a request");
+    for key in [
+        "service_tier",
+        "prompt_cache_key",
+        "safety_identifier",
+        "metadata",
+    ] {
+        assert_eq!(responses[key], chat[key], "{key}");
+    }
+    assert_eq!(responses["text"]["verbosity"], "low");
+
+    let body = serde_json::Value::Object(responses);
+    let back = OpenAiChat
+        .encode_request(&OpenAiResponses.decode_json(&body))
+        .expect("a request");
+    for key in [
+        "service_tier",
+        "prompt_cache_key",
+        "safety_identifier",
+        "metadata",
+        "verbosity",
+    ] {
+        assert_eq!(back[key], chat[key], "{key}");
+    }
+}
+
+#[test]
+fn openais_shared_options_say_nothing_to_another_format() {
+    let chat: serde_json::Value = serde_json::from_str(CHAT_OPTIONS).expect("json");
+    let chat = OpenAiChat.decode_json(&chat);
+    assert!(chat.native.is_none());
+    for written in [
+        GeminiGenerate.encode_request(&chat).expect("a request"),
+        AnthropicMessages.encode_request(&chat).expect("a request"),
+    ] {
+        for key in [
+            "service_tier",
+            "prompt_cache_key",
+            "safety_identifier",
+            "verbosity",
+        ] {
+            assert!(written.get(key).is_none(), "{key}");
+        }
+    }
+}
+
+#[test]
+fn a_shared_option_of_another_type_stays_native() {
+    let body = json!({ "messages": [{ "role": "user", "content": "x" }], "service_tier": 1 });
+    let chat = OpenAiChat.decode_json(&body);
+    assert_eq!(chat.options.service_tier, None);
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["service_tier"], 1);
+}

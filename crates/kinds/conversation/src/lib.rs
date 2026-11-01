@@ -67,6 +67,16 @@ pub struct GenerationOptions {
     pub parallel_tool_calls: Option<bool>,
     /// Required shape of the generated answer.
     pub response_format: Option<ResponseFormat>,
+    /// The processing tier asked for, as OpenAI names it.
+    pub service_tier: Option<String>,
+    /// A key for a provider's prompt cache.
+    pub prompt_cache_key: Option<String>,
+    /// A stable id for a provider's abuse checks.
+    pub safety_identifier: Option<String>,
+    /// How much the answer says, as OpenAI names it.
+    pub verbosity: Option<String>,
+    /// The caller's tags for the response, as OpenAI keeps them.
+    pub metadata: Option<Map<String, Value>>,
 }
 
 /// How much the model thinks before it answers, and whether it says so.

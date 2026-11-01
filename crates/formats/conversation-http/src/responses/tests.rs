@@ -262,7 +262,6 @@ fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
         ("include", json!(["reasoning.encrypted_content"])),
         ("truncation", json!("auto")),
         ("reasoning", json!({ "summary": "concise" })),
-        ("metadata", json!({ "k": "v" })),
         (
             "tools",
             json!([{ "type": "file_search", "vector_store_ids": ["vs_1"] }]),
@@ -318,7 +317,7 @@ fn the_defaults_an_sdk_sends_say_nothing() {
 fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
     let v = json!({
         "model": "m", "input": [{ "role": "user", "content": "hi" }],
-        "text": { "format": { "type": "json_object" }, "verbosity": "low" },
+        "text": { "format": { "type": "json_object" }, "odd": "low" },
     });
     let chat = decode_request(&v);
     assert_eq!(
@@ -327,7 +326,7 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
     );
     assert_eq!(
         chat.native.fields().get("text"),
-        Some(&json!({ "verbosity": "low" }))
+        Some(&json!({ "odd": "low" }))
     );
     assert_eq!(round_trip(&v), v);
 }
