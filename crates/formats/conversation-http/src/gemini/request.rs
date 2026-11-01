@@ -236,8 +236,8 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
     Ok((instruction, rest))
 }
 
-/// Whether a message's fields are none Gemini writes or refuses: none, or
-/// another format's it drops.
+/// Whether a message's fields are none Gemini writes: none, or another
+/// format's it drops.
 fn unsaid(m: &Message) -> bool {
     m.native.format() != Some(GEMINI)
 }

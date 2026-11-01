@@ -256,8 +256,7 @@ pub(crate) fn shows(reply: &Output) -> bool {
 }
 
 /// A message's content in format `C`: a string if it is one text with
-/// nothing beside it, and parts otherwise; a part in another format is
-/// refused.
+/// nothing beside it, and parts otherwise.
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
