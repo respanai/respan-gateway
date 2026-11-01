@@ -14,9 +14,8 @@ use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
-    Keep, NativeFieldsExt, arguments_object, effort_name, kept_fields, merge_fields, merge_missing,
-    native_fields, parse_effort, reasoning_of, refuse_strict, remainder, set, untranslatable,
-    write_search,
+    NativeFieldsExt, arguments_object, effort_name, kept_fields, merge_fields, merge_missing,
+    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -240,9 +239,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
 /// Whether a message's fields are none Gemini writes or refuses: none, or
 /// another format's it drops.
 fn unsaid(m: &Message) -> bool {
-    let what = |_: &str| String::new();
-    let kept = kept_fields(GEMINI, &m.native, what, Keep::CACHE_MARKER);
-    kept.is_ok_and(|f| f.is_empty())
+    m.native.format() != Some(GEMINI)
 }
 
 /// The messages as `contents`: the results of one turn's calls are one user
@@ -253,9 +250,6 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            Role::Native { .. } => {
-                return Err(untranslatable("a role this format has no place for"));
-            }
             role => ROLES
                 .name(role)
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
@@ -268,8 +262,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
-        let what = |_: &str| "messages with fields the kind has no place for".to_owned();
-        content.extend(kept_fields(GEMINI, &m.native, what, Keep::CACHE_MARKER)?);
+        content.extend(kept_fields(GEMINI, &m.native));
         let answers = !m.content.is_empty()
             && unsaid(m)
             && m.content
@@ -318,19 +311,17 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
 /// A part of the kind's as Gemini writes it; `names` has the calls made so
 /// far, by id, for the results that answer them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
-    let what = |k: &str| format!("a part's '{k}'");
-    let fields =
-        |native: &Option<NativeFields>| kept_fields(GEMINI, native, what, Keep::CACHE_MARKER);
+    let fields = |native: &Option<NativeFields>| kept_fields(GEMINI, native);
     match c {
         Content::Text { text, native, .. } => {
             let mut part = Map::new();
             part.insert("text".into(), text.as_str().into());
-            part.extend(fields(native)?);
+            part.extend(fields(native));
             Ok(part.into())
         }
         Content::Reasoning { text, native, .. } => {
             let mut part = json!({ "text": text, "thought": true });
-            merge_missing(&mut part, fields(native)?);
+            merge_missing(&mut part, fields(native));
             Ok(part)
         }
         Content::Image(media) | Content::Audio(media) | Content::Document(media) => {
@@ -349,7 +340,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
                 call["id"] = id.as_str().into();
             }
             let mut part = json!({ "functionCall": call });
-            merge_missing(&mut part, fields(native)?);
+            merge_missing(&mut part, fields(native));
             Ok(part)
         }
         Content::ToolResult {
@@ -372,11 +363,10 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
                 response["id"] = id.as_str().into();
             }
             let mut part = json!({ "functionResponse": response });
-            merge_missing(&mut part, fields(native)?);
+            merge_missing(&mut part, fields(native));
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        Content::Native(raw) => Err(untranslatable(&format!("a part in {}'s shape", raw.format))),
         _ => Err(untranslatable("an unsupported kind of part")),
     }
 }
@@ -405,8 +395,7 @@ fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
         return Err(untranslatable("a display name on media content"));
     }
-    let what = |k: &str| format!("media field '{k}'");
-    let native = kept_fields(GEMINI, &media.native, what, Keep::CACHE_MARKER)?;
+    let native = kept_fields(GEMINI, &media.native);
     let mut part = match &media.source {
         MediaSource::Url(uri) => {
             json!({ "fileData": { "mimeType": media.mime_type, "fileUri": uri } })
@@ -570,7 +559,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
     };
     let mut declarations = Vec::new();
     for t in &chat.tools {
-        refuse_strict(t)?;
         let mut d = Map::new();
         d.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -579,8 +567,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         if t.parameters.is_object() {
             d.insert("parametersJsonSchema".into(), t.parameters.clone());
         }
-        let what = |k: &str| format!("a tool's '{k}'");
-        d.extend(kept_fields(GEMINI, &t.native, what, Keep::CACHE_MARKER)?);
+        d.extend(kept_fields(GEMINI, &t.native));
         declarations.push(Value::Object(d));
     }
     let mut tools = Vec::new();

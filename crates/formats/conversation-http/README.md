@@ -32,7 +32,8 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 
 What a format has no form for stays native to it (`NativeFields`,
 `Content::Native`, `Output::Native`), is written only by that format, and is
-refused in translation where it could change the answer. A call to a
+dropped by another, with a warning: what has meaning beyond its format belongs
+in the kind. A call to a
 provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
@@ -90,15 +91,14 @@ response whole), one item at a time, with the ids, `output_index`,
 `content_index` and `sequence_number` the kind has no place for made when
 another provider answered.
 
-What the kind has no form for stays native and is refused in translation:
+What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
 them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
 code interpreter, MCP) and the items they make, refusals, and annotations. A
-relay in this format sends them back. The ids and statuses of items, and a
-function tool's default `strict`, are inert: any other format drops them, and
-a tool another format sent is written with `strict: false`, as it is not the
-Responses default. Stop sequences and a failed tool result have no form in a
+relay in this format sends them back. A function tool's `strict` is the kind's:
+a tool that does not say it keeps the Responses default, and a tool another
+format sent is written with `strict: false`. Stop sequences and a failed tool result have no form in a
 request, and log probabilities are not carried. The module docs say it all.
 
 ## Google Gemini
@@ -128,14 +128,12 @@ tool choice (`ANY` with one allowed name is a named tool); `generationConfig`
 gives the output limit, `temperature`, `topP`, stop sequences and structured
 output (`responseMimeType` with a schema).
 
-What the kind has no form for stays native and is refused in another format:
+What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
 [reasoning](#reasoning-and-sampling) maps, and other `generationConfig` fields, tools Google runs (`googleSearch`), a `toolConfig`
-beyond the choice, video parts. A part's `thoughtSignature` is the one native
-field another format drops, as it only hints at the thinking behind the part
-(Gemini 3 needs one on a function call in the history: written for one,
-the first call of each turn without one takes Google's documented
-placeholder).
+beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
+on a function call in the history: written for one, the first call of each turn
+without one takes Google's documented placeholder).
 Writing, a request for several candidates, one tool call at a time and an end
 user's id are refused.
 
@@ -164,7 +162,7 @@ maps; what Converse has no field for is refused.
 `Input.options.reasoning` and `top_k` are the kind's; each format reads and
 writes them as below. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
-to its own format unchanged, and is refused in another.
+to its own format unchanged, and is dropped by another.
 
 | Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
 | --- | --- | --- | --- | --- | --- |

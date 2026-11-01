@@ -16,8 +16,8 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    Keep, NativeFieldsExt, arguments_object, encode_native, kept_fields, reasoning_of,
-    refuse_strict, set, stop_json, tool_field, untranslatable, unwritable_content,
+    NativeFieldsExt, arguments_object, kept_fields, reasoning_of, set, stop_json, untranslatable,
+    unwritable_content,
 };
 
 /// The leading system messages as `system` blocks, and the rest; a later
@@ -33,11 +33,9 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
     }
     let mut blocks = Vec::new();
     for message in system {
-        check(&message.native, "a system message's fields")?;
         for part in &message.content {
             match part {
                 Content::Text { text, native, .. } => {
-                    check(native, "a text part's fields")?;
                     if !text.trim().is_empty() {
                         blocks.push(json!({ "text": text }));
                         if cached(native) {
@@ -55,13 +53,6 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
     Ok((blocks, rest))
 }
 
-/// Refuses the fields of another format's `native`, but a cache marker,
-/// which Converse has no block for here.
-fn check(native: &Option<NativeFields>, what: &str) -> Result<(), Fault> {
-    let what = |_: &str| what.to_owned();
-    kept_fields(BEDROCK, native, what, Keep::CACHE_MARKER).map(drop)
-}
-
 /// The messages as Converse's: its content blocks, and, as it needs the
 /// roles to alternate, a message of the role before it joined to that one.
 /// A message with nothing to say is left out.
@@ -74,8 +65,6 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 .name(role)
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
         };
-        let fields = |_: &str| "messages with fields the kind has no place for".to_owned();
-        encode_native(BEDROCK, &m.native, &mut Map::new(), fields, Keep::default())?;
         let mut blocks: Vec<Value> = Vec::new();
         for part in m.content.iter().filter(|c| !is_unsigned(c)) {
             if let Some(written) = block(part)? {
@@ -133,10 +122,7 @@ fn block(part: &Content) -> Result<Option<Value>, Fault> {
 /// A part as a content block.
 fn content_block(part: &Content) -> Result<Value, Fault> {
     match part {
-        Content::Text { text, native, .. } => {
-            check(native, "a text part's fields")?;
-            Ok(json!({ "text": text }))
-        }
+        Content::Text { text, .. } => Ok(json!({ "text": text })),
         Content::Image(media) => image(media),
         Content::Document(media) => document(media),
         Content::Reasoning { text, native } => reasoning(text, native),
@@ -144,10 +130,8 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             id,
             name,
             arguments,
-            native,
             ..
         } => {
-            check(native, "a tool call's fields")?;
             let input = arguments_object(arguments)?;
             Ok(json!({ "toolUse": { "toolUseId": id, "name": name, "input": input } }))
         }
@@ -155,10 +139,8 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             id,
             content,
             is_error,
-            native,
             ..
         } => {
-            check(native, "a tool result's fields")?;
             let said = content.iter().filter(|c| !is_blank(c));
             let mut content: Vec<Value> = said.map(result_block).collect::<Result<_, _>>()?;
             if content.is_empty() {
@@ -171,7 +153,6 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             Ok(json!({ "toolResult": result }))
         }
         Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
-        Content::Native(raw) => Err(untranslatable(&format!("a part in {}'s shape", raw.format))),
         Content::Audio(_) => Err(untranslatable("audio")),
         _ => Err(untranslatable("an unsupported kind of part")),
     }
@@ -226,8 +207,6 @@ pub(super) fn is_unsigned(part: &Content) -> bool {
 /// The bytes of `media`, base64; a URL is refused, as Converse takes bytes
 /// only.
 fn bytes_of(media: &Media) -> Result<Value, Fault> {
-    let what = |_: &str| "media fields the kind has no place for".to_owned();
-    kept_fields(BEDROCK, &media.native, what, Keep::CACHE_MARKER)?;
     match &media.source {
         MediaSource::Bytes(bytes) => Ok(json!({ "bytes": STANDARD.encode(bytes) })),
         MediaSource::Url(_) => Err(Fault::bad_request(
@@ -298,8 +277,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         spec.insert("inputSchema".into(), json!({ "json": schema }));
-        refuse_strict(t)?;
-        let mut fields = kept_fields(BEDROCK, &t.native, tool_field, Keep::CACHE_MARKER)?;
+        let mut fields = kept_fields(BEDROCK, &t.native);
         fields.shift_remove(CACHE_MARKER);
         spec.extend(fields);
         Ok(json!({ "toolSpec": spec }))

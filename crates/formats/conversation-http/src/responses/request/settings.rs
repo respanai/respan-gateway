@@ -4,9 +4,9 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    INERT, Keep, NativeFieldsExt, decode_tools, each_tool, effort_name, kept_fields, native_fields,
-    only, own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict,
-    tool_field, untranslatable, write_search,
+    NativeFieldsExt, decode_tools, each_tool, effort_name, kept_fields, native_fields, only,
+    own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
+    write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -42,12 +42,11 @@ fn function_tool(tool: &Value) -> Option<Tool> {
     };
     let mut kind = Tool::new(tool["name"].as_str()?, tool["parameters"].clone());
     kind.description = description;
-    let mut fields = rest_of(tool, &["type", "name", "description", "parameters"]);
+    let fields = rest_of(tool, &["type", "name", "description", "parameters"]);
+    kind.native = native_fields(RESPONSES, fields);
     // Strict is on unless it is said; no other format has that default.
-    if !tool.as_object()?.contains_key("strict") {
-        fields.insert(INERT.into(), json!({ "strict": "unsaid" }));
-    }
-    (kind.strict, kind.native) = take_strict(native_fields(RESPONSES, fields));
+    kind.strict = None;
+    take_strict(&mut kind);
     Some(kind)
 }
 
@@ -55,9 +54,7 @@ fn function_tool(tool: &Value) -> Option<Tool> {
 fn web_search(tool: &Value) -> Option<ProviderTool> {
     let kind = tool["type"].as_str()?;
     let search = kind == "web_search" || kind.starts_with("web_search_");
-    let hints = ["type", "search_context_size"];
-    (search && kind != "web_search_call")
-        .then(|| read_search(RESPONSES, rest_of(tool, &[]), &hints))
+    (search && kind != "web_search_call").then(|| read_search(RESPONSES, rest_of(tool, &[])))
 }
 
 fn read_choice(choice: &Value) -> Option<ToolChoice> {
@@ -91,15 +88,7 @@ pub(in crate::responses) fn write_tools(
         if let Some(strict) = t.strict {
             tool.insert("strict".into(), strict.into());
         }
-        let mut fields = kept_fields(RESPONSES, &t.native, tool_field, Keep::CACHE_MARKER)?;
-        let unsaid = fields
-            .shift_remove(INERT)
-            .is_some_and(|inert| inert["strict"] == "unsaid");
-        tool.extend(fields);
-        // Another format's tools are not strict, which is not the default.
-        if !unsaid && !tool.contains_key("strict") {
-            tool.insert("strict".into(), false.into());
-        }
+        tool.extend(kept_fields(RESPONSES, &t.native));
         Ok(Value::Object(tool))
     };
     let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;

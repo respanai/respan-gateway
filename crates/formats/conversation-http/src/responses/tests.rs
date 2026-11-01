@@ -218,10 +218,11 @@ fn an_item_the_kind_has_no_form_for_stays_whole() {
     let chat = decode_request(&v);
     assert!(matches!(&chat.messages[1].role, Role::Native { name, .. } if name == "item"));
     assert_eq!(round_trip(&v), v);
-    let refused = AnthropicMessages
-        .encode_request(&chat)
-        .expect_err("an item");
-    assert!(refused.message().contains("role"), "{}", refused.message());
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["messages"],
+        json!([{ "role": "user", "content": "hi" }])
+    );
 }
 
 #[test]
@@ -253,7 +254,7 @@ fn media_and_reasoning_round_trip() {
 }
 
 #[test]
-fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
+fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
     for (field, value) in [
         ("previous_response_id", json!("resp_1")),
         ("conversation", json!("conv_1")),
@@ -272,12 +273,11 @@ fn what_the_kind_has_no_form_for_is_native_and_refused_in_translation() {
         let chat = decode_request(&v);
         assert_eq!(chat.native.fields().get(field), Some(&value), "{field}");
         assert_eq!(round_trip(&v), v, "{field}");
-        for refused in [
+        for sent in [
             AnthropicMessages.encode_request(&chat),
             OpenAiChat.encode_request(&chat),
         ] {
-            let message = refused.expect_err(field).message().to_owned();
-            assert!(message.contains(field), "{field}: {message}");
+            assert!(sent.expect("written").get(field).is_none(), "{field}");
         }
     }
 }
@@ -384,12 +384,6 @@ fn a_failed_tool_result_and_audio_cannot_be_written() {
     let mut results = Message::new(Role::User, "");
     results.content = vec![Content::tool_result("c", vec!["boom".into()], true)];
     let chat = Input::new([results]);
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
-}
-
-#[test]
-fn a_native_role_of_another_format_is_refused() {
-    let chat = Input::new([Message::new(Role::native("openai-chat", "tool"), "x")]);
     assert!(OpenAiResponses.encode_request(&chat).is_err());
 }
 
@@ -934,31 +928,6 @@ fn a_chat_tools_strict_is_written_as_responses_own() {
         v["tools"][1]["strict"], false,
         "Chat Completions' tools are not strict by default"
     );
-}
-
-#[test]
-fn chat_fields_responses_has_too_are_written_as_its_own() {
-    let body = json!({
-        "model": "m", "messages": [{ "role": "user", "content": "hi" }],
-        "store": false, "metadata": { "a": "b" }, "service_tier": "flex",
-        "prompt_cache_key": "k", "verbosity": "low",
-    });
-    let chat = OpenAiChat
-        .decode_request(Bytes::from(body.to_string()))
-        .expect("decoded");
-    let v = OpenAiResponses.encode_request(&chat).expect("translated");
-    // Whether OpenAI keeps a chat is Chat Completions' own: not carried.
-    assert!(v.get("store").is_none());
-    assert_eq!(v["metadata"], json!({ "a": "b" }));
-    assert_eq!(v["service_tier"], "flex");
-    assert_eq!(v["prompt_cache_key"], "k");
-    assert_eq!(v["text"]["verbosity"], "low");
-    // One Responses lacks is still refused.
-    let n = json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }], "n": 2 });
-    let chat = OpenAiChat
-        .decode_request(Bytes::from(n.to_string()))
-        .expect("decoded");
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
 }
 
 #[test]

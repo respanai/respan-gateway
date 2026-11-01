@@ -12,6 +12,7 @@ use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 
 use super::Schema;
 use super::errors::says;
@@ -48,81 +49,72 @@ pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
 }
 
-/// What a format does with the fields of an `native` it writes: `own` keys it
-/// writes itself, which are left out, and `droppable` keys, a field's own
-/// spelling or a hint, which another format drops instead of refusing.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Keep {
-    /// Keys the format writes itself.
-    pub own: &'static [&'static str],
-    /// Keys another format drops.
-    pub droppable: &'static [&'static str],
-}
-
-impl Keep {
-    /// Nothing is the format's own, and a cache marker or a thought
-    /// signature is dropped by another format: each only hints, at what to
-    /// cache or at the thinking behind a part, to the format that wrote it.
-    pub const CACHE_MARKER: Keep = Keep {
-        own: &[],
-        droppable: &["cache_control", "thoughtSignature"],
-    };
-}
-
-/// The native key under which a format keeps what of a value no other format
-/// needs: the id and status of an item a stateful API stored (a `msg_..` or
-/// `fc_..` of Responses), or a default the format left unsaid. Any other
-/// format drops it instead of refusing.
-pub const INERT: &str = "inert";
-
-/// The fields of `native` to write in `format`: all but the `own` keys if they
-/// are in `format`; if they are another's, none if each is droppable (or
-/// [`INERT`]), else an `Err` naming the first that is not, by `what`.
-pub(crate) fn kept_fields(
-    format: &str,
-    native: &Option<NativeFields>,
-    what: impl FnOnce(&str) -> String,
-    keep: Keep,
-) -> Result<Map<String, Value>, Fault> {
-    let own = native.format() == Some(format);
-    let mut fields = Map::new();
-    for (key, value) in native.fields() {
-        let droppable = keep.droppable.contains(&key.as_str()) || key == INERT;
-        match (own, droppable) {
-            (true, _) if keep.own.contains(&key.as_str()) => {}
-            (true, _) => _ = fields.insert(key.clone(), value.clone()),
-            (false, true) => {}
-            (false, false) => return Err(untranslatable(&what(key))),
+/// The fields of `native` to write in `format`. A native field means something
+/// only to its own format: another format's are dropped, with a warning.
+pub(crate) fn kept_fields(format: &str, native: &Option<NativeFields>) -> Map<String, Value> {
+    match native {
+        Some(n) if *n.format == *format => n.fields.clone(),
+        Some(n) => {
+            warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
+            Map::new()
         }
+        None => Map::new(),
     }
-    Ok(fields)
 }
 
-/// The fields of a message's `native` to write in `format`, as
-/// [`kept_fields`] says, a cache marker dropped by another format, the
-/// [`INERT`] ones written as they came by their own.
-pub(crate) fn message_fields(
-    format: &str,
-    native: &Option<NativeFields>,
-    what: impl FnOnce(&str) -> String,
-) -> Result<Map<String, Value>, Fault> {
-    let mut fields = kept_fields(format, native, what, Keep::CACHE_MARKER)?;
-    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
-        fields.extend(inert);
-    }
-    Ok(fields)
+/// Says what of `from`'s, by name alone, a request in `format` goes without.
+fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a str>) {
+    let what: Vec<&str> = what.into_iter().collect();
+    eprintln!("warning: a request in {format} drops {from}'s {what:?}");
 }
 
-/// Write the fields of `native` into `v` as [`kept_fields`] says.
-pub(crate) fn encode_native(
-    format: &str,
-    native: &Option<NativeFields>,
-    v: &mut Map<String, Value>,
-    what: impl FnOnce(&str) -> String,
-    keep: Keep,
-) -> Result<(), Fault> {
-    v.extend(kept_fields(format, native, what, keep)?);
-    Ok(())
+/// Whether `format` writes `part`: another format's shape it cannot.
+fn own_part(format: &str, part: &mut Content) -> bool {
+    if let Content::ToolResult { content, .. } = part {
+        content.retain_mut(|c| own_part(format, c));
+    }
+    match part {
+        Content::Native(n) if *n.format != *format => {
+            warn_dropped(format, &n.format, ["part"]);
+            false
+        }
+        _ => true,
+    }
+}
+
+/// Whether a part, or one in a tool result, is in another format's shape.
+fn holds_foreign(format: &str, part: &Content) -> bool {
+    match part {
+        Content::Native(n) => *n.format != *format,
+        Content::ToolResult { content, .. } => content.iter().any(|c| holds_foreign(format, c)),
+        _ => false,
+    }
+}
+
+/// `chat` without the parts in another format's shape and the messages in
+/// another format's role, each dropped with a warning.
+pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
+    let foreign_role =
+        |m: &Message| matches!(&m.role, Role::Native { format: f, .. } if **f != *format);
+    let holds = |m: &Message| foreign_role(m) || m.content.iter().any(|c| holds_foreign(format, c));
+    if !chat.messages.iter().any(holds) {
+        return Cow::Borrowed(chat);
+    }
+    let mut chat = chat.clone();
+    chat.messages.retain_mut(|m| {
+        if let Role::Native {
+            format: from, name, ..
+        } = &m.role
+            && foreign_role(m)
+        {
+            warn_dropped(format, from, [name.as_str()]);
+            return false;
+        }
+        let said = !m.content.is_empty();
+        m.content.retain_mut(|c| own_part(format, c));
+        !said || !m.content.is_empty()
+    });
+    Cow::Owned(chat)
 }
 
 /// `fields` as the native of a value decoded by `format`: none if empty.
@@ -288,7 +280,7 @@ pub(crate) fn shows(reply: &Output) -> bool {
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
-        [Content::Text { text, native, .. }] if kept_text_fields(C::NAME, native)?.is_empty() => {
+        [Content::Text { text, native, .. }] if kept_fields(C::NAME, native).is_empty() => {
             text.as_str().into()
         }
         parts => parts
@@ -308,16 +300,6 @@ pub(crate) fn decode_content<C: Schema>(v: &Value) -> Vec<Content> {
     }
 }
 
-/// The fields of a text part's `native` to write in `format`: a cache marker
-/// is dropped by another format, any other field refused.
-fn kept_text_fields(
-    format: &str,
-    native: &Option<NativeFields>,
-) -> Result<Map<String, Value>, Fault> {
-    let what = |key: &str| format!("a text part's '{key}'");
-    kept_fields(format, native, what, Keep::CACHE_MARKER)
-}
-
 /// A part as format `C` has it: text, a part in that format only, or what
 /// the format writes of the kind's ([`Schema::encode_part`]).
 fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
@@ -326,14 +308,11 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
             let mut part = Map::new();
             part.insert("type".into(), "text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(kept_text_fields(C::NAME, native)?);
+            part.extend(kept_fields(C::NAME, native));
             Ok(part.into())
         }
         Content::Native(NativeValue { format, value, .. }) if **format == *C::NAME => {
             Ok(Value::clone(value))
-        }
-        Content::Native(NativeValue { format, .. }) => {
-            Err(untranslatable(&format!("a part in {format}'s shape")))
         }
         other => C::encode_part(other),
     }
@@ -391,8 +370,7 @@ pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Res
     let mut v = Map::new();
     v.insert("role".into(), role_of(C::NAME, m, roles)?);
     v.insert("content".into(), encode_content::<C>(&m.content)?);
-    let fields = |_: &str| "messages with fields the kind has no place for".to_owned();
-    v.extend(message_fields(C::NAME, &m.native, fields)?);
+    v.extend(kept_fields(C::NAME, &m.native));
     Ok(v.into())
 }
 
@@ -460,66 +438,35 @@ pub(crate) fn each_tool(
     (v.is_null() || v.is_array()).then_some(out)
 }
 
-/// A web search of `format`, `fields` its native, those named `hints` set
-/// aside, as they only hint and another format drops them.
-pub(crate) fn read_search(
-    format: &str,
-    mut fields: Map<String, Value>,
-    hints: &[&str],
-) -> ProviderTool {
-    let inert: Map<String, Value> = hints
-        .iter()
-        .filter_map(|h| Some(((*h).into(), fields.shift_remove(*h)?)))
-        .collect();
-    fields.insert(INERT.into(), inert.into());
+/// A web search of `format`, `fields` its native.
+pub(crate) fn read_search(format: &str, fields: Map<String, Value>) -> ProviderTool {
     ProviderTool::WebSearch {
         native: native_fields(format, fields),
     }
 }
 
 /// The fields of a provider tool to write in `format`: a web search's own,
-/// its hints among them; another format's that bound it are refused.
+/// its hints among them.
 pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
     let ProviderTool::WebSearch { native } = tool else {
         return Err(untranslatable(
             "a provider tool this format has no form for",
         ));
     };
-    let what = |k: &str| format!("a web search's '{k}'");
-    let mut fields = kept_fields(format, native, what, Keep::CACHE_MARKER)?;
-    if let Some(Value::Object(inert)) = fields.shift_remove(INERT) {
-        fields.extend(inert);
-    }
-    Ok(fields)
+    Ok(kept_fields(format, native))
 }
 
-/// A tool's `strict`, which OpenAI's formats say the same way, out of its
-/// `native`; one that is no boolean stays there.
-pub(crate) fn take_strict(
-    mut native: Option<NativeFields>,
-) -> (Option<bool>, Option<NativeFields>) {
-    let Some(fields) = native.as_mut().map(|n| &mut n.fields) else {
-        return (None, None);
+/// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
+/// out of its `native`; one that is no boolean stays there.
+pub(crate) fn take_strict(tool: &mut Tool) {
+    let Some(fields) = tool.native.as_mut().map(|n| &mut n.fields) else {
+        return;
     };
-    let strict = fields.get("strict").and_then(Value::as_bool);
-    if strict.is_some() {
+    if let Some(strict) = fields.get("strict").and_then(Value::as_bool) {
         fields.shift_remove("strict");
+        tool.strict = Some(strict);
     }
-    (strict, native.filter(|n| !n.is_empty()))
-}
-
-/// Refuses a tool whose arguments must match its schema, in a format that
-/// cannot promise it. Not asking for it says nothing, so needs no place.
-pub(crate) fn refuse_strict(tool: &Tool) -> Result<(), Fault> {
-    match tool.strict {
-        Some(true) => Err(untranslatable(&tool_field("strict"))),
-        _ => Ok(()),
-    }
-}
-
-/// How a refusal names a tool's field `key`.
-pub(crate) fn tool_field(key: &str) -> String {
-    format!("a tool's '{key}'")
+    tool.native.take_if(|n| n.is_empty());
 }
 
 /// Turns a provider's running usage totals into increments.

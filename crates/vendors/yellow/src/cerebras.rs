@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use respan_gateway_conversation::{Block, Delta, Input, Output};
+use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_conversation_http::{INERT, Schema};
 use respan_gateway_core::{Filter, Result};
 use serde_json::{Map, Value};
 
@@ -41,27 +41,18 @@ impl Dialect for Cerebras {
 }
 
 /// Each assistant message's reasoning as its `reasoning`, as Cerebras
-/// takes it back: the kind's, and a client's own `reasoning_content`, which
-/// the format keeps [`INERT`].
+/// takes it back: the kind's, and a client's own `reasoning_content`.
 fn write_reasoning(input: &mut Input) -> Result<()> {
     chat::write_reasoning(input)?;
     for message in &mut input.messages {
         let Some(fields) = message.native.as_mut().map(|n| &mut n.fields) else {
             continue;
         };
-        rename_reasoning(fields);
-        if let Some(Value::Object(inert)) = fields.get_mut(INERT) {
-            rename_reasoning(inert);
+        if let Some(text) = fields.shift_remove("reasoning_content") {
+            fields.insert("reasoning".into(), text);
         }
     }
     Ok(())
-}
-
-/// `reasoning_content` of `fields` as `reasoning`.
-fn rename_reasoning(fields: &mut Map<String, Value>) {
-    if let Some(text) = fields.shift_remove("reasoning_content") {
-        fields.insert("reasoning".into(), text);
-    }
 }
 
 /// Reads a response's `reasoning` as reasoning blocks of its own numbers, counting down from the last, which the format never gives: one

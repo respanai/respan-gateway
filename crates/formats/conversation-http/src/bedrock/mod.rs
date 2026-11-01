@@ -195,9 +195,8 @@ impl Schema for BedrockConverse {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = crate::schema::Keep::default();
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        let mut native = crate::schema::kept_fields(BEDROCK, &chat.native, in_the_request, keep)?;
+        let chat = &*crate::schema::own_shapes(chat, BEDROCK);
+        let mut native = crate::schema::kept_fields(BEDROCK, &chat.native);
         let mut v = self.encode_json(chat)?;
         // The model's own fields beside the reasoning written from the kind.
         let fields = "additionalModelRequestFields";

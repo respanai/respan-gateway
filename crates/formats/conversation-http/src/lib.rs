@@ -17,9 +17,7 @@
 
 pub mod fields;
 mod schema;
-pub use schema::{
-    Asked, Framing, INERT, Schema, StreamResponse, merge_details, read_provider_error,
-};
+pub use schema::{Asked, Framing, Schema, StreamResponse, merge_details, read_provider_error};
 
 pub mod anthropic;
 pub mod bedrock;
