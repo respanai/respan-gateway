@@ -11,7 +11,9 @@
 //! function call outputs as the results of a user message. Consecutive items
 //! of an assistant are one assistant message (`request` says how an item's own
 //! fields are kept). Function
-//! tools, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`,
+//! tools (one of a `namespace` named `{namespace}__{name}`, unless another
+//! tool has that name, and its calls so), `tool_choice`,
+//! `parallel_tool_calls`, `max_output_tokens`,
 //! `temperature`, `top_p`, `user`, `text.format` and `reasoning` (its `effort`,
 //! and a `summary` of `auto`) are the kind's.
 //!
@@ -64,7 +66,8 @@
 //! part, delta, `done` events, and the terminal event with the response
 //! whole), one item at a time, with ids and indexes made when the events
 //! have none. A whole body is the response, its `output` the blocks in the
-//! order they opened.
+//! order they opened. A call of a function of a `namespace` in the client's
+//! request is written by its own name, with its `namespace`.
 //!
 //! Not carried: log probabilities, which are written empty.
 
@@ -82,6 +85,8 @@ use crate::schema::{
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http;
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
@@ -97,6 +102,9 @@ const ANNOTATION: &str = "annotation";
 const USAGE_FIELDS: &str = "usage_fields";
 /// The type of the native that carries the response's fields that changed.
 const RESPONSE_FIELDS: &str = "response_fields";
+/// What joins a namespace's name and its tool's in the name the kind has for
+/// the tool.
+const JOIN: &str = "__";
 
 /// OpenAI Responses, `openai-responses`: a `POST` to any path ending in
 /// `/responses`. The provider's base URL includes the version, such as
@@ -278,6 +286,17 @@ impl Schema for OpenAiResponses {
 
     fn stream_encoder(&self, _asked: Asked) -> Box<dyn Encoder<Output>> {
         Box::new(encode::Events::default())
+    }
+
+    /// A call of a function tool of a namespace in the client's request is
+    /// written with its namespace.
+    fn response_encoder(
+        &self,
+        head: &mut http::response::Parts,
+        request: &http::Request<Bytes>,
+    ) -> Box<dyn Encoder<Output>> {
+        let encoder = crate::schema::response_encoder(*self, head, request);
+        encode::Namespaced::wrap(encoder, request.body())
     }
 
     fn error_body(fault: &Fault) -> Value {

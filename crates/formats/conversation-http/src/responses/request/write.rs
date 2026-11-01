@@ -1,6 +1,6 @@
 //! Writing a conversation as a Responses request's input items.
 
-use super::super::RESPONSES;
+use super::super::{JOIN, RESPONSES};
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -258,12 +258,15 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                     true => "{}",
                     false => arguments.as_str(),
                 };
+                let fields = native.fields_for(RESPONSES);
+                let namespace = fields.get("namespace").and_then(Value::as_str);
+                let own = namespace.and_then(|n| name.strip_prefix(n)?.strip_prefix(JOIN));
                 let mut v = Map::new();
                 v.insert("type".into(), "function_call".into());
                 v.insert("call_id".into(), id.as_str().into());
-                v.insert("name".into(), name.as_str().into());
+                v.insert("name".into(), own.unwrap_or(name.as_str()).into());
                 v.insert("arguments".into(), arguments.into());
-                v.extend(native.fields_for(RESPONSES));
+                v.extend(fields);
                 items.push(v.into());
             }
             // Reasoning is only valid with the id of the item it was.

@@ -1,6 +1,6 @@
 //! Reading a Responses request's input items as messages.
 
-use super::super::RESPONSES;
+use super::super::{JOIN, RESPONSES};
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::schema::{NativeFieldsExt, native_fields, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
@@ -161,6 +161,10 @@ fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
 
 fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let (id, name) = (item["call_id"].as_str()?, item["name"].as_str()?);
+    let name = match item["namespace"].as_str() {
+        Some(namespace) => format!("{namespace}{JOIN}{name}"),
+        None => name.to_owned(),
+    };
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];

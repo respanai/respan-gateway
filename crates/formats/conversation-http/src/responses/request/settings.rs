@@ -1,7 +1,7 @@
 //! The rest of a Responses request: tools and choice, text format, parts and
 //! reasoning.
 
-use super::super::RESPONSES;
+use super::super::{JOIN, RESPONSES};
 use super::{read::read_media, write::write_media};
 use crate::schema::{
     NativeFieldsExt, decode_tools, each_tool, effort_name, native_fields, only, own_native,
@@ -16,10 +16,18 @@ use serde_json::{Map, Value, json};
 
 // -------------------------------------------------------------------- tools
 
-/// Function tools, the choice and whether calls may be parallel, as the
-/// kind's.
+/// Function tools, those of a namespace among them, the choice and whether
+/// calls may be parallel, as the kind's.
 pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], function_tool, web_search);
+    let mut tools = each_tool(&v["tools"], function_tool, web_search);
+    if let Some((read, ..)) = &mut tools {
+        for spaced in spaced(&v["tools"]) {
+            if let Some(mut tool) = function_tool(spaced.tool) {
+                tool.name = spaced.name;
+                read.push(tool);
+            }
+        }
+    }
     let choice = match &v["tool_choice"] {
         Value::Null => Some(None),
         choice => read_choice(choice).map(Some),
@@ -30,6 +38,53 @@ pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
     decode_tools(chat, tools, choice, parallel, keys);
+}
+
+/// A function tool of a namespace, by the name the kind has for it.
+struct Spaced<'a> {
+    name: String,
+    namespace: &'a str,
+    tool: &'a Value,
+}
+
+/// The function tools of the namespaces in `tools` the kind can name: of two
+/// whose names join to one, that of the longer namespace, and none whose
+/// joined name another tool has.
+fn spaced(tools: &Value) -> Vec<Spaced<'_>> {
+    let tools = tools.as_array().map_or(&[][..], Vec::as_slice);
+    let mut out: Vec<Spaced> = Vec::new();
+    for group in tools.iter().filter(|t| t["type"] == "namespace") {
+        let Some(namespace) = group["name"].as_str() else {
+            continue;
+        };
+        for tool in group["tools"].as_array().map_or(&[][..], Vec::as_slice) {
+            let Some(own) = tool["name"].as_str().filter(|_| tool["type"] == "function") else {
+                continue;
+            };
+            let name = format!("{namespace}{JOIN}{own}");
+            if tools.iter().any(|t| t["name"] == name.as_str()) {
+                continue;
+            }
+            let spaced = Spaced {
+                name,
+                namespace,
+                tool,
+            };
+            match out.iter_mut().find(|s| s.name == spaced.name) {
+                Some(had) if had.namespace.len() < namespace.len() => *had = spaced,
+                Some(_) => {}
+                None => out.push(spaced),
+            }
+        }
+    }
+    out
+}
+
+/// The namespace and own name of the function tool of a namespace in
+/// `tools` that the kind names `name`, if there is one.
+pub(in crate::responses) fn split<'a>(tools: &'a Value, name: &str) -> Option<(&'a str, &'a str)> {
+    let spaced = spaced(tools).into_iter().find(|s| s.name == name)?;
+    Some((spaced.namespace, spaced.tool["name"].as_str()?))
 }
 
 fn function_tool(tool: &Value) -> Option<Tool> {
