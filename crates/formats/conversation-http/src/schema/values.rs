@@ -514,6 +514,30 @@ pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<Stri
     Ok(fields)
 }
 
+/// A tool's `strict`, which OpenAI's formats say the same way, out of its
+/// `native`; one that is no boolean stays there.
+pub(crate) fn take_strict(
+    mut native: Option<NativeFields>,
+) -> (Option<bool>, Option<NativeFields>) {
+    let Some(fields) = native.as_mut().map(|n| &mut n.fields) else {
+        return (None, None);
+    };
+    let strict = fields.get("strict").and_then(Value::as_bool);
+    if strict.is_some() {
+        fields.shift_remove("strict");
+    }
+    (strict, native.filter(|n| !n.is_empty()))
+}
+
+/// Refuses a tool whose arguments must match its schema, in a format that
+/// cannot promise it. Not asking for it says nothing, so needs no place.
+pub(crate) fn refuse_strict(tool: &Tool) -> Result<(), Fault> {
+    match tool.strict {
+        Some(true) => Err(untranslatable(&tool_field("strict"))),
+        _ => Ok(()),
+    }
+}
+
 /// How a refusal names a tool's field `key`.
 pub(crate) fn tool_field(key: &str) -> String {
     format!("a tool's '{key}'")
