@@ -988,3 +988,13 @@ fn every_named_effort_is_the_kinds_and_written_as_it_came() {
         );
     }
 }
+
+#[test]
+fn top_k_is_dropped_with_no_field_for_it() {
+    let mut chat = Input::default();
+    chat.options.top_k = Some(64);
+    let sent = OpenAiResponses
+        .encode_request(&chat)
+        .expect("dropped, not refused");
+    assert!(sent.get("top_k").is_none());
+}

@@ -1837,3 +1837,25 @@ fn a_reply_sent_back_as_history_crosses_to_another_format() {
     );
     assert_eq!(back.map(|m| m.get("refusal").is_none()), Some(true));
 }
+
+#[test]
+fn top_k_is_dropped_with_no_field_for_it() {
+    let mut chat = Input::default();
+    chat.options.top_k = Some(64);
+    let sent = OpenAiChat
+        .encode_request(&chat)
+        .expect("dropped, not refused");
+    assert!(sent.get("top_k").is_none());
+}
+
+#[test]
+fn a_native_top_k_is_written() {
+    let mut chat = Input::default();
+    let fields = json!({ "top_k": 64 })
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    chat.native = Some(NativeFields::new(OPENAI, fields));
+    let sent = OpenAiChat.encode_request(&chat).expect("written");
+    assert_eq!(sent["top_k"], json!(64));
+}

@@ -55,6 +55,13 @@ fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a
     eprintln!("warning: a request in {format} drops {from}'s {what:?}");
 }
 
+/// Says that a request in `format` goes without `what`, an option the
+/// format has no field for, rather than refusing it: a coding agent sets
+/// its sampler's knobs by default, not because an answer depends on them.
+pub(crate) fn warn_dropped_option(format: &str, what: &str) {
+    eprintln!("warning: a request in {format} drops {what}, which it has no field for");
+}
+
 /// Whether `format` writes `part`: another format's shape it cannot.
 fn own_part(format: &str, part: &mut Content) -> bool {
     if let Content::ToolResult { content, .. } = part {

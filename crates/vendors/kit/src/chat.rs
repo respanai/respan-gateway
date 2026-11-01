@@ -19,6 +19,24 @@ pub fn write_reasoning(input: &mut Input) -> Result<()> {
     Ok(())
 }
 
+/// Sampling from the `top_k` likeliest tokens, as a Chat Completions
+/// request's native `top_k` field, which the spec has none for: a filter of
+/// a call's input ([`Dialect::inputs`]) for the servers that take the field
+/// anyway, as vLLM, llama.cpp and Ollama do.
+///
+/// [`Dialect::inputs`]: crate::Dialect::inputs
+pub fn write_top_k(input: &mut Input) -> Result<()> {
+    let Some(top_k) = input.options.top_k.take() else {
+        return Ok(());
+    };
+    input
+        .native
+        .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()))
+        .fields
+        .insert("top_k".into(), top_k.into());
+    Ok(())
+}
+
 /// Reasoning but signed reasoning, which the format refuses.
 fn plain(p: &Content) -> bool {
     matches!(p, Content::Reasoning { native, .. } if native.as_ref().is_none_or(NativeFields::is_empty))
@@ -57,4 +75,28 @@ fn write_message_reasoning(message: &mut Message) {
     native
         .fields
         .insert("reasoning_content".into(), text.into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn top_k_becomes_a_native_field() {
+        let mut input = Input::default();
+        input.options.top_k = Some(64);
+        write_top_k(&mut input).expect("written");
+        assert_eq!(input.options.top_k, None);
+        let native = input.native.as_ref().expect("native");
+        assert_eq!(&*native.format, OpenAiChat::NAME);
+        assert_eq!(native.fields["top_k"], json!(64));
+    }
+
+    #[test]
+    fn no_top_k_stays_native_free() {
+        let mut input = Input::default();
+        write_top_k(&mut input).expect("nothing to do");
+        assert!(input.native.is_none());
+    }
 }

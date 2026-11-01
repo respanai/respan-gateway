@@ -3,11 +3,14 @@
 //! and not), tool calls, embeddings (float and base64) and model listing,
 //! from both the OpenAI and the Anthropic client shapes.
 
+use respan_gateway_conversation::{Input, Output};
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_core::Filter;
 use respan_gateway_media_http::openai::OpenAiEmbeddings;
 
 use respan_gateway_vendor_kit::{
-    Body, BoxFuture, Model, Models, Upstream, Vendor, VendorProvider, built_wrong, http, json,
+    Body, BoxFuture, Dialect, Dialected, Model, Models, Upstream, Vendor, VendorProvider,
+    built_wrong, chat, http, json,
 };
 
 /// Where its API is.
@@ -18,12 +21,25 @@ pub const VENDOR: Vendor = Vendor {
     id: "ollama",
     key_env: &[],
     formats: &[
-        (&OpenAiChat, Some(BASE_URL)),
+        (&Dialected::new(OpenAiChat, OllamaChat), Some(BASE_URL)),
         (&OpenAiEmbeddings, Some(BASE_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
 };
+
+/// Ollama's Chat Completions: it takes a `top_k` the spec has no field for.
+#[derive(Debug, Clone, Copy)]
+pub struct OllamaChat;
+
+impl Dialect for OllamaChat {
+    type Input = Input;
+    type Output = Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
+        Some(Box::new(chat::write_top_k))
+    }
+}
 
 /// Its models, of its native `GET /api/tags`: each the kind its
 /// `capabilities` say, `embedding` or chat. Ollama's OpenAI-style

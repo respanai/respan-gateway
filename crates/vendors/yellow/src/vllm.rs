@@ -16,7 +16,7 @@ pub const VENDOR: Vendor = Vendor {
 };
 
 /// vLLM's Chat Completions: it takes reasoning back as
-/// `reasoning_content`.
+/// `reasoning_content`, and a `top_k` the spec has no field for.
 #[derive(Debug, Clone, Copy)]
 pub struct Vllm;
 
@@ -25,6 +25,9 @@ impl Dialect for Vllm {
     type Output = Output;
 
     fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
-        Some(Box::new(chat::write_reasoning))
+        Some(Box::new(|input: &mut Input| {
+            chat::write_reasoning(input)?;
+            chat::write_top_k(input)
+        }))
     }
 }
