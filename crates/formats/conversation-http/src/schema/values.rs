@@ -374,21 +374,26 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
     role.ok_or_else(|| untranslatable("a role this format has no place for"))
 }
 
+/// The tools of a request: the kind's, the provider's, and whether that is
+/// all of them.
+type ReadTools = (Vec<Tool>, Vec<ProviderTool>, bool);
+
 /// Set `chat`'s tools, tool choice and whether calls may be parallel, each
 /// that a format's request says in a form the kind has, taking its field,
 /// named in `keys` (none for a format that says it inside another), out of
 /// `chat.native`.
 pub(crate) fn decode_tools(
     chat: &mut Input,
-    tools: Option<(Vec<Tool>, Vec<ProviderTool>)>,
+    tools: Option<ReadTools>,
     choice: Option<Option<ToolChoice>>,
     parallel: Option<Option<bool>>,
     keys: [&str; 3],
 ) {
-    if let Some((tools, provided)) = tools {
+    if let Some((tools, provided, all)) = tools {
         chat.tools = tools;
         chat.provider_tools = provided;
-        if let Some(native) = &mut chat.native {
+        // Else its format writes the list whole, another what the kind can say.
+        if all && let Some(native) = &mut chat.native {
             native.fields.shift_remove(keys[0]);
         }
     }
@@ -408,18 +413,19 @@ pub(crate) fn decode_tools(
     }
 }
 
-/// The tools of `v`, each by `tool` or else by `provided`, if the kind can
-/// say each.
+/// The tools of `v` the kind can say, each by `tool` or else by `provided`,
+/// and whether that is all of them.
 pub(crate) fn each_tool(
     v: &Value,
     tool: fn(&Value) -> Option<Tool>,
     provided: fn(&Value) -> Option<ProviderTool>,
-) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
-    let mut out = (Vec::new(), Vec::new());
+) -> Option<ReadTools> {
+    let mut out = (Vec::new(), Vec::new(), true);
     for t in v.as_array().map_or(&[][..], Vec::as_slice) {
-        match tool(t) {
-            Some(t) => out.0.push(t),
-            None => out.1.push(provided(t)?),
+        match (tool(t), provided(t)) {
+            (Some(t), _) => out.0.push(t),
+            (None, Some(p)) => out.1.push(p),
+            (None, None) => out.2 = false,
         }
     }
     (v.is_null() || v.is_array()).then_some(out)
