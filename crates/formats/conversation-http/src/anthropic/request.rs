@@ -208,10 +208,8 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     Ok(v)
 }
 
-/// An Anthropic `tool_use` or `tool_result` block as the kind's part, if it
-/// can say all of it. A field it has no place for, other than a cache marker,
-/// on the block or on a text block of a result, keeps it the format's own:
-/// translating it is refused, not dropped.
+/// An Anthropic `tool_use` or `tool_result` block as the kind's part, its
+/// fields the kind has no place for kept as the part's own.
 fn tool_part(block: &Value) -> Option<Content> {
     match block["type"].as_str()? {
         "tool_use" => {
@@ -230,12 +228,6 @@ fn tool_part(block: &Value) -> Option<Content> {
                 Value::Null => false,
                 is_error => is_error.as_bool()?,
             };
-            let blocks = block["content"].as_array().into_iter().flatten();
-            let marked =
-                |b: &Value| b["type"] == "text" && !only(b, &["type", "text", "cache_control"]);
-            if blocks.into_iter().any(marked) {
-                return None;
-            }
             let content = decode_content::<AnthropicMessages>(&block["content"]);
             let id = block["tool_use_id"].as_str()?;
             let mut part = Content::tool_result(id, content, is_error);

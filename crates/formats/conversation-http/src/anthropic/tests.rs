@@ -719,6 +719,23 @@ fn a_text_part_that_says_more_keeps_it_in_its_extra_and_is_still_plain() {
 }
 
 #[test]
+fn a_tool_result_with_cited_text_is_a_result_in_any_format() {
+    let result = json!({ "type": "tool_result", "tool_use_id": "t1", "content": [
+        { "type": "text", "text": "hi", "citations": [{ "type": "c" }] }] });
+    let chat = AnthropicMessages.decode_json(&json!({ "model": "m", "max_tokens": 1,
+        "messages": [{ "role": "user", "content": [result] }] }));
+    let again = AnthropicMessages.encode_request(&chat).expect("written");
+    assert_eq!(again["messages"][0]["content"][0], result);
+    let other = crate::openai::OpenAiChat
+        .encode_request(&chat)
+        .expect("translated");
+    assert_eq!(
+        other["messages"][0],
+        json!({ "role": "tool", "tool_call_id": "t1", "content": "hi" })
+    );
+}
+
+#[test]
 fn a_system_prompt_of_several_blocks_is_edited_block_by_block() {
     let body = json!({ "model": "m", "max_tokens": 5, "system": [
         { "type": "text", "text": "one" }, { "type": "text", "text": "two sk-1" }],
