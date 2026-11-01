@@ -19,16 +19,14 @@
 //! native to its block, is the only way it reaches a later call (the
 //! gateway's `plugins.responses` puts it back).
 //!
-//! What the kind has no form for stays native to this format and is refused
+//! What the kind has no form for stays native to this format and is dropped
 //! in translation: `previous_response_id` and `conversation` (another
 //! provider cannot resolve them; the gateway's `plugins.responses` resolves
 //! the first itself), `include`, `truncation`,
 //! the rest of `reasoning` (`generate_summary`, a summary but `auto`), `metadata`, built-in tools (web search,
 //! file search, computer use, code interpreter, MCP) and the items they
 //! make, and the rest of what the request says beyond the spec's defaults.
-//! Item ids and statuses, and the default `strict` of a function tool, are
-//! inert: any other format drops them. A request with stop sequences cannot be
-//! written, as Responses has none.
+//! A request with stop sequences cannot be written, as Responses has none.
 //!
 //! # Responses as events
 //!
@@ -54,11 +52,10 @@
 //! - The item's fields the kind has no place for, such as its `id`, are its
 //!   [`Output::block_fields`] before its block opens, and an annotation one
 //!   native `{"type": "annotation", ..}`; the usage object's other fields
-//!   are `{"type": "usage_fields", ..}`. Another format drops the block's
-//!   fields and the usage's, and refuses annotations.
+//!   are `{"type": "usage_fields", ..}`. Another format drops them all.
 //! - An item the kind has no form for (a built-in tool's call, a refusal)
 //!   is a native of each of its events as they came, or, from a whole body,
-//!   one `response.output_item.done`; any other format refuses it.
+//!   one `response.output_item.done`; any other format drops it.
 //!
 //! Encoders do the reverse. A stream is written as the documented sequence
 //! (`response.created`, `response.in_progress`, each item's `added`, content

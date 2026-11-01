@@ -25,8 +25,7 @@ events.
 
 The helpers the formats share (messages and parts, the `native` fields a
 value keeps for its own format, usage totals and the faults of what cannot be
-written) are private to this crate. Each format names its own inert events
-(`Schema::is_inert`): those another format drops in translation. How a provider's error body reads,
+written) are private to this crate. How a provider's error body reads,
 leniently, as compatible servers send it, is public, `read_provider_error`,
 for the HTTP formats of other JSON kinds, such as the media kinds'.
 

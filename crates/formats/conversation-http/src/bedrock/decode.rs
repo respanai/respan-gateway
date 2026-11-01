@@ -102,8 +102,8 @@ impl ConverseDecoder {
         out.push(Output::native(self.name.clone(), v));
     }
 
-    /// The fields of a response beside its content, as an inert event that
-    /// another format drops.
+    /// The fields of a response beside its content, as an event that another
+    /// format drops.
     fn fields(&self, kind: &str, v: &Value, known: &[&str], out: &mut Vec<Output>) {
         let rest = unsupported_fields(v, known, &[]);
         if !rest.is_empty() {

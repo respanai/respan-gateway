@@ -208,7 +208,7 @@ fn is_empty(m: &Message) -> bool {
     m.content.iter().all(empty) && unsaid(m)
 }
 
-/// Whether a message's fields are none Anthropic writes or refuses.
+/// Whether a message's fields are none Anthropic writes.
 fn unsaid(m: &Message) -> bool {
     m.native.format() != Some(ANTHROPIC)
 }

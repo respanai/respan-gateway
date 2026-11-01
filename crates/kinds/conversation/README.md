@@ -47,7 +47,7 @@ native fields. Text-part native fields are allowed.
 What the kind has no form for stays as the format that decoded it has it, in optional
 `NativeFields` (a mandatory format ID and its fields) on an `Input`, `Message`, `Tool`
 or `Start`, or in a `Content::Native(NativeValue)` or `Output::Native(NativeValue)`; only that format writes
-it, and translating it is refused if it could change the answer.
+it, and another format drops it: what has meaning across formats belongs here.
 
 Input values are plain data: they keep nothing of the bytes they were
 decoded from, and compare by what they say. A request is always written
