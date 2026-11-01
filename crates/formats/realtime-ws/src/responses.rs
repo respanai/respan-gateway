@@ -15,7 +15,6 @@ pub(crate) const SPEC: Spec = Spec {
     protocol: None,
     binary_text: false,
     transcribes: false,
-    harmless: None,
 };
 
 /// OpenAI's Responses over WebSocket: a `GET` upgrade to a path ending in

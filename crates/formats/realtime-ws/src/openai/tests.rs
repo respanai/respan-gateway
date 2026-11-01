@@ -200,7 +200,7 @@ fn a_tools_schema_names_its_types_as_openai_takes_them() {
 }
 
 #[test]
-fn another_formats_input_is_dropped_where_it_cannot_change_the_answer() {
+fn another_formats_input_is_dropped() {
     let gemini = |v: Value| {
         Some(NativeFields::new(
             "gemini-live",
@@ -219,25 +219,14 @@ fn another_formats_input_is_dropped_where_it_cannot_change_the_answer() {
         json!({"realtimeInput": {"activityStart": {}}}),
     );
     assert_eq!(sent(&[start]).expect("written"), Vec::<Value>::new());
+    let video = Input::native("gemini-live", json!({"realtimeInput": {"video": {}}}));
+    assert_eq!(sent(&[video]).expect("written"), Vec::<Value>::new());
     let mut sampled = Session::default();
+    sampled.voice = Some("alloy".into());
     sampled.native = gemini(json!({"setup": {"generationConfig": {"temperature": 0.2}}}));
-    for (event, field) in [
-        (
-            Input::Session(sampled),
-            "`setup.generationConfig.temperature`",
-        ),
-        (
-            Input::native("gemini-live", json!({"realtimeInput": {"video": {}}})),
-            "`realtimeInput.video`",
-        ),
-    ] {
-        let refused = sent(&[event]).expect_err("refused");
-        assert!(refused.is(FaultKind::Client), "{refused}");
-        assert_eq!(
-            refused.message(),
-            format!("{field} cannot be translated to openai-realtime")
-        );
-    }
+    let written = sent(&[Input::Session(sampled)]).expect("written");
+    assert!(written[0].get("setup").is_none(), "{written:?}");
+    assert_eq!(written[0]["session"]["audio"]["output"]["voice"], "alloy");
 }
 
 #[test]

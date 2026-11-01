@@ -203,10 +203,7 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     };
     let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"role": role, "parts": parts});
-    merge(
-        &mut v,
-        own(NAME, &m.native, || refuse("another format's message"))?,
-    );
+    merge(&mut v, own(&m.native));
     Ok(v)
 }
 
@@ -224,11 +221,7 @@ fn answer(v: &Value) -> Option<Input> {
 /// A tool's answer as a function response: its output as the response if
 /// it is a JSON object, else the object `{"output": ..}`, and the `name` of
 /// the tool it answers if it does not say it.
-fn answer_json(
-    result: &ToolResult,
-    name: Option<&String>,
-    refuse: fn(&str) -> Fault,
-) -> Result<Value, Fault> {
+fn answer_json(result: &ToolResult, name: Option<&String>) -> Value {
     let response = match serde_json::from_str::<Value>(&result.output) {
         Ok(object @ Value::Object(_)) => object,
         _ => json!({"output": result.output}),
@@ -237,11 +230,8 @@ fn answer_json(
     if let (None, Some(name)) = (&result.native, name) {
         v["name"] = name.as_str().into();
     }
-    merge(
-        &mut v,
-        own(NAME, &result.native, || refuse("another format's answer"))?,
-    );
-    Ok(v)
+    merge(&mut v, own(&result.native));
+    v
 }
 
 /// What the client says that the next [`Input::Respond`] answers.
@@ -274,8 +264,6 @@ pub(super) struct Provider {
     answered: bool,
     /// Whether the user's activity is open, with manual turns.
     activity: bool,
-    /// Whether audio came since the user's last turn ended.
-    heard: bool,
     /// Its audio in PCM.
     convert: Convert,
 }
@@ -289,7 +277,6 @@ impl Provider {
             held: None,
             answered: false,
             activity: false,
-            heard: false,
             convert: Convert::default(),
         }
     }
@@ -307,7 +294,9 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let event = foreign::admit(NAME, event)?;
+        let Some(event) = foreign::admit(NAME, event) else {
+            return Ok(());
+        };
         let mut messages = Vec::new();
         self.encode(&event, &mut messages)?;
         for message in &messages {
@@ -363,10 +352,7 @@ impl Provider {
                 }
                 return Ok(());
             }
-            Input::Respond { native } if answered && self.held.is_none() => {
-                own(NAME, native, || refuse("another format's event"))?;
-                return Ok(());
-            }
+            Input::Respond { .. } if answered && self.held.is_none() => return Ok(()),
             Input::Respond { native } => (self.respond(native)?, native),
             _ => {
                 self.flush(out)?;
@@ -382,7 +368,6 @@ impl Provider {
                         if manual && !std::mem::replace(&mut self.activity, true) {
                             out.push(json!({"realtimeInput": {"activityStart": {}}}));
                         }
-                        self.heard = true;
                         let mime = format!("audio/pcm;rate={}", pcm.rate);
                         let blob = json!({"mimeType": mime, "data": json::base64(&data)});
                         (json!({"realtimeInput": {"audio": blob}}), native)
@@ -391,7 +376,7 @@ impl Provider {
                         return Err(refuse("a commit under the provider's voice detection"));
                     }
                     Input::Commit { native } => {
-                        (self.activity, self.heard, self.answered) = (false, false, true);
+                        (self.activity, self.answered) = (false, true);
                         (json!({"realtimeInput": {"activityEnd": {}}}), native)
                     }
                     Input::Cancel { native } if native.is_some() => {
@@ -406,17 +391,11 @@ impl Provider {
                         out.push(Value::clone(value));
                         return Ok(());
                     }
-                    Input::Native(native) => {
-                        return foreign::native_input(NAME, native, self.heard);
-                    }
                     _ => return Err(refuse("another format's event")),
                 }
             }
         };
-        merge(
-            &mut v,
-            own(NAME, native, || refuse("another format's event"))?,
-        );
+        merge(&mut v, own(native));
         out.push(v);
         Ok(())
     }
@@ -475,7 +454,7 @@ impl Provider {
         match self.held.take() {
             None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
             None => Err(refuse("a response to nothing the client said")),
-            Some(Held::Results(results)) => self.results(&results),
+            Some(Held::Results(results)) => Ok(self.results(&results)),
             Some(Held::Messages(messages)) if content => {
                 let mut v = messages_json(&messages, refuse)?;
                 v["clientContent"]["turnComplete"] = true.into();
@@ -490,14 +469,11 @@ impl Provider {
         }
     }
 
-    fn results(&self, results: &[ToolResult]) -> Result<Value, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+    fn results(&self, results: &[ToolResult]) -> Value {
         let calls = &self.shared.lock().calls;
-        let answers = results
-            .iter()
-            .map(|r| answer_json(r, calls.get(&r.id), refuse));
-        let answers = answers.collect::<Result<Vec<_>, _>>()?;
-        Ok(json!({"toolResponse": {"functionResponses": answers}}))
+        let answers = results.iter().map(|r| answer_json(r, calls.get(&r.id)));
+        let answers: Vec<Value> = answers.collect();
+        json!({"toolResponse": {"functionResponses": answers}})
     }
 
     /// Write what is held, which nothing answers: tools' answers; messages
@@ -506,7 +482,7 @@ impl Provider {
         match self.held.take() {
             None => {}
             Some(Held::Messages(_)) => return Err(untranslatable_input(NAME, UNANSWERED)),
-            Some(Held::Results(results)) => out.push(self.results(&results)?),
+            Some(Held::Results(results)) => out.push(self.results(&results)),
         }
         Ok(())
     }
@@ -591,7 +567,7 @@ fn messages_json(messages: &[Input], refuse: fn(&str) -> Fault) -> Result<Value,
     for event in messages {
         if let Input::Message { message, native } = event {
             turns.push(message_json(message, refuse)?);
-            if let Some(fields) = own(NAME, native, || refuse("another format's event"))? {
+            if let Some(fields) = own(native) {
                 kept.extend(fields.clone());
             }
         }

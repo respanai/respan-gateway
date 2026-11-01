@@ -274,7 +274,7 @@ impl Default for Client {
 
 impl Client {
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event)? else {
+        let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
         // A response's audio starts afresh: none the last one's resampler
@@ -442,10 +442,7 @@ impl Client {
                         "status_details": null, "output": response.output});
                     merge(&mut v["response"], made_up.as_object());
                 }
-                merge(
-                    &mut v,
-                    own(NAME, native, || refuse("another format's event"))?,
-                );
+                merge(&mut v, own(native));
                 for (path, counter) in USAGE {
                     let mut usage = self.usage.unwrap_or_default();
                     let n = *counter(&mut usage);
@@ -485,10 +482,7 @@ impl Client {
             }
             _ => return Err(refuse("another format's event")),
         };
-        merge(
-            &mut v,
-            own(NAME, native, || refuse("another format's event"))?,
-        );
+        merge(&mut v, own(native));
         out.push(v);
         Ok(())
     }
