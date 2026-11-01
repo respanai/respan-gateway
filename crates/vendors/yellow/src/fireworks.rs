@@ -6,6 +6,7 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::Fault;
 use respan_gateway_decision::{Input, Output};
 use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media_http::openai::OpenAiEmbeddings;
@@ -37,7 +38,7 @@ impl Dialect for Fireworks {
     type Input = Input;
     type Output = Output;
 
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+    fn request(&self, head: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
         set_path(head, "/systemone")?;
         Ok(None)
     }

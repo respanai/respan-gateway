@@ -11,6 +11,7 @@ use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_core::Fault;
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media_http::bedrock::BedrockEmbeddings;
@@ -51,7 +52,7 @@ impl Dialect for Messages {
         Some(KeyIn::Bearer)
     }
 
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+    fn request(&self, head: &mut RequestHead, _: Option<&Bytes>) -> Result<Option<Rewrite>, Fault> {
         set_path(head, MESSAGES_PATH)?;
         Ok(None)
     }
@@ -85,7 +86,7 @@ mod tests {
             .body(())
             .expect("a call");
         let mut head = call.into_parts().0;
-        Messages.request(&mut head).expect("a path");
+        Messages.request(&mut head, None).expect("a path");
         assert_eq!(head.uri.path(), MESSAGES_PATH);
     }
 
