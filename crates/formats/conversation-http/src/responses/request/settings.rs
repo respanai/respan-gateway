@@ -77,7 +77,7 @@ pub(in crate::responses) fn write_tools(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut tool = Map::new();
         tool.insert("type".into(), "function".into());
         tool.insert("name".into(), t.name.as_str().into());
@@ -89,9 +89,9 @@ pub(in crate::responses) fn write_tools(
             tool.insert("strict".into(), strict.into());
         }
         tool.extend(t.native.fields_for(RESPONSES));
-        Ok(Value::Object(tool))
+        Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     for provided in &chat.provider_tools {
         let mut search = Map::from_iter([("type".into(), "web_search".into())]);
         search.extend(write_search(RESPONSES, provided)?);

@@ -361,13 +361,12 @@ pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Res
     Ok(v.into())
 }
 
-/// The role to write: another format's roles are refused.
+/// The role to write, if this format has it.
 fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let role = match &m.role {
         Role::Native {
             format: f, name, ..
         } if **f == *format => Some(name.as_str()),
-        Role::Native { .. } => None,
         role => roles.name(role),
     };
     let role = role.map(Value::from);

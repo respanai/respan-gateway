@@ -266,7 +266,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
     if chat.options.parallel_tool_calls == Some(false) {
         return Err(untranslatable("one tool call at a time"));
     }
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut spec = Map::new();
         spec.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -280,7 +280,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         let mut fields = t.native.fields_for(BEDROCK);
         fields.shift_remove(CACHE_MARKER);
         spec.extend(fields);
-        Ok(json!({ "toolSpec": spec }))
+        json!({ "toolSpec": spec })
     };
     let choice = match &chat.options.tool_choice {
         None | Some(ToolChoice::Auto) => None,
@@ -291,7 +291,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
     };
     let mut tools: Vec<Value> = Vec::new();
     for t in &chat.tools {
-        tools.push(tool(t)?);
+        tools.push(tool(t));
         if cached(&t.native) {
             tools.push(cache_point());
         }
