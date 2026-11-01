@@ -244,3 +244,20 @@ fn a_strict_that_is_no_boolean_stays_native() {
     let back = OpenAiChat.encode_request(&chat).expect("a request");
     assert_eq!(back["tools"][0]["function"]["strict"], "yes");
 }
+
+#[test]
+fn a_tool_the_kind_cannot_say_costs_another_format_only_that_tool() {
+    let body = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }], "tools": [
+        { "type": "file_search", "vector_store_ids": ["vs_1"] },
+        { "type": "function", "name": "f", "parameters": { "type": "object" }, "strict": false },
+    ] });
+    let chat = OpenAiResponses.decode_json(&body);
+    let sent = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(sent["tools"].as_array().map(Vec::len), Some(1));
+    assert_eq!(sent["tools"][0]["name"], "f");
+    let back = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(
+        back["tools"], body["tools"],
+        "its own format keeps the list"
+    );
+}
