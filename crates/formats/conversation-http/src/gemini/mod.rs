@@ -85,7 +85,7 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
-    kept_fields, merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
+    merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
@@ -291,7 +291,7 @@ impl Schema for GeminiGenerate {
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let chat = &*crate::schema::own_shapes(chat, GEMINI);
-        let mut native = kept_fields(GEMINI, &chat.native);
+        let mut native = chat.native.fields_for(GEMINI);
         native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = self.encode_json(chat)?;
         v.extend(native);

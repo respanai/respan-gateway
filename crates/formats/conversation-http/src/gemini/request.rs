@@ -14,8 +14,8 @@ use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
-    NativeFieldsExt, arguments_object, effort_name, kept_fields, merge_fields, merge_missing,
-    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
+    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -262,7 +262,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
-        content.extend(kept_fields(GEMINI, &m.native));
+        content.extend(m.native.fields_for(GEMINI));
         let answers = !m.content.is_empty()
             && unsaid(m)
             && m.content
@@ -311,7 +311,7 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
 /// A part of the kind's as Gemini writes it; `names` has the calls made so
 /// far, by id, for the results that answer them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
-    let fields = |native: &Option<NativeFields>| kept_fields(GEMINI, native);
+    let fields = |native: &Option<NativeFields>| native.fields_for(GEMINI);
     match c {
         Content::Text { text, native, .. } => {
             let mut part = Map::new();
@@ -395,7 +395,7 @@ fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
         return Err(untranslatable("a display name on media content"));
     }
-    let native = kept_fields(GEMINI, &media.native);
+    let native = media.native.fields_for(GEMINI);
     let mut part = match &media.source {
         MediaSource::Url(uri) => {
             json!({ "fileData": { "mimeType": media.mime_type, "fileUri": uri } })
@@ -567,7 +567,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         if t.parameters.is_object() {
             d.insert("parametersJsonSchema".into(), t.parameters.clone());
         }
-        d.extend(kept_fields(GEMINI, &t.native));
+        d.extend(t.native.fields_for(GEMINI));
         declarations.push(Value::Object(d));
     }
     let mut tools = Vec::new();

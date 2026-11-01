@@ -5,8 +5,8 @@
 
 use crate::schema::{
     NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
-    kept_fields, merge_missing, native_fields, only, own_native, read_search, remainder, rest_of,
-    set, take_native, untranslatable, write_search,
+    merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
+    take_native, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -87,7 +87,7 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         tool.insert("input_schema".into(), schema);
-        tool.extend(kept_fields(ANTHROPIC, &t.native));
+        tool.extend(t.native.fields_for(ANTHROPIC));
         Ok(Value::Object(tool))
     };
     let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
@@ -138,7 +138,7 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Document(media) => write_media("document", media),
         Content::Reasoning { text, native } => {
             let mut v = json!({"type":"thinking", "thinking":text});
-            merge_missing(&mut v, kept_fields(ANTHROPIC, native));
+            merge_missing(&mut v, native.fields_for(ANTHROPIC));
             Ok(v)
         }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
@@ -193,7 +193,7 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
         return Err(untranslatable("a display name on image or audio content"));
     }
-    let native = kept_fields(ANTHROPIC, &media.native);
+    let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
         MediaSource::Url(url) => json!({"type":"url","url":url}),
         MediaSource::Bytes(bytes) => {
@@ -252,7 +252,7 @@ fn tool_part(block: &Value) -> Option<Content> {
 /// Write the fields of a tool part's `native` into its Anthropic `block`:
 /// another format's are dropped.
 fn block_fields(block: &mut Value, native: &Option<NativeFields>) -> Result<(), Fault> {
-    let fields = kept_fields(ANTHROPIC, native);
+    let fields = native.fields_for(ANTHROPIC);
     if let Some(block) = block.as_object_mut() {
         block.extend(fields);
     }

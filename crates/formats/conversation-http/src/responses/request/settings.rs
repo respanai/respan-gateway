@@ -4,8 +4,8 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, kept_fields, native_fields, only,
-    own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
+    NativeFieldsExt, decode_tools, each_tool, effort_name, native_fields, only, own_native,
+    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
     write_search,
 };
 use respan_gateway_conversation::{
@@ -88,7 +88,7 @@ pub(in crate::responses) fn write_tools(
         if let Some(strict) = t.strict {
             tool.insert("strict".into(), strict.into());
         }
-        tool.extend(kept_fields(RESPONSES, &t.native));
+        tool.extend(t.native.fields_for(RESPONSES));
         Ok(Value::Object(tool))
     };
     let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;

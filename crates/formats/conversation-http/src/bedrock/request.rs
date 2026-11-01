@@ -16,7 +16,7 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    NativeFieldsExt, arguments_object, kept_fields, reasoning_of, set, stop_json, untranslatable,
+    NativeFieldsExt, arguments_object, reasoning_of, set, stop_json, untranslatable,
     unwritable_content,
 };
 
@@ -277,7 +277,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         spec.insert("inputSchema".into(), json!({ "json": schema }));
-        let mut fields = kept_fields(BEDROCK, &t.native);
+        let mut fields = t.native.fields_for(BEDROCK);
         fields.shift_remove(CACHE_MARKER);
         spec.extend(fields);
         Ok(json!({ "toolSpec": spec }))

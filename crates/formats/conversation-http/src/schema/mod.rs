@@ -34,9 +34,9 @@ pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::{
     Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
-    fits, kept_fields, merge_fields, merge_into, merge_missing, native_fields, only, own_fields,
-    own_shapes, read_search, remainder, set, source_url, stop_json, take_strict, tidy,
-    unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
+    fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
+    read_search, remainder, set, source_url, stop_json, take_strict, tidy, unsupported_fields,
+    untranslatable, unwritable_content, usage_extra, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -184,7 +184,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// place for are written only if they are this format's.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let chat = &*own_shapes(chat, Self::NAME);
-        let mut native = kept_fields(Self::NAME, &chat.native);
+        let mut native = chat.native.fields_for(Self::NAME);
         native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));

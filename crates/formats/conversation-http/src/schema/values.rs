@@ -49,19 +49,6 @@ pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
 }
 
-/// The fields of `native` to write in `format`. A native field means something
-/// only to its own format: another format's are dropped, with a warning.
-pub(crate) fn kept_fields(format: &str, native: &Option<NativeFields>) -> Map<String, Value> {
-    match native {
-        Some(n) if *n.format == *format => n.fields.clone(),
-        Some(n) => {
-            warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
-            Map::new()
-        }
-        None => Map::new(),
-    }
-}
-
 /// Says what of `from`'s, by name alone, a request in `format` goes without.
 fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a str>) {
     let what: Vec<&str> = what.into_iter().collect();
@@ -280,7 +267,7 @@ pub(crate) fn shows(reply: &Output) -> bool {
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
-        [Content::Text { text, native, .. }] if kept_fields(C::NAME, native).is_empty() => {
+        [Content::Text { text, native, .. }] if native.fields_for(C::NAME).is_empty() => {
             text.as_str().into()
         }
         parts => parts
@@ -308,7 +295,7 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
             let mut part = Map::new();
             part.insert("type".into(), "text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(kept_fields(C::NAME, native));
+            part.extend(native.fields_for(C::NAME));
             Ok(part.into())
         }
         Content::Native(NativeValue { format, value, .. }) if **format == *C::NAME => {
@@ -370,7 +357,7 @@ pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Res
     let mut v = Map::new();
     v.insert("role".into(), role_of(C::NAME, m, roles)?);
     v.insert("content".into(), encode_content::<C>(&m.content)?);
-    v.extend(kept_fields(C::NAME, &m.native));
+    v.extend(m.native.fields_for(C::NAME));
     Ok(v.into())
 }
 
@@ -453,7 +440,7 @@ pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<Stri
             "a provider tool this format has no form for",
         ));
     };
-    Ok(kept_fields(format, native))
+    Ok(native.fields_for(format))
 }
 
 /// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
@@ -600,6 +587,9 @@ pub(crate) trait NativeFieldsExt {
     fn fields(&self) -> &Map<String, Value>;
     /// The fields to edit, made of `format` if there are none.
     fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
+    /// The fields to write in `format`. A native field means something only
+    /// to its own format: another format's are dropped, with a warning.
+    fn fields_for(&self, format: &str) -> Map<String, Value>;
     /// The format the fields are of.
     fn format(&self) -> Option<&str>;
     /// Whether there are no fields.
@@ -617,6 +607,16 @@ impl NativeFieldsExt for Option<NativeFields> {
         &mut self
             .get_or_insert_with(|| NativeFields::new(format, Map::new()))
             .fields
+    }
+    fn fields_for(&self, format: &str) -> Map<String, Value> {
+        match self {
+            Some(n) if *n.format == *format => n.fields.clone(),
+            Some(n) => {
+                warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
+                Map::new()
+            }
+            None => Map::new(),
+        }
     }
     fn format(&self) -> Option<&str> {
         self.as_ref().map(|n| n.format.as_ref())

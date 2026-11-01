@@ -6,8 +6,8 @@
 
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    kept_fields, merge_missing, native_fields, only, own_native, read_search, reasoning_of,
-    remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
+    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
+    set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -94,7 +94,7 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         if t.strict == Some(true) {
             function.insert("strict".into(), true.into());
         }
-        function.extend(kept_fields(OPENAI, &t.native));
+        function.extend(t.native.fields_for(OPENAI));
         Ok(json!({ "type": "function", "function": function }))
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
@@ -191,7 +191,7 @@ fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
             ..
         } = c
         {
-            let own = kept_fields(OPENAI, native);
+            let own = native.fields_for(OPENAI);
             let function = json!({ "name": name, "arguments": arguments });
             let mut call = json!({ "id": id, "type": "function", "function": function });
             merge_missing(&mut call, own);
@@ -248,7 +248,7 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     }
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
-        only.extend(kept_fields(OPENAI, &m.native));
+        only.extend(m.native.fields_for(OPENAI));
         return Ok(out.into_iter().map(Value::Object).collect());
     }
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
@@ -348,7 +348,7 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
         return Err(untranslatable("a display name on image or audio content"));
     }
-    let native = kept_fields(OPENAI, &media.native);
+    let native = media.native.fields_for(OPENAI);
     let url = || match &media.source {
         MediaSource::Url(url) => url.clone(),
         MediaSource::Bytes(data) => {

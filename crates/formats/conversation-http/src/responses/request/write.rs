@@ -2,7 +2,7 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, kept_fields, merge_missing, untranslatable};
+use crate::schema::{NativeFieldsExt, merge_missing, untranslatable};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
@@ -65,7 +65,7 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
 /// message item, each result an output item of its own.
 fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fault> {
     let before = items.len();
-    let mut extras = kept_fields(RESPONSES, &m.native);
+    let mut extras = m.native.fields_for(RESPONSES);
     let mut parts: Vec<Value> = Vec::new();
     for c in &m.content {
         match c {
@@ -136,7 +136,7 @@ fn write_input_part(c: &Content) -> Result<Value, Fault> {
             let mut part = Map::new();
             part.insert("type".into(), "input_text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(kept_fields(RESPONSES, native));
+            part.extend(native.fields_for(RESPONSES));
             Ok(part.into())
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
@@ -151,7 +151,7 @@ pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
     if image && media.name.is_some() {
         return Err(untranslatable("a display name on image content"));
     }
-    let native = kept_fields(RESPONSES, &media.native);
+    let native = media.native.fields_for(RESPONSES);
     let url = || match &media.source {
         MediaSource::Url(url) => url.clone(),
         MediaSource::Bytes(data) => {
@@ -200,7 +200,7 @@ fn write_result(
     v.insert("type".into(), "function_call_output".into());
     v.insert("call_id".into(), id.into());
     v.insert("output".into(), output);
-    v.extend(kept_fields(RESPONSES, native));
+    v.extend(native.fields_for(RESPONSES));
     Ok(v.into())
 }
 
@@ -221,7 +221,7 @@ impl AsText for Content {
 /// An assistant message: its text runs are message items, its calls and
 /// reasoning items of their own.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    if !kept_fields(RESPONSES, &m.native).is_empty() {
+    if !m.native.fields_for(RESPONSES).is_empty() {
         return Err(untranslatable("an assistant message's fields"));
     }
     let before = items.len();
@@ -253,7 +253,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.insert("call_id".into(), id.as_str().into());
                 v.insert("name".into(), name.as_str().into());
                 v.insert("arguments".into(), arguments.into());
-                v.extend(kept_fields(RESPONSES, native));
+                v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
             Content::Reasoning { text, native } => {
@@ -269,7 +269,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 if native.format() != Some(RESPONSES) {
                     return Err(untranslatable("reasoning from another format"));
                 }
-                v.extend(kept_fields(RESPONSES, native));
+                v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
             _ => return Err(untranslatable("an unsupported kind of part")),
@@ -296,7 +296,7 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     for (i, c) in parts.iter().enumerate() {
         match c {
             Content::Text { text, native, .. } => {
-                let mut fields = kept_fields(RESPONSES, native);
+                let mut fields = native.fields_for(RESPONSES);
                 if i == 0
                     && let Some(Value::Object(more)) = fields.shift_remove(MESSAGE)
                 {
