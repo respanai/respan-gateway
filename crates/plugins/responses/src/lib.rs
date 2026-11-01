@@ -30,7 +30,7 @@ use respan_gateway_conversation::{Assembled, Content, Input, Message, Output, Ro
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{
-    ClientContext, Fault, Filter, Plugin, ProviderContext, Result, async_trait,
+    ClientContext, Fault, Filter, NativeFields, Plugin, ProviderContext, Result, async_trait,
 };
 use respan_gateway_http::raw::Original;
 use serde_json::Value;
@@ -186,9 +186,8 @@ impl Plugin for Responses {
             let (parent, kept) = match ours {
                 Some(native) => {
                     let parent = native.fields.shift_remove("previous_response_id");
-                    let unkept = native.fields.get("inert").map(|i| &i["store"])
-                        == Some(&Value::Bool(false));
-                    (parent.and_then(|p| p.as_str().map(str::to_owned)), !unkept)
+                    let parent = parent.and_then(|p| p.as_str().map(str::to_owned));
+                    (parent, keeps(native))
                 }
                 None => (None, true),
             };
@@ -215,6 +214,12 @@ impl Plugin for Responses {
             Ok(())
         })
     }
+}
+
+/// Whether a request's own fields let its response be kept: `store: false`
+/// does not.
+fn keeps(native: &NativeFields) -> bool {
+    native.fields.get("store") != Some(&Value::Bool(false))
 }
 
 /// How many of `input`'s messages are the request's instructions, not its
@@ -386,4 +391,23 @@ impl Filter<Output> for KeepReasoning {
 /// A response id of the gateway's: `resp_` and a random UUID's hex.
 fn new_id() -> String {
     format!("resp_{}", uuid::Uuid::new_v4().simple())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use respan_gateway_http::bytes::Bytes;
+
+    #[test]
+    fn a_request_that_says_store_false_is_not_kept() {
+        let kept = |body: &'static str| {
+            let input = OpenAiResponses
+                .decode_request(Bytes::from_static(body.as_bytes()))
+                .expect("a request");
+            input.native.as_ref().is_none_or(keeps)
+        };
+        assert!(!kept(r#"{"model": "m", "input": "hi", "store": false}"#));
+        assert!(kept(r#"{"model": "m", "input": "hi", "store": true}"#));
+        assert!(kept(r#"{"model": "m", "input": "hi"}"#));
+    }
 }
