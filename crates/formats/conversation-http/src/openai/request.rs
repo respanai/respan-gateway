@@ -7,8 +7,8 @@
 use crate::schema::{
     INERT, Keep, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
     encode_message, encode_native, kept_fields, merge_missing, message_fields, native_fields, only,
-    own_native, read_search, reasoning_of, remainder, rest_of, set, source_url, tool_field,
-    untranslatable, write_search,
+    own_native, read_search, reasoning_of, remainder, rest_of, set, source_url, take_strict,
+    tool_field, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -59,6 +59,7 @@ fn openai_tool(tool: &Value) -> Option<Tool> {
         OPENAI,
         rest_of(function, &["name", "description", "parameters"]),
     );
+    (kind.strict, kind.native) = take_strict(kind.native);
     Some(kind)
 }
 
@@ -95,6 +96,9 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         }
         if !t.parameters.is_null() {
             function.insert("parameters".into(), t.parameters.clone());
+        }
+        if let Some(strict) = t.strict {
+            function.insert("strict".into(), strict.into());
         }
         encode_native(
             OPENAI,

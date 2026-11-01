@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
     Keep, NativeFieldsExt, arguments_object, effort_name, kept_fields, merge_fields, merge_missing,
-    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    native_fields, parse_effort, reasoning_of, refuse_strict, remainder, set, untranslatable,
+    write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -569,6 +570,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
     };
     let mut declarations = Vec::new();
     for t in &chat.tools {
+        refuse_strict(t)?;
         let mut d = Map::new();
         d.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {

@@ -6,7 +6,8 @@
 use crate::schema::{
     Keep, NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool,
     encode_content, encode_native, kept_fields, merge_missing, native_fields, only, own_native,
-    read_search, remainder, rest_of, set, take_native, tool_field, untranslatable, write_search,
+    read_search, refuse_strict, remainder, rest_of, set, take_native, tool_field, untranslatable,
+    write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -77,6 +78,7 @@ fn anthropic_choice(choice: &Value) -> Option<(Option<ToolChoice>, Option<bool>)
 /// time are said inside `tool_choice`.
 pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let tool = |t: &Tool| -> Result<Value, Fault> {
+        refuse_strict(t)?;
         let mut tool = Map::new();
         tool.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
