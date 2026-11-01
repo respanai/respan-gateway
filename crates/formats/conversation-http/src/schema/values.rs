@@ -55,15 +55,6 @@ fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a
     eprintln!("warning: a request in {format} drops {from}'s {what:?}");
 }
 
-/// Says that `format` goes without reasoning it cannot take back.
-pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
-    warn_dropped(
-        format,
-        native.format().unwrap_or("another format"),
-        ["reasoning"],
-    );
-}
-
 /// Whether `format` writes `part`: another format's shape it cannot.
 fn own_part(format: &str, part: &mut Content) -> bool {
     if let Content::ToolResult { content, .. } = part {
@@ -111,6 +102,15 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
         !said || !m.content.is_empty()
     });
     Cow::Owned(chat)
+}
+
+/// Says that `format` goes without reasoning it cannot take back.
+pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
+    warn_dropped(
+        format,
+        native.format().unwrap_or("another format"),
+        ["reasoning"],
+    );
 }
 
 /// `fields` as the native of a value decoded by `format`: none if empty.
