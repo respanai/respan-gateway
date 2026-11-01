@@ -453,6 +453,16 @@ pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<Stri
     Ok(native.fields_for(format))
 }
 
+/// `key` of `input`'s `native`, out of it if it is a string; one of another
+/// type stays there.
+pub(crate) fn take_text(input: &mut Input, key: &str) -> Option<String> {
+    let native = input.native.as_mut()?;
+    native.fields.get(key)?.as_str()?;
+    let text = native.fields.shift_remove(key)?.as_str().map(str::to_owned);
+    input.native.take_if(|n| n.is_empty());
+    text
+}
+
 /// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
 /// out of its `native`; one that is no boolean stays there.
 pub(crate) fn take_strict(tool: &mut Tool) {

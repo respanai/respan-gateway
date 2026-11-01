@@ -313,16 +313,17 @@ fn the_defaults_an_sdk_sends_say_nothing() {
 fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
     let v = json!({
         "model": "m", "input": [{ "role": "user", "content": "hi" }],
-        "text": { "format": { "type": "json_object" }, "verbosity": "low" },
+        "text": { "format": { "type": "json_object" }, "verbosity": "low", "extra": 1 },
     });
     let chat = decode_request(&v);
     assert_eq!(
         chat.options.response_format,
         Some(ResponseFormat::JsonObject)
     );
+    assert_eq!(chat.options.verbosity.as_deref(), Some("low"));
     assert_eq!(
         chat.native.fields().get("text"),
-        Some(&json!({ "verbosity": "low" }))
+        Some(&json!({ "extra": 1 }))
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -1045,4 +1046,23 @@ fn a_providers_parts_beyond_their_totals_stay_within_them() {
     assert_eq!(usage.cached_input_tokens, 15);
     assert_eq!(usage.cache_write_input_tokens, 0);
     assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
+}
+
+#[test]
+fn a_chats_service_tier_and_verbosity_are_said_in_responses() {
+    let chat = OpenAiChat.decode_json(&json!({
+        "model": "m", "messages": [{ "role": "user", "content": "hi" }],
+        "service_tier": "flex", "verbosity": "low",
+    }));
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert_eq!(sent["service_tier"], "flex");
+    assert_eq!(sent["text"]["verbosity"], "low");
+    let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
+        "service_tier": "flex", "text": { "verbosity": "low" } });
+    assert_eq!(round_trip(&v), v);
+    let sent = OpenAiChat
+        .encode_request(&decode_request(&v))
+        .expect("written");
+    assert_eq!(sent["service_tier"], "flex");
+    assert_eq!(sent["verbosity"], "low");
 }
