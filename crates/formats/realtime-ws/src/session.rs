@@ -13,7 +13,6 @@ use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::foreign::Harmless;
 use serde_json::Value;
 
 /// Reads one frame as zero or more events.
@@ -55,9 +54,6 @@ pub(crate) struct Spec {
     /// Whether its sessions transcribe alone: one opened at its path is a
     /// transcription from its connect, whoever provides it.
     pub(crate) transcribes: bool,
-    /// What of its natives another format may drop; with none, all are
-    /// refused.
-    pub(crate) harmless: Option<&'static Harmless>,
 }
 
 impl Spec {

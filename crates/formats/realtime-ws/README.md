@@ -138,15 +138,9 @@ transcription has none of, is not written. So a Mistral client transcribes
 with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
 A refused input is `bad_request`, closing the client 1008; a refused
-output `upstream`. Another format's events and fields a provider sends are
-dropped at the client, but an event its format says tells of what the model
-said (OpenAI's MCP events) is refused.
-
-Which of a format's natives another may drop is for that format alone to
-say, of its own fields and events (`Harmless`, in each spec's module): no
-spec names another's. A writer drops another format's native where its
-format says so and refuses it where not; a format that says nothing has its
-native inputs refused and its native outputs dropped. An error says its
+output `upstream`. Another format's natives, fields and events alike, are
+dropped by a writer, with a warning at the provider's: what has meaning
+beyond its format belongs in the kind. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 

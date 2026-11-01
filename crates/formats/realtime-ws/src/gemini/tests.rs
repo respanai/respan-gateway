@@ -349,11 +349,6 @@ fn a_refusal_closes_a_live_client() {
     assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1007)));
     let foreign = Output::native("openai-realtime", json!({"type": "rate_limits.updated"}));
     assert_eq!(heard(&[foreign]).expect("dropped"), Vec::<Value>::new());
-    let mcp = Output::native(
-        "openai-realtime",
-        json!({"type": "mcp_list_tools.completed"}),
-    );
-    assert!(heard(&[mcp]).is_err());
 }
 
 #[test]
