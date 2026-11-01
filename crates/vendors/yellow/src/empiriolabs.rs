@@ -92,7 +92,7 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
             "EmpirioLabs AI edits an image with no mask",
         ));
     }
-    let mut fields = kept(OpenAiImages::NAME, &input.native)?;
+    let mut fields = kept(OpenAiImages::NAME, &input.native);
     fields.entry("sync").or_insert(true.into());
     fields.entry("response_format").or_insert("b64_json".into());
     if !input.images.is_empty() {

@@ -1,8 +1,8 @@
 //! OpenAI Embeddings: `POST /embeddings` (JSON), answered whole in JSON.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, foreign, invalid, json_bytes,
-    kept, merge_missing, missing, native_of, post_to, rest_of, sends, set, take_count, take_string,
+    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, invalid, json_bytes, kept,
+    merge_missing, missing, native_of, post_to, rest_of, sends, set, take_count, take_string,
     unb64, unreadable, whole_json,
 };
 use respan_gateway_conversation::Usage;
@@ -136,7 +136,7 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     v.insert("input".into(), items_json(&input.items)?);
     set(&mut v, "dimensions", input.dimensions);
     set(&mut v, "user", input.user.clone());
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, &kept(NAME, &input.native));
     Ok(sends(json_bytes(&v)?))
 }
 
@@ -252,13 +252,12 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
                 item.insert("object".into(), "embedding".into());
                 item.insert("index".into(), e.index.into());
                 item.insert("embedding".into(), vector_json(&e.vector, base64));
-                merge_missing(&mut item, &kept(NAME, &e.native)?);
+                merge_missing(&mut item, &kept(NAME, &e.native));
                 data.push(Value::Object(item));
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
             // A body has no place for another event.
-            Output::Native(n) => {
+            Output::Native(n) if &*n.format == NAME => {
                 if let Some(more) = as_usage_extras(&n.value) {
                     merge_missing(&mut extras, more);
                 }
@@ -284,7 +283,7 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
         body.insert("usage".into(), u.into());
     }
     if let Some(start) = start {
-        merge_missing(&mut body, &kept(NAME, &start.native)?);
+        merge_missing(&mut body, &kept(NAME, &start.native));
     }
     json_bytes(&body)
 }

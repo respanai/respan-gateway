@@ -22,7 +22,7 @@ use respan_gateway_conversation_http::fields::{
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, NativeValue};
 use respan_gateway_decision::{
     Answer, Ask, ChoiceValue, Input, Output, Question, Start, Usage, Verdict,
 };
@@ -267,14 +267,14 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         v.insert("type".into(), kind.into());
         set(&mut v, "instructions", q.instructions.clone());
         set(&mut v, "criteria", criteria);
-        merge_missing(&mut v, &kept(NAME, &q.native)?);
+        merge_missing(&mut v, &kept(NAME, &q.native));
         questions.insert(q.id.clone(), v.into());
     }
     let mut v = Map::new();
     set(&mut v, "model", input.model.clone());
     v.insert("state".into(), input.state.clone());
     v.insert("questions".into(), questions.into());
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, &kept(NAME, &input.native));
     Ok(v)
 }
 
@@ -364,20 +364,13 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
         match event {
             Output::Start(start) => {
                 set(&mut body, "model", start.model.clone());
-                merge_missing(&mut body, &kept(NAME, &start.native)?);
+                merge_missing(&mut body, &kept(NAME, &start.native));
             }
             Output::Answer(answer) => {
                 answers.insert(answer.id.clone(), encode_answer(answer)?.into());
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format != NAME => {
-                return Err(Fault::new(format!(
-                    "an event of format {} cannot be written in {NAME}",
-                    n.format
-                ))
-                .with(ErrorCode("untranslatable".into())));
-            }
-            Output::Native(n) => {
+            Output::Native(n) if &*n.format == NAME => {
                 if let Some(more) = n.value["answers"].as_object() {
                     merge_missing(&mut answers, more);
                 }
@@ -452,7 +445,7 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
         }
     }
     set(&mut v, "confidence", answer.confidence);
-    merge_missing(&mut v, &kept(NAME, &answer.native)?);
+    merge_missing(&mut v, &kept(NAME, &answer.native));
     Ok(v)
 }
 

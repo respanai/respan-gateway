@@ -129,7 +129,7 @@ fn referenced(input: &mut image::Input) -> Result<(), Fault> {
     if input.images.is_empty() {
         return Ok(());
     }
-    let mut fields = kept(OpenAiImages::NAME, &input.native)?;
+    let mut fields = kept(OpenAiImages::NAME, &input.native);
     let references = input
         .images
         .drain(..)
@@ -189,7 +189,7 @@ mod tests {
         )];
         referenced(&mut input).expect("taken");
         assert!(input.images.is_empty());
-        let fields = kept(OpenAiImages::NAME, &input.native).expect("fields");
+        let fields = kept(OpenAiImages::NAME, &input.native);
         assert_eq!(
             fields["input_references"],
             json!([{ "type": "image_url", "image_url": { "url": "https://a.example/cat.png" } }])

@@ -45,8 +45,7 @@ use respan_gateway_core::{Connection, ErrorCode, Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
-    self, HeaderMap, HeaderValue, StatusCode, request::Parts as RequestHead,
-    response::Parts as ResponseHead,
+    self, HeaderMap, HeaderValue, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo, raw::Original};
@@ -308,16 +307,6 @@ fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
     o.get("usage")?.as_object()
 }
 
-/// An event of another format than `format`, which it cannot write.
-fn foreign(format: &str, native: &NativeValue) -> Fault {
-    Fault::new(format!(
-        "an event of format {} cannot be written in {format}",
-        native.format
-    ))
-    .with(ErrorCode("untranslatable".into()))
-    .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY))
-}
-
 /// Bytes as base64.
 fn b64(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
@@ -525,7 +514,7 @@ mod tests {
     #[test]
     fn a_fault_is_written_in_openais_error_schema() {
         let mut head = http::Response::new(()).into_parts().0;
-        head.status = StatusCode::BAD_REQUEST;
+        head.status = http::StatusCode::BAD_REQUEST;
         let request = http::Request::new(Bytes::new());
         let body = refusal(&missing("prompt"), &request, &mut head);
         let v: Value = serde_json::from_slice(&body).unwrap_or_default();
