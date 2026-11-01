@@ -37,7 +37,8 @@ pub(crate) use values::{
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
     fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
     read_search, remainder, set, source_url, stop_json, take_strict, take_text, tidy,
-    unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
+    unsupported_fields, untranslatable, unwritable_content, usage_extra, warn_reasoning,
+    write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 

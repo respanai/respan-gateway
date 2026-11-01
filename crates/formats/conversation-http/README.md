@@ -52,8 +52,8 @@ appeared, so a relay in this format sends it back and a plugin can read it
 `{"choices": [..]}`; usage's own as a native `{"usage": {..}}`. A vendor's
 departures from the spec, such as reasoning in `reasoning_content`, are its
 plugins' in the [vendors crate](../../vendors/README.md), which read
-these. Reasoning has no field in this format, and is refused, as is media
-in a tool result.
+these. Reasoning has no field in this format, and is dropped; media in a tool
+result is refused.
 
 A block is any number unique in a response, such as a plugin's own: both
 formats' encoders write blocks in the order they open.
