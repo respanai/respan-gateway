@@ -24,7 +24,7 @@ use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, Model, Rewrite, Vendor}
 const BASE_URL: &str = "https://api.openai.com/v1";
 
 /// OpenAI. A chat to a model Chat Completions does not serve well goes to
-/// its Responses ([`responses_only`]).
+/// its Responses ([`in_responses`]).
 pub const VENDOR: Vendor = Vendor {
     id: "openai",
     key_env: &["OPENAI_API_KEY"],
@@ -73,20 +73,24 @@ fn completion_limit(body: Bytes) -> Result<Bytes, Fault> {
         .map_err(unwritten)
 }
 
-fn format_for(_: &Ask, model: &Model) -> Option<&'static str> {
-    responses_only(&model.id).then_some(OpenAiResponses::NAME)
+fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
+    in_responses(&model.id, ask.tools).then_some(OpenAiResponses::NAME)
 }
 
 /// The models only Responses serves, by a part of their names.
 const RESPONSES_ONLY: &[&str] = &["-pro", "codex", "deep-research", "computer-use"];
 
-/// Whether a chat to `model` goes to Responses: a model only it serves, or
-/// gpt-5.4 or later, whose reasoning Chat Completions refuses with function
-/// tools (from gpt-5.6 they reason unless told not to), as a tool loop may
-/// add.
-pub fn responses_only(model: &str) -> bool {
+/// Whether a chat to `model` goes to Responses: a model only it serves, or,
+/// if it offers `tools` ([`Ask::tools`]), gpt-5.4 or later, whose reasoning
+/// Chat Completions refuses with function tools (from gpt-5.6 they reason
+/// unless told not to). Any other chat stays in Chat Completions, which
+/// takes what Responses cannot, such as `stop`, `seed` and `n`.
+pub fn in_responses(model: &str, tools: bool) -> bool {
     if RESPONSES_ONLY.iter().any(|p| model.contains(p)) {
         return true;
+    }
+    if !tools {
+        return false;
     }
     let Some(version) = model.strip_prefix("gpt-") else {
         return false;
@@ -116,5 +120,46 @@ mod tests {
         assert_eq!(both, serde_json::json!({ "max_completion_tokens": 7 }));
         let body = Bytes::from_static(br#"{"max_completion_tokens":7}"#);
         assert_eq!(completion_limit(body.clone()).ok(), Some(body));
+    }
+
+    #[test]
+    fn a_chat_goes_to_responses_for_a_model_only_it_serves_or_tools_it_refuses() {
+        for model in [
+            "gpt-5.5-pro",
+            "gpt-5-codex",
+            "o3-deep-research",
+            "computer-use-preview",
+        ] {
+            assert!(in_responses(model, false), "{model}");
+        }
+        for model in ["gpt-5.4", "gpt-5.6-terra", "gpt-6-luna"] {
+            assert!(in_responses(model, true), "{model}");
+            assert!(!in_responses(model, false), "{model} without tools");
+        }
+        for model in ["gpt-5.2", "gpt-5-mini", "gpt-4o", "o4-mini"] {
+            assert!(!in_responses(model, true), "{model}");
+        }
+    }
+
+    #[test]
+    fn its_format_follows_the_request() {
+        let ask = |format, tools| Ask {
+            kind: "chat",
+            format,
+            model: None,
+            client: None,
+            tools,
+        };
+        let model = Model::new("gpt-5.6-terra");
+        let format = |a: &Ask| format_for(a, &model);
+        assert_eq!(format(&ask("openai-chat", false)), None);
+        assert_eq!(
+            format(&ask("openai-chat", true)),
+            Some(OpenAiResponses::NAME)
+        );
+        assert_eq!(
+            format(&ask("anthropic-messages", true)),
+            Some(OpenAiResponses::NAME)
+        );
     }
 }
