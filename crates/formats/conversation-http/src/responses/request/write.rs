@@ -8,14 +8,24 @@ use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, R
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
+/// The key in a request's native that says its leading system message was
+/// its `instructions`.
+pub(in crate::responses) const INSTRUCTIONS: &str = "instructions";
+
 /// The request's `instructions` and `input`: a leading system message of
-/// one plain text is the instructions.
+/// one plain text is the instructions if it came so; another's system
+/// message, such as Chat Completions', is an input item, where OpenAI reads
+/// it as it would have there (its check that a JSON answer is asked for in
+/// words reads only the input).
 pub(in crate::responses) fn write_input(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
+    let instructed =
+        chat.native.format() == Some(RESPONSES) && chat.native.fields().contains_key(INSTRUCTIONS);
     let mut rest = &chat.messages[..];
-    if let Some((first, after)) = rest.split_first()
+    if instructed
+        && let Some((first, after)) = rest.split_first()
         && first.role == Role::System
         && first.native.is_empty()
         && let [
