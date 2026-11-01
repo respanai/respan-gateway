@@ -156,10 +156,12 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
         Some(ResponseFormat::JsonSchema { .. })
     ));
     assert_eq!(chat.tools[0].name, "f");
-    assert!(
-        chat.native.is_none(),
-        "everything is the kind's: {:?}",
-        chat.native
+    assert_eq!(
+        chat.native.fields(),
+        json!({ "inert": { "instructions": true } })
+            .as_object()
+            .expect("fields"),
+        "everything is the kind's, but that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -365,8 +367,8 @@ fn another_formats_conversation_is_written_as_responses() {
         v,
         json!({
             "model": "m",
-            "instructions": "be brief",
             "input": [
+                { "role": "system", "content": "be brief" },
                 { "role": "user", "content": "weather?" },
                 { "role": "assistant", "content": "checking" },
                 { "type": "function_call", "call_id": "c1", "name": "get", "arguments": "{\"a\":1}" },
@@ -1018,4 +1020,89 @@ fn every_named_effort_is_the_kinds_and_written_as_it_came() {
             Some(json!(name))
         );
     }
+}
+
+#[test]
+fn a_chats_system_message_is_an_input_item_and_only_instructions_are_instructions() {
+    let chat = OpenAiChat.decode_json(&json!({
+        "messages": [
+            { "role": "system", "content": "Answer in JSON." },
+            { "role": "user", "content": "hi" },
+        ],
+        "response_format": { "type": "json_object" },
+    }));
+    let v = OpenAiResponses.encode_request(&chat).expect("a request");
+    assert!(v.get("instructions").is_none(), "{v:?}");
+    assert_eq!(
+        v["input"],
+        json!([
+            { "role": "system", "content": "Answer in JSON." },
+            { "role": "user", "content": "hi" },
+        ])
+    );
+    // A system item of Responses' own input stays one.
+    let item = json!({ "model": "m", "input": [{ "role": "system", "content": "s" }, { "role": "user", "content": "u" }] });
+    assert_eq!(round_trip(&item), item);
+}
+
+#[test]
+fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
+    let v = json!({
+        "model": "m",
+        "instructions": "be brief",
+        "input": [{ "role": "user", "content": "hi" }],
+        "store": false,
+        "max_output_tokens": 9,
+    });
+    let chat = decode_request(&v);
+    let anthropic = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(anthropic["system"], "be brief");
+    assert!(anthropic.get("instructions").is_none() && anthropic.get("inert").is_none());
+    let openai = OpenAiChat.encode_request(&chat).expect("chat");
+    assert_eq!(
+        openai["messages"],
+        json!([{ "role": "system", "content": "be brief" }, { "role": "user", "content": "hi" }])
+    );
+    assert!(openai.get("instructions").is_none() && openai.get("inert").is_none());
+    assert_eq!(round_trip(&v), v);
+}
+
+#[test]
+fn a_clients_own_inert_field_does_not_break_what_is_set_aside() {
+    for inert in [json!(1), json!("x"), json!([1]), json!(null), json!(true)] {
+        let v = json!({ "model": "gpt-5", "instructions": "s", "input": "hi", "store": false, "inert": inert });
+        let chat = OpenAiResponses.decode_json(&v);
+        assert_eq!(
+            chat.native.fields().get("inert"),
+            Some(&json!({ "store": false, "instructions": true })),
+            "{inert}"
+        );
+        // Another format drops what is set aside; it is written to no one else.
+        assert!(AnthropicMessages.encode_request(&chat).is_ok(), "{inert}");
+    }
+}
+
+#[test]
+fn a_chats_own_inert_field_does_not_break_what_is_set_aside() {
+    let chat = OpenAiChat.decode_json(&json!({ "store": true, "inert": 1, "messages": [] }));
+    assert_eq!(
+        chat.native.fields().get("inert"),
+        Some(&json!({ "store": true }))
+    );
+}
+
+/// OpenRouter has reported 87 reasoning tokens of 76 output: the answer is
+/// served, its counts within their totals, and the stream can still end.
+#[test]
+fn a_providers_parts_beyond_their_totals_stay_within_them() {
+    let usage = usage_of(&json!({
+        "input_tokens": 15, "output_tokens": 76,
+        "input_tokens_details": { "cached_tokens": 20, "cache_write_tokens": 3 },
+        "output_tokens_details": { "reasoning_tokens": 87 },
+    }))
+    .expect("read");
+    assert_eq!(usage.reasoning_tokens, 76);
+    assert_eq!(usage.cached_input_tokens, 15);
+    assert_eq!(usage.cache_write_input_tokens, 0);
+    assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
 }

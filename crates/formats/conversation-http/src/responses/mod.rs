@@ -4,7 +4,8 @@
 //! # Requests
 //!
 //! `instructions` is a leading system message and `input` the messages after
-//! it: a string is one user message, and an array's items are messages
+//! it; a leading system message is written back as `instructions` only if it
+//! came so, any other as a message item of its role. A string is one user message, and an array's items are messages
 //! (`input_text`, `input_image` and `input_file` parts), an assistant's
 //! function calls and reasoning, and function call outputs as the results of
 //! a user message. Consecutive items of an assistant are one assistant
@@ -76,8 +77,8 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, INERT, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields,
-    native_fields, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
+    parts_within_totals, set_aside, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -177,8 +178,9 @@ impl Schema for OpenAiResponses {
     const PATH: &'static str = "/responses";
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
-    /// The structured output requirement is in `text`.
-    const OWN: &'static [&'static str] = &["text", "reasoning"];
+    /// The structured output requirement is in `text`; whether the request
+    /// had `instructions` is said by [`request::write_input`].
+    const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     /// Chat Completions' fields Responses has too, OpenAI's both.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[
         (crate::openai::OPENAI, "metadata", "metadata"),
@@ -199,7 +201,7 @@ impl Schema for OpenAiResponses {
 
     /// A client of another format can name no response: none is stored,
     /// and its reasoning comes encrypted, to be carried to a later call.
-    fn translated(v: &mut Map<String, Value>) {
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
         v.entry("store").or_insert(false.into());
         let include = v.entry("include").or_insert_with(|| json!([]));
         if let Some(include) = include.as_array_mut() {
@@ -231,10 +233,15 @@ impl Schema for OpenAiResponses {
         // Not to store a response is OpenAI's to honour; another provider
         // stores nothing anyway.
         if let Some(store) = chat.native.fields_mut(RESPONSES).shift_remove("store") {
-            let inert = serde_json::json!({ "store": store });
-            chat.native
-                .fields_mut(RESPONSES)
-                .insert(INERT.into(), inert);
+            set_aside(chat.native.fields_mut(RESPONSES), "store", store);
+        }
+        // Its leading system message goes back as `instructions` alone.
+        if crate::schema::says(&v["instructions"]) {
+            set_aside(
+                chat.native.fields_mut(RESPONSES),
+                request::INSTRUCTIONS,
+                true.into(),
+            );
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
@@ -306,7 +313,7 @@ pub(crate) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/input_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/input_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/output_tokens_details/reasoning_tokens")?;
-    Ok(usage)
+    Ok(parts_within_totals(usage))
 }
 
 /// What a usage object `u` says that has no unit.

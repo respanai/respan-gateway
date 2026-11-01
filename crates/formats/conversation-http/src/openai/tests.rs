@@ -1339,15 +1339,16 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_refused() {
         Some(pdf)
     );
     // The same holds for the fields of a request.
-    let thinking = json!({ "thinking": { "type": "enabled" } });
-    let fields = thinking.as_object().cloned().unwrap_or_default();
+    let servers =
+        json!({ "mcp_servers": [{ "type": "url", "url": "https://x.test", "name": "x" }] });
+    let fields = servers.as_object().cloned().unwrap_or_default();
     chat.native = Some(NativeFields::new(OPENAI, fields.clone()));
     assert!(AnthropicMessages.encode_request(&chat).is_err());
     chat.native = Some(NativeFields::new("anthropic-messages", fields));
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
-        sent.map(|v| v["thinking"].clone()).ok(),
-        Some(json!({ "type": "enabled" }))
+        sent.map(|v| v["mcp_servers"].clone()).ok(),
+        Some(servers["mcp_servers"].clone())
     );
 }
 
@@ -1848,4 +1849,15 @@ fn a_reply_sent_back_as_history_crosses_to_another_format() {
         Some(json!({ "x": 1 }))
     );
     assert_eq!(back.map(|m| m.get("refusal").is_none()), Some(true));
+}
+
+#[test]
+fn a_providers_reasoning_beyond_its_output_stays_within_it() {
+    let usage = usage_of(&json!({
+        "prompt_tokens": 15, "completion_tokens": 76,
+        "completion_tokens_details": { "reasoning_tokens": 87 },
+    }))
+    .expect("read");
+    assert_eq!((usage.reasoning_tokens, usage.output_tokens), (76, 76));
+    assert!(check_usage(&usage, USAGE).is_ok());
 }

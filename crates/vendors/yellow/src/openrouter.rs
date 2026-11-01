@@ -1,14 +1,18 @@
-//! OpenRouter: Chat Completions, for many vendors' models, and images.
+//! OpenRouter: Chat Completions and Responses, for many vendors' models,
+//! and images.
 
-use respan_gateway_conversation::Usage;
+use respan_gateway_conversation::{Input, Output, Usage};
+use respan_gateway_conversation_http::Schema;
+use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_core::{Fault, Filter, NativeValue};
+use respan_gateway_conversation_http::responses::OpenAiResponses;
+use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::image;
 use respan_gateway_media_http::openai::OpenAiImages;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 
@@ -16,12 +20,14 @@ use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// OpenRouter. Its models' names are `<vendor>/<model>`: a configured
-/// provider named `<vendor>` takes the name first.
+/// provider named `<vendor>` takes the name first. A chat goes in its
+/// client's format, Chat Completions for a client of another.
 pub const VENDOR: Vendor = Vendor {
     id: "openrouter",
     key_env: &["OPENROUTER_API_KEY"],
     formats: &[
-        (&OpenAiChat, Some(BASE_URL)),
+        (&Dialected::new(OpenAiChat, OpenRouter), Some(BASE_URL)),
+        (&OpenAiResponses, Some(BASE_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
             Some(BASE_URL),
@@ -29,6 +35,65 @@ pub const VENDOR: Vendor = Vendor {
     ],
     ..Vendor::DEFAULT
 };
+
+/// OpenRouter's Chat Completions: Claude's thinking, as Anthropic's clients
+/// ask for it, is its `reasoning`.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouter;
+
+impl Dialect for OpenRouter {
+    type Input = Input;
+    type Output = Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
+        Some(Box::new(reasoning))
+    }
+}
+
+/// `input` with a thinking budget as its `reasoning.max_tokens`, and
+/// adaptive thinking, Anthropic's own and its only field, as
+/// `reasoning.enabled`; unless another format's other fields leave no room
+/// for its own.
+fn reasoning(input: &mut Input) -> Result<(), Fault> {
+    let adaptive = input.native.as_ref().is_some_and(|n| {
+        &*n.format == AnthropicMessages::NAME
+            && n.fields.len() == 1
+            && n.fields
+                .get("thinking")
+                .is_some_and(|t| t["type"] == "adaptive")
+    });
+    if adaptive {
+        let reasoning = [("reasoning".to_owned(), json!({ "enabled": true }))];
+        input.native = Some(NativeFields::new(
+            OpenAiChat::NAME,
+            Map::from_iter(reasoning),
+        ));
+        return Ok(());
+    }
+    let budget = input
+        .options
+        .reasoning
+        .as_ref()
+        .and_then(|r| r.budget_tokens);
+    let own = input
+        .native
+        .as_ref()
+        .is_none_or(|n| n.is_empty() || &*n.format == OpenAiChat::NAME);
+    let (Some(budget), true) = (budget, own) else {
+        return Ok(());
+    };
+    let withheld = input.options.reasoning.take().and_then(|r| r.summary) == Some(false);
+    let mut reasoning = json!({ "max_tokens": budget });
+    if withheld {
+        reasoning["exclude"] = true.into();
+    }
+    let native = input
+        .native
+        .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()));
+    native.format = OpenAiChat::NAME.into();
+    native.fields.entry("reasoning").or_insert(reasoning);
+    Ok(())
+}
 
 /// OpenRouter's images, as they depart from OpenAI's: generations and edits
 /// both at `/images`, an edit's images as JSON `input_references`, each a
@@ -149,6 +214,75 @@ mod tests {
         assert!(
             matches!(&out[1], image::Output::Native(n) if *n.value == json!({ "usage": { "cost": 0.04 } }))
         );
+    }
+
+    #[test]
+    fn it_speaks_chat_first_and_responses_beside_it() {
+        let names: Vec<_> = VENDOR.formats.iter().map(|(f, _)| f.name()).collect();
+        assert_eq!(names[..2], [OpenAiChat::NAME, OpenAiResponses::NAME]);
+        assert!(
+            VENDOR
+                .formats
+                .iter()
+                .all(|(_, base)| *base == Some(BASE_URL))
+        );
+    }
+
+    #[test]
+    fn its_responses_usage_reads_with_its_own_fields_beside() {
+        use respan_gateway_conversation::Output;
+        let body = json!({
+            "id": "gen-1", "object": "response", "created_at": 1, "status": "completed",
+            "model": "openai/gpt-5.5-codex",
+            "output": [{ "id": "msg_1", "type": "message", "status": "completed", "role": "assistant",
+                "content": [{ "type": "output_text", "text": "hi", "annotations": [] }] }],
+            "usage": { "input_tokens": 5, "output_tokens": 2, "total_tokens": 7,
+                "input_tokens_details": { "cached_tokens": 1 },
+                "output_tokens_details": { "reasoning_tokens": 0 },
+                "cost": 0.0001, "is_byok": false },
+        });
+        let mut out = Vec::new();
+        OpenAiResponses.decode_body(&body, &mut out).expect("read");
+        let usage = out.iter().find_map(|o| match o {
+            Output::Usage(u) => Some(*u),
+            _ => None,
+        });
+        assert_eq!(
+            usage.map(|u| (u.input_tokens, u.output_tokens)),
+            Some((5, 2))
+        );
+    }
+
+    #[test]
+    fn claudes_thinking_is_its_reasoning() {
+        let mut messages = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9000,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "enabled", "budget_tokens": 2048 },
+        }));
+        reasoning(&mut messages).expect("taken");
+        assert!(messages.options.reasoning.is_none());
+        let sent = OpenAiChat.encode_request(&messages).expect("written");
+        assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
+        assert!(sent.get("reasoning_effort").is_none());
+        // Without a budget the input is as it came.
+        let plain = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9,
+            "messages": [{ "role": "user", "content": "hi" }],
+        }));
+        let mut taken = plain.clone();
+        reasoning(&mut taken).expect("taken");
+        assert_eq!(taken, plain);
+        let mut adaptive = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "adaptive" },
+            "output_config": { "effort": "high" },
+        }));
+        reasoning(&mut adaptive).expect("taken");
+        let sent = OpenAiChat.encode_request(&adaptive).expect("written");
+        assert_eq!(sent["reasoning"], json!({ "enabled": true }));
+        assert_eq!(sent["reasoning_effort"], "high");
     }
 
     #[test]

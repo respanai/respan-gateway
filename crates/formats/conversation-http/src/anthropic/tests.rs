@@ -2,6 +2,7 @@ use super::*;
 
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
+use crate::openai::OpenAiChat;
 use respan_gateway_conversation::ToolChoice;
 use respan_gateway_core::NativeFields;
 use respan_gateway_http::http::{HeaderValue, header::CONTENT_TYPE};
@@ -1017,7 +1018,6 @@ fn large_content_in_another_order_is_written_in_that_order() {
 
 #[test]
 fn every_output_effort_is_the_kinds_and_reaches_openai() {
-    use crate::openai::OpenAiChat;
     for name in ["low", "medium", "high", "xhigh", "max"] {
         let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": name },
             "messages": [{ "role": "user", "content": "hi" }] });
@@ -1033,5 +1033,196 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
             sent.ok().map(|v| v["reasoning_effort"].clone()),
             Some(json!(name))
         );
+    }
+}
+
+#[test]
+fn a_chats_json_output_is_written_as_anthropic_takes_it() {
+    let chat = |format: Value| {
+        OpenAiChat.decode_json(&json!({
+            "messages": [{ "role": "user", "content": "JSON please" }],
+            "response_format": format,
+        }))
+    };
+    // A JSON object without a schema asks for nothing the prompt does not.
+    let sent = AnthropicMessages
+        .encode_request(&chat(json!({ "type": "json_object" })))
+        .expect("written");
+    assert!(sent.get("output_config").is_none(), "{sent:?}");
+    // A wrapper's description and strictness are dropped, and the schema's
+    // constraints become its descriptions.
+    let format = json!({ "type": "json_schema", "json_schema": {
+        "name": "r", "description": "a reply", "strict": false,
+        "schema": { "type": "object", "properties": { "tags": { "type": "array", "maxItems": 2 } } },
+    } });
+    let sent = AnthropicMessages
+        .encode_request(&chat(format))
+        .expect("written");
+    assert_eq!(
+        sent["output_config"],
+        json!({ "format": { "type": "json_schema", "schema": { "type": "object", "properties": {
+            "tags": { "description": "Note: maximum number of items: 2.", "type": "array" },
+        } } } })
+    );
+}
+
+#[test]
+fn a_chats_thinking_is_adopted_as_anthropics() {
+    let chat = |thinking: Value| {
+        OpenAiChat.decode_json(&json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": thinking,
+        }))
+    };
+    let budget = json!({ "type": "enabled", "budget_tokens": 10_000 });
+    let sent = AnthropicMessages
+        .encode_request(&chat(budget.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], budget);
+    assert_eq!(
+        sent["max_tokens"],
+        10_000 + DEFAULT_MAX_TOKENS,
+        "room to answer"
+    );
+    let adaptive = json!({ "type": "adaptive" });
+    let sent = AnthropicMessages
+        .encode_request(&chat(adaptive.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], adaptive);
+    // Chat Completions keeps it as it came.
+    let sent = OpenAiChat
+        .encode_request(&chat(adaptive.clone()))
+        .expect("written");
+    assert_eq!(sent["thinking"], adaptive);
+}
+
+#[test]
+fn a_chats_effort_thinks_as_its_claude_does() {
+    let sent = |model: &str, extra: Value| {
+        let mut body = json!({ "model": model, "reasoning_effort": "high",
+            "messages": [{ "role": "user", "content": "hi" }] });
+        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+            body.extend(extra.clone());
+        }
+        let chat = OpenAiChat
+            .decode_request(Bytes::from(body.to_string()))
+            .expect("chat");
+        let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+        AnthropicMessages::translated(&chat, &mut v);
+        Value::Object(v)
+    };
+    // Adaptive, beside the effort, from Claude 4.6.
+    for model in ["claude-sonnet-4-6", "claude-opus-5", "claude-sonnet-5"] {
+        let v = sent(model, json!({}));
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{model}");
+        assert_eq!(v["output_config"], json!({ "effort": "high" }), "{model}");
+    }
+    // A budget in its place before, with room to answer.
+    for model in [
+        "claude-sonnet-4-5-20250929",
+        "claude-3-7-sonnet-latest",
+        "claude-opus-4-1-20250805",
+    ] {
+        let v = sent(model, json!({}));
+        assert_eq!(
+            v["thinking"],
+            json!({ "type": "enabled", "budget_tokens": 4096 }),
+            "{model}"
+        );
+        assert!(v.get("output_config").is_none(), "{model}");
+        assert_eq!(v["max_tokens"], 4096 + DEFAULT_MAX_TOKENS, "{model}");
+    }
+    // Claude 3 thinks not at all.
+    let v = sent("claude-3-5-haiku-latest", json!({}));
+    assert!(v.get("thinking").is_none() && v.get("output_config").is_none());
+    // Thinking the client named, and another model, stay as written.
+    let v = sent(
+        "claude-sonnet-4-5",
+        json!({ "thinking": { "type": "enabled", "budget_tokens": 2048 } }),
+    );
+    assert_eq!(v["thinking"]["budget_tokens"], 2048);
+    let v = sent("kimi-k2", json!({}));
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["output_config"], json!({ "effort": "high" }));
+}
+
+#[test]
+fn a_chats_reasoning_object_is_dropped_for_anthropic() {
+    let chat = OpenAiChat.decode_json(&json!({
+        "messages": [{ "role": "user", "content": "hi" }],
+        "reasoning": { "effort": "high" },
+    }));
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert!(sent.get("reasoning").is_none());
+    assert_eq!(
+        OpenAiChat.encode_request(&chat).expect("written")["reasoning"],
+        json!({ "effort": "high" })
+    );
+}
+
+/// The call a chat `body` to `model` becomes for Claude, with the thinking a
+/// translated effort adds.
+fn claude_call(model: &str, body: Value) -> Value {
+    let mut chat = json!({ "model": model, "reasoning_effort": "low",
+        "messages": [{ "role": "user", "content": "hi" }] });
+    if let (Some(chat), Some(body)) = (chat.as_object_mut(), body.as_object()) {
+        chat.extend(body.clone());
+    }
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(chat.to_string()))
+        .expect("chat");
+    let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+    AnthropicMessages::translated(&chat, &mut v);
+    Value::Object(v)
+}
+
+#[test]
+fn a_chats_effort_adds_no_thinking_beside_what_anthropic_refuses_with_it() {
+    let tool = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }]);
+    let calls =
+        json!([{ "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }]);
+    let refused = [
+        json!({ "temperature": 0.2 }),
+        json!({ "top_p": 0.5 }),
+        json!({ "tools": tool, "tool_choice": "required" }),
+        json!({ "tools": tool, "tool_choice": { "type": "function", "function": { "name": "f" } } }),
+        // A tool loop whose turn of the assistant's has no thinking to open with.
+        json!({ "tools": tool, "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+        ] }),
+        // A last turn of the assistant's to continue.
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "The answer is" },
+        ] }),
+    ];
+    for extra in refused {
+        // Claude 4.6 and later keeps the effort alone.
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert!(v.get("thinking").is_none(), "{extra}: {v}");
+        assert_eq!(v["output_config"], json!({ "effort": "low" }), "{extra}");
+        // A budgeted Claude has no effort of its own to keep.
+        let v = claude_call("claude-sonnet-4-5", extra.clone());
+        assert!(
+            v.get("thinking").is_none() && v.get("output_config").is_none(),
+            "{extra}: {v}"
+        );
+    }
+    // A temperature of 1, an auto choice, or a finished tool loop think.
+    for extra in [
+        json!({ "temperature": 1.0, "top_p": 0.95 }),
+        json!({ "tools": tool, "tool_choice": "auto" }),
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+            { "role": "assistant", "content": "done" },
+            { "role": "user", "content": "thanks" },
+        ] }),
+    ] {
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{extra}: {v}");
     }
 }

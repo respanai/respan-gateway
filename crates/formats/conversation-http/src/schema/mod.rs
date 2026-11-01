@@ -33,13 +33,14 @@ pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
 pub use values::INERT;
+pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
     Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
     encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
-    message_fields, native_fields, only, own_fields, read_search, remainder, set, source_url,
-    stop_json, tidy, tool_field, unsupported_fields, untranslatable, unwritable_content,
-    usage_extra, write_search,
+    message_fields, native_fields, only, own_fields, read_search, remainder, set, set_aside,
+    source_url, stop_json, tidy, tool_field, unsupported_fields, untranslatable,
+    unwritable_content, usage_extra, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -109,6 +110,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// goes, such as Chat Completions' `verbosity` as Responses'
     /// `text.verbosity`.
     const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[];
+    /// Fields of another format's `native` this format drops, as asking
+    /// nothing it can say: `(format, key)`.
+    const DROPPED: &'static [(&'static str, &'static str)] = &[];
     /// Decodes the events of a streamed response into events.
     type Decoding: respan_gateway_http::Decoder<Output>;
 
@@ -143,9 +147,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// Prepare the request sent to a provider: add what the gateway needs of it,
     /// such as usage in a stream.
     fn prepare_call(_v: &mut Map<String, Value>) {}
-    /// Prepare a call whose client speaks another format: say what the
-    /// format must for a client that can name nothing it keeps.
-    fn translated(_v: &mut Map<String, Value>) {}
+    /// Prepare a call of `input` whose client speaks another format: say
+    /// what the format must for a client that can name nothing it keeps.
+    fn translated(_input: &Input, _v: &mut Map<String, Value>) {}
     /// Spell the fields of `v` as `original`, the client's request in this
     /// format, did, where the format has two spellings of one field.
     fn respell(_original: &Value, _v: &mut Map<String, Value>) {}
@@ -201,6 +205,11 @@ pub trait Schema: Copy + Send + Sync + 'static {
         let mut adopted = Vec::new();
         let mut rest = chat.native.clone();
         if let Some(n) = rest.as_mut() {
+            for (format, key) in Self::DROPPED {
+                if *n.format == **format {
+                    n.fields.shift_remove(*key);
+                }
+            }
             for (format, key, path) in Self::ADOPTED {
                 if *n.format != **format {
                     continue;
@@ -216,9 +225,11 @@ pub trait Schema: Copy + Send + Sync + 'static {
             }
         }
         let mut native = kept_fields(Self::NAME, &rest, in_the_request, keep)?;
-        // What only this format needs is written as it came.
+        // What only this format needs is written as it came, but what it
+        // writes itself.
         if let Some(Value::Object(inert)) = native.shift_remove(INERT) {
-            native.extend(inert);
+            let written = |key: &String| Self::OWN.contains(&key.as_str());
+            native.extend(inert.into_iter().filter(|(key, _)| !written(key)));
         }
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));

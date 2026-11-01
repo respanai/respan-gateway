@@ -75,6 +75,17 @@ impl Keep {
 /// format drops it instead of refusing.
 pub const INERT: &str = "inert";
 
+/// Sets `value` aside under `key` in the [`INERT`] object of a format's
+/// native `fields`: a client's own `inert` field that is no object is
+/// replaced, as the format could not write it back.
+pub(crate) fn set_aside(fields: &mut Map<String, Value>, key: &str, value: Value) {
+    let inert = fields.entry(INERT).or_insert(Value::Null);
+    if !inert.is_object() {
+        *inert = Value::Object(Map::new());
+    }
+    inert[key] = value;
+}
+
 /// The fields of `native` to write in `format`: all but the `own` keys if they
 /// are in `format`; if they are another's, none if each is droppable (or
 /// [`INERT`]), else an `Err` naming the first that is not, by `what`.
@@ -190,6 +201,16 @@ pub(crate) fn check_usage(usage: &Usage, fields: UsageFields) -> Result<(), Faul
         return Err(unwritable_usage());
     }
     Ok(())
+}
+
+/// A provider's counts with each part within its whole: some report more
+/// reasoning than output, and an answer already given is not failed for it.
+pub(crate) fn parts_within_totals(mut usage: Usage) -> Usage {
+    usage.reasoning_tokens = usage.reasoning_tokens.min(usage.output_tokens);
+    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
+    let uncached = usage.input_tokens - usage.cached_input_tokens;
+    usage.cache_write_input_tokens = usage.cache_write_input_tokens.min(uncached);
+    usage
 }
 
 /// A provider's usage count at `v`: `None` if it says none (absent or
