@@ -77,7 +77,7 @@ fn anthropic_choice(choice: &Value) -> Option<(Option<ToolChoice>, Option<bool>)
 /// The kind's tools as Anthropic's fields of a request `v`. Calls one at a
 /// time are said inside `tool_choice`.
 pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut tool = Map::new();
         tool.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -89,9 +89,9 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         };
         tool.insert("input_schema".into(), schema);
         tool.extend(t.native.fields_for(ANTHROPIC));
-        Ok(Value::Object(tool))
+        Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     for provided in &chat.provider_tools {
         let mut search = Map::new();
         search.insert("type".into(), "web_search_20250305".into());
@@ -252,12 +252,11 @@ fn tool_part(block: &Value) -> Option<Content> {
 
 /// Write the fields of a tool part's `native` into its Anthropic `block`:
 /// another format's are dropped.
-fn block_fields(block: &mut Value, native: &Option<NativeFields>) -> Result<(), Fault> {
+fn block_fields(block: &mut Value, native: &Option<NativeFields>) {
     let fields = native.fields_for(ANTHROPIC);
     if let Some(block) = block.as_object_mut() {
         block.extend(fields);
     }
-    Ok(())
 }
 
 /// The kind's tool call or result as an Anthropic block.
@@ -272,7 +271,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
         } => {
             let input = arguments_object(arguments)?;
             let mut block = json!({ "type": "tool_use", "id": id, "name": name, "input": input });
-            block_fields(&mut block, native)?;
+            block_fields(&mut block, native);
             Ok(block)
         }
         Content::ToolResult {
@@ -283,7 +282,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             ..
         } => {
             let mut block = json!({ "type": "tool_result", "tool_use_id": id });
-            block_fields(&mut block, native)?;
+            block_fields(&mut block, native);
             if !content.is_empty() {
                 block["content"] = encode_content::<AnthropicMessages>(content)?;
             }

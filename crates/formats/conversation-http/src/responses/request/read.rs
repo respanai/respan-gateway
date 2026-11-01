@@ -214,5 +214,3 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
         .push(Content::Reasoning { text, native });
     Some(())
 }
-
-// ------------------------------------------------------------------ writing
