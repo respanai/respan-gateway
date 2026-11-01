@@ -110,7 +110,7 @@ pub(super) struct Client {
 
 impl Client {
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event)? else {
+        let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
         if let Some(v) = self.encode(&event) {

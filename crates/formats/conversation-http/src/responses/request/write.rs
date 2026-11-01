@@ -2,20 +2,30 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, merge_missing, untranslatable};
+use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
+/// The key in a request's native that says its leading system message was
+/// its `instructions`.
+pub(in crate::responses) const INSTRUCTIONS: &str = "instructions";
+
 /// The request's `instructions` and `input`: a leading system message of
-/// one plain text is the instructions.
+/// one plain text is the instructions if it came so; another's system
+/// message, such as Chat Completions', is an input item, where OpenAI reads
+/// it as it would have there (its check that a JSON answer is asked for in
+/// words reads only the input).
 pub(in crate::responses) fn write_input(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
+    let instructed =
+        chat.native.format() == Some(RESPONSES) && chat.native.fields().contains_key(INSTRUCTIONS);
     let mut rest = &chat.messages[..];
-    if let Some((first, after)) = rest.split_first()
+    if instructed
+        && let Some((first, after)) = rest.split_first()
         && first.role == Role::System
         && first.native.is_empty()
         && let [
@@ -231,7 +241,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
                 if !run.is_empty() && native.fields().contains_key(MESSAGE) {
-                    flush_assistant(&mut run, items)?;
+                    flush_assistant(&mut run, items);
                 }
                 run.push(c);
             }
@@ -243,7 +253,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 native,
                 ..
             } => {
-                flush_assistant(&mut run, items)?;
+                flush_assistant(&mut run, items);
                 let arguments = match arguments.trim().is_empty() {
                     true => "{}",
                     false => arguments.as_str(),
@@ -256,8 +266,12 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
+            // Reasoning is only valid with the id of the item it was.
+            Content::Reasoning { native, .. } if native.format() != Some(RESPONSES) => {
+                warn_reasoning(RESPONSES, native);
+            }
             Content::Reasoning { text, native } => {
-                flush_assistant(&mut run, items)?;
+                flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {
                     true => json!([]),
                     false => json!([{ "type": "summary_text", "text": text }]),
@@ -265,17 +279,13 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 let mut v = Map::new();
                 v.insert("type".into(), "reasoning".into());
                 v.insert("summary".into(), summary);
-                // Reasoning is only valid with the id of the item it was.
-                if native.format() != Some(RESPONSES) {
-                    return Err(untranslatable("reasoning from another format"));
-                }
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
             _ => return Err(untranslatable("an unsupported kind of part")),
         }
     }
-    flush_assistant(&mut run, items)?;
+    flush_assistant(&mut run, items);
     if items.len() == before {
         items.push(json!({ "role": "assistant", "content": "" }));
     }
@@ -284,10 +294,10 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
 
 /// The message item of a run of an assistant's text: by its text alone if
 /// it keeps nothing of an item, else in full.
-fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<(), Fault> {
+fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) {
     let parts = std::mem::take(run);
     if parts.is_empty() {
-        return Ok(());
+        return;
     }
     let mut item = Map::new();
     let mut plain = true;
@@ -320,7 +330,7 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     }
     if plain && item.is_empty() {
         items.push(json!({ "role": "assistant", "content": texts }));
-        return Ok(());
+        return;
     }
     let mut v = Map::new();
     v.insert("type".into(), "message".into());
@@ -329,5 +339,4 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) -> Result<()
     v.entry("status").or_insert_with(|| "completed".into());
     v.extend(item);
     items.push(v.into());
-    Ok(())
 }

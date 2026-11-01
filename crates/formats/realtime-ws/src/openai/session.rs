@@ -45,7 +45,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     )
     .or_else(|| at(v, TRANSCRIPTION)?.is_object().then_some(true));
     s.output_transcription = Some(true);
-    s.tools = take(v, TOOLS, tools, |t| tools_json(t, refuse).ok());
+    s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
     s.tool_choice = take(v, TOOL_CHOICE, tool_choice, tool_choice_json);
     s.max_output_tokens = take(v, MAX_OUTPUT_TOKENS, Value::as_u64, number);
     s.native = json::native(NAME, std::mem::take(v));
@@ -88,13 +88,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
             false => Value::Null,
         }),
     );
-    put(
-        TOOLS,
-        s.tools
-            .as_ref()
-            .map(|t| tools_json(t, refuse))
-            .transpose()?,
-    );
+    put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
     put(
         TOOL_CHOICE,
         s.tool_choice.as_ref().and_then(tool_choice_json),
@@ -217,10 +211,7 @@ fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     put("create_response", vad.respond.map(Value::from));
     put("interrupt_response", vad.interrupt.map(Value::from));
     let mut v = Value::Object(v);
-    merge(
-        &mut v,
-        own(NAME, &vad.native, || refuse("another format's VAD tuning"))?,
-    );
+    merge(&mut v, own(&vad.native));
     if v.get("type").is_none() {
         v["type"] = "server_vad".into();
     }
@@ -254,7 +245,7 @@ fn tool(v: &Value) -> Option<Tool> {
     Some(tool)
 }
 
-fn tools_json(tools: &[Tool], refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn tools_json(tools: &[Tool]) -> Value {
     let tool = |t: &Tool| {
         let mut v = json!({"type": "function", "name": t.name});
         if let Some(description) = &t.description {
@@ -264,11 +255,8 @@ fn tools_json(tools: &[Tool], refuse: fn(&str) -> Fault) -> Result<Value, Fault>
             v["parameters"] = t.parameters.clone();
             lowercase_types(&mut v["parameters"]);
         }
-        merge(
-            &mut v,
-            own(NAME, &t.native, || refuse("another format's tool"))?,
-        );
-        Ok(v)
+        merge(&mut v, own(&t.native));
+        v
     };
     tools.iter().map(tool).collect()
 }

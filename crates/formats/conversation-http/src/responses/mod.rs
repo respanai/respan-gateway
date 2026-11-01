@@ -4,11 +4,13 @@
 //! # Requests
 //!
 //! `instructions` is a leading system message and `input` the messages after
-//! it: a string is one user message, and an array's items are messages
-//! (`input_text`, `input_image` and `input_file` parts), an assistant's
-//! function calls and reasoning, and function call outputs as the results of
-//! a user message. Consecutive items of an assistant are one assistant
-//! message (`request` says how an item's own fields are kept). Function
+//! it; a leading system message is written back as `instructions` only if it
+//! came so, any other as a message item of its role. A string is one user
+//! message, and an array's items are messages (`input_text`, `input_image`
+//! and `input_file` parts), an assistant's function calls and reasoning, and
+//! function call outputs as the results of a user message. Consecutive items
+//! of an assistant are one assistant message (`request` says how an item's own
+//! fields are kept). Function
 //! tools, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`,
 //! `temperature`, `top_p`, `user`, `text.format` and `reasoning` (its `effort`,
 //! and a `summary` of `auto`) are the kind's.
@@ -19,16 +21,14 @@
 //! native to its block, is the only way it reaches a later call (the
 //! gateway's `plugins.responses` puts it back).
 //!
-//! What the kind has no form for stays native to this format and is refused
+//! What the kind has no form for stays native to this format and is dropped
 //! in translation: `previous_response_id` and `conversation` (another
 //! provider cannot resolve them; the gateway's `plugins.responses` resolves
 //! the first itself), `include`, `truncation`,
 //! the rest of `reasoning` (`generate_summary`, a summary but `auto`), `metadata`, built-in tools (web search,
 //! file search, computer use, code interpreter, MCP) and the items they
 //! make, and the rest of what the request says beyond the spec's defaults.
-//! Item ids and statuses, and the default `strict` of a function tool, are
-//! inert: any other format drops them. A request with stop sequences cannot be
-//! written, as Responses has none.
+//! A request with stop sequences cannot be written, as Responses has none.
 //!
 //! # Responses as events
 //!
@@ -54,11 +54,10 @@
 //! - The item's fields the kind has no place for, such as its `id`, are its
 //!   [`Output::block_fields`] before its block opens, and an annotation one
 //!   native `{"type": "annotation", ..}`; the usage object's other fields
-//!   are `{"type": "usage_fields", ..}`. Another format drops the block's
-//!   fields and the usage's, and refuses annotations.
+//!   are `{"type": "usage_fields", ..}`. Another format drops them all.
 //! - An item the kind has no form for (a built-in tool's call, a refusal)
 //!   is a native of each of its events as they came, or, from a whole body,
-//!   one `response.output_item.done`; any other format refuses it.
+//!   one `response.output_item.done`; any other format drops it.
 //!
 //! Encoders do the reverse. A stream is written as the documented sequence
 //! (`response.created`, `response.in_progress`, each item's `added`, content
@@ -77,7 +76,7 @@ mod tests;
 
 use crate::schema::{
     Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    unsupported_fields, unwritable_content, usage_extra,
+    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -177,13 +176,14 @@ impl Schema for OpenAiResponses {
     const PATH: &'static str = "/responses";
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
-    /// The structured output requirement is in `text`.
-    const OWN: &'static [&'static str] = &["text", "reasoning"];
+    /// The structured output requirement is in `text`; whether the request
+    /// had `instructions` is said by [`request::write_input`].
+    const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
     /// and its reasoning comes encrypted, to be carried to a later call.
-    fn translated(v: &mut Map<String, Value>) {
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
         v.entry("store").or_insert(false.into());
         let include = v.entry("include").or_insert_with(|| json!([]));
         if let Some(include) = include.as_array_mut() {
@@ -212,10 +212,18 @@ impl Schema for OpenAiResponses {
         if chat.user.is_some() {
             chat.native.fields_mut(RESPONSES).shift_remove("user");
         }
+        // Its leading system message goes back as `instructions` alone.
+        if crate::schema::says(&v["instructions"]) {
+            chat.native
+                .fields_mut(RESPONSES)
+                .insert(request::INSTRUCTIONS.into(), true.into());
+        }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
         chat.native = native_fields(RESPONSES, std::mem::take(chat.native.fields_mut(RESPONSES)));
         request::read_format(v, &mut chat);
+        chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
+        request::read_verbosity(&mut chat);
         request::read_reasoning(&mut chat);
         chat
     }
@@ -227,6 +235,11 @@ impl Schema for OpenAiResponses {
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
         request::write_tools(chat, &mut v)?;
+        crate::schema::set(
+            &mut v,
+            "service_tier",
+            chat.options.service_tier.clone().map(Into::into),
+        );
         crate::schema::set(
             &mut v,
             "max_output_tokens",
@@ -282,7 +295,7 @@ pub(crate) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/input_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/input_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/output_tokens_details/reasoning_tokens")?;
-    Ok(usage)
+    Ok(parts_within_totals(usage))
 }
 
 /// What a usage object `u` says that has no unit.

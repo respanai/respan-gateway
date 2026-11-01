@@ -22,7 +22,7 @@
 //!
 //! What the kind has no form for stays as the format that decoded it has it
 //! ([`NativeFields`], [`Content::Native`], [`Output::Native`]); it is sent only in that
-//! format, and translating it is refused if it can change the answer.
+//! format, and another drops it: what has meaning across formats belongs here.
 //!
 //! Values are plain data: they say what they hold and compare by it. They
 //! keep nothing of the bytes they were decoded from.
@@ -49,6 +49,10 @@ pub use usage::Usage;
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct GenerationOptions {
+    /// The processing tier asked for, as OpenAI names it.
+    pub service_tier: Option<String>,
+    /// How much the answer says, as OpenAI names it.
+    pub verbosity: Option<String>,
     /// Maximum generated tokens.
     pub max_output_tokens: Option<u64>,
     /// Sampling temperature.

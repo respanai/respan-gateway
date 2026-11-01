@@ -2,8 +2,8 @@
 //! audio's bytes or, if asked (`stream_format: "sse"`), a stream of events.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, event_json, foreign, invalid, json_bytes,
-    kept, merge_missing, missing, native_of, post_to, read_usage, sends, set, sse_event, streams,
+    Fields, Form, as_usage_extras, b64, bind_client, event_json, invalid, json_bytes, kept,
+    merge_missing, missing, native_of, post_to, read_usage, sends, set, sse_event, streams,
     take_number, take_string, unb64, unreadable, usage_extras, write_usage,
 };
 use crate::edge::{bind_provider, ended_events};
@@ -121,7 +121,7 @@ fn post(
     set(&mut v, "instructions", input.instructions.clone());
     set(&mut v, "response_format", input.audio_format.clone());
     set(&mut v, "speed", input.speed);
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, &kept(NAME, &input.native));
     if stream {
         v.insert("stream_format".into(), "sse".into());
     }
@@ -178,11 +178,9 @@ fn response_encoder(
     let format = asked.get("response_format").and_then(Value::as_str);
     super::content_type(head, audio_type(format.unwrap_or("mp3")));
     Box::new(|event: &Output, out: &mut Vec<Bytes>| {
-        match event {
-            Output::Audio(bytes) => out.push(bytes.clone()),
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
-            // Raw audio has no place for anything else.
-            _ => {}
+        // Raw audio has no place for anything else.
+        if let Output::Audio(bytes) = event {
+            out.push(bytes.clone());
         }
         Ok(())
     })
@@ -222,8 +220,7 @@ impl StreamEncoder {
                 *self.usage.get_or_insert_with(Usage::default) += u;
                 return Ok(());
             }
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
-            Output::Native(n) => match as_usage_extras(&n.value) {
+            Output::Native(n) if &*n.format == NAME => match as_usage_extras(&n.value) {
                 Some(more) => {
                     merge_missing(&mut self.extras, more);
                     return Ok(());

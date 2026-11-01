@@ -17,6 +17,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
 use serde_json::{Map, Value, json};
 
+use crate::anthropic::output_schema::output_schema;
 use crate::anthropic::{ANTHROPIC, AnthropicMessages};
 
 /// Anthropic's custom tools and choice, with whether calls may be
@@ -76,7 +77,7 @@ fn anthropic_choice(choice: &Value) -> Option<(Option<ToolChoice>, Option<bool>)
 /// The kind's tools as Anthropic's fields of a request `v`. Calls one at a
 /// time are said inside `tool_choice`.
 pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut tool = Map::new();
         tool.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -88,9 +89,9 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         };
         tool.insert("input_schema".into(), schema);
         tool.extend(t.native.fields_for(ANTHROPIC));
-        Ok(Value::Object(tool))
+        Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     for provided in &chat.provider_tools {
         let mut search = Map::new();
         search.insert("type".into(), "web_search_20250305".into());
@@ -251,12 +252,11 @@ fn tool_part(block: &Value) -> Option<Content> {
 
 /// Write the fields of a tool part's `native` into its Anthropic `block`:
 /// another format's are dropped.
-fn block_fields(block: &mut Value, native: &Option<NativeFields>) -> Result<(), Fault> {
+fn block_fields(block: &mut Value, native: &Option<NativeFields>) {
     let fields = native.fields_for(ANTHROPIC);
     if let Some(block) = block.as_object_mut() {
         block.extend(fields);
     }
-    Ok(())
 }
 
 /// The kind's tool call or result as an Anthropic block.
@@ -271,7 +271,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
         } => {
             let input = arguments_object(arguments)?;
             let mut block = json!({ "type": "tool_use", "id": id, "name": name, "input": input });
-            block_fields(&mut block, native)?;
+            block_fields(&mut block, native);
             Ok(block)
         }
         Content::ToolResult {
@@ -282,7 +282,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             ..
         } => {
             let mut block = json!({ "type": "tool_result", "tool_use_id": id });
-            block_fields(&mut block, native)?;
+            block_fields(&mut block, native);
             if !content.is_empty() {
                 block["content"] = encode_content::<AnthropicMessages>(content)?;
             }
@@ -393,29 +393,12 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
         }
         config["effort"] = effort.into();
     }
+    // A JSON object without a schema has no format here: the prompt asks
+    // for JSON. A schema wrapper's description and strictness have no field,
+    // and Anthropic always holds the answer to the schema.
     let schema = match &input.options.response_format {
-        None | Some(ResponseFormat::Text) => None,
-        Some(ResponseFormat::JsonObject) => {
-            return Err(untranslatable(
-                "unconstrained JSON object output in Anthropic; supply a schema",
-            ));
-        }
-        Some(ResponseFormat::JsonSchema {
-            schema,
-            description,
-            strict,
-            ..
-        }) => {
-            // OpenAI uses the wrapper description to instruct the model, and
-            // Anthropic always constrains the result. Do not silently discard
-            // those requests when there is no equivalent target field.
-            if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
-                    "a schema wrapper description or non-strict schema output in Anthropic",
-                ));
-            }
-            Some(schema)
-        }
+        None | Some(ResponseFormat::Text | ResponseFormat::JsonObject) => None,
+        Some(ResponseFormat::JsonSchema { schema, .. }) => Some(output_schema(schema)),
     };
     if let Some(schema) = schema {
         let config = config.get_or_insert_with(|| json!({}));
@@ -444,6 +427,127 @@ pub(crate) fn read_thinking(input: &mut Input) {
             _ => None,
         }
     });
+}
+
+/// The thinking budget an effort buys a Claude that thinks to a budget.
+const EFFORT_BUDGETS: &[(&str, u64)] = &[
+    ("low", 1024),
+    ("medium", 2048),
+    ("high", 4096),
+    ("xhigh", 8192),
+    ("max", 16384),
+];
+
+/// How a Claude model thinks.
+enum Thinks {
+    /// Adaptively, to an effort: Claude 4.6 and later.
+    Adaptively,
+    /// To a token budget: Claude 3.7 to 4.5.
+    ToBudget,
+    /// Not at all: Claude 3 but 3.7.
+    Never,
+}
+
+fn thinks(model: &str) -> Thinks {
+    let budgeted = [
+        "-4-0", "-4.0", "-4-1", "-4.1", "-4-5", "-4.5", "-4-2025", "-4@",
+    ];
+    let family = |family: &str| {
+        model.ends_with(&format!("{family}-4"))
+            || budgeted
+                .iter()
+                .any(|v| model.contains(&format!("{family}{v}")))
+    };
+    if model.contains("claude-3-7") || model.contains("3-7-sonnet") {
+        Thinks::ToBudget
+    } else if model.contains("claude-3") {
+        Thinks::Never
+    } else if ["opus", "sonnet", "haiku"].iter().any(|f| family(f)) {
+        Thinks::ToBudget
+    } else {
+        Thinks::Adaptively
+    }
+}
+
+/// Whether the call `v` can think: Anthropic refuses thinking beside a
+/// temperature but 1, a `top_k`, a `top_p` under 0.95, a forced tool
+/// (`any` or `tool`), a last turn of the assistant's to continue, and a
+/// tool loop's turn of the assistant's that does not open with its thinking.
+fn can_think(v: &Map<String, Value>) -> bool {
+    let number = |key: &str| v.get(key).and_then(Value::as_f64);
+    let forced = v.get("tool_choice").and_then(|c| c["type"].as_str());
+    let forced = matches!(forced, Some("any" | "tool"));
+    if number("temperature").is_some_and(|t| t != 1.0)
+        || number("top_p").is_some_and(|p| p < 0.95)
+        || v.contains_key("top_k")
+        || forced
+    {
+        return false;
+    }
+    let messages = v.get("messages").and_then(Value::as_array);
+    let messages = messages.map(Vec::as_slice).unwrap_or_default();
+    let blocks = |m: &Value| m["content"].as_array().cloned().unwrap_or_default();
+    // The turn in progress: what follows the user's last message of its own.
+    let of_user =
+        |m: &Value| m["role"] == "user" && blocks(m).iter().all(|b| b["type"] != "tool_result");
+    let turn = messages.iter().rposition(of_user).map_or(0, |at| at + 1);
+    let turn = &messages[turn..];
+    let assistant = |m: &&Value| m["role"] == "assistant";
+    let opens_with_thinking = |m: &Value| {
+        let first = blocks(m).first().map(|b| b["type"].clone());
+        matches!(
+            first.as_ref().and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        )
+    };
+    turn.last().is_none_or(|last| last["role"] != "assistant")
+        && turn.iter().filter(assistant).all(opens_with_thinking)
+}
+
+/// A Claude call whose reasoning is an effort alone (`output_config.effort`)
+/// and no `thinking`, as a client of another format names it: beside the
+/// effort, adaptive thinking on Claude 4.6 and later; in its place, a
+/// thinking budget on Claude 3.7 to 4.5, `max_tokens` above it; on another
+/// Claude 3, neither. A call that cannot think ([`can_think`]) keeps the
+/// effort alone on Claude 4.6 and later, and has none on the others. Another
+/// model's call stays as written.
+pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
+    let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
+    let model = model.to_ascii_lowercase();
+    if !model.contains("claude") || v.contains_key("thinking") {
+        return;
+    }
+    let effort = v.get("output_config").and_then(|c| c.get("effort"));
+    let Some(effort) = effort.and_then(Value::as_str).map(str::to_owned) else {
+        return;
+    };
+    let thinks = thinks(&model);
+    let thinking = match (&thinks, can_think(v)) {
+        (Thinks::Adaptively, true) => Some(json!({ "type": "adaptive" })),
+        (Thinks::ToBudget, true) => {
+            let Some(&(_, budget)) = EFFORT_BUDGETS.iter().find(|(e, _)| *e == effort) else {
+                return;
+            };
+            let limit = v.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
+            if limit <= budget {
+                let limit = budget.saturating_add(crate::anthropic::DEFAULT_MAX_TOKENS);
+                v.insert("max_tokens".into(), limit.into());
+            }
+            Some(json!({ "type": "enabled", "budget_tokens": budget }))
+        }
+        _ => None,
+    };
+    if !matches!(thinks, Thinks::Adaptively)
+        && let Some(Value::Object(config)) = v.get_mut("output_config")
+    {
+        config.remove("effort");
+        if config.is_empty() {
+            v.remove("output_config");
+        }
+    }
+    if let Some(thinking) = thinking {
+        v.insert("thinking".into(), thinking);
+    }
 }
 
 /// The request's `thinking`: the kind's reasoning, else the request's own.

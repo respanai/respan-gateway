@@ -2,7 +2,7 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields;
+use crate::fields::{self, warn_dropped};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
@@ -47,12 +47,6 @@ pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSour
 /// A request body that is not a JSON object.
 pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
-}
-
-/// Says what of `from`'s, by name alone, a request in `format` goes without.
-fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a str>) {
-    let what: Vec<&str> = what.into_iter().collect();
-    eprintln!("warning: a request in {format} drops {from}'s {what:?}");
 }
 
 /// Says that a request in `format` goes without `what`, an option the
@@ -109,6 +103,15 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
         !said || !m.content.is_empty()
     });
     Cow::Owned(chat)
+}
+
+/// Says that `format` goes without reasoning it cannot take back.
+pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
+    warn_dropped(
+        format,
+        native.format().unwrap_or("another format"),
+        ["reasoning"],
+    );
 }
 
 /// `fields` as the native of a value decoded by `format`: none if empty.
@@ -176,6 +179,16 @@ pub(crate) fn check_usage(usage: &Usage, fields: UsageFields) -> Result<(), Faul
         return Err(unwritable_usage());
     }
     Ok(())
+}
+
+/// A provider's counts with each part within its whole: some report more
+/// reasoning than output, and an answer already given is not failed for it.
+pub(crate) fn parts_within_totals(mut usage: Usage) -> Usage {
+    usage.reasoning_tokens = usage.reasoning_tokens.min(usage.output_tokens);
+    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
+    let uncached = usage.input_tokens - usage.cached_input_tokens;
+    usage.cache_write_input_tokens = usage.cache_write_input_tokens.min(uncached);
+    usage
 }
 
 /// A provider's usage count at `v`: `None` if it says none (absent or
@@ -269,8 +282,7 @@ pub(crate) fn shows(reply: &Output) -> bool {
 }
 
 /// A message's content in format `C`: a string if it is one text with
-/// nothing beside it, and parts otherwise; a part in another format is
-/// refused.
+/// nothing beside it, and parts otherwise.
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
@@ -368,18 +380,21 @@ pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Res
     Ok(v.into())
 }
 
-/// The role to write: another format's roles are refused.
+/// The role to write, if this format has it.
 fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let role = match &m.role {
         Role::Native {
             format: f, name, ..
         } if **f == *format => Some(name.as_str()),
-        Role::Native { .. } => None,
         role => roles.name(role),
     };
     let role = role.map(Value::from);
     role.ok_or_else(|| untranslatable("a role this format has no place for"))
 }
+
+/// The tools of a request: the kind's, the provider's, and whether that is
+/// all of them.
+type ReadTools = (Vec<Tool>, Vec<ProviderTool>, bool);
 
 /// Set `chat`'s tools, tool choice and whether calls may be parallel, each
 /// that a format's request says in a form the kind has, taking its field,
@@ -387,15 +402,16 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
 /// `chat.native`.
 pub(crate) fn decode_tools(
     chat: &mut Input,
-    tools: Option<(Vec<Tool>, Vec<ProviderTool>)>,
+    tools: Option<ReadTools>,
     choice: Option<Option<ToolChoice>>,
     parallel: Option<Option<bool>>,
     keys: [&str; 3],
 ) {
-    if let Some((tools, provided)) = tools {
+    if let Some((tools, provided, all)) = tools {
         chat.tools = tools;
         chat.provider_tools = provided;
-        if let Some(native) = &mut chat.native {
+        // Else its format writes the list whole, another what the kind can say.
+        if all && let Some(native) = &mut chat.native {
             native.fields.shift_remove(keys[0]);
         }
     }
@@ -415,18 +431,19 @@ pub(crate) fn decode_tools(
     }
 }
 
-/// The tools of `v`, each by `tool` or else by `provided`, if the kind can
-/// say each.
+/// The tools of `v` the kind can say, each by `tool` or else by `provided`,
+/// and whether that is all of them.
 pub(crate) fn each_tool(
     v: &Value,
     tool: fn(&Value) -> Option<Tool>,
     provided: fn(&Value) -> Option<ProviderTool>,
-) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
-    let mut out = (Vec::new(), Vec::new());
+) -> Option<ReadTools> {
+    let mut out = (Vec::new(), Vec::new(), true);
     for t in v.as_array().map_or(&[][..], Vec::as_slice) {
-        match tool(t) {
-            Some(t) => out.0.push(t),
-            None => out.1.push(provided(t)?),
+        match (tool(t), provided(t)) {
+            (Some(t), _) => out.0.push(t),
+            (None, Some(p)) => out.1.push(p),
+            (None, None) => out.2 = false,
         }
     }
     (v.is_null() || v.is_array()).then_some(out)
@@ -448,6 +465,16 @@ pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<Stri
         ));
     };
     Ok(native.fields_for(format))
+}
+
+/// `key` of `input`'s `native`, out of it if it is a string; one of another
+/// type stays there.
+pub(crate) fn take_text(input: &mut Input, key: &str) -> Option<String> {
+    let native = input.native.as_mut()?;
+    native.fields.get(key)?.as_str()?;
+    let text = native.fields.shift_remove(key)?.as_str().map(str::to_owned);
+    input.native.take_if(|n| n.is_empty());
+    text
 }
 
 /// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
@@ -594,8 +621,7 @@ pub(crate) trait NativeFieldsExt {
     fn fields(&self) -> &Map<String, Value>;
     /// The fields to edit, made of `format` if there are none.
     fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
-    /// The fields to write in `format`. A native field means something only
-    /// to its own format: another format's are dropped, with a warning.
+    /// The fields to write in `format` ([`fields::kept`]).
     fn fields_for(&self, format: &str) -> Map<String, Value>;
     /// The format the fields are of.
     fn format(&self) -> Option<&str>;
@@ -616,14 +642,7 @@ impl NativeFieldsExt for Option<NativeFields> {
             .fields
     }
     fn fields_for(&self, format: &str) -> Map<String, Value> {
-        match self {
-            Some(n) if *n.format == *format => n.fields.clone(),
-            Some(n) => {
-                warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
-                Map::new()
-            }
-            None => Map::new(),
-        }
+        fields::kept(format, self)
     }
     fn format(&self) -> Option<&str> {
         self.as_ref().map(|n| n.format.as_ref())

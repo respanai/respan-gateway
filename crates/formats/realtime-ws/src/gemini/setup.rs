@@ -38,7 +38,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.instructions = take(v, INSTRUCTIONS, instructions, |t| {
         Some(json!([{"text": t}]))
     });
-    s.tools = take(v, TOOLS, tools, |t| tools_json(t, refuse).ok());
+    s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
     s.turns = take(v, DETECTION, turns, |t| detection_json(t, refuse).ok());
     if let Some(Turns::Server(vad)) = &mut s.turns {
         vad.interrupt = take(v, HANDLING, handling, |i| handling_json(*i));
@@ -79,13 +79,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         INSTRUCTIONS,
         s.instructions.as_ref().map(|t| json!([{"text": t}])),
     );
-    put(
-        TOOLS,
-        s.tools
-            .as_ref()
-            .map(|t| tools_json(t, refuse))
-            .transpose()?,
-    );
+    put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
     put(
         DETECTION,
         s.turns
@@ -103,10 +97,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     for (path, on) in transcriptions {
         put(path, on.filter(|on| *on).map(|_| json!({})));
     }
-    merge(
-        &mut v,
-        own(NAME, &s.native, || refuse("another format's session"))?,
-    );
+    merge(&mut v, own(&s.native));
     // A transcription turned off is no field, whatever its settings were.
     for (path, on) in transcriptions {
         if on == Some(false) {
@@ -180,9 +171,9 @@ fn tool(v: &Value) -> Option<Tool> {
     Some(tool)
 }
 
-fn tools_json(tools: &[Tool], refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn tools_json(tools: &[Tool]) -> Value {
     if tools.is_empty() {
-        return Ok(json!([]));
+        return json!([]);
     }
     let declaration = |t: &Tool| {
         let mut v = json!({"name": t.name});
@@ -201,17 +192,11 @@ fn tools_json(tools: &[Tool], refuse: fn(&str) -> Fault) -> Result<Value, Fault>
             };
             v[key] = t.parameters.clone();
         }
-        merge(
-            &mut v,
-            own(NAME, &t.native, || refuse("another format's tool"))?,
-        );
-        Ok(v)
+        merge(&mut v, own(&t.native));
+        v
     };
-    let declarations = tools
-        .iter()
-        .map(declaration)
-        .collect::<Result<Vec<_>, Fault>>()?;
-    Ok(json!([{"functionDeclarations": declarations}]))
+    let declarations: Vec<Value> = tools.iter().map(declaration).collect();
+    json!([{"functionDeclarations": declarations}])
 }
 
 /// Automatic activity detection: off is manual turns, else the server's.
@@ -250,10 +235,7 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
         v.insert("prefixPaddingMs".into(), ms.into());
     }
     let mut v = Value::Object(v);
-    merge(
-        &mut v,
-        own(NAME, &vad.native, || refuse("another format's VAD tuning"))?,
-    );
+    merge(&mut v, own(&vad.native));
     Ok(v)
 }
 

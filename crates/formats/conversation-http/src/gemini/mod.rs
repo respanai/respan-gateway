@@ -30,11 +30,10 @@
 //! beside a `thinkingLevel`, or a dynamic one (`-1`), stays native.
 //!
 //! What the kind has no form for is this format's `native`, where it
-//! appeared, and refused in another format: `safetySettings`,
+//! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`
-//! (which another format drops).
+//! the kind has no choice for, video parts, and a part's `thoughtSignature`.
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!
@@ -66,11 +65,10 @@
 //!   `toolUsePromptTokenCount` are the input, `candidatesTokenCount` and
 //!   `thoughtsTokenCount` the output,
 //!   `cachedContentTokenCount` the cached input.
-//! - What else a response says is an inert [`Output::Native`] of this format
-//!   (`candidate_fields`, `response_fields`, `usage_fields`), which another
-//!   format drops, and what the kind has no form for is not inert:
-//!   a part of another kind (`executableCode`, a response image), and a
-//!   second candidate.
+//! - What else a response says is an [`Output::Native`] of this format, which
+//!   another format drops: `candidate_fields`, `response_fields`,
+//!   `usage_fields`, a part of another kind (`executableCode`, a response
+//!   image), and a second candidate.
 //!
 //! A stream ends with its last response, which has the `finishReason`; one
 //! that ends without it was cut. Encoders do the reverse: a stream is a
@@ -100,8 +98,8 @@ use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
 pub use request::needs_signatures;
 use request::{
-    read_config, read_messages, read_tools, sign_calls, split_system, write_config, write_messages,
-    write_tools,
+    effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
+    write_config, write_messages, write_tools,
 };
 
 /// This format's name.
@@ -421,6 +419,12 @@ impl Schema for GeminiGenerate {
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         body.finish(whole.start.as_ref(), parts, finish, &whole.usage)
+    }
+
+    /// A client of another format names its reasoning by an effort: Gemini
+    /// thinks as its model does for it ([`effort_thinking`]).
+    fn translated(input: &Input, v: &mut Map<String, Value>) {
+        effort_thinking(input.model.as_deref().unwrap_or_default(), v);
     }
 
     fn error_body(fault: &Fault) -> Value {

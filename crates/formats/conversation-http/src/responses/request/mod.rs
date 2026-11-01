@@ -16,10 +16,10 @@ mod write;
 
 pub(super) use read::read_input;
 pub(super) use settings::{
-    decode_part, encode_part, read_format, read_reasoning, read_tools, write_format,
-    write_reasoning, write_tools,
+    decode_part, encode_part, read_format, read_reasoning, read_tools, read_verbosity,
+    write_format, write_reasoning, write_tools,
 };
-pub(super) use write::write_input;
+pub(super) use write::{INSTRUCTIONS, write_input};
 
 use super::RESPONSES;
 use crate::schema::Names;
@@ -39,6 +39,5 @@ const ROLES: Names<Role> = Names(
 /// The role of a message that holds an item the kind has no form for.
 const ITEM_ROLE: &str = "item";
 
-/// The key of an assistant message item's fields beyond its inert ones, on
-/// its first text part.
+/// The key of an assistant message item's fields, on its first text part.
 const MESSAGE: &str = "message";

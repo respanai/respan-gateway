@@ -13,8 +13,8 @@
 //!
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; another drops it with a warning. A request that asks for several choices (`n > 1`) cannot be
-//! written and is refused.
+//! only by that format; another drops it with a warning. A request that asks
+//! for several choices (`n > 1`) cannot be written and is refused.
 
 mod errors;
 mod exchange;
@@ -31,13 +31,15 @@ pub use exchange::Asked;
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use respan_gateway_conversation::block_fields;
+pub(crate) use values::parts_within_totals;
 pub(crate) use values::warn_dropped_option;
 pub(crate) use values::{
     Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
     fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
-    read_search, remainder, set, source_url, stop_json, take_strict, tidy, unsupported_fields,
-    untranslatable, unwritable_content, usage_extra, write_search,
+    read_search, remainder, set, source_url, stop_json, take_strict, take_text, tidy,
+    unsupported_fields, untranslatable, unwritable_content, usage_extra, warn_reasoning,
+    write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -136,9 +138,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// Prepare the request sent to a provider: add what the gateway needs of it,
     /// such as usage in a stream.
     fn prepare_call(_v: &mut Map<String, Value>) {}
-    /// Prepare a call whose client speaks another format: say what the
-    /// format must for a client that can name nothing it keeps.
-    fn translated(_v: &mut Map<String, Value>) {}
+    /// Prepare a call of `input` whose client speaks another format: say
+    /// what the format must for a client that can name nothing it keeps.
+    fn translated(_input: &Input, _v: &mut Map<String, Value>) {}
     /// Spell the fields of `v` as `original`, the client's request in this
     /// format, did, where the format has two spellings of one field.
     fn respell(_original: &Value, _v: &mut Map<String, Value>) {}

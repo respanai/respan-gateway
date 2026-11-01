@@ -25,8 +25,7 @@ events.
 
 The helpers the formats share (messages and parts, the `native` fields a
 value keeps for its own format, usage totals and the faults of what cannot be
-written) are private to this crate. Each format names its own inert events
-(`Schema::is_inert`): those another format drops in translation. How a provider's error body reads,
+written) are private to this crate. How a provider's error body reads,
 leniently, as compatible servers send it, is public, `read_provider_error`,
 for the HTTP formats of other JSON kinds, such as the media kinds'.
 
@@ -52,8 +51,8 @@ appeared, so a relay in this format sends it back and a plugin can read it
 `{"choices": [..]}`; usage's own as a native `{"usage": {..}}`. A vendor's
 departures from the spec, such as reasoning in `reasoning_content`, are its
 plugins' in the [vendors crate](../../vendors/README.md), which read
-these. Reasoning has no field in this format, and is refused, as is media
-in a tool result.
+these. Reasoning has no field in this format, and is dropped; media in a tool
+result is refused.
 
 A block is any number unique in a response, such as a plugin's own: both
 formats' encoders write blocks in the order they open.

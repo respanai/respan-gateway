@@ -30,6 +30,7 @@
 
 mod decode;
 mod encode;
+mod output_schema;
 mod request;
 #[cfg(test)]
 mod tests;
@@ -53,8 +54,8 @@ use serde_json::{Map, Value, json};
 use decode::AnthropicDecoder;
 use encode::EventStream;
 use request::{
-    read_effort, read_output, read_thinking, read_tools_of, write_output, write_thinking,
-    write_tools,
+    effort_thinking, read_effort, read_output, read_thinking, read_tools_of, write_output,
+    write_thinking, write_tools,
 };
 
 /// The `max_tokens` of a translated request without one, as it is required.
@@ -208,7 +209,7 @@ fn is_empty(m: &Message) -> bool {
     m.content.iter().all(empty) && unsaid(m)
 }
 
-/// Whether a message's fields are none Anthropic writes or refuses.
+/// Whether a message's fields are none Anthropic writes.
 fn unsaid(m: &Message) -> bool {
     m.native.format() != Some(ANTHROPIC)
 }
@@ -228,6 +229,12 @@ impl Schema for AnthropicMessages {
     const CARRIED_QUERY: &'static [&'static str] = &["beta"];
     const OWN: &'static [&'static str] = &["metadata", "output_config", "thinking"];
     type Decoding = AnthropicDecoder;
+
+    /// A client of another format names its reasoning by an effort alone:
+    /// Claude thinks as its model does for it ([`effort_thinking`]).
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
+        effort_thinking(v);
+    }
 
     fn decoder(&self) -> AnthropicDecoder {
         AnthropicDecoder::default()

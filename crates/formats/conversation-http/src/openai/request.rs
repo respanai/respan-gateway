@@ -7,7 +7,7 @@
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
     merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, write_search,
+    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -82,7 +82,7 @@ fn openai_choice(choice: &Value) -> Option<ToolChoice> {
 
 /// The kind's tools as OpenAI's fields of a request `v`.
 pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let tool = |t: &Tool| -> Result<Value, Fault> {
+    let tool = |t: &Tool| {
         let mut function = Map::new();
         function.insert("name".into(), t.name.as_str().into());
         if let Some(text) = &t.description {
@@ -95,9 +95,9 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
             function.insert("strict".into(), true.into());
         }
         function.extend(t.native.fields_for(OPENAI));
-        Ok(json!({ "type": "function", "function": function }))
+        json!({ "type": "function", "function": function })
     };
-    let tools: Vec<Value> = chat.tools.iter().map(tool).collect::<Result<_, Fault>>()?;
+    let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
     match chat.provider_tools.as_slice() {
         [] => {}
@@ -134,13 +134,6 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// assistant's `tool_calls` as calls after its content. What else the kind
 /// cannot say of them stays in the message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
-    if let Some(native) = &mut message.native {
-        // A reply sent back as history carries `refusal: null`, `annotations: []` and the
-        // like; an empty field says nothing, so it is absent.
-        native
-            .fields
-            .retain(|_, v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
-    }
     if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
         let Some(id) = m["tool_call_id"].as_str() else {
             return;
@@ -180,7 +173,7 @@ fn openai_call(call: &Value) -> Option<Content> {
 }
 
 /// The kind's calls as OpenAI's `tool_calls`.
-fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
+fn openai_calls(calls: &[&Content]) -> Vec<Value> {
     let mut out = Vec::new();
     for c in calls {
         if let Content::ToolCall {
@@ -198,7 +191,7 @@ fn openai_calls(calls: &[&Content]) -> Result<Vec<Value>, Fault> {
             out.push(call);
         }
     }
-    Ok(out)
+    out
 }
 
 /// A tool message answering call `id` with `content`.
@@ -229,7 +222,7 @@ fn openai_result(
 
 /// A message as OpenAI's: each result a tool message of its own, then, if
 /// it says more, the message and its calls in `tool_calls`. It has no field
-/// for reasoning.
+/// for reasoning, which is dropped.
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
     let results: Vec<&Content> = m.content.iter().filter(|p| is(p, true)).collect();
@@ -257,16 +250,16 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
         let calls: Vec<&Content> = rest.iter().copied().filter(call).collect();
         let mut said = m.clone();
         said.content = rest.into_iter().filter(|p| !call(p)).cloned().collect();
-        if said
-            .content
-            .iter()
-            .any(|p| matches!(p, Content::Reasoning { .. }))
-        {
-            return Err(untranslatable("reasoning in OpenAI Chat"));
-        }
+        said.content.retain(|p| match p {
+            Content::Reasoning { native, .. } => {
+                warn_reasoning(OPENAI, native);
+                false
+            }
+            _ => true,
+        });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
         if !calls.is_empty() {
-            v["tool_calls"] = openai_calls(&calls)?.into();
+            v["tool_calls"] = openai_calls(&calls).into();
             if said.content.is_empty() {
                 v["content"] = Value::Null;
             }
@@ -340,9 +333,6 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        Content::Reasoning { .. } => {
-            return Err(untranslatable("reasoning outside an assistant message"));
-        }
         _ => return Err(untranslatable("an unsupported kind of part")),
     };
     if media.name.is_some() && kind != "document" {

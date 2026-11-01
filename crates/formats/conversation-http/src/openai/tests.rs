@@ -1469,7 +1469,7 @@ fn streamed_refusals_and_logprobs_join_in_a_whole_body() {
 }
 
 #[test]
-fn reasoning_in_a_request_is_refused_and_anthropics_thinking() {
+fn reasoning_in_a_request_is_dropped_but_anthropics_thinking() {
     let mut chat = OpenAiChat.decode_json(&json!({ "model": "m", "messages": [
         { "role": "user", "content": "hi" },
         { "role": "assistant", "content": "ok" },
@@ -1483,7 +1483,11 @@ fn reasoning_in_a_request_is_refused_and_anthropics_thinking() {
     );
     // OpenAI Chat has no field for it; Anthropic, which refuses thinking it
     // did not sign, leaves it out of an earlier turn.
-    assert!(OpenAiChat.encode_request(&chat).is_err());
+    let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.ok().map(|v| v["messages"][1].clone()),
+        Some(json!({ "role": "assistant", "content": "ok" }))
+    );
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
         sent.ok().map(|v| v["messages"][1]["content"].clone()),
@@ -1836,6 +1840,17 @@ fn a_reply_sent_back_as_history_crosses_to_another_format() {
         Some(json!({ "x": 1 }))
     );
     assert_eq!(back.map(|m| m.get("refusal").is_none()), Some(true));
+}
+
+#[test]
+fn a_providers_reasoning_beyond_its_output_stays_within_it() {
+    let usage = usage_of(&json!({
+        "prompt_tokens": 15, "completion_tokens": 76,
+        "completion_tokens_details": { "reasoning_tokens": 87 },
+    }))
+    .expect("read");
+    assert_eq!((usage.reasoning_tokens, usage.output_tokens), (76, 76));
+    assert!(check_usage(&usage, USAGE).is_ok());
 }
 
 #[test]

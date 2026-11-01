@@ -83,7 +83,7 @@ fn taken(input: &mut speech::Input) -> Result<(), Fault> {
     let Some(voice) = input.voice.take() else {
         return Ok(());
     };
-    let mut fields = kept(OpenAiSpeech::NAME, &input.native)?;
+    let mut fields = kept(OpenAiSpeech::NAME, &input.native);
     fields.entry("voice_id").or_insert_with(|| voice.into());
     input.native = native_of(OpenAiSpeech::NAME, fields);
     Ok(())

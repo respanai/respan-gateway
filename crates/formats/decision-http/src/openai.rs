@@ -58,7 +58,7 @@ impl OpenAiDecisions {
     /// An answer as this contract writes it, its name and its score's
     /// labels as `question`, as a client asked it, says them.
     pub fn answer_value(answer: &Answer, question: &Value) -> Result<Value, Fault> {
-        let mut v = kept(OPENAI, &redundant(&answer.native))?;
+        let mut v = kept(OPENAI, &redundant(&answer.native));
         v.insert("type".into(), verdict_type(&answer.verdict)?.into());
         if let Some(name) = question.get("name") {
             v.insert("name".into(), name.clone());
@@ -388,7 +388,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             "instructions".into(),
             q.instructions.clone().unwrap_or_else(|| "".into()),
         );
-        merge_missing(&mut v, &kept(OPENAI, &q.native)?);
+        merge_missing(&mut v, &kept(OPENAI, &q.native));
         questions.push(Value::Object(v));
     }
     let state = match &input.state {
@@ -399,7 +399,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     set(&mut v, "model", input.model.clone());
     v.insert("input".into(), state);
     v.insert("questions".into(), questions.into());
-    merge_missing(&mut v, &kept(OPENAI, &input.native)?);
+    merge_missing(&mut v, &kept(OPENAI, &input.native));
     Ok(v)
 }
 
@@ -503,17 +503,10 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
         match event {
             Output::Start(start) => {
                 set(&mut body, "model", start.model.clone());
-                merge_missing(&mut body, &kept(OPENAI, &start.native)?);
+                merge_missing(&mut body, &kept(OPENAI, &start.native));
             }
             Output::Answer(answer) => answers.push(answer),
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += *u,
-            Output::Native(n) if &*n.format != OPENAI => {
-                return Err(Fault::new(format!(
-                    "an event of format {} cannot be written in {OPENAI}",
-                    n.format
-                ))
-                .with(ErrorCode("untranslatable".into())));
-            }
             _ => {}
         }
     }
@@ -767,12 +760,13 @@ mod tests {
     }
 
     #[test]
-    fn another_formats_fields_are_refused() {
+    fn another_formats_fields_are_dropped() {
         let mut input = Input::new("x", vec![]);
         input.native = Some(NativeFields::new(
             "decisions",
             Map::from_iter([("extra".into(), true.into())]),
         ));
-        assert!(encode_request(&input).is_err());
+        let written = encode_request(&input).expect("written");
+        assert!(!written.contains_key("extra"), "{written:?}");
     }
 }

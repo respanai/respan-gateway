@@ -247,7 +247,7 @@ fn create_body(create: &Create) -> Result<(Bytes, Value), Fault> {
     if let Some(seconds) = create.seconds {
         parameters.insert("durationSeconds".into(), seconds.into());
     }
-    for (key, value) in kept(NAME, &create.native)? {
+    for (key, value) in kept(NAME, &create.native) {
         parameters.entry(key).or_insert(value);
     }
     let parameters = Value::Object(parameters);

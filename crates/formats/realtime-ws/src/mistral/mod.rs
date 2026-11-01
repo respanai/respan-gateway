@@ -15,27 +15,10 @@ use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::foreign::{Drop, Harmless};
 use crate::session::{Spec, model_at, model_query};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-
-/// What of Mistral's own natives another format may drop: its session's
-/// streaming delay, which says how soon text comes, not what it says.
-pub(crate) const HARMLESS: Harmless = Harmless {
-    session: &["session.target_streaming_delay_ms"],
-    vad: &[],
-    message: &[],
-    event: &[],
-    input: |event| {
-        (
-            Drop::Never,
-            event["type"].as_str().unwrap_or_default().to_owned(),
-        )
-    },
-    said: |_| false,
-};
 
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
@@ -43,7 +26,6 @@ pub(crate) const SPEC: Spec = Spec {
     protocol: None,
     binary_text: false,
     transcribes: true,
-    harmless: Some(&HARMLESS),
 };
 
 /// Mistral's realtime transcription: a `GET` upgrade to a path ending in
