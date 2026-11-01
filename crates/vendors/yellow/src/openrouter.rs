@@ -1,16 +1,17 @@
 //! OpenRouter: Chat Completions and Responses, for many vendors' models,
 //! and images.
 
-use respan_gateway_conversation::Usage;
+use respan_gateway_conversation::{Input, Output, Usage};
+use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeValue};
+use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::image;
 use respan_gateway_media_http::openai::OpenAiImages;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 
@@ -24,7 +25,7 @@ pub const VENDOR: Vendor = Vendor {
     id: "openrouter",
     key_env: &["OPENROUTER_API_KEY"],
     formats: &[
-        (&OpenAiChat, Some(BASE_URL)),
+        (&Dialected::new(OpenAiChat, OpenRouter), Some(BASE_URL)),
         (&OpenAiResponses, Some(BASE_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
@@ -33,6 +34,48 @@ pub const VENDOR: Vendor = Vendor {
     ],
     ..Vendor::DEFAULT
 };
+
+/// OpenRouter's Chat Completions: a thinking budget, such as Anthropic's
+/// clients send, is its `reasoning.max_tokens`.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouter;
+
+impl Dialect for OpenRouter {
+    type Input = Input;
+    type Output = Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<Input>>> {
+        Some(Box::new(reasoning_limit))
+    }
+}
+
+/// `input` with a thinking budget as its `reasoning.max_tokens`, unless
+/// another format's fields leave no room for its own.
+fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
+    let budget = input
+        .options
+        .reasoning
+        .as_ref()
+        .and_then(|r| r.budget_tokens);
+    let own = input
+        .native
+        .as_ref()
+        .is_none_or(|n| n.is_empty() || &*n.format == OpenAiChat::NAME);
+    let (Some(budget), true) = (budget, own) else {
+        return Ok(());
+    };
+    let withheld = input.options.reasoning.take().and_then(|r| r.summary) == Some(false);
+    let mut reasoning = json!({ "max_tokens": budget });
+    if withheld {
+        reasoning["exclude"] = true.into();
+    }
+    let native = input
+        .native
+        .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()));
+    native.format = OpenAiChat::NAME.into();
+    native.fields.entry("reasoning").or_insert(reasoning);
+    Ok(())
+}
 
 /// OpenRouter's images, as they depart from OpenAI's: generations and edits
 /// both at `/images`, an edit's images as JSON `input_references`, each a
@@ -118,7 +161,6 @@ impl Filter<image::Output> for Counted {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use respan_gateway_conversation_http::Schema;
 
     #[test]
     fn an_edits_images_are_its_input_references() {
@@ -191,6 +233,29 @@ mod tests {
             usage.map(|u| (u.input_tokens, u.output_tokens)),
             Some((5, 2))
         );
+    }
+
+    #[test]
+    fn a_thinking_budget_is_its_reasoning_limit() {
+        use respan_gateway_conversation_http::anthropic::AnthropicMessages;
+        let mut messages = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9000,
+            "messages": [{ "role": "user", "content": "hi" }],
+            "thinking": { "type": "enabled", "budget_tokens": 2048 },
+        }));
+        reasoning_limit(&mut messages).expect("taken");
+        assert!(messages.options.reasoning.is_none());
+        let sent = OpenAiChat.encode_request(&messages).expect("written");
+        assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
+        assert!(sent.get("reasoning_effort").is_none());
+        // Without a budget the input is as it came.
+        let plain = AnthropicMessages.decode_json(&json!({
+            "max_tokens": 9,
+            "messages": [{ "role": "user", "content": "hi" }],
+        }));
+        let mut taken = plain.clone();
+        reasoning_limit(&mut taken).expect("taken");
+        assert_eq!(taken, plain);
     }
 
     #[test]
