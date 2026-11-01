@@ -98,6 +98,15 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
     Cow::Owned(chat)
 }
 
+/// Says that `format` goes without reasoning it cannot take back.
+pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
+    warn_dropped(
+        format,
+        native.format().unwrap_or("another format"),
+        ["reasoning"],
+    );
+}
+
 /// `fields` as the native of a value decoded by `format`: none if empty.
 pub(crate) fn native_fields(format: &str, fields: Map<String, Value>) -> Option<NativeFields> {
     match fields.is_empty() {

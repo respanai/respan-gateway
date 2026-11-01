@@ -283,6 +283,25 @@ fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
 }
 
 #[test]
+fn another_formats_reasoning_is_dropped() {
+    let mut chat = decode_request(&json!({ "model": "m", "input": [
+        { "role": "assistant", "content": "ok" },
+    ]}));
+    chat.messages[0].content.insert(
+        0,
+        Content::Reasoning {
+            text: "hm".into(),
+            native: None,
+        },
+    );
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["input"],
+        json!([{ "role": "assistant", "content": "ok" }])
+    );
+}
+
+#[test]
 fn not_storing_is_sent_to_openai_and_said_to_no_other_provider() {
     let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }], "store": false });
     assert_eq!(round_trip(&v), v);
