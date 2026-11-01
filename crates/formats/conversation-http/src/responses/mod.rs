@@ -216,6 +216,8 @@ impl Schema for OpenAiResponses {
         request::read_tools(v, &mut chat);
         chat.native = native_fields(RESPONSES, std::mem::take(chat.native.fields_mut(RESPONSES)));
         request::read_format(v, &mut chat);
+        chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
+        request::read_verbosity(&mut chat);
         request::read_reasoning(&mut chat);
         chat
     }
@@ -227,6 +229,11 @@ impl Schema for OpenAiResponses {
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
         request::write_tools(chat, &mut v)?;
+        crate::schema::set(
+            &mut v,
+            "service_tier",
+            chat.options.service_tier.clone().map(Into::into),
+        );
         crate::schema::set(
             &mut v,
             "max_output_tokens",

@@ -61,7 +61,7 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
     merge_details, merge_fields, merge_into, native_fields, parse_effort, set, stop_json,
-    take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
+    take_native, take_text, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -227,6 +227,8 @@ impl Schema for OpenAiChat {
         if chat.user.is_some() {
             chat.native.fields_mut(OPENAI).shift_remove("user");
         }
+        chat.options.service_tier = take_text(&mut chat, "service_tier");
+        chat.options.verbosity = take_text(&mut chat, "verbosity");
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES);
             read_openai_message(m, &mut message);
@@ -253,6 +255,16 @@ impl Schema for OpenAiChat {
             ));
         }
         let mut v = Map::new();
+        set(
+            &mut v,
+            "service_tier",
+            chat.options.service_tier.clone().map(Into::into),
+        );
+        set(
+            &mut v,
+            "verbosity",
+            chat.options.verbosity.clone().map(Into::into),
+        );
         let mut messages = Vec::new();
         for m in &chat.messages {
             messages.extend(write_openai_message(m, &ROLES)?);

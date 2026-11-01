@@ -162,6 +162,27 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
 
 /// The request's `text`: its own fields, with the format the kind's
 /// structured output requirement says.
+/// Its `text.verbosity`, which Chat Completions says at the top, out of its
+/// `native`.
+pub(in crate::responses) fn read_verbosity(chat: &mut Input) {
+    let Some(native) = chat.native.as_mut() else {
+        return;
+    };
+    let Some(Value::Object(text)) = native.fields.get_mut("text") else {
+        return;
+    };
+    if !text.get("verbosity").is_some_and(Value::is_string) {
+        return;
+    }
+    chat.options.verbosity = text
+        .shift_remove("verbosity")
+        .and_then(|v| v.as_str().map(str::to_owned));
+    if text.is_empty() {
+        native.fields.shift_remove("text");
+    }
+    chat.native.take_if(|n| n.is_empty());
+}
+
 pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Value>) {
     let own = input.native.format() == Some(RESPONSES);
     let mut text = own
@@ -188,6 +209,9 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
             Some(spec)
         }
     };
+    if let (Some(verbosity), Some(text)) = (&input.options.verbosity, text.as_object_mut()) {
+        text.insert("verbosity".into(), verbosity.as_str().into());
+    }
     if let (Some(format), Some(text)) = (format, text.as_object_mut()) {
         text.insert("format".into(), format);
     }

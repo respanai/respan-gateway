@@ -49,6 +49,10 @@ pub use usage::Usage;
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct GenerationOptions {
+    /// The processing tier asked for, as OpenAI names it.
+    pub service_tier: Option<String>,
+    /// How much the answer says, as OpenAI names it.
+    pub verbosity: Option<String>,
     /// Maximum generated tokens.
     pub max_output_tokens: Option<u64>,
     /// Sampling temperature.
