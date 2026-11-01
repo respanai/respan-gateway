@@ -1078,7 +1078,7 @@ fn a_chats_effort_thinks_as_its_claude_does() {
             .decode_request(Bytes::from(body.to_string()))
             .expect("chat");
         let mut v = AnthropicMessages.encode_request(&chat).expect("written");
-        AnthropicMessages::translated(&mut v);
+        AnthropicMessages::translated(&chat, &mut v);
         Value::Object(v)
     };
     // Adaptive, beside the effort, from Claude 4.6.
@@ -1111,7 +1111,7 @@ fn a_chats_effort_thinks_as_its_claude_does() {
         "output_config": { "effort": "high" } });
     let written = v.clone();
     if let Some(call) = v.as_object_mut() {
-        AnthropicMessages::translated(call);
+        AnthropicMessages::translated(&Input::default(), call);
     }
     assert_eq!(v, written);
     let v = sent("kimi-k2", json!({}));
