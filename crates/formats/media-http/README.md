@@ -139,6 +139,23 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
   message, status}}`. Veo reports no progress: an operation is done or not.
 
+`gemini::GeminiTranscriptions`, named `gemini-transcriptions`: a Gemini
+model as a transcriber, through `generateContent`, to providers only.
+
+- A call is `POST /models/{model}:generateContent`, one user turn of the
+  audio (`inlineData`, or `fileData` for audio at a URL) and a text
+  instruction that asks for the words spoken, or for a translation to
+  English, and names the `language` and `prompt`; the `temperature` is a
+  `generationConfig`'s. Its native fields go in the body.
+- Audio inline is refused over 20 MB once base64-encoded, the most a
+  Gemini request holds (400, before any call). Gemini gives the text alone, so a vendor's
+  dialect takes of an OpenAI client's native fields only `response_format`
+  `json` and `text` and refuses the rest, 400 `unsupported`.
+- The first candidate's text, not its thoughts', is the transcript, as is a
+  transcribing model's `audioTranscription` part, and its `usageMetadata`
+  is token usage. An answer with no text and a block or finish reason is
+  400 `no_transcript`.
+
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.

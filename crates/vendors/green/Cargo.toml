@@ -17,6 +17,7 @@ respan-gateway-core.workspace = true
 respan-gateway-decision.workspace = true
 respan-gateway-decision-http.workspace = true
 respan-gateway-http.workspace = true
+respan-gateway-media.workspace = true
 respan-gateway-media-http.workspace = true
 respan-gateway-realtime-ws.workspace = true
 respan-gateway-vendor-kit.workspace = true
