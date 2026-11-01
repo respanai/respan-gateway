@@ -102,18 +102,10 @@ pub(crate) fn merge(v: &mut Value, native: Option<&Map<String, Value>>) {
     }
 }
 
-/// The fields of `native` to write in `format`: none if there are none, and
-/// refused by `refuse` if they are another format's.
-pub(crate) fn own<'a>(
-    format: &str,
-    native: &'a Option<NativeFields>,
-    refuse: impl FnOnce() -> Fault,
-) -> Result<Option<&'a Map<String, Value>>, Fault> {
-    match native {
-        None => Ok(None),
-        Some(native) if *native.format == *format => Ok(Some(&native.fields)),
-        Some(_) => Err(refuse()),
-    }
+/// The fields of `native`, none if there are none: a writer has dropped
+/// another format's ([`crate::foreign`]).
+pub(crate) fn own(native: &Option<NativeFields>) -> Option<&Map<String, Value>> {
+    native.as_ref().map(|native| &native.fields)
 }
 
 /// An input `format` cannot write, which could change the answer: the

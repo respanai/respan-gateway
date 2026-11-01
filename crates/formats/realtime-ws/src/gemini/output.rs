@@ -524,7 +524,7 @@ impl Client {
         if let Output::ResponseStart { native, .. } = event {
             self.foreign = native.as_ref().is_some_and(|n| *n.format != *NAME);
         }
-        let Some(event) = foreign::strip(NAME, event)? else {
+        let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
         match &event {
@@ -576,8 +576,7 @@ impl Client {
                 self.heard = !complete;
                 (content("inputTranscription", json!({"text": text})), native)
             }
-            Output::ResponseStart { native, .. } => {
-                own(NAME, native, || refuse("another format's event"))?;
+            Output::ResponseStart { .. } => {
                 self.interrupted = false;
                 return Ok(Vec::new());
             }
@@ -614,10 +613,7 @@ impl Client {
                         Fault::upstream("a tool call's arguments are not a JSON object")
                     })?;
                 let mut call = json!({"id": id, "name": name, "args": args});
-                merge(
-                    &mut call,
-                    own(NAME, native, || refuse("another format's call"))?,
-                );
+                merge(&mut call, own(native));
                 self.calls.push(call);
                 return Ok(Vec::new());
             }
@@ -637,10 +633,7 @@ impl Client {
                     (_, Status::Interrupted) if interrupted_already && self.foreign => {
                         (turn_complete, false)
                     }
-                    (_, Status::Interrupted) if interrupted_already => {
-                        own(NAME, native, || refuse("another format's event"))?;
-                        return Ok(Vec::new());
-                    }
+                    (_, Status::Interrupted) if interrupted_already => return Ok(Vec::new()),
                     (_, Status::Interrupted) => (interrupted, true),
                     (_, status) => {
                         let mut v = turn_complete;
@@ -651,10 +644,7 @@ impl Client {
                     }
                 };
                 let mut v = v;
-                merge(
-                    &mut v,
-                    own(NAME, native, || refuse("another format's event"))?,
-                );
+                merge(&mut v, own(native));
                 let mut messages = vec![v];
                 if then && self.foreign {
                     messages.push(content("turnComplete", true.into()));
@@ -681,10 +671,7 @@ impl Client {
             _ => return Err(refuse("another format's event")),
         };
         let mut v = v;
-        merge(
-            &mut v,
-            own(NAME, native, || refuse("another format's event"))?,
-        );
+        merge(&mut v, own(native));
         if let Some(used) = self.usage.take() {
             put_usage(&mut v, &used);
         }
