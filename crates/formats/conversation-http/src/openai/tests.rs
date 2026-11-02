@@ -1556,6 +1556,36 @@ fn the_fault_says_message_and_type_the_provider_the_rest() {
 }
 
 #[test]
+fn an_error_type_is_written_as_the_type_beside_the_code() {
+    let fault = Fault::new("over the cap")
+        .with(ErrorCode("key_usage_limit_exceeded".into()))
+        .with(ErrorType("rate_limit_exceeded".into()));
+    let error = &OpenAiChat::error_body(&fault)["error"];
+    assert_eq!(
+        (&error["type"], &error["code"]),
+        (
+            &json!("rate_limit_exceeded"),
+            &json!("key_usage_limit_exceeded")
+        )
+    );
+    let error = &OpenAiResponses::error_body(&fault)["error"];
+    assert_eq!(
+        (&error["type"], &error["code"]),
+        (
+            &json!("rate_limit_exceeded"),
+            &json!("key_usage_limit_exceeded")
+        )
+    );
+    // Its details cannot say the type: a provider's own `type` stays out.
+    let details = json!({"type": "invalid_request_error"});
+    let fault = fault.with(Details(details.as_object().expect("error fields").clone()));
+    assert_eq!(
+        OpenAiChat::error_body(&fault)["error"]["type"],
+        "rate_limit_exceeded"
+    );
+}
+
+#[test]
 fn a_plugins_fault_takes_one_shape_on_every_path() {
     let details = json!({"message": "x", "type": 5, "code": 7, "param": 3, "category": "pii"});
     let fault = Fault::new("pii")

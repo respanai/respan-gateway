@@ -57,6 +57,12 @@ result is refused.
 A block is any number unique in a response, such as a plugin's own: both
 formats' encoders write blocks in the order they open.
 
+An error body is `{"error": {"message", "type", "param", "code"}}`, its
+`code` the fault's. Its `type` is the fault's `openai::ErrorType`, a hint
+for the class of error (`invalid_request_error` beside
+`context_length_exceeded`), else the code; `responses::OpenAiResponses`
+writes the same.
+
 ## Anthropic Messages
 
 `anthropic::AnthropicMessages`, named `anthropic-messages`: a `POST` to a
