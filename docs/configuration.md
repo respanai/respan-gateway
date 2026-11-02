@@ -75,6 +75,13 @@ key = "env:RESPAN_API_KEY"
 
 Write secrets as `env:NAME` to keep them out of the file.
 
+By default, the gateway accepts OpenAI Chat Completions, OpenAI Responses,
+Anthropic Messages and Gemini `generateContent` clients, even with only a
+Chat Completions provider. A provider's `formats` says what it speaks;
+the top-level `formats` list restricts which client formats the gateway
+serves. Other kinds' client formats are enabled when a provider speaks
+that kind.
+
 ## Providers
 
 A provider is a `vendor` with its key, or any compatible endpoint given

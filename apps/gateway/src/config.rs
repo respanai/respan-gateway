@@ -232,7 +232,7 @@ pub struct Config {
     #[serde(default)]
     pub providers: IndexMap<String, ProviderConfig>,
     /// The formats served to clients, by name, tried in order. Unset:
-    /// `openai-chat`, `anthropic-messages`, and every format of another
+    /// every client chat format, and every client format of another
     /// kind some provider speaks, except `passthrough`. Serve
     /// `passthrough` last to relay every other request unread to the
     /// provider of format `passthrough`, whose `base_url` is then the
