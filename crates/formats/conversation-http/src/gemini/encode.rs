@@ -12,7 +12,7 @@ use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 
 use super::request::is_synthetic;
-use super::{BLOCKED, FINISH, GEMINI, GeminiGenerate, USAGE, usage_body};
+use super::{BLOCKED, FINISH, GEMINI, GeminiGenerate, USAGE, search_grounded, usage_body_grounded};
 
 /// Writes the SSE frames of `inner` as the elements of one JSON array, which
 /// is how Gemini streams without `alt=sse`.
@@ -132,6 +132,7 @@ impl ResponseFields {
         usage: &Usage,
     ) -> Result<Value, Fault> {
         let reason = reason_of(finish)?;
+        let grounded = search_grounded(&Value::Object(self.candidate.clone()));
         let mut body = Map::new();
         body.extend(own_fields(start, GEMINI));
         let blocked = reason == BLOCKED;
@@ -148,7 +149,7 @@ impl ResponseFields {
             candidates.extend(self.more);
             body.insert("candidates".into(), candidates.into());
         }
-        if let Some(usage) = usage_body(usage, &self.usage) {
+        if let Some(usage) = usage_body_grounded(usage, &self.usage, grounded) {
             body.insert("usageMetadata".into(), usage);
         }
         let (id, model) = start
@@ -237,7 +238,8 @@ impl EventStream {
             v.insert("candidates".into(), candidates.into());
         }
         if last.is_some() {
-            if let Some(usage) = usage_body(&self.usage, &self.fields.usage) {
+            let grounded = search_grounded(&Value::Object(self.fields.candidate.clone()));
+            if let Some(usage) = usage_body_grounded(&self.usage, &self.fields.usage, grounded) {
                 v.insert("usageMetadata".into(), usage);
             }
             v.extend(std::mem::take(&mut self.fields.top));
