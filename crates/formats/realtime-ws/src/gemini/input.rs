@@ -59,11 +59,54 @@ impl Client {
             (_, false) => return Err(invalid("a session's first message is its setup")),
             _ => {
                 let answering = self.answering.load(Ordering::Relaxed);
-                out.extend(decode(&v, answering).unwrap_or_else(|| vec![Input::native(NAME, v)]));
+                let named = camel_cased(v.clone());
+                out.extend(
+                    decode(&named, answering).unwrap_or_else(|| vec![Input::native(NAME, v)]),
+                );
             }
         }
         Ok(())
     }
+}
+
+const SNAKE_CASED: [(&str, &str); 9] = [
+    ("realtime_input", "realtimeInput"),
+    ("client_content", "clientContent"),
+    ("tool_response", "toolResponse"),
+    ("activity_start", "activityStart"),
+    ("activity_end", "activityEnd"),
+    ("audio_stream_end", "audioStreamEnd"),
+    ("turn_complete", "turnComplete"),
+    ("function_responses", "functionResponses"),
+    ("mime_type", "mimeType"),
+];
+
+fn camel_cased(v: Value) -> Value {
+    let named = |fields: Map<String, Value>| -> Map<String, Value> {
+        fields
+            .into_iter()
+            .map(|(name, value)| {
+                let name = SNAKE_CASED
+                    .iter()
+                    .find(|(snake, _)| *snake == name)
+                    .map_or(name, |(_, camel)| (*camel).to_owned());
+                (name, value)
+            })
+            .collect()
+    };
+    let Value::Object(message) = v else {
+        return v;
+    };
+    let mut message = named(message);
+    for body in message.values_mut() {
+        if let Value::Object(fields) = body {
+            *fields = named(std::mem::take(fields));
+        }
+        if let Some(Value::Object(blob)) = body.get_mut("audio") {
+            *blob = named(std::mem::take(blob));
+        }
+    }
+    Value::Object(message)
 }
 
 /// A message the Live API refuses, as it closes the session.
