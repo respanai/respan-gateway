@@ -295,38 +295,45 @@ fn response_events(
         session: session.clone(),
         ..Output::default()
     };
-    let inner: Box<dyn h::Decoder<Output>> = if content::is_stream(head) {
-        Box::new(Sse::new(move |raw: Bytes, out: &mut Vec<Output>| {
-            let data = respan_gateway_sse::event_data(&raw);
-            let messages = match data.filter(|d| !d.is_empty()) {
-                Some(data) => Some(read(data.as_bytes()).ok_or_else(|| {
-                    Fault::upstream("the MCP server sent an invalid JSON-RPC message")
-                })?),
-                None => None,
-            };
-            let mut output = output(messages);
-            output.event_id = field(&raw, "id");
-            output.event = field(&raw, "event");
-            out.push(output);
-            Ok(())
-        }))
-    } else {
-        Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
-            if !raw.is_empty() {
-                let messages = read(&raw).ok_or_else(|| {
-                    Fault::upstream("the MCP server sent an invalid JSON-RPC message")
-                })?;
-                out.push(output(Some(messages)));
-            }
-            Ok(())
-        }))
-    };
-    Some(Box::new(Correlated {
+    // Correlate each decoded message before the SSE adapter reads the next
+    // event, so completion does not depend on HTTP frame boundaries.
+    let correlated = move |inner: Box<dyn h::Decoder<Output>>| Correlated {
         inner,
         pending,
         correlate,
         done: false,
-    }))
+    };
+    let inner: Box<dyn h::Decoder<Output>> = if content::is_stream(head) {
+        Box::new(Sse::new(correlated(Box::new(
+            move |raw: Bytes, out: &mut Vec<Output>| {
+                let data = respan_gateway_sse::event_data(&raw);
+                let messages = match data.filter(|d| !d.is_empty()) {
+                    Some(data) => Some(read(data.as_bytes()).ok_or_else(|| {
+                        Fault::upstream("the MCP server sent an invalid JSON-RPC message")
+                    })?),
+                    None => None,
+                };
+                let mut output = output(messages);
+                output.event_id = field(&raw, "id");
+                output.event = field(&raw, "event");
+                out.push(output);
+                Ok(())
+            },
+        ))))
+    } else {
+        Box::new(Whole::new(correlated(Box::new(
+            move |raw: Bytes, out: &mut Vec<Output>| {
+                if !raw.is_empty() {
+                    let messages = read(&raw).ok_or_else(|| {
+                        Fault::upstream("the MCP server sent an invalid JSON-RPC message")
+                    })?;
+                    out.push(output(Some(messages)));
+                }
+                Ok(())
+            },
+        ))))
+    };
+    Some(inner)
 }
 
 /// An answer that is a fault from its head.
@@ -782,4 +789,93 @@ fn failure(id: &Value, fault: &Fault) -> Value {
     }
     e["error"]["data"] = data;
     e
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::*;
+
+    fn decoder(method: Method, body: Value) -> Box<dyn h::Decoder<Output>> {
+        let sent = Request::builder()
+            .method(method)
+            .body(Bytes::from(body.to_string()))
+            .expect("valid request");
+        let (head, ()) = Response::builder()
+            .header(CONTENT_TYPE, SSE)
+            .body(())
+            .expect("valid response")
+            .into_parts();
+        response_events(&head, &sent).expect("stream decoder")
+    }
+
+    fn request(id: i32) -> Value {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/list"})
+    }
+
+    fn answered(out: &[Output]) -> Vec<Value> {
+        out.iter().flat_map(|o| o.answers()).collect()
+    }
+
+    #[test]
+    fn a_completed_post_ignores_later_sse_data_at_every_frame_boundary() {
+        let wire = b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\ndata: not-json\n\n";
+        for cut in 0..=wire.len() {
+            let mut decoder = decoder(Method::POST, request(1));
+            let mut out = Vec::new();
+            decoder.start(&mut out).expect("start");
+            for frame in [&wire[..cut], &wire[cut..]] {
+                if !decoder.done() {
+                    decoder
+                        .decode(Bytes::copy_from_slice(frame), &mut out)
+                        .unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+                }
+            }
+            assert!(decoder.done(), "cut {cut}");
+            decoder.end(Ok(()), &mut out).expect("completed request");
+            assert_eq!(answered(&out), vec![json!(1)], "cut {cut}");
+        }
+    }
+
+    #[test]
+    fn a_completed_post_does_not_read_a_trailing_event_at_eof() {
+        let mut decoder = decoder(Method::POST, request(1));
+        let mut out = Vec::new();
+        decoder
+            .decode(
+                Bytes::from_static(
+                    b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\ndata: not-json\n",
+                ),
+                &mut out,
+            )
+            .expect("valid reply");
+        assert!(decoder.done());
+        decoder
+            .end(Ok(()), &mut out)
+            .expect("ignore bytes after completion");
+        assert_eq!(answered(&out), vec![json!(1)]);
+    }
+
+    #[test]
+    fn a_post_waits_for_all_ids_and_rejects_an_unexpected_reply_before_completion() {
+        let mut decoder = decoder(Method::POST, json!([request(1), request(2)]));
+        let mut out = Vec::new();
+        let result = decoder.decode(Bytes::from_static(
+            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{}}\n\n"
+        ), &mut out);
+        assert!(result.is_err());
+        assert!(!decoder.done());
+        assert_eq!(answered(&out), vec![json!(1)]);
+    }
+
+    #[test]
+    fn a_get_keeps_reading_uncorrelated_replies() {
+        let mut decoder = decoder(Method::GET, Value::Null);
+        let mut out = Vec::new();
+        decoder.decode(Bytes::from_static(
+            b"data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n\n"
+        ), &mut out).expect("independent replies on GET");
+        assert!(!decoder.done());
+        decoder.end(Ok(()), &mut out).expect("GET EOF");
+        assert_eq!(answered(&out), vec![json!(1), json!(2)]);
+    }
 }
