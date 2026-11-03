@@ -1,8 +1,9 @@
-//! OpenRouter: Chat Completions and Responses, for many vendors' models,
-//! and images.
+//! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
+//! models, and images.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
+use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -18,6 +19,9 @@ use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 /// Where its API is.
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
 
+/// Where its Messages API is: the format adds the `/v1`.
+const MESSAGES_URL: &str = "https://openrouter.ai/api";
+
 /// OpenRouter. Its models' names are `<vendor>/<model>`: a configured
 /// provider named `<vendor>` takes the name first. A chat goes in its
 /// client's format, Chat Completions for a client of another.
@@ -27,6 +31,7 @@ pub const VENDOR: Vendor = Vendor {
     formats: &[
         (&Dialected::new(OpenAiChat, OpenRouter), Some(BASE_URL)),
         (&OpenAiResponses, Some(BASE_URL)),
+        (&AnthropicMessages, Some(MESSAGES_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
             Some(BASE_URL),
@@ -199,15 +204,22 @@ mod tests {
     }
 
     #[test]
-    fn it_speaks_chat_first_and_responses_beside_it() {
+    fn it_speaks_chat_first_and_responses_and_messages_beside_it() {
         let names: Vec<_> = VENDOR.formats.iter().map(|(f, _)| f.name()).collect();
-        assert_eq!(names[..2], [OpenAiChat::NAME, OpenAiResponses::NAME]);
-        assert!(
-            VENDOR
-                .formats
-                .iter()
-                .all(|(_, base)| *base == Some(BASE_URL))
+        assert_eq!(
+            names[..3],
+            [
+                OpenAiChat::NAME,
+                OpenAiResponses::NAME,
+                AnthropicMessages::NAME
+            ]
         );
+        // Messages' base leaves out the `/v1` its format adds.
+        assert!(VENDOR.formats.iter().all(|(f, base)| *base
+            == Some(match f.name() == AnthropicMessages::NAME {
+                true => MESSAGES_URL,
+                false => BASE_URL,
+            })));
     }
 
     #[test]
