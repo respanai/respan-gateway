@@ -44,6 +44,7 @@ are:
 
 | | Vendor | For | `vendor` | Key | Tools |
 |:-:|---|---|---|---|---|
+| | [deed.page](https://deed.page) | Web publishing | `deedpage` | `DEEDPAGE_TOKEN` | `publish_site`, `list_sites`, `delete_site` |
 | <img src="assets/tool-vendors/e2b.png" width="20" height="20" alt=""> | [E2B](https://e2b.dev) | Code execution | `e2b` | `E2B_API_KEY` | `run_code`, `list_sandboxes`, `kill_sandbox` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tool-vendors/elevenlabs-dark.svg"><img src="assets/tool-vendors/elevenlabs.svg" width="20" height="20" alt=""></picture> | [ElevenLabs](https://elevenlabs.io) | Voice | `elevenlabs` | `ELEVENLABS_API_KEY` | `text_to_speech`, `search_voices`, `speech_to_text`, `sound_effect` |
 | | [Exa](https://exa.ai) | Search | `exa` | `EXA_API_KEY` | `search`, `get_contents` |
@@ -129,6 +130,18 @@ or `https://api-ap.cloudinary.com/v1_1`.
   sandbox's toolbox. `run_code` returns charts as images.
 
 Sandboxes bill per second while they run.
+
+**deed.page**, at `https://deed.page`, its key a bearer token:
+
+- `publish_site` is `POST /v1/sites`: one HTML page, served as
+  `index.html` at `https://{slug}.deed.page/`, permanent unless
+  `ttl_seconds` is given (sent as `X-Ttl`). The URL is returned, never a
+  token.
+- `list_sites` is `GET /v1/sites`: the token's sites.
+- `delete_site` is `DELETE /v1/sites/{slug}`.
+
+Calls are free. A token comes from a first publish without one (see
+[the docs](https://deed.page/docs)); every site it publishes stays under it.
 
 **E2B**, at `https://api.e2b.app`, its key in `X-API-Key`:
 

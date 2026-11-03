@@ -134,6 +134,16 @@ fn steps(vendor: &str) -> Vec<Step> {
             ),
             step("delete_sandbox", json!({"sandbox": "${sb}"})),
         ],
+        "deedpage" => vec![
+            capturing(
+                "publish_site",
+                json!({"html": "<h1>respan-gateway live check</h1>", "ttl_seconds": 300}),
+                "\"slug\": \"",
+                "slug",
+            ),
+            step("list_sites", json!({})),
+            step("delete_site", json!({"slug": "${slug}"})),
+        ],
         "e2b" => vec![
             capturing(
                 "run_code",
