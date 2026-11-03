@@ -445,16 +445,14 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
 }
 
 /// The request's `reasoning_effort`: the kind's effort, else the request's
-/// own. Chat has no token budget, and no field that returns the thinking.
+/// own. Chat has no token budget, and no field that asks for the thinking:
+/// a server that thinks returns it (`reasoning_content`) unasked.
 pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
     let Some(r) = reasoning_of(input)? else {
         return Ok(own_native(input, OPENAI, "reasoning_effort"));
     };
     if r.budget_tokens.is_some() {
         return Err(untranslatable("a reasoning token budget in OpenAI Chat"));
-    }
-    if r.summary == Some(true) {
-        return Err(untranslatable("returned reasoning in OpenAI Chat"));
     }
     Ok(match r.effort {
         Some(effort) => Some(effort_name(effort)?.into()),
