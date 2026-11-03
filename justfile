@@ -10,19 +10,29 @@ default:
 dev *args: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    trap 'kill 0' EXIT
-    cargo run -p respan-gateway -- {{args}} &
-    (cd {{ui}} && pnpm dev) &
-    wait -n
+    # macOS ships bash 3.2, which has no `wait -n`. The fifo unblocks when either child exits.
+    status_fifo=$(mktemp)
+    rm -f "$status_fifo"
+    mkfifo "$status_fifo"
+    trap 'rm -f "$status_fifo"; kill 0' EXIT
+    (set +e; cargo run -p respan-gateway -- {{args}}; echo "$?" > "$status_fifo") &
+    (set +e; cd {{ui}} && pnpm dev; echo "$?" > "$status_fifo") &
+    read -r status < "$status_fifo"
+    exit "$status"
 
 # The UI with hot reload against a fake gateway; no Rust needed.
 mock: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    trap 'kill 0' EXIT
-    (cd {{ui}} && pnpm mock) &
-    (cd {{ui}} && pnpm dev) &
-    wait -n
+    # macOS ships bash 3.2, which has no `wait -n`. The fifo unblocks when either child exits.
+    status_fifo=$(mktemp)
+    rm -f "$status_fifo"
+    mkfifo "$status_fifo"
+    trap 'rm -f "$status_fifo"; kill 0' EXIT
+    (set +e; cd {{ui}} && pnpm mock; echo "$?" > "$status_fifo") &
+    (set +e; cd {{ui}} && pnpm dev; echo "$?" > "$status_fifo") &
+    read -r status < "$status_fifo"
+    exit "$status"
 
 # Build the UI, then run the gateway serving it at http://localhost:8080/ui/.
 run *args: ui-build
