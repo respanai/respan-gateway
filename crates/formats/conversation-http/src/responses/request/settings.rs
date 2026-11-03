@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 /// Function tools, the choice and whether calls may be parallel, as the
 /// kind's.
 pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], function_tool, web_search);
+    let tools = each_tool(&expanded_tools(&v["tools"]), function_tool, web_search);
     let choice = match &v["tool_choice"] {
         Value::Null => Some(None),
         choice => read_choice(choice).map(Some),
@@ -30,6 +30,37 @@ pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
     decode_tools(chat, tools, choice, parallel, keys);
+}
+
+/// Expand Responses namespaces into qualified function names for formats that
+/// have no namespace container. The metadata lets this format rebuild them.
+fn expanded_tools(tools: &Value) -> Value {
+    let Some(tools) = tools.as_array() else {
+        return tools.clone();
+    };
+    let mut expanded = Vec::new();
+    for tool in tools {
+        if tool["type"] != "namespace" {
+            expanded.push(tool.clone());
+            continue;
+        }
+        let Some(namespace) = tool["name"].as_str() else {
+            continue;
+        };
+        for function in tool["tools"].as_array().into_iter().flatten() {
+            let Some(name) = function["name"].as_str() else {
+                continue;
+            };
+            let mut function = function.clone();
+            function["name"] = format!("{namespace}__{name}").into();
+            function["namespace"] = namespace.into();
+            if let Some(description) = tool["description"].as_str() {
+                function["namespace_description"] = description.into();
+            }
+            expanded.push(function);
+        }
+    }
+    expanded.into()
 }
 
 fn function_tool(tool: &Value) -> Option<Tool> {
@@ -78,9 +109,15 @@ pub(in crate::responses) fn write_tools(
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
     let tool = |t: &Tool| {
+        let mut native = t.native.fields_for(RESPONSES);
+        let name = native
+            .get("namespace")
+            .and_then(Value::as_str)
+            .and_then(|namespace| t.name.strip_prefix(namespace)?.strip_prefix("__"))
+            .unwrap_or(&t.name);
         let mut tool = Map::new();
         tool.insert("type".into(), "function".into());
-        tool.insert("name".into(), t.name.as_str().into());
+        tool.insert("name".into(), name.into());
         if let Some(text) = &t.description {
             tool.insert("description".into(), text.as_str().into());
         }
@@ -88,10 +125,46 @@ pub(in crate::responses) fn write_tools(
         if let Some(strict) = t.strict {
             tool.insert("strict".into(), strict.into());
         }
-        tool.extend(t.native.fields_for(RESPONSES));
+        native.shift_remove("namespace");
+        native.shift_remove("namespace_description");
+        tool.extend(native);
         Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
+    let mut tools = Vec::new();
+    let mut namespaces: Vec<(String, Option<String>, Vec<Value>)> = Vec::new();
+    for (t, value) in chat.tools.iter().zip(chat.tools.iter().map(tool)) {
+        let native = t.native.fields_for(RESPONSES);
+        let Some(namespace) = native.get("namespace").and_then(Value::as_str) else {
+            tools.push(value);
+            continue;
+        };
+        let description = native
+            .get("namespace_description")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some((_, _, functions)) =
+            namespaces.iter_mut().find(|(name, _, _)| name == namespace)
+        {
+            functions.push(value);
+        } else {
+            namespaces.push((namespace.to_owned(), description, vec![value]));
+        }
+    }
+    tools.extend(
+        namespaces
+            .into_iter()
+            .map(|(name, description, functions)| {
+                let mut namespace = Map::from_iter([
+                    ("type".into(), "namespace".into()),
+                    ("name".into(), name.into()),
+                    ("tools".into(), functions.into()),
+                ]);
+                if let Some(description) = description {
+                    namespace.insert("description".into(), description.into());
+                }
+                namespace.into()
+            }),
+    );
     for provided in &chat.provider_tools {
         let mut search = Map::from_iter([("type".into(), "web_search".into())]);
         search.extend(write_search(RESPONSES, provided)?);
