@@ -572,6 +572,63 @@ async fn a_route_applies_to_every_kind_its_provider_serves() {
 }
 
 #[tokio::test]
+async fn chat_only_providers_serve_responses_and_gemini_clients_by_default() {
+    for explicit in [false, true] {
+        let provider = FakeOpenAi::start().await;
+        let formats = if explicit {
+            "formats = [\"openai-chat\"]\n"
+        } else {
+            ""
+        };
+        let config = format!(
+            "{formats}providers = {{ local = {{ formats = \"openai-chat\", base_url = \"{}\", key = \"sk-test\" }} }}\n",
+            provider.base_url()
+        );
+        let gateway = resolve(&config).unwrap_or_else(|e| panic!("gateway: {e}"));
+        for (path, body, text) in [
+            (
+                "/v1/responses",
+                r#"{"model":"llama","input":"hi"}"#,
+                "/output/0/content/0/text",
+            ),
+            (
+                "/v1beta/models/llama:generateContent",
+                r#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#,
+                "/candidates/0/content/parts/0/text",
+            ),
+        ] {
+            provider.answer(Answer::text("hello"));
+            let (response, _) = serve(&gateway, post(path, body)).await;
+            let (status, _, body) = read_whole(response).await;
+            let expected = if explicit {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::OK
+            };
+            assert_eq!(
+                status, expected,
+                "{path}, explicit formats: {explicit}: {body:?}"
+            );
+            if !explicit {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&body.expect("response body")).expect("JSON");
+                assert_eq!(body.pointer(text).and_then(|v| v.as_str()), Some("hello"));
+            }
+        }
+        gateway.idle().await;
+        assert_eq!(provider.requests().len(), if explicit { 0 } else { 2 });
+        for request in provider.requests() {
+            assert_eq!(request.path, "/v1/chat/completions");
+            assert_eq!(request.object().expect("JSON")["model"], "llama");
+            assert_eq!(
+                request.object().expect("JSON")["messages"][0]["content"],
+                "hi"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn responses_are_served_by_default_natively_where_a_provider_speaks_them() {
     let text = "providers = { a = { formats = [\"openai-chat\", \"openai-responses\"], base_url = \"https://a.test/v1\", auth = { type = \"bearer\", key = \"sk-test\" } }, b = { formats = \"openai-chat\", base_url = \"https://b.test/v1\", auth = { type = \"bearer\", key = \"sk-test\" } } }\n[routes.\"gpt*\"]\nto = \"a\"\n[routes.\"llama*\"]\nto = \"b\"\n";
     let (gateway, a, b) = local(text).await;
