@@ -150,9 +150,13 @@ const KNOWN: &[&str] = &[
     "metadata",
 ];
 
-/// Roles a message can have; system prompts have their own field.
+/// Roles a message can have; system prompts may also be inline.
 const ROLES: Names<Role> = Names(
-    &[("user", Role::User), ("assistant", Role::Assistant)],
+    &[
+        ("user", Role::User),
+        ("assistant", Role::Assistant),
+        ("system", Role::System),
+    ],
     ANTHROPIC,
 );
 

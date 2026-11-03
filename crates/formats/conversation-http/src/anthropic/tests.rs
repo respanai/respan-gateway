@@ -300,6 +300,25 @@ fn a_system_message_goes_in_the_system_prompt_only_before_the_conversation() {
 }
 
 #[test]
+fn an_inline_system_message_is_preserved_for_other_formats() {
+    let body = json!({ "model": "c", "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "system", "content": "be brief" },
+        { "role": "user", "content": "again" },
+    ]});
+    let chat = AnthropicMessages.decode_json(&body);
+    let openai = OpenAiChat.encode_request(&chat).expect("openai");
+    assert_eq!(
+        openai["messages"],
+        json!([
+            { "role": "user", "content": "hi" },
+            { "role": "system", "content": "be brief" },
+            { "role": "user", "content": "again" },
+        ])
+    );
+}
+
+#[test]
 fn a_temperature_above_1_is_refused() {
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.temperature = Some(1.5);
