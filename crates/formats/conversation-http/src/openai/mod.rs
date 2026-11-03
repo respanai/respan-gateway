@@ -73,6 +73,7 @@ use respan_gateway_core::{Connection, Fault, Format, NativeValue};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
+use std::borrow::Cow;
 
 use decode::OpenAiDecoder;
 use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice};
@@ -90,6 +91,22 @@ pub(crate) const OPENAI: &str = "openai-chat";
 /// vendor sends stays native, as the module says.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiChat;
+
+/// The `type` an OpenAI error body writes beside its `code`, as a hint on
+/// a fault ([`Fault::with`]), such as `invalid_request_error` beside
+/// `context_length_exceeded`. Without it, the body writes the code in both.
+/// Both OpenAI formats read it, Chat Completions and Responses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorType(pub Cow<'static, str>);
+
+/// The `type` of `fault`'s OpenAI error body: its [`ErrorType`], else its
+/// code.
+pub(crate) fn error_type(fault: &Fault) -> &str {
+    match fault.get() {
+        Some(ErrorType(error_type)) => error_type,
+        None => fault.code(),
+    }
+}
 
 /// The counts of a usage object `u` of this format, and its fields beside
 /// them; `Err` for a count that is no count.
@@ -394,8 +411,7 @@ impl Schema for OpenAiChat {
 
     fn error_body(fault: &Fault) -> Value {
         let code = fault.code();
-        let error =
-            json!({ "message": fault.message(), "type": code, "param": null, "code": code });
+        let error = json!({ "message": fault.message(), "type": error_type(fault), "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
 

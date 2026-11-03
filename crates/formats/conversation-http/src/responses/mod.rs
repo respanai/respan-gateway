@@ -74,6 +74,7 @@ mod request;
 #[cfg(test)]
 mod tests;
 
+use crate::openai::error_type;
 use crate::schema::{
     Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
     parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
@@ -282,8 +283,7 @@ impl Schema for OpenAiResponses {
 
     fn error_body(fault: &Fault) -> Value {
         let code = fault.code();
-        let error =
-            json!({ "message": fault.message(), "type": code, "param": null, "code": code });
+        let error = json!({ "message": fault.message(), "type": error_type(fault), "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
 }
