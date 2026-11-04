@@ -888,7 +888,7 @@ fn another_formats_events_are_dropped() {
 }
 
 #[test]
-fn an_error_after_content_ends_the_stream_with_an_error_event() {
+fn an_error_after_content_ends_the_stream_with_an_error_and_a_failed_event() {
     let mut enc = encode::Events::default();
     let mut out = BytesMut::new();
     for reply in [
@@ -904,8 +904,14 @@ fn an_error_after_content_ends_the_stream_with_an_error_event() {
     )
     .expect("ends");
     let text = String::from_utf8_lossy(&out).into_owned();
-    let last = text.trim_end().rsplit("\n\n").next().unwrap_or_default();
-    let error = event_json(last.as_bytes()).expect("an error event");
+    let mut events = text.trim_end().rsplit("\n\n");
+    let failed = event_json(events.next().unwrap_or_default().as_bytes()).expect("a failed event");
+    assert_eq!(failed["type"], "response.failed");
+    assert_eq!(failed["response"]["id"], "r");
+    assert_eq!(failed["response"]["status"], "failed");
+    assert_eq!(failed["response"]["error"]["code"], "upstream");
+    assert_eq!(failed["response"]["error"]["message"], "lost");
+    let error = event_json(events.next().unwrap_or_default().as_bytes()).expect("an error event");
     assert_eq!(error["type"], "error");
     assert_eq!(error["message"], "lost");
     assert!(text.contains("event: error\n"));
