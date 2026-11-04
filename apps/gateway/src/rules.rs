@@ -68,7 +68,10 @@ fn rule(
                 target.target
             ));
         }
-        if to.contains(&candidate) {
+        if to
+            .iter()
+            .any(|c| c.provider == candidate.provider && c.model == candidate.model)
+        {
             return Err(format!("to: '{}' is listed twice", target.target));
         }
         if target.weight == 0 && route.pick == Pick::Weighted {
