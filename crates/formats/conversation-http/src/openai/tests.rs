@@ -1720,6 +1720,22 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
     }
 }
 
+/// Codex asks a Responses model for a summary of its thinking by default.
+/// Chat has no field that asks for it, and a server that thinks returns it
+/// unasked, so the effort goes to Chat alone.
+#[test]
+fn a_summary_of_the_thinking_goes_to_chat_as_its_effort_alone() {
+    use crate::responses::OpenAiResponses;
+    let body = json!({ "model": "m", "input": "hi",
+        "reasoning": { "effort": "low", "summary": "auto" } });
+    let chat = OpenAiResponses.decode_json(&body);
+    let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.ok().map(|v| v["reasoning_effort"].clone()),
+        Some(json!("low"))
+    );
+}
+
 /// What vendors of Chat Completions add to a message: dropped by another
 /// format, written back as it came by this one.
 #[test]

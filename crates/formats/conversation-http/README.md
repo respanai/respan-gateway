@@ -175,7 +175,7 @@ to its own format unchanged, and is dropped by another.
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
 | `effort: XHigh/Max` | `reasoning_effort: "xhigh"/"max"` | `reasoning.effort` | `output_config.effort` | refused | refused |
 | `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
-| `summary: true` | refused | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
+| `summary: true` | (thinking is returned) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
 | `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` | refused |
 
