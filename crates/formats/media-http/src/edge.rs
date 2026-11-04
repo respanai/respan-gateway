@@ -86,6 +86,10 @@ where
             false => Err(Fault::truncated()),
         }
     }
+
+    fn done(&self) -> bool {
+        self.done
+    }
 }
 
 /// What `write` writes into one buffer, as one frame if it wrote anything:

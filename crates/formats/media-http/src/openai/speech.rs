@@ -256,3 +256,73 @@ impl Encoder<Output> for StreamEncoder {
         crate::edge::frame(frames, |out| self.end_into(&end, out))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn streamed() -> Box<dyn Decoder<Output>> {
+        let head = http::Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(())
+            .expect("response")
+            .into_parts()
+            .0;
+        read_response(&head)
+    }
+
+    #[test]
+    fn a_speech_stream_stops_at_its_done_event() {
+        let stream = concat!(
+            "data: {\"type\":\"speech.audio.delta\",\"audio\":\"aGk=\"}\n\n",
+            "data: {\"type\":\"speech.audio.done\",\"usage\":{\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}\n\n",
+            "data: {\"error\":{\"message\":\"after completion\"}}\n\n",
+        );
+        for cut in 0..=stream.len() {
+            let mut decoder = streamed();
+            let mut events = Vec::new();
+            for part in [&stream.as_bytes()[..cut], &stream.as_bytes()[cut..]] {
+                decoder
+                    .decode(Bytes::copy_from_slice(part), &mut events)
+                    .unwrap_or_else(|e| panic!("cut at {cut}: {e}"));
+            }
+            assert!(decoder.done(), "cut at {cut}");
+            decoder.end(Ok(()), &mut events).expect("complete");
+            assert_eq!(
+                events,
+                [
+                    Output::Audio(Bytes::from_static(b"hi")),
+                    Output::Usage(Usage::new(2, 3)),
+                ],
+                "cut at {cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_speech_stream_without_its_done_event_still_fails() {
+        let mut decoder = streamed();
+        let mut events = Vec::new();
+        decoder
+            .decode(
+                Bytes::from_static(
+                    b"data: {\"type\":\"speech.audio.delta\",\"audio\":\"aGk=\"}\n\n",
+                ),
+                &mut events,
+            )
+            .expect("audio");
+        assert!(!decoder.done());
+        let error = decoder.end(Ok(()), &mut events).expect_err("truncated");
+        assert_eq!(error.code(), "truncated");
+
+        let mut decoder = streamed();
+        let error = decoder
+            .decode(
+                Bytes::from_static(b"data: {\"error\":{\"message\":\"before completion\"}}\n\n"),
+                &mut Vec::new(),
+            )
+            .expect_err("provider error");
+        assert_eq!(error.message(), "before completion");
+        assert!(!decoder.done());
+    }
+}
