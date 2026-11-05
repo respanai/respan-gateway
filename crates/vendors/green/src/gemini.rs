@@ -49,7 +49,6 @@ pub const VENDOR: Vendor = Vendor {
     ],
     models: list_models,
     format_for: Some(format_for),
-    ..Vendor::DEFAULT
 };
 
 /// What a Gemini 3 model accepts as the signature of a function call made

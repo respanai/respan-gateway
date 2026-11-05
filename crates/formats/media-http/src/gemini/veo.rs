@@ -577,11 +577,13 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
 }
 
 /// Whether `id` is spelled as a job id the gateway gives out, Veo's or
-/// OpenAI's, perhaps wrapped in its provider's name (`<provider>~<id>`):
+/// OpenAI's or Omni's, perhaps wrapped in its provider's name (`<provider>~<id>`):
 /// none of Google's own files or operations is, so those pass through.
 fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [PREFIX, "video_"].iter().any(|s| inner.starts_with(s))
+    [PREFIX, "video_", "omni_"]
+        .iter()
+        .any(|s| inner.starts_with(s))
 }
 
 /// What a client asks: a creation's body read into the kind's, the rest by
@@ -844,6 +846,65 @@ mod tests {
             ("/v1beta/tunedModels/t/operations/abc123".into(), None),
         ] {
             assert_eq!(route(&path), routed, "{path}");
+        }
+    }
+
+    #[test]
+    fn omni_creation_returns_pollable_and_downloadable_paths() {
+        use futures::StreamExt;
+        let decode = |request| {
+            let (io, _) = ClientIo::accept(request, 1024);
+            assert!(Format::<ClientIo, Input, Output>::matches(&GeminiVeo, &io));
+            let (opening, _) =
+                Format::<ClientIo, Input, Output>::bind(&GeminiVeo, io).expect("bind");
+            futures::executor::block_on(async {
+                opening
+                    .await
+                    .expect("open")
+                    .next()
+                    .await
+                    .expect("input")
+                    .expect("decode")
+            })
+        };
+        for id in ["omni_aW50ZXJhY3Rpb24", "east~omni_aW50ZXJhY3Rpb24"] {
+            let create =
+                http::Request::post("/v1beta/models/gemini-omni-1.2-flash:predictLongRunning")
+                    .body(Bytes::from_static(br#"{"instances":[{"prompt":"boat"}]}"#))
+                    .expect("request");
+            let request = http::Request::post(create.uri())
+                .body(respan_gateway_http::Body::full(create.body().clone()))
+                .expect("create");
+            assert!(matches!(decode(request), Input::Create(_)));
+            let mut job = Job::new(id, Status::InProgress);
+            job.model = Some("gemini-omni-1.2-flash".into());
+            let mut response = http::Response::new(()).into_parts().0;
+            let operation = response_encoder(&create, &mut response)
+                .encode_all(&[Output::Job(job.clone())])
+                .expect("operation");
+            let operation: Value = serde_json::from_slice(&operation).expect("JSON");
+            let poll = format!("/v1beta/{}", operation["name"].as_str().expect("name"));
+            let request = http::Request::get(&poll)
+                .body(respan_gateway_http::Body::default())
+                .expect("poll");
+            assert!(matches!(decode(request), Input::Retrieve { id: got } if got == id));
+            job.status = Status::Completed;
+            let operation = response_encoder(&create, &mut response)
+                .encode_all(&[Output::Job(job)])
+                .expect("completed operation");
+            let operation: Value = serde_json::from_slice(&operation).expect("JSON");
+            let uri = operation["response"]["generateVideoResponse"]["generatedSamples"][0]["video"]["uri"].as_str().expect("uri");
+            let request = http::Request::get(uri)
+                .body(respan_gateway_http::Body::default())
+                .expect("download");
+            assert!(matches!(decode(request), Input::Content { id: got, .. } if got == id));
+            let download = http::Request::get(uri)
+                .body(Bytes::new())
+                .expect("download");
+            let bytes = response_encoder(&download, &mut response)
+                .encode_all(&[Output::Content(Bytes::from_static(b"video"))])
+                .expect("content");
+            assert_eq!(bytes, b"video"[..]);
         }
     }
 

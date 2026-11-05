@@ -11,12 +11,14 @@ use base64::{
     Engine,
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
+use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_core::{ErrorCode, Fault, Filter, NativeFields};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::dialect::Dialect;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_http::{KeyIn, Rewrite};
 use respan_gateway_media::video::{Create, Input, Output, Variant};
+use respan_gateway_media_http::openai::OpenAiVideos;
 use serde_json::{Value, json};
 
 const NAME: &str = "gemini-omni";
@@ -150,7 +152,12 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
     if create.reference.is_some() {
         return Err(unsupported("use a reference image"));
     }
-    if create.native.as_ref().is_some_and(|n| !n.fields.is_empty()) {
+    let native_format = if create.native.as_ref().is_some_and(|n| &*n.format == NAME) {
+        NAME
+    } else {
+        OpenAiVideos::NAME
+    };
+    if !kept(native_format, &create.native).is_empty() {
         return Err(unsupported("use additional video options"));
     }
     let seconds = create.seconds.unwrap_or(10);
@@ -247,7 +254,6 @@ mod tests {
     use respan_gateway_http::dialect::Dialected;
     use respan_gateway_http::http::{self, Method};
     use respan_gateway_media::video::Status;
-    use respan_gateway_media_http::openai::OpenAiVideos;
 
     fn create() -> Create {
         let mut create = Create::new("a paper boat");
@@ -290,7 +296,22 @@ mod tests {
             serde_json::Map::from_iter([("seed".into(), json!(1))]),
         ));
         assert!(create_body(&input).is_err());
+        input.native.as_mut().expect("native").format = NAME.into();
+        assert!(create_body(&input).is_err());
     }
+    #[test]
+    fn foreign_native_fields_are_dropped() {
+        let mut input = create();
+        input.native = Some(NativeFields::new(
+            "gemini-veo",
+            serde_json::Map::from_iter([("negativePrompt".into(), json!("rain"))]),
+        ));
+        let body: Value =
+            serde_json::from_slice(&create_body(&input).expect("foreign fields are dropped"))
+                .expect("JSON");
+        assert!(body.get("negativePrompt").is_none());
+    }
+
     #[test]
     fn job_ids_cannot_escape_the_interactions_path() {
         assert_eq!(
@@ -346,7 +367,7 @@ mod tests {
     fn provider_refusals_are_left_for_the_format_to_read() {
         let sent = http::Request::get("/videos")
             .body(())
-            .unwrap()
+            .expect("request")
             .into_parts()
             .0;
         let mut response = http::Response::new(()).into_parts().0;
