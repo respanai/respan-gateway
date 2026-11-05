@@ -4,7 +4,7 @@
 
 use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -96,7 +96,7 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
     fields.entry("sync").or_insert(true.into());
     fields.entry("response_format").or_insert("b64_json".into());
     if !input.images.is_empty() {
-        let images = input.images.iter().map(|m| Value::from(crate::linked(m)));
+        let images = input.images.iter().map(|m| Value::from(media_url(m)));
         fields.insert("image".into(), images.collect::<Vec<_>>().into());
     }
     input.images.clear();

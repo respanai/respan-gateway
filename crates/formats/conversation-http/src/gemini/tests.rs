@@ -7,7 +7,7 @@ use respan_gateway_conversation::Delta;
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
-use respan_gateway_conversation::{Content, Role, ToolChoice};
+use respan_gateway_conversation::{Content, Media, MediaSource, Role, ToolChoice};
 
 /// The responses of `chunks`, each decoded in turn.
 fn decode(chunks: &[Value]) -> Result<Vec<Output>, Fault> {
@@ -248,6 +248,15 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
     assert_eq!(back["contents"], body["contents"]);
     assert_eq!(back["generationConfig"]["seed"], 3);
     assert_eq!(back["generationConfig"]["temperature"], 1.0);
+}
+
+#[test]
+fn a_wildcard_type_is_not_sent() {
+    let image = Media::new("image/*", MediaSource::Url("u".into()));
+    assert_eq!(
+        media_part(&image),
+        json!({ "fileData": { "fileUri": "u" } })
+    );
 }
 
 #[test]

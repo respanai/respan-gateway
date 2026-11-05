@@ -4,6 +4,7 @@
 //! for, such as a tool the provider runs, stays in the `native` of the
 //! request, the message or the tool.
 
+use crate::fields::media_url;
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
     merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
@@ -339,12 +340,7 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         return Err(untranslatable("a display name on image or audio content"));
     }
     let native = media.native.fields_for(OPENAI);
-    let url = || match &media.source {
-        MediaSource::Url(url) => url.clone(),
-        MediaSource::Bytes(data) => {
-            format!("data:{};base64,{}", media.mime_type, STANDARD.encode(data))
-        }
-    };
+    let url = || media_url(media);
     let mut v = match kind {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {

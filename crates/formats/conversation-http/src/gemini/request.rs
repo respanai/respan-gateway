@@ -390,20 +390,29 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
     Ok(json!({ if is_error { "error" } else { "output" }: text }))
 }
 
-/// An `inlineData` or `fileData` part of `media`.
-fn write_media(media: &Media) -> Result<Value, Fault> {
-    if media.name.is_some() {
-        return Err(untranslatable("a display name on media content"));
-    }
-    let native = media.native.fields_for(GEMINI);
-    let mut part = match &media.source {
+/// `media` as an `inlineData` or `fileData` part. Gemini refuses a wildcard
+/// type, and finds a URL's type itself.
+pub fn media_part(media: &Media) -> Value {
+    match &media.source {
+        MediaSource::Url(uri) if media.mime_type == "image/*" => {
+            json!({ "fileData": { "fileUri": uri } })
+        }
         MediaSource::Url(uri) => {
             json!({ "fileData": { "mimeType": media.mime_type, "fileUri": uri } })
         }
         MediaSource::Bytes(bytes) => {
             json!({ "inlineData": { "mimeType": media.mime_type, "data": STANDARD.encode(bytes) } })
         }
-    };
+    }
+}
+
+/// An `inlineData` or `fileData` part of `media`, with its native fields.
+fn write_media(media: &Media) -> Result<Value, Fault> {
+    if media.name.is_some() {
+        return Err(untranslatable("a display name on media content"));
+    }
+    let native = media.native.fields_for(GEMINI);
+    let mut part = media_part(media);
     merge_fields(&mut part, &native);
     Ok(part)
 }
