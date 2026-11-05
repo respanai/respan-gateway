@@ -390,39 +390,29 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
     Ok(json!({ if is_error { "error" } else { "output" }: text }))
 }
 
-/// The type `fileData` gives `uri`. Gemini refuses the wildcard of an image
-/// known only by its URL: it goes by its extension, or says no type.
-fn file_mime<'a>(mime: &'a str, uri: &str) -> Option<&'a str> {
-    if mime != "image/*" {
-        return Some(mime);
-    }
-    let path = uri.split(['?', '#']).next()?;
-    match path.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
-        "jpg" | "jpeg" => Some("image/jpeg"),
-        "png" => Some("image/png"),
-        "webp" => Some("image/webp"),
-        "gif" => Some("image/gif"),
-        "heic" => Some("image/heic"),
-        "heif" => Some("image/heif"),
-        _ => None,
+/// `media` as an `inlineData` or `fileData` part. Gemini refuses a wildcard
+/// type, and finds a URL's type itself.
+pub fn media_part(media: &Media) -> Value {
+    match &media.source {
+        MediaSource::Url(uri) if media.mime_type == "image/*" => {
+            json!({ "fileData": { "fileUri": uri } })
+        }
+        MediaSource::Url(uri) => {
+            json!({ "fileData": { "mimeType": media.mime_type, "fileUri": uri } })
+        }
+        MediaSource::Bytes(bytes) => {
+            json!({ "inlineData": { "mimeType": media.mime_type, "data": STANDARD.encode(bytes) } })
+        }
     }
 }
 
-/// An `inlineData` or `fileData` part of `media`.
+/// An `inlineData` or `fileData` part of `media`, with its native fields.
 fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
         return Err(untranslatable("a display name on media content"));
     }
     let native = media.native.fields_for(GEMINI);
-    let mut part = match &media.source {
-        MediaSource::Url(uri) => match file_mime(&media.mime_type, uri) {
-            Some(mime) => json!({ "fileData": { "mimeType": mime, "fileUri": uri } }),
-            None => json!({ "fileData": { "fileUri": uri } }),
-        },
-        MediaSource::Bytes(bytes) => {
-            json!({ "inlineData": { "mimeType": media.mime_type, "data": STANDARD.encode(bytes) } })
-        }
-    };
+    let mut part = media_part(media);
     merge_fields(&mut part, &native);
     Ok(part)
 }

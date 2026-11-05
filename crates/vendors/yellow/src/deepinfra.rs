@@ -1,9 +1,6 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
 //! transcriptions, as OpenAI serves them, and videos in its dialect.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use respan_gateway_conversation::MediaSource;
 use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
@@ -79,13 +76,7 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
     let Some(reference) = create.reference.take() else {
         return Ok(());
     };
-    let url = match reference.source {
-        MediaSource::Url(url) => url,
-        MediaSource::Bytes(bytes) => {
-            let data = STANDARD.encode(bytes);
-            format!("data:{};base64,{data}", reference.mime_type)
-        }
-    };
+    let url = crate::linked(&reference);
     let mut fields = kept(OpenAiVideos::NAME, &create.native);
     fields.entry("image_url").or_insert_with(|| url.into());
     create.native = native_of(OpenAiVideos::NAME, fields);
@@ -169,7 +160,7 @@ fn price(p: &Value) -> Option<Price> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::Media;
+    use respan_gateway_conversation::{Media, MediaSource};
     use serde_json::json;
 
     fn head(status: u16, content_type: &str) -> ResponseHead {

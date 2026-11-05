@@ -8,7 +8,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{invalid, kept, native_of};
-use respan_gateway_conversation_http::gemini::{call_of, sse, usage_body, usage_of};
+use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
@@ -133,7 +133,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 /// A call's body: its turn, its `generationConfig`, and its native fields.
 fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
     let mut native = kept(NAME, &input.native);
-    let mut parts: Vec<Value> = input.images.iter().map(part_of).collect();
+    let mut parts: Vec<Value> = input.images.iter().map(media_part).collect();
     parts.push(json!({ "text": input.prompt }));
     let mut config = match native.remove("generationConfig") {
         Some(Value::Object(config)) => config,
@@ -162,18 +162,6 @@ fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
         v.entry(key).or_insert(value);
     }
     Ok(v)
-}
-
-/// An image as a part: its bytes inline, or its URL as a file's.
-fn part_of(media: &Media) -> Value {
-    match &media.source {
-        MediaSource::Bytes(bytes) => json!({
-            "inlineData": { "mimeType": media.mime_type, "data": STANDARD.encode(bytes) },
-        }),
-        MediaSource::Url(url) => json!({
-            "fileData": { "mimeType": media.mime_type, "fileUri": url },
-        }),
-    }
 }
 
 /// Gemini's aspect ratio of a size `WxH`, and its image size if above 1K;
@@ -434,7 +422,7 @@ fn response_of(events: &[Output]) -> Value {
     let (mut parts, mut usage) = (Vec::new(), None);
     for event in events {
         match event {
-            Output::Image(image) => parts.push(part_of(&image.media)),
+            Output::Image(image) => parts.push(media_part(&image.media)),
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             _ => {}
         }

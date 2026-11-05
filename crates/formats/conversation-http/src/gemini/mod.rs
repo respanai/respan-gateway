@@ -96,11 +96,11 @@ use serde_json::{Map, Value, json};
 
 use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
-pub use request::needs_signatures;
 use request::{
     effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
     write_config, write_messages, write_tools,
 };
+pub use request::{media_part, needs_signatures};
 
 /// This format's name.
 const GEMINI: &str = "gemini-generate";

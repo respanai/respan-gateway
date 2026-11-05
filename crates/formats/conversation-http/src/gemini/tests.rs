@@ -7,7 +7,7 @@ use respan_gateway_conversation::Delta;
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
-use respan_gateway_conversation::{Content, Role, ToolChoice};
+use respan_gateway_conversation::{Content, Media, MediaSource, Role, ToolChoice};
 
 /// The responses of `chunks`, each decoded in turn.
 fn decode(chunks: &[Value]) -> Result<Vec<Output>, Fault> {
@@ -251,35 +251,12 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
 }
 
 #[test]
-fn an_openai_image_url_goes_by_its_extension_never_a_wildcard() {
-    for (url, data) in [
-        (
-            "https://x/a.JPG",
-            json!({ "mimeType": "image/jpeg", "fileUri": "https://x/a.JPG" }),
-        ),
-        (
-            "https://x/b.c/a.png?s=d.gif#e",
-            json!({ "mimeType": "image/png", "fileUri": "https://x/b.c/a.png?s=d.gif#e" }),
-        ),
-        ("https://x/a", json!({ "fileUri": "https://x/a" })),
-        ("https://x.com", json!({ "fileUri": "https://x.com" })),
-        (
-            "https://x/a.png/b",
-            json!({ "fileUri": "https://x/a.png/b" }),
-        ),
-    ] {
-        let body = json!({ "model": "g", "messages": [{ "role": "user", "content": [
-            { "type": "image_url", "image_url": { "url": url } },
-        ] }] });
-        let chat = crate::openai::OpenAiChat
-            .decode_request(Bytes::from(body.to_string()))
-            .expect("a request");
-        let written: Value = GeminiGenerate
-            .encode_request(&chat)
-            .expect("a request")
-            .into();
-        assert_eq!(written["contents"][0]["parts"][0]["fileData"], data);
-    }
+fn a_wildcard_type_is_not_sent() {
+    let image = Media::new("image/*", MediaSource::Url("u".into()));
+    assert_eq!(
+        media_part(&image),
+        json!({ "fileData": { "fileUri": "u" } })
+    );
 }
 
 #[test]
