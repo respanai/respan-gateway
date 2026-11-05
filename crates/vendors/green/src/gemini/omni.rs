@@ -47,6 +47,38 @@ impl GeminiOmni {
         let id = String::from_utf8(raw).ok()?;
         is_segment(&id).then_some(id)
     }
+    /// Decode the single inline MP4 video in an interaction, rejecting invalid video data.
+    pub fn video_bytes(value: &Value) -> Result<Bytes, Fault> {
+        let mut videos = value["steps"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|step| step["type"] == "model_output")
+            .flat_map(|step| step["content"].as_array().into_iter().flatten())
+            .filter(|content| content["type"] == "video");
+        let video = videos
+            .next()
+            .ok_or_else(|| Fault::upstream("the completed interaction holds no video"))?;
+        if videos.next().is_some() {
+            return Err(Fault::upstream("the interaction holds multiple videos"));
+        }
+        if video["mime_type"]
+            .as_str()
+            .is_some_and(|mime| mime != "video/mp4")
+        {
+            return Err(Fault::upstream("the interaction video is not MP4"));
+        }
+        let encoded = video["data"]
+            .as_str()
+            .ok_or_else(|| Fault::upstream("the interaction video has no inline data"))?;
+        let bytes = STANDARD
+            .decode(encoded)
+            .map_err(|_| Fault::upstream("the interaction video is not valid base64"))?;
+        if bytes.is_empty() {
+            return Err(Fault::upstream("the interaction video is empty"));
+        }
+        Ok(bytes.into())
+    }
 }
 
 impl Dialect for GeminiOmni {
@@ -129,10 +161,9 @@ impl Dialect for GeminiOmni {
                     return Err(Fault::bad_request("the Gemini Omni video is not ready")
                         .with(ErrorCode("video_not_ready".into())));
                 }
-                return video_bytes(&value);
+                return GeminiOmni::video_bytes(&value);
             }
-            let value = job;
-            serde_json::to_vec(&value)
+            serde_json::to_vec(&job)
                 .map(Bytes::from)
                 .map_err(|e| Fault::internal("an interaction could not be encoded").with_source(e))
         }))
@@ -187,38 +218,6 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
         .map_err(|e| Fault::internal("an interaction could not be encoded").with_source(e))
 }
 
-fn video_bytes(value: &Value) -> Result<Bytes, Fault> {
-    let mut videos = value["steps"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|step| step["type"] == "model_output")
-        .flat_map(|step| step["content"].as_array().into_iter().flatten())
-        .filter(|content| content["type"] == "video");
-    let video = videos
-        .next()
-        .ok_or_else(|| Fault::upstream("the completed interaction holds no video"))?;
-    if videos.next().is_some() {
-        return Err(Fault::upstream("the interaction holds multiple videos"));
-    }
-    if video["mime_type"]
-        .as_str()
-        .is_some_and(|mime| mime != "video/mp4")
-    {
-        return Err(Fault::upstream("the interaction video is not MP4"));
-    }
-    let encoded = video["data"]
-        .as_str()
-        .ok_or_else(|| Fault::upstream("the interaction video has no inline data"))?;
-    let bytes = STANDARD
-        .decode(encoded)
-        .map_err(|_| Fault::upstream("the interaction video is not valid base64"))?;
-    if bytes.is_empty() {
-        return Err(Fault::upstream("the interaction video is empty"));
-    }
-    Ok(bytes.into())
-}
-
 fn job_of(value: &Value) -> Result<Value, Fault> {
     let id = value["id"]
         .as_str()
@@ -227,7 +226,7 @@ fn job_of(value: &Value) -> Result<Value, Fault> {
     let status = match value["status"].as_str() {
         Some("in_progress") => "in_progress",
         Some("completed") => {
-            video_bytes(value)?;
+            GeminiOmni::video_bytes(value)?;
             "completed"
         }
         Some("failed" | "cancelled") => "failed",
@@ -330,7 +329,7 @@ mod tests {
         assert_eq!(job["status"], "completed");
         assert_eq!(job["usage"], value["usage"]);
         assert_eq!(
-            video_bytes(&value).expect("bytes"),
+            GeminiOmni::video_bytes(&value).expect("bytes"),
             Bytes::from_static(b"video")
         );
         let mut bad = value;
@@ -344,6 +343,24 @@ mod tests {
         let mut url = completed();
         url["steps"][0]["content"][0] = json!({"type": "video", "uri": "https://evil.test/video"});
         assert!(job_of(&url).is_err());
+    }
+    #[test]
+    fn video_bytes_validates_the_provider_video_independently_of_status() {
+        let mut value = completed();
+        value["status"] = "in_progress".into();
+        assert_eq!(
+            GeminiOmni::video_bytes(&value).expect("video bytes"),
+            Bytes::from_static(b"video")
+        );
+        value["steps"][0]["content"][0]["mime_type"] = "video/webm".into();
+        assert!(GeminiOmni::video_bytes(&value).is_err());
+        value["steps"][0]["content"][0] = json!({"type": "video", "data": "dmlkZW8="});
+        assert!(GeminiOmni::video_bytes(&value).is_ok());
+        value["steps"][0]["content"] = json!([
+            {"type": "video", "data": "dmlkZW8="},
+            {"type": "video", "data": "dmlkZW8="}
+        ]);
+        assert!(GeminiOmni::video_bytes(&value).is_err());
     }
     #[test]
     fn statuses_and_missing_usage_remain_distinct() {
