@@ -86,6 +86,11 @@ A tool's description and output are untrusted input to the model. Offer
 only tools from servers you trust, and use `deny` to keep destructive ones
 out. A client can opt one request out with `x-respan-tool-loop: off`.
 
+The loop retries a tool call once only if the connection was refused or
+the server rejected its session (`404` or `no_session`). Other failures
+are returned to the model, since the tool may already have run. Tool-list
+requests can be retried after any failure.
+
 ## Turning tools off
 
 The web UI's Tools page turns a server or a single tool off and on while
