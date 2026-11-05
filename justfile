@@ -10,9 +10,7 @@ default:
 dev *args: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    gateway_pid=
-    ui_pid=
-    trap 'kill "$gateway_pid" "$ui_pid" 2>/dev/null || true' EXIT
+    trap 'kill 0' EXIT
     cargo run -p respan-gateway -- {{args}} &
     gateway_pid=$!
     (cd {{ui}} && pnpm dev) &
@@ -38,9 +36,7 @@ dev *args: ui-deps
 mock: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    mock_pid=
-    ui_pid=
-    trap 'kill "$mock_pid" "$ui_pid" 2>/dev/null || true' EXIT
+    trap 'kill 0' EXIT
     (cd {{ui}} && pnpm mock) &
     mock_pid=$!
     (cd {{ui}} && pnpm dev) &
