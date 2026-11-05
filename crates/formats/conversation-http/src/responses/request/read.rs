@@ -2,7 +2,7 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, native_fields, only, remainder, says, source_url};
+use crate::schema::{ANY_IMAGE, NativeFieldsExt, native_fields, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use serde_json::{Map, Value, json};
 
@@ -56,7 +56,7 @@ pub(super) fn read_media(p: &Value) -> Option<Content> {
         if fields.get("detail") == Some(&json!("auto")) {
             fields.shift_remove("detail");
         }
-        let (mime, source) = source_url(p["image_url"].as_str()?, "image/*")?;
+        let (mime, source) = source_url(p["image_url"].as_str()?, ANY_IMAGE)?;
         Media::new(mime, source)
     } else {
         let (mime, source) = match (p["file_data"].as_str(), p["file_url"].as_str()) {

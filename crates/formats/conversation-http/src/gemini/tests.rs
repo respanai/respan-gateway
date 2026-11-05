@@ -250,6 +250,56 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
     assert_eq!(back["generationConfig"]["temperature"], 1.0);
 }
 
+/// The part Gemini is sent for an OpenAI image of `url`.
+fn part_of_image_url(url: &str) -> Value {
+    let body = json!({ "model": "g", "messages": [{ "role": "user", "content": [
+        { "type": "image_url", "image_url": { "url": url } },
+    ] }] });
+    let chat = crate::openai::OpenAiChat
+        .decode_request(Bytes::from(body.to_string()))
+        .expect("a request");
+    let written: Value = GeminiGenerate
+        .encode_request(&chat)
+        .expect("a request")
+        .into();
+    written["contents"][0]["parts"][0].clone()
+}
+
+#[test]
+fn an_image_url_is_typed_by_its_extension_never_a_wildcard() {
+    for (url, mime) in [
+        ("https://x/flower.jpg", "image/jpeg"),
+        ("https://x/flower.JPEG", "image/jpeg"),
+        ("https://x/a.b/flower.png?sig=c.gif#d.webp", "image/png"),
+        ("https://x/flower.webp", "image/webp"),
+    ] {
+        let want = json!({ "fileData": { "mimeType": mime, "fileUri": url } });
+        assert_eq!(part_of_image_url(url), want);
+    }
+}
+
+#[test]
+fn an_image_url_of_no_known_extension_says_no_type() {
+    for url in [
+        "https://x/flower",
+        "https://x.com",
+        "https://x/flower.bin",
+        "https://x/a.png/flower",
+        "https://x/flower?f=a.png",
+    ] {
+        let want = json!({ "fileData": { "fileUri": url } });
+        assert_eq!(part_of_image_url(url), want);
+    }
+}
+
+#[test]
+fn a_data_url_image_stays_inline_with_its_own_type() {
+    assert_eq!(
+        part_of_image_url("data:image/png;base64,aGk="),
+        json!({ "inlineData": { "mimeType": "image/png", "data": "aGk=" } })
+    );
+}
+
 #[test]
 fn media_reads_by_its_mime_type_and_writes_as_it_came() {
     let body = json!({ "contents": [{ "role": "user", "parts": [

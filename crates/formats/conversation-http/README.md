@@ -120,7 +120,8 @@ The model is in the path, not the body: a client's request names it there
 model. Whether to stream is the method, not a field. `contents` are
 messages (`model` is the assistant), `systemInstruction` a leading system
 message, `thought` parts reasoning, `inlineData` and `fileData` an image,
-audio or document by MIME type, and `functionCall` and `functionResponse` the
+audio or document by MIME type (an image known only by its URL is typed by
+its extension, or sent with no type for Gemini to find), and `functionCall` and `functionResponse` the
 tool call and its result. Gemini names a result by its tool, not by an id:
 a call without an `id` is given one of the format's own (`gemini_call_..`),
 which its result finds by name and which Gemini never sees; writing a

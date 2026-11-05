@@ -5,9 +5,9 @@
 //! request, the message or the tool.
 
 use crate::schema::{
-    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    ANY_IMAGE, Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content,
+    encode_message, merge_missing, native_fields, only, own_native, read_search, reasoning_of,
+    remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -274,7 +274,7 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
     let (kind, mime, source, mut fields, name) = match v["type"].as_str()? {
         "image_url" => {
             let image = &v["image_url"];
-            let (mime, src) = source_url(image["url"].as_str()?, "image/*")?;
+            let (mime, src) = source_url(image["url"].as_str()?, ANY_IMAGE)?;
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
             if !nested.is_empty() {

@@ -31,6 +31,10 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
+/// The media type of an image known only by its URL: which image, the URL
+/// alone cannot say.
+pub(crate) const ANY_IMAGE: &str = "image/*";
+
 /// The media type and source of a URL: the data of a `data:` URL, else the
 /// URL, of type `fallback`.
 pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSource)> {
