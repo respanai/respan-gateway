@@ -14,20 +14,9 @@ use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
-    ANY_IMAGE, NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing,
-    native_fields, parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
+    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
 };
-
-/// The image types an extension says.
-const IMAGE_EXTENSIONS: [(&str, &str); 7] = [
-    ("gif", "image/gif"),
-    ("heic", "image/heic"),
-    ("heif", "image/heif"),
-    ("jpeg", "image/jpeg"),
-    ("jpg", "image/jpeg"),
-    ("png", "image/png"),
-    ("webp", "image/webp"),
-];
 
 /// The id a call of Gemini's without one is given: its position, so that its
 /// answer, which names the tool, finds it.
@@ -401,18 +390,22 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
     Ok(json!({ if is_error { "error" } else { "output" }: text }))
 }
 
-/// The type `fileData` gives `uri`. Gemini refuses a wildcard, so an image of
-/// no known type goes by its extension, or says none for Gemini to find.
-fn file_mime<'a>(media: &'a Media, uri: &str) -> Option<&'a str> {
-    if media.mime_type != ANY_IMAGE {
-        return Some(&media.mime_type);
+/// The type `fileData` gives `uri`. Gemini refuses the wildcard of an image
+/// known only by its URL: it goes by its extension, or says no type.
+fn file_mime<'a>(mime: &'a str, uri: &str) -> Option<&'a str> {
+    if mime != "image/*" {
+        return Some(mime);
     }
     let path = uri.split(['?', '#']).next()?;
-    let (_, extension) = path.rsplit('/').next()?.rsplit_once('.')?;
-    IMAGE_EXTENSIONS
-        .iter()
-        .find(|(e, _)| e.eq_ignore_ascii_case(extension))
-        .map(|(_, mime)| *mime)
+    match path.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "png" => Some("image/png"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        "heic" => Some("image/heic"),
+        "heif" => Some("image/heif"),
+        _ => None,
+    }
 }
 
 /// An `inlineData` or `fileData` part of `media`.
@@ -422,7 +415,7 @@ fn write_media(media: &Media) -> Result<Value, Fault> {
     }
     let native = media.native.fields_for(GEMINI);
     let mut part = match &media.source {
-        MediaSource::Url(uri) => match file_mime(media, uri) {
+        MediaSource::Url(uri) => match file_mime(&media.mime_type, uri) {
             Some(mime) => json!({ "fileData": { "mimeType": mime, "fileUri": uri } }),
             None => json!({ "fileData": { "fileUri": uri } }),
         },

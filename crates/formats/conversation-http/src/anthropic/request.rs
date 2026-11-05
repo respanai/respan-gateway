@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    ANY_IMAGE, NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool,
-    encode_content, merge_missing, native_fields, only, own_native, read_search, remainder,
-    rest_of, set, take_native, untranslatable, write_search,
+    NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
+    merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
+    take_native, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -161,13 +161,13 @@ fn read_media(v: &Value) -> Option<Content> {
             MediaSource::Bytes(STANDARD.decode(source["data"].as_str()?).ok()?.into()),
         ),
         "url" => (
-            ANY_IMAGE.to_owned(),
+            "image/*".to_owned(),
             MediaSource::Url(source["url"].as_str()?.into()),
         ),
         _ => return None,
     };
     let image = v["type"] == "image";
-    if !image && mime == ANY_IMAGE {
+    if !image && mime == "image/*" {
         mime = "application/pdf".into();
     }
     let mut fields = remainder(v, &["type", "source", "title"]);
