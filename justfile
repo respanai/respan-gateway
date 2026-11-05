@@ -10,19 +10,57 @@ default:
 dev *args: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    trap 'kill 0' EXIT
+    gateway_pid=
+    ui_pid=
+    trap 'kill "$gateway_pid" "$ui_pid" 2>/dev/null || true' EXIT
     cargo run -p respan-gateway -- {{args}} &
+    gateway_pid=$!
     (cd {{ui}} && pnpm dev) &
-    wait -n
+    ui_pid=$!
+    is_running() {
+        for running_pid in $(jobs -pr); do
+            [ "$running_pid" = "$1" ] && return 0
+        done
+        return 1
+    }
+    while is_running "$gateway_pid" && is_running "$ui_pid"; do
+        sleep 1
+    done
+    status=0
+    if is_running "$gateway_pid"; then
+        wait "$ui_pid" || status=$?
+    else
+        wait "$gateway_pid" || status=$?
+    fi
+    exit "$status"
 
 # The UI with hot reload against a fake gateway; no Rust needed.
 mock: ui-deps
     #!/usr/bin/env bash
     set -euo pipefail
-    trap 'kill 0' EXIT
+    mock_pid=
+    ui_pid=
+    trap 'kill "$mock_pid" "$ui_pid" 2>/dev/null || true' EXIT
     (cd {{ui}} && pnpm mock) &
+    mock_pid=$!
     (cd {{ui}} && pnpm dev) &
-    wait -n
+    ui_pid=$!
+    is_running() {
+        for running_pid in $(jobs -pr); do
+            [ "$running_pid" = "$1" ] && return 0
+        done
+        return 1
+    }
+    while is_running "$mock_pid" && is_running "$ui_pid"; do
+        sleep 1
+    done
+    status=0
+    if is_running "$mock_pid"; then
+        wait "$ui_pid" || status=$?
+    else
+        wait "$mock_pid" || status=$?
+    fi
+    exit "$status"
 
 # Build the UI, then run the gateway serving it at http://localhost:8080/ui/.
 run *args: ui-build
