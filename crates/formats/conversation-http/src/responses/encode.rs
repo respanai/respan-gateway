@@ -649,14 +649,19 @@ impl Events {
             return self.terminate(out);
         };
         // What the provider finished before it broke off is kept.
-        if self.finish.is_some() {
+        let is_finished = self.finish.is_some();
+        if is_finished {
             self.terminate(out)?;
         }
         let raw = f
             .get::<RawReply>()
             .map(|r| String::from_utf8_lossy(r.0.body()).into_owned());
         let said = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
-        match said.filter(|v| v["type"].is_string()) {
+        let said = said.filter(|v| v["type"].is_string());
+        let is_failed = said
+            .as_ref()
+            .is_some_and(|v| v["type"] == "response.failed");
+        match said {
             Some(v) => {
                 let name = v["type"].as_str().map(str::to_owned);
                 out.extend_from_slice(event(name.as_deref(), &v).as_bytes());
@@ -671,7 +676,25 @@ impl Events {
                 self.emit(out, v);
             }
         }
+        // SDKs raise on `error` and stop reading; a client that reads only the
+        // terminal event learns of the failure from this one. A stream has one.
+        if !is_finished && !is_failed {
+            self.fail(f, out);
+        }
         Ok(())
+    }
+
+    /// Writes the terminal event of a response that failed.
+    fn fail(&mut self, f: &Fault, out: &mut BytesMut) {
+        if !self.began {
+            self.created = unix_now();
+        }
+        let mut response = self.response("failed", None, false);
+        response["error"] = json!({ "code": f.code(), "message": f.message() });
+        self.emit(
+            out,
+            json!({ "type": "response.failed", "response": response }),
+        );
     }
 }
 
