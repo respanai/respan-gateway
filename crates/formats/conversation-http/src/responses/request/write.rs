@@ -2,8 +2,8 @@
 
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
+use crate::fields::media_url;
 use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
-use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -162,12 +162,7 @@ pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
         return Err(untranslatable("a display name on image content"));
     }
     let native = media.native.fields_for(RESPONSES);
-    let url = || match &media.source {
-        MediaSource::Url(url) => url.clone(),
-        MediaSource::Bytes(data) => {
-            format!("data:{};base64,{}", media.mime_type, STANDARD.encode(data))
-        }
-    };
+    let url = || media_url(media);
     let mut v = match (image, &media.source) {
         (true, _) => json!({ "type": "input_image", "image_url": url() }),
         (false, MediaSource::Url(url)) => json!({ "type": "input_file", "file_url": url }),

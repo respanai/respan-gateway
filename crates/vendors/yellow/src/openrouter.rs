@@ -4,7 +4,7 @@
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
@@ -120,7 +120,7 @@ fn referenced(input: &mut image::Input) -> Result<(), Fault> {
     let references = input
         .images
         .drain(..)
-        .map(|m| json!({ "type": "image_url", "image_url": { "url": crate::linked(&m) } }));
+        .map(|m| json!({ "type": "image_url", "image_url": { "url": media_url(&m) } }));
     fields.insert(
         "input_references".into(),
         references.collect::<Vec<Value>>().into(),

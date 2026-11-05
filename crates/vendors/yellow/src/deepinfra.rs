@@ -1,7 +1,7 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
 //! transcriptions, as OpenAI serves them, and videos in its dialect.
 
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
@@ -76,7 +76,7 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
     let Some(reference) = create.reference.take() else {
         return Ok(());
     };
-    let url = crate::linked(&reference);
+    let url = media_url(&reference);
     let mut fields = kept(OpenAiVideos::NAME, &create.native);
     fields.entry("image_url").or_insert_with(|| url.into());
     create.native = native_of(OpenAiVideos::NAME, fields);

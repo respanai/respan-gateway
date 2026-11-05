@@ -1,8 +1,20 @@
 //! JSON object helpers for formats that read a body's fields and write
 //! them back, keeping what they have no place for.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
+use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_core::{Details, Fault, NativeFields};
 use serde_json::{Map, Value};
+
+/// `media` as a URL: its own, or a data URL of its bytes.
+pub fn media_url(media: &Media) -> String {
+    match &media.source {
+        MediaSource::Url(url) => url.clone(),
+        MediaSource::Bytes(bytes) => {
+            format!("data:{};base64,{}", media.mime_type, STANDARD.encode(bytes))
+        }
+    }
+}
 
 /// The seconds since the Unix epoch, as a response's `created` says.
 pub fn unix_now() -> u64 {

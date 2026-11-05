@@ -10,6 +10,7 @@ use super::{
     unb64, unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
 };
 use respan_gateway_conversation::{Media, MediaSource, Usage};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeFields, NativeValue};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -159,11 +160,6 @@ fn data_url(url: &str) -> Option<(String, Bytes)> {
     Some((mime.to_owned(), unb64(data)?))
 }
 
-/// `media` as a data URL.
-fn to_data_url(media: &Media, bytes: &[u8]) -> String {
-    format!("data:{};base64,{}", media.mime_type, b64(bytes))
-}
-
 /// The call of `input`: a generation in JSON; an edit as a form, or in
 /// JSON if an image is a URL.
 fn post(
@@ -220,13 +216,7 @@ fn fields(input: &Input, stream: bool) -> Map<String, Value> {
 
 /// A JSON edit, its images named by URL.
 fn linked_edit(input: &Input, stream: bool) -> Map<String, Value> {
-    let link = |media: &Media| {
-        let url = match &media.source {
-            MediaSource::Url(url) => url.clone(),
-            MediaSource::Bytes(bytes) => to_data_url(media, bytes),
-        };
-        json!({ "image_url": url })
-    };
+    let link = |media: &Media| json!({ "image_url": media_url(media) });
     let mut v = fields(input, stream);
     v.insert(
         "images".into(),
