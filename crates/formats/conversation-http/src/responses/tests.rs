@@ -954,6 +954,41 @@ fn a_chat_tools_strict_is_written_as_responses_own() {
 }
 
 #[test]
+fn a_namespace_is_flattened_for_chat_and_rebuilt_for_responses() {
+    let body = json!({
+        "model": "m",
+        "input": [{ "role": "user", "content": "hi" }],
+        "tools": [{
+            "type": "namespace",
+            "name": "mcp__railway",
+            "description": "Railway tools",
+            "tools": [{
+                "type": "function",
+                "name": "get_project",
+                "description": "Get a project",
+                "parameters": { "type": "object" }
+            }]
+        }]
+    });
+    let chat = decode_request(&body);
+    let openai = OpenAiChat.encode_request(&chat).expect("chat");
+    assert_eq!(
+        openai["tools"][0]["function"]["name"],
+        "mcp__railway__get_project"
+    );
+    assert_eq!(round_trip(&body), body);
+
+    let body = json!({
+        "model": "m",
+        "input": [{ "role": "user", "content": "search" }],
+        "tools": [{ "type": "web_search_preview" }]
+    });
+    let chat = decode_request(&body);
+    let openai = OpenAiChat.encode_request(&chat).expect("chat search");
+    assert_eq!(openai["web_search_options"], json!({}));
+}
+
+#[test]
 fn instructions_count_as_the_reader_reads_them() {
     for (body, instructed) in [
         (r#"{"instructions":"Be brief."}"#, true),
