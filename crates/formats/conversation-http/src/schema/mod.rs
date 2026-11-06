@@ -14,7 +14,8 @@
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
 //! only by that format; another drops it with a warning. A request that asks
-//! for several choices (`n > 1`) cannot be written and is refused.
+//! for several OpenAI Chat choices (`n > 1`) is refused on input, before
+//! translation can drop the choice count.
 
 mod errors;
 mod exchange;
@@ -110,6 +111,10 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn decoder(&self) -> Self::Decoding;
     /// The events of one whole response body `v`.
     fn decode_body(&self, v: &Value, out: &mut Vec<Output>) -> Result<(), Fault>;
+    /// Refuse a client request the conversation kind cannot represent.
+    fn validate_request_json(&self, _v: &Value) -> Result<(), Fault> {
+        Ok(())
+    }
     /// A JSON request as a conversation, noting what it has no place for.
     fn decode_json(&self, v: &Value) -> Input;
     /// A conversation as a request, but for its own `native` fields and the
@@ -177,6 +182,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
             Ok(v) if v.is_object() => v,
             _ => return Err(values::not_an_object()),
         };
+        self.validate_request_json(&v)?;
         let mut chat = self.decode_json(&v);
         chat.model = v["model"].as_str().map(Into::into);
         Ok(chat)

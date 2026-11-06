@@ -41,6 +41,8 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 
 `openai::OpenAiChat`: a `POST` to a path ending in `/chat/completions`; its
 provider base URL includes the version, such as `https://api.openai.com/v1`.
+A Chat Completions request with `n > 1` is refused before the provider
+is called, including when the selected provider speaks another format.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
