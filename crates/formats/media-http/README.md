@@ -111,11 +111,10 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
 - A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews
   (shut down 2026-10-22), is created by `POST /interactions`: its prompt,
   after its reference image if any, the `input`, its `size` the
-  `response_format`'s `aspect_ratio` and `resolution` (`360p`, `720p`,
-  `1080p` or `4k` by the short side; with no size, its native `aspectRatio`
-  and `resolution`), its `seconds` the `duration` (`"8s"`); it has no place
-  for Veo's other parameters (`negativePrompt`, `personGeneration`), so
-  those are dropped. Its video is a file of the Files API, asked at a URI, and the
+  `response_format`'s `aspect_ratio` and `resolution` (with no size, its
+  native `aspectRatio` and `resolution`), its `seconds` the `duration`
+  (`"8s"`); it has no place for Veo's other parameters (`negativePrompt`,
+  `personGeneration`), so those are dropped. Its video is a file of the Files API, asked at a URI, and the
   file is its job: its name, `files/{id}`, spelled as an operation's,
   retrieved by `GET /files/{id}`, `in_progress` until the file is `ACTIVE`,
   `completed` then with the file's download URI as its video, `failed` if
