@@ -138,6 +138,8 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   operation's `error`, or, filtered, a response of
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
   message, status}}`. Veo reports no progress: an operation is done or not.
+  Polling a Gemini Omni operation by its qualified name returns that same
+  name, including when the provider reports the video through the Files API.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
