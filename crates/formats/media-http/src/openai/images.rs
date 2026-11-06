@@ -40,9 +40,9 @@ const EDITS: &str = "/images/edits";
 /// `url`), and its usage; an image is of the answer's `output_format`, else
 /// of the type its bytes say, else PNG. A stream decodes into a [`Start`] of its first
 /// event's fields, a [`Partial`] per partial image and an [`Image`] per
-/// completed one, with its usage; a stream that ends before its image fails
-/// `truncated`. Either is written to a client in the framing it asked for;
-/// a whole body has no partial images.
+/// completed one, with its usage. It stops after the requested image count
+/// and fails `truncated` if the body ends earlier. Either is written to a client
+/// in the framing it asked for; a whole body has no partial images.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiImages;
 
@@ -91,7 +91,7 @@ impl Format<ProviderIo, Output, Input> for OpenAiImages {
             io,
             NAME,
             move |head, input| post(head, input, stream),
-            |head, _| read_response(head),
+            read_response,
         ))
     }
 }
@@ -167,21 +167,29 @@ fn post(
     input: &Input,
     stream: bool,
 ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+    let fields = fields(input, stream);
+    let count: Option<u32> = match fields.get("n") {
+        Some(Value::String(count)) => count.trim().parse().ok(),
+        Some(count) => count.as_u64().and_then(|n| u32::try_from(n).ok()),
+        None => None,
+    };
+    head.extensions
+        .insert(ImageCount(count.unwrap_or(1).max(1)));
     if !input.is_edit() {
         if input.mask.is_some() {
             return Err(Fault::bad_request("a mask needs an image to edit"));
         }
         post_to(head, GENERATIONS, "application/json")?;
-        return Ok(sends(json_bytes(&fields(input, stream))?));
+        return Ok(sends(json_bytes(&fields)?));
     }
     let mut files = input.images.iter().chain(&input.mask);
     if !files.all(|media| bytes_of(media).is_some()) {
         post_to(head, EDITS, "application/json")?;
-        return Ok(sends(json_bytes(&linked_edit(input, stream))?));
+        return Ok(sends(json_bytes(&linked_edit(input, fields))?));
     }
     let mut form = Writer::with_boundary(multipart::random_boundary());
     post_to(head, EDITS, &form.content_type())?;
-    for (name, value) in &fields(input, stream) {
+    for (name, value) in &fields {
         write_field(&mut form, name, value);
     }
     let name = match input.images.len() {
@@ -215,9 +223,8 @@ fn fields(input: &Input, stream: bool) -> Map<String, Value> {
 }
 
 /// A JSON edit, its images named by URL.
-fn linked_edit(input: &Input, stream: bool) -> Map<String, Value> {
+fn linked_edit(input: &Input, mut v: Map<String, Value>) -> Map<String, Value> {
     let link = |media: &Media| json!({ "image_url": media_url(media) });
-    let mut v = fields(input, stream);
     v.insert(
         "images".into(),
         input.images.iter().map(link).collect::<Vec<_>>().into(),
@@ -226,11 +233,24 @@ fn linked_edit(input: &Input, stream: bool) -> Map<String, Value> {
     v
 }
 
+// The expected count rides on the sent request for both JSON and form calls.
+#[derive(Clone, Copy)]
+struct ImageCount(u32);
+
 /// The decoder of a provider's answer of `head`: a stream of events, or one
 /// JSON body.
-fn read_response(head: &http::response::Parts) -> Option<Box<dyn Decoder<Output>>> {
+fn read_response(
+    head: &http::response::Parts,
+    request: &http::Request<Bytes>,
+) -> Option<Box<dyn Decoder<Output>>> {
     Some(match content::is_stream(head) {
-        true => Box::new(Sse::new(Streamed::default())),
+        true => Box::new(Sse::new(Streamed {
+            shared: None,
+            remaining: request
+                .extensions()
+                .get::<ImageCount>()
+                .map_or(1, |count| count.0),
+        })),
         false => Box::new(Whole::new(decode_whole)),
     })
 }
@@ -242,7 +262,15 @@ impl Decoder<Output> for Streamed {
 
     fn end(&mut self, end: Result<(), Fault>, _: &mut Vec<Output>) -> Result<(), Fault> {
         end?;
-        Streamed::end(self)
+        if self.done() {
+            Ok(())
+        } else {
+            Err(Fault::truncated())
+        }
+    }
+
+    fn done(&self) -> bool {
+        self.remaining == 0
     }
 }
 
@@ -314,10 +342,10 @@ const EVENT_FIELDS: &[&str] = &[
 
 /// Reads a stream: its first event's other fields are its [`Start`]'s, and
 /// a later event keeps those it says otherwise.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Streamed {
     shared: Option<Map<String, Value>>,
-    done: bool,
+    remaining: u32,
 }
 
 impl Streamed {
@@ -360,15 +388,8 @@ impl Streamed {
         image.revised_prompt = v["revised_prompt"].as_str().map(Into::into);
         image.native = native_of(NAME, fields);
         out.push(Output::Image(image));
-        self.done = true;
+        self.remaining = self.remaining.saturating_sub(1);
         read_usage_into(&v["usage"], out)
-    }
-
-    fn end(&mut self) -> Result<(), Fault> {
-        match self.done {
-            true => Ok(()),
-            false => Err(Fault::truncated()),
-        }
     }
 }
 
@@ -538,7 +559,9 @@ impl Encoder<Output> for StreamEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_core::FaultKind;
+    use futures::{SinkExt, StreamExt, TryStreamExt, executor::block_on, stream};
+    use respan_gateway_core::{EventStream, Extensions, FaultKind};
+    use respan_gateway_http::{Body, connect};
 
     fn edit(body: Value) -> Result<Input, Fault> {
         let head = http::Request::post(EDITS).body(()).unwrap_or_default();
@@ -640,6 +663,103 @@ mod tests {
             ("image_generation.completed", 3),
         ];
         assert_eq!(seen, want.map(|(k, n)| (k.to_owned(), n)));
+    }
+
+    const IMAGE_A: &str = concat!(
+        "data: {\"type\":\"image_generation.completed\",",
+        "\"b64_json\":\"YQ==\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}\n\n"
+    );
+    const IMAGE_B: &str =
+        "data: {\"type\":\"image_generation.completed\",\"b64_json\":\"Yg==\"}\n\n";
+    const TRAILING_ERROR: &str =
+        "data: {\"type\":\"error\",\"error\":{\"message\":\"after completion\"}}\n\n";
+
+    fn image_stream(
+        count: Option<u32>,
+        native_count: Option<u32>,
+        chunks: &'static [&'static str],
+        forbid_more_polls: bool,
+    ) -> EventStream<Output> {
+        let send = move |request: http::Request<Body>| async move {
+            let encoded = request.body().full_bytes().expect("read the image request");
+            let request: Value = serde_json::from_slice(encoded).expect("JSON image request");
+            assert_eq!(request["n"], json!(count.or(native_count)));
+            let frames = stream::iter(
+                chunks
+                    .iter()
+                    .map(|chunk| Ok(Bytes::from_static(chunk.as_bytes()))),
+            );
+            let body = if forbid_more_polls {
+                Body::stream(frames.chain(stream::poll_fn(|_| {
+                    panic!("the image stream read past the final completion")
+                })))
+            } else {
+                Body::stream(frames)
+            };
+            let response = http::Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(body)
+                .expect("an image response");
+            Ok((response, None))
+        };
+        let io = connect(send, 1024)(Extensions::new());
+        let (incoming, mut outgoing) = OpenAiImages.bind(io).expect("bind the format");
+        let mut input = Input::new("a prompt");
+        input.count = count;
+        input.native =
+            native_count.map(|n| NativeFields::new(NAME, Map::from_iter([("n".into(), json!(n))])));
+        outgoing
+            .prepare(&mut EventStream::single(input))
+            .expect("prepare the request");
+        let (answer, sent) = block_on(async { futures::join!(incoming, outgoing.close()) });
+        sent.expect("send the request");
+        answer.expect("open the response")
+    }
+
+    #[test]
+    fn a_completed_image_ignores_a_trailing_error() {
+        let events = block_on(
+            image_stream(None, None, &[IMAGE_A, TRAILING_ERROR], false).try_collect::<Vec<_>>(),
+        )
+        .expect("the completed image succeeds");
+        assert!(matches!(
+            events.as_slice(),
+            [Output::Start(_), Output::Image(_), Output::Usage(_)]
+        ));
+    }
+
+    #[test]
+    fn a_two_image_stream_finishes_without_waiting_for_eof() {
+        for (count, native_count) in [(Some(2), None), (None, Some(2))] {
+            let events = block_on(
+                image_stream(count, native_count, &[IMAGE_A, IMAGE_B], true)
+                    .try_collect::<Vec<_>>(),
+            )
+            .expect("both images succeed");
+            let images: Vec<_> = events
+                .iter()
+                .filter_map(|event| match event {
+                    Output::Image(image) => Some(&image.media.source),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                images,
+                [
+                    &MediaSource::Bytes(Bytes::from_static(b"a")),
+                    &MediaSource::Bytes(Bytes::from_static(b"b")),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn an_image_stream_cut_before_completion_is_truncated() {
+        for (count, frames) in [(None, &[][..]), (Some(2), &[IMAGE_A][..])] {
+            let fault = block_on(image_stream(count, None, frames, false).try_collect::<Vec<_>>())
+                .expect_err("not all requested images arrived");
+            assert_eq!(fault.to_string(), Fault::truncated().to_string());
+        }
     }
 
     #[test]
