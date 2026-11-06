@@ -139,8 +139,8 @@ What the kind has no form for stays native and is dropped in another format:
 beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
 on a function call in the history: written for one, the first call of each turn
 without one takes Google's documented placeholder).
-Writing, a request for several candidates, one tool call at a time and an end
-user's id are refused.
+Writing, a request for several candidates and an end user's id are refused;
+one for one tool call at a time is dropped, as Gemini has no such control.
 
 A response's first candidate is the events: consecutive text parts one text
 block, a function call a tool block (its arguments whole), `STOP` a tool use
@@ -173,11 +173,17 @@ to its own format unchanged, and is dropped by another.
 | --- | --- | --- | --- | --- | --- |
 | `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
-| `effort: XHigh/Max` | `reasoning_effort: "xhigh"/"max"` | `reasoning.effort` | `output_config.effort` | refused | refused |
+| `effort: XHigh/Max` | `reasoning_effort: "xhigh"/"max"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | refused |
 | `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
 | `summary: true` | refused | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
 | `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` | refused |
+
+Translated to Gemini, an effort becomes what its model has: from Gemini 3,
+the nearest of the thinking levels Google documents for the model (`low` and
+`high` for one it does not), the higher on a tie and `none` the least, as
+these cannot stop thinking; on Gemini 2.5, a thinking budget (`none` 0, or
+128 on 2.5 Pro, which always thinks).
 
 An effort and a budget do not convert, so each travels only to a format that
 has it (see the [kind](../../kinds/conversation/README.md)); asking for both

@@ -350,7 +350,6 @@ fn what_gemini_cannot_say_is_refused_not_dropped() {
     let one = json!({ "contents": [{ "parts": [{ "text": "x" }] }] });
     let refused = |edit: fn(&mut Input)| written(one.clone(), edit).is_err();
     assert!(refused(|c| c.user = Some("u".into())));
-    assert!(refused(|c| c.options.parallel_tool_calls = Some(false)));
     assert!(refused(|c| c.messages.clear()));
     assert!(refused(|c| {
         let mut m = respan_gateway_conversation::Message::new(Role::System, "late");
@@ -358,6 +357,7 @@ fn what_gemini_cannot_say_is_refused_not_dropped() {
         c.messages.push(m);
     }));
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
+    assert!(!refused(|c| c.options.parallel_tool_calls = Some(false)));
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
         c.native
@@ -674,7 +674,7 @@ fn a_json_array_element_joins_the_data_lines_of_its_event() {
 }
 
 #[test]
-fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
+fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_high() {
     use respan_gateway_conversation::{Effort, Reasoning};
     for level in ["minimal", "low", "medium", "high"] {
         let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
@@ -691,8 +691,12 @@ fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
         let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
         let sent = written(one, |c| {
             c.options.reasoning = Some(Reasoning::effort(effort))
-        });
-        assert!(sent.is_err(), "{effort:?}");
+        })
+        .expect("written");
+        assert_eq!(
+            sent["generationConfig"]["thinkingConfig"]["thinkingLevel"], "high",
+            "{effort:?}"
+        );
     }
 }
 
@@ -713,22 +717,50 @@ fn a_chats_effort_is_the_thinking_its_gemini_has() {
     let level = |l: &str, shown: bool| json!({ "thinkingLevel": l, "includeThoughts": shown });
     let cases = [
         ("gemini-2.5-flash-lite", "none", budget(0, false)),
-        ("gemini-2.5-flash-lite", "minimal", budget(512, true)),
+        ("gemini-2.5-flash", "none", budget(0, false)),
+        ("gemini-2.5-pro", "none", budget(128, false)),
         ("gemini-2.5-flash", "minimal", budget(1, true)),
-        ("gemini-2.5-pro", "minimal", budget(128, true)),
+        ("gemini-2.5-flash-lite", "minimal", budget(512, true)),
         ("gemini-2.5-flash-lite", "low", budget(1024, true)),
-        ("gemini-2.5-flash-lite", "medium", budget(2048, true)),
-        ("gemini-2.5-flash-lite", "high", budget(4096, true)),
-        ("gemini-3.5-flash-lite", "none", level("low", false)),
-        ("gemini-3.5-flash-lite", "minimal", level("low", true)),
-        ("gemini-3.5-flash-lite", "low", level("low", true)),
-        ("gemini-3.5-flash-lite", "medium", level("high", true)),
-        ("gemini-3.5-flash-lite", "high", level("high", true)),
+        ("gemini-2.5-pro", "medium", budget(2048, true)),
+        ("gemini-2.5-flash", "high", budget(4096, true)),
+        ("gemini-2.5-flash", "xhigh", budget(4096, true)),
+        ("gemini-4-argon", "none", level("low", false)),
+        ("gemini-4-argon", "minimal", level("low", true)),
+        ("gemini-4-argon", "low", level("low", true)),
+        ("gemini-4-argon", "medium", level("medium", true)),
+        ("gemini-4-argon", "high", level("high", true)),
+        ("gemini-4-argon", "xhigh", level("high", true)),
+        ("gemini-4-argon", "max", level("high", true)),
+        ("gemini-3.8-flash", "minimal", level("low", true)),
+        ("gemini-3.8-flash", "medium", level("medium", true)),
+        ("gemini-3.6-flash", "minimal", level("minimal", true)),
+        ("gemini-3.6-flash", "medium", level("medium", true)),
+        ("gemini-3.5-flash-lite", "none", level("minimal", false)),
+        ("gemini-3.5-flash-lite", "minimal", level("minimal", true)),
+        ("gemini-3.5-flash-lite", "medium", level("medium", true)),
+        ("gemini-3.1-pro-preview", "minimal", level("low", true)),
+        ("gemini-3.1-pro-preview", "medium", level("medium", true)),
+        (
+            "gemini-3.1-flash-lite-preview",
+            "minimal",
+            level("minimal", true),
+        ),
+        ("gemini-3.1-flash-lite-image", "low", level("minimal", true)),
+        ("gemini-3.1-flash-lite-image", "medium", level("high", true)),
         ("gemini-3-flash-preview", "none", level("minimal", false)),
         ("gemini-3-flash-preview", "minimal", level("minimal", true)),
         ("gemini-3-flash-preview", "medium", level("medium", true)),
-        ("gemini-3.1-pro-preview", "minimal", level("low", true)),
-        ("gemini-3.1-pro-preview", "medium", level("medium", true)),
+        ("gemini-3.1-flash-image", "medium", level("high", true)),
+        (
+            "gemini-3.1-flash-image-preview",
+            "low",
+            level("minimal", true),
+        ),
+        ("gemini-3.5-flash", "medium", level("high", true)),
+        ("gemini-3.7-flash", "minimal", level("low", true)),
+        ("gemini-3-pro-preview", "minimal", level("low", true)),
+        ("gemini-3-pro-preview", "medium", level("high", true)),
         ("gemini-2.0-flash", "high", Value::Null),
     ];
     for (model, effort, want) in cases {
@@ -738,5 +770,4 @@ fn a_chats_effort_is_the_thinking_its_gemini_has() {
             "{model} {effort}"
         );
     }
-    assert!(effort_thinking("gemini-2.5-flash", "xhigh").is_err());
 }

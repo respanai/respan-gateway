@@ -591,9 +591,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         .then(|| tools.into())
         .or_else(|| native("tools"));
     set(v, "tools", tools);
-    if chat.options.parallel_tool_calls == Some(false) {
-        return Err(untranslatable("one tool call at a time"));
-    }
     let mode = match &chat.options.tool_choice {
         None => None,
         Some(ToolChoice::Auto) => Some(json!({ "mode": "AUTO" })),
@@ -791,6 +788,50 @@ fn minimal_budget(model: &str) -> u64 {
     }
 }
 
+/// Gemini's thinking levels, least first.
+const LEVELS: [&str; 4] = ["minimal", "low", "medium", "high"];
+
+/// `low`, `medium` and `high`.
+const LOW_TO_HIGH: &[&str] = &["low", "medium", "high"];
+
+/// The thinking levels each Gemini 3 and later model has, by a name its
+/// model contains, the more specific first.
+const MODEL_LEVELS: &[(&str, &[&str])] = &[
+    ("gemini-3.1-flash-lite-image", &["minimal", "high"]),
+    ("gemini-3.1-flash-image", &["minimal", "high"]),
+    ("gemini-3.1-flash-lite", &LEVELS),
+    ("gemini-3.1-pro", LOW_TO_HIGH),
+    ("gemini-3-pro", &["low", "high"]),
+    ("gemini-3-flash", &LEVELS),
+    ("gemini-3.5-flash-lite", &LEVELS),
+    ("gemini-3.6-flash", &LEVELS),
+    ("gemini-3.8-flash", LOW_TO_HIGH),
+    ("gemini-4", LOW_TO_HIGH),
+    ("gemini-robotics-er", &LEVELS),
+];
+
+/// The levels of another model from Gemini 3 on: `low` and `high`, which
+/// every one has.
+const OTHER_LEVELS: &[&str] = &["low", "high"];
+
+/// The level of `levels` nearest the named `effort` (`none` the least, one
+/// above `high` as `high`), the higher on a tie.
+fn nearest_level(effort: &str, levels: &[&'static str]) -> &'static str {
+    let rank = |l: &str| LEVELS.iter().position(|x| *x == l);
+    let want = match effort {
+        "none" => 0,
+        effort => rank(effort).unwrap_or(LEVELS.len() - 1),
+    };
+    levels
+        .iter()
+        .copied()
+        .min_by_key(|l| {
+            let at = rank(l).unwrap_or(0);
+            (at.abs_diff(want), std::cmp::Reverse(at))
+        })
+        .unwrap_or("high")
+}
+
 /// The major version of a Gemini `model`, if its name says one.
 fn gemini_version(model: &str) -> Option<u32> {
     let (_, after) = model.split_once("gemini-")?;
@@ -800,11 +841,11 @@ fn gemini_version(model: &str) -> Option<u32> {
 
 /// A call whose `thinkingConfig` is an effort the kind wrote, its level or
 /// a budget of 0 for none, as a client of another format names it: on
-/// Gemini 3 and later, the level the model has for it (the flash line has
-/// `minimal` and `medium`, Gemini 3.1 Pro `medium`; others round to `low` or
-/// `high`, and none is the least level without thoughts); on Gemini 2.5 a
-/// thinking budget for it (none is 0); before 2.5, which does not think,
-/// none. Thoughts are included but for none.
+/// Gemini 3 and later, the nearest level the model has ([`MODEL_LEVELS`]),
+/// none the least, as these cannot stop thinking; on Gemini 2.5 a thinking
+/// budget for it ([`EFFORT_BUDGETS`]), none 0 but on 2.5 Pro, which always
+/// thinks and takes its least, 128; before 2.5, which does not think, none.
+/// Thoughts are included but for none.
 pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
     let model = model.to_ascii_lowercase();
     let Some(version) = gemini_version(&model) else {
@@ -830,19 +871,19 @@ pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
         thinking.shift_remove("thinkingLevel");
         thinking.shift_remove("thinkingBudget");
     } else if version >= 3 {
-        let flash = model.contains("gemini-3-flash") || model.contains("gemini-3.1-flash");
-        let medium = flash || model.contains("gemini-3.1-pro-preview");
-        let floor = if flash { "minimal" } else { "low" };
-        let level = match effort.as_str() {
-            "minimal" | "none" => floor,
-            "low" => "low",
-            "medium" if medium => "medium",
-            _ => "high",
-        };
+        let levels = MODEL_LEVELS
+            .iter()
+            .find(|(name, _)| model.contains(name))
+            .map_or(OTHER_LEVELS, |(_, levels)| *levels);
         thinking.shift_remove("thinkingBudget");
-        thinking.insert("thinkingLevel".into(), level.into());
+        thinking.insert(
+            "thinkingLevel".into(),
+            nearest_level(&effort, levels).into(),
+        );
     } else {
+        let pro = model.contains("2.5-pro") || model.contains("2-5-pro");
         let budget = match effort.as_str() {
+            "none" if pro => 128,
             "none" => 0,
             "minimal" => minimal_budget(&model),
             effort => EFFORT_BUDGETS
@@ -873,8 +914,8 @@ fn level_name(effort: Effort) -> Option<&'static str> {
     }
 }
 
-/// `thinkingConfig` of `config` with the kind's reasoning over its own,
-/// refused for an effort Gemini has no level for.
+/// `thinkingConfig` of `config` with the kind's reasoning over its own, an
+/// effort above `high` as `high`.
 fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
     let Some(config) = config.as_object_mut() else {
         return Ok(());
@@ -890,9 +931,12 @@ fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
     match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => _ = thinking.insert("thinkingBudget".into(), 0.into()),
         (Some(effort), _) => {
-            let level = level_name(effort).ok_or_else(|| {
-                untranslatable("a reasoning effort Gemini has no thinking level for")
-            })?;
+            let level = match effort {
+                Effort::XHigh | Effort::Max => "high",
+                effort => level_name(effort).ok_or_else(|| {
+                    untranslatable("a reasoning effort Gemini has no thinking level for")
+                })?,
+            };
             thinking.insert("thinkingLevel".into(), level.into());
         }
         (None, Some(n)) => _ = thinking.insert("thinkingBudget".into(), n.into()),

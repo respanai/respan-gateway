@@ -1687,7 +1687,7 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
 }
 
 #[test]
-fn efforts_above_high_are_written_verbatim_or_refused() {
+fn efforts_above_high_are_written_verbatim_or_as_high() {
     use crate::gemini::GeminiGenerate;
     use crate::responses::OpenAiResponses;
     use respan_gateway_conversation::Effort;
@@ -1715,8 +1715,15 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
             anthropic.ok().map(|v| v["output_config"].clone()),
             Some(json!({ "effort": name }))
         );
-        // Gemini has no thinking level above `high`, and does not get one.
-        assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
+        // Gemini has no thinking level above `high`, and thinks at `high`.
+        let gemini = GeminiGenerate.encode_request(&chat).map(Value::from);
+        assert_eq!(
+            gemini
+                .ok()
+                .map(|v| v["generationConfig"]["thinkingConfig"]["thinkingLevel"].clone()),
+            Some(json!("high")),
+            "{name}"
+        );
     }
 }
 
