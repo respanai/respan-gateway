@@ -244,6 +244,14 @@ impl OpenAiDecoder {
         }
         for call in calls.into_iter().flatten() {
             let key = Key::Call(self.call_index(&call));
+            let named = call.start.as_ref().map(|(id, _)| id);
+            if let Some(block) = self.open_block(&key)
+                && let Some(open) = self.blocks.get_mut(block as usize)
+                && named.is_some_and(|id| open.call_id.as_ref() != Some(id))
+            {
+                open.open = false;
+                out.push(Output::block_end(block));
+            }
             let block = match (call.start, self.open_block(&key)) {
                 (Some((id, name)), None) => {
                     let next = u32::try_from(self.blocks.len()).unwrap_or(u32::MAX);
