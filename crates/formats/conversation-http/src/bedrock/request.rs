@@ -264,7 +264,9 @@ fn document_name(name: &str) -> String {
 /// `None` offers none.
 pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     if chat.options.parallel_tool_calls == Some(false) {
-        return Err(untranslatable("one tool call at a time"));
+        return Err(Fault::bad_request(
+            "Bedrock cannot turn off parallel tool calls",
+        ));
     }
     let tool = |t: &Tool| {
         let mut spec = Map::new();

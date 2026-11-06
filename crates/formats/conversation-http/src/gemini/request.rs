@@ -592,7 +592,9 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         .or_else(|| native("tools"));
     set(v, "tools", tools);
     if chat.options.parallel_tool_calls == Some(false) {
-        return Err(untranslatable("one tool call at a time"));
+        return Err(Fault::bad_request(
+            "Gemini cannot turn off parallel tool calls",
+        ));
     }
     let mode = match &chat.options.tool_choice {
         None => None,
@@ -890,9 +892,12 @@ fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
     match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => _ = thinking.insert("thinkingBudget".into(), 0.into()),
         (Some(effort), _) => {
-            let level = level_name(effort).ok_or_else(|| {
-                untranslatable("a reasoning effort Gemini has no thinking level for")
-            })?;
+            let Some(level) = level_name(effort) else {
+                return Err(Fault::bad_request(format!(
+                    "Gemini does not take a reasoning effort of \"{}\"; its highest is \"high\"",
+                    effort_name(effort)?
+                )));
+            };
             thinking.insert("thinkingLevel".into(), level.into());
         }
         (None, Some(n)) => _ = thinking.insert("thinkingBudget".into(), n.into()),
