@@ -10,14 +10,11 @@ use serde_json::{Map, Value, json};
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
-
-mod omni;
-pub use omni::GeminiOmni;
-use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiVideos};
+use respan_gateway_media_http::openai::OpenAiEmbeddings;
 use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
-    Ask, Body, BoxFuture, Capability, Dialect, Dialected, Model, Models, Vendor, VendorProvider,
+    Body, BoxFuture, Capability, Dialect, Dialected, Model, Models, Vendor, VendorProvider,
     built_wrong, http, json as body_json, models,
 };
 
@@ -44,11 +41,10 @@ pub const VENDOR: Vendor = Vendor {
         (&GeminiLive, Some(LIVE)),
         (&GeminiImages, Some(API)),
         (&GeminiVeo, Some(API)),
-        (&Dialected::new(OpenAiVideos, GeminiOmni), Some(API)),
         (&OpenAiEmbeddings, Some(OPENAI_API)),
     ],
     models: list_models,
-    format_for: Some(format_for),
+    ..Vendor::DEFAULT
 };
 
 /// What a Gemini 3 model accepts as the signature of a function call made
@@ -148,47 +144,4 @@ fn list_models(p: &VendorProvider) -> BoxFuture<'_, Models> {
         };
         Ok(models.filter_map(model).collect())
     })
-}
-
-fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
-    (ask.kind == "video").then_some(if GeminiOmni::supports(&model.id) {
-        OpenAiVideos::NAME
-    } else {
-        GeminiVeo::NAME
-    })
-}
-
-#[cfg(test)]
-mod omni_tests {
-    use super::*;
-    #[test]
-    fn only_the_exact_omni_video_model_selects_interactions() {
-        let ask = Ask {
-            kind: "video",
-            format: "openai-videos",
-            model: None,
-            client: None,
-            tools: false,
-        };
-        for id in [GeminiOmni::MODEL, "models/gemini-omni-1.2-flash"] {
-            assert_eq!(format_for(&ask, &Model::new(id)), Some(OpenAiVideos::NAME));
-        }
-        for id in [
-            "veo-3.0-generate-001",
-            "gemini-omni-1.1-flash",
-            "gemini-omni-1.2-flash-extra",
-        ] {
-            assert_eq!(format_for(&ask, &Model::new(id)), Some(GeminiVeo::NAME));
-        }
-        assert_eq!(
-            format_for(
-                &Ask {
-                    kind: "chat",
-                    ..ask
-                },
-                &Model::new(GeminiOmni::MODEL)
-            ),
-            None
-        );
-    }
 }

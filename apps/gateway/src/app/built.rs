@@ -313,15 +313,9 @@ fn video_jobs(plan: &Plan, formats: &[KnownFormat]) -> VideoJobs {
     };
     let entries = plan.upstreams.iter();
     let entries = entries.flat_map(|u| u.entries.iter().map(move |e| (u, e)));
-    entries.fold(VideoJobs::new(), |jobs, (u, e)| {
-        match if u.provider.vendor().id == "gemini" && e.format == "openai-videos" {
-            Some("omni_")
-        } else {
-            spelling(&e.format)
-        } {
-            Some(spelling) => jobs.provider(&u.name, &e.internal, spelling),
-            None => jobs,
-        }
+    entries.fold(VideoJobs::new(), |jobs, (u, e)| match spelling(&e.format) {
+        Some(spelling) => jobs.provider(&u.name, &e.internal, spelling),
+        None => jobs,
     })
 }
 

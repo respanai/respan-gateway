@@ -2122,20 +2122,16 @@ dependencies = [
 name = "respan-gateway-vendors-green"
 version = "0.3.0"
 dependencies = [
- "base64 0.22.1",
- "futures",
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
  "respan-gateway-decision",
  "respan-gateway-decision-http",
  "respan-gateway-http",
- "respan-gateway-media",
  "respan-gateway-media-http",
  "respan-gateway-realtime-ws",
  "respan-gateway-vendor-kit",
  "serde_json",
- "tokio",
 ]
 
 [[package]]
