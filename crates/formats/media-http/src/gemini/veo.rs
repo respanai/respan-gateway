@@ -52,8 +52,9 @@ const PREFIX: &str = "veo_";
 /// A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews, is
 /// created by `POST /interactions` instead: its prompt and reference image
 /// the `input`, its `size` the `response_format`'s `aspect_ratio` and
-/// `resolution`; it chooses its length, and has no place for Veo's own
-/// parameters, so those and `seconds` are dropped. Its video is a file of
+/// `resolution` (else its native `aspectRatio` and `resolution`, as for 4k),
+/// its `seconds` the `duration`; it has no place for Veo's other
+/// parameters, so those are dropped. Its video is a file of
 /// the Files API, which is its job: the file's name (`files/{id}`) spelled
 /// as an operation's is, retrieved by `GET /files/{id}`, `in_progress`
 /// until the file is `ACTIVE`, then `completed`, its video the file's
@@ -267,8 +268,8 @@ fn is_omni(model: &str) -> bool {
 
 /// A Gemini Omni creation's body: its prompt, after its reference image if
 /// any, as the input, and a video as the response, at a URI, as the Files
-/// API keeps it. Veo's own parameters, such as `negativePrompt`, Omni has
-/// no place for: they are dropped.
+/// API keeps it, at its `seconds` as a `duration`. Veo's other parameters,
+/// such as `negativePrompt`, Omni has no place for: they are dropped.
 fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
     let input = match &create.reference {
         None => Value::String(create.prompt.clone()),
@@ -289,6 +290,18 @@ fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
         let (aspect, resolution) = aspect_of(size)?;
         format["aspect_ratio"] = aspect.into();
         format["resolution"] = resolution.into();
+    }
+    let native = kept(NAME, &create.native);
+    for (key, said) in [
+        ("aspect_ratio", "aspectRatio"),
+        ("resolution", "resolution"),
+    ] {
+        if let Some(value) = native.get(said).filter(|_| format.get(key).is_none()) {
+            format[key] = value.clone();
+        }
+    }
+    if let Some(seconds) = create.seconds {
+        format["duration"] = format!("{seconds}s").into();
     }
     let body = json!({ "model": model, "input": input, "response_format": format });
     let body = serde_json::to_vec(&body)
@@ -888,9 +901,12 @@ mod tests {
     fn a_gemini_omni_video_is_an_interaction_whose_file_is_its_job() {
         let mut create = Create::new("a paper boat");
         create.model = Some("gemini-omni-1.1-flash".into());
-        create.size = Some("720x1280".into());
         create.seconds = Some(8);
-        let veo = Map::from_iter([("negativePrompt".to_owned(), json!("rain"))]);
+        let veo = Map::from_iter([
+            ("negativePrompt".to_owned(), json!("rain")),
+            ("aspectRatio".to_owned(), json!("9:16")),
+            ("resolution".to_owned(), json!("4k")),
+        ]);
         create.native = Some(NativeFields::new(NAME, veo));
         let mut head = http::Request::new(()).into_parts().0;
         let input = Input::Create(create);
@@ -907,7 +923,8 @@ mod tests {
             json!({
                 "model": "gemini-omni-1.1-flash",
                 "input": "a paper boat",
-                "response_format": {"type": "video", "delivery": "uri", "aspect_ratio": "9:16", "resolution": "720p"},
+                "response_format": {"type": "video", "delivery": "uri", "aspect_ratio": "9:16",
+                    "resolution": "4k", "duration": "8s"},
             })
         );
         assert!(matches!(asked, Call::Omni));
