@@ -1091,3 +1091,13 @@ fn a_providers_parts_beyond_their_totals_stay_within_them() {
     assert_eq!(usage.cache_write_input_tokens, 0);
     assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
 }
+
+#[test]
+fn top_k_is_dropped_with_no_field_for_it() {
+    let mut chat = Input::default();
+    chat.options.top_k = Some(64);
+    let sent = OpenAiResponses
+        .encode_request(&chat)
+        .expect("dropped, not refused");
+    assert!(sent.get("top_k").is_none());
+}

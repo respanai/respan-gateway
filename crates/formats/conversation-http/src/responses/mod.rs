@@ -256,7 +256,7 @@ impl Schema for OpenAiResponses {
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
-            return Err(crate::schema::untranslatable("top_k in Responses"));
+            crate::schema::warn_dropped_option(Self::NAME, "top_k");
         }
         Ok(v)
     }

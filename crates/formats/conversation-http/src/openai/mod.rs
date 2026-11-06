@@ -61,8 +61,8 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
     merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals, set,
-    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, untranslatable,
-    usage_extra,
+    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
+    warn_dropped_option,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -305,7 +305,7 @@ impl Schema for OpenAiChat {
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
         if chat.options.top_k.is_some() {
-            return Err(untranslatable("top_k in OpenAI Chat"));
+            warn_dropped_option(Self::NAME, "top_k");
         }
         Ok(v)
     }
