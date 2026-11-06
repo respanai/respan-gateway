@@ -447,10 +447,14 @@ pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own_native(input, OPENAI, "reasoning_effort"));
     };
     if r.budget_tokens.is_some() {
-        return Err(untranslatable("a reasoning token budget in OpenAI Chat"));
+        return Err(Fault::bad_request(
+            "OpenAI Chat does not take a reasoning token budget; use a reasoning effort instead",
+        ));
     }
     if r.summary == Some(true) {
-        return Err(untranslatable("returned reasoning in OpenAI Chat"));
+        return Err(Fault::bad_request(
+            "OpenAI Chat cannot be asked to return reasoning; leave the reasoning summary unset",
+        ));
     }
     Ok(match r.effort {
         Some(effort) => Some(effort_name(effort)?.into()),
