@@ -139,8 +139,8 @@ What the kind has no form for stays native and is dropped in another format:
 beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
 on a function call in the history: written for one, the first call of each turn
 without one takes Google's documented placeholder).
-Writing, a request for several candidates, one tool call at a time and an end
-user's id are refused.
+Writing, a request for several candidates and an end user's id are refused;
+one for one tool call at a time is dropped, as Gemini has no such control.
 
 A response's first candidate is the events: consecutive text parts one text
 block, a function call a tool block (its arguments whole), `STOP` a tool use

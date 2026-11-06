@@ -591,9 +591,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         .then(|| tools.into())
         .or_else(|| native("tools"));
     set(v, "tools", tools);
-    if chat.options.parallel_tool_calls == Some(false) {
-        return Err(untranslatable("one tool call at a time"));
-    }
     let mode = match &chat.options.tool_choice {
         None => None,
         Some(ToolChoice::Auto) => Some(json!({ "mode": "AUTO" })),

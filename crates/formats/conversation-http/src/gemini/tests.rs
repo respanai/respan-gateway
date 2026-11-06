@@ -350,7 +350,6 @@ fn what_gemini_cannot_say_is_refused_not_dropped() {
     let one = json!({ "contents": [{ "parts": [{ "text": "x" }] }] });
     let refused = |edit: fn(&mut Input)| written(one.clone(), edit).is_err();
     assert!(refused(|c| c.user = Some("u".into())));
-    assert!(refused(|c| c.options.parallel_tool_calls = Some(false)));
     assert!(refused(|c| c.messages.clear()));
     assert!(refused(|c| {
         let mut m = respan_gateway_conversation::Message::new(Role::System, "late");
@@ -358,6 +357,7 @@ fn what_gemini_cannot_say_is_refused_not_dropped() {
         c.messages.push(m);
     }));
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
+    assert!(!refused(|c| c.options.parallel_tool_calls = Some(false)));
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
         c.native
