@@ -34,9 +34,8 @@ pub fn detected() -> Vec<(&'static Vendor, Option<String>, Option<String>)> {
                 Some(ollama_base_url(&host))
             };
             // Each of its formats at a URL of its own, its names set.
-            let own = |(_, url): &(_, Option<&str>)| {
-                url.is_some_and(|url| respan_gateway_vendors::located(url).is_ok())
-            };
+            let own =
+                |(_, url): &(_, Option<&str>)| url.is_some_and(|url| (vendor.locate)(url).is_ok());
             let located = vendor.formats.iter().all(own) || base_url.is_some();
             match (vendor.key_env.is_empty(), key) {
                 (false, Some(key)) if located => Some((vendor, Some(key), base_url)),

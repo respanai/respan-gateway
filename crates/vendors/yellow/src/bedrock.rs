@@ -15,9 +15,7 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media_http::bedrock::BedrockEmbeddings;
 
-use respan_gateway_vendor_kit::{
-    Ask, BoxFuture, Dialect, Dialected, KeyIn, Model, Models, Rewrite, Vendor, VendorProvider,
-};
+use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, KeyIn, Model, Rewrite, Vendor, models};
 
 /// Where a region's runtime is: `AWS_REGION`'s, unless a host says.
 const BASE_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com";
@@ -34,8 +32,9 @@ pub const VENDOR: Vendor = Vendor {
         (&Dialected::new(AnthropicMessages, Messages), Some(BASE_URL)),
         (&BedrockEmbeddings, Some(BASE_URL)),
     ],
-    models: no_models,
+    models: models::none,
     format_for: Some(format_for),
+    ..Vendor::DEFAULT
 };
 
 /// Anthropic's Messages as Bedrock serves them: under `/anthropic`, the key a
@@ -67,11 +66,6 @@ fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
         true => AnthropicMessages::NAME,
         false => BedrockConverse::NAME,
     })
-}
-
-/// Its models are its account's: none are listed.
-fn no_models(_: &VendorProvider) -> BoxFuture<'_, Models> {
-    Box::pin(async { Ok(Vec::new()) })
 }
 
 #[cfg(test)]

@@ -60,7 +60,15 @@ pub struct Vendor {
     /// The format a request for a model goes in, if not the usual: the
     /// client's own, else its first of the kind.
     pub format_for: Option<FormatFor>,
+    /// Its base URLs with their names from the environment: [`located`],
+    /// unless a value it names changes more than its place, such as a
+    /// location whose host is another.
+    pub locate: Locate,
 }
+
+/// A vendor's base URL, each `{NAME}` in it the environment variable
+/// `NAME`; `Err` with the name of one not set ([`located`]).
+pub type Locate = fn(&str) -> Result<String, &str>;
 
 impl std::fmt::Debug for Vendor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -80,6 +88,7 @@ impl Vendor {
         formats: &[],
         models: models::openai,
         format_for: None,
+        locate: located,
     };
 
     /// Its format `name`, and that format's base URL, if it speaks it.

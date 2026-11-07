@@ -111,6 +111,11 @@ fn pricing(p: &Value) -> Option<Price> {
     Some(Price::new(input, output, number(&p["cached_input"])))
 }
 
+/// No models, for a vendor whose API lists none.
+pub fn none(_: &VendorProvider) -> BoxFuture<'_, Models> {
+    Box::pin(async { Ok(Vec::new()) })
+}
+
 /// OpenAI's model list: `GET /models`.
 pub fn openai(p: &VendorProvider) -> BoxFuture<'_, Models> {
     Box::pin(async move {
