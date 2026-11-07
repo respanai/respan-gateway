@@ -160,7 +160,8 @@ A request's model goes, in order, to:
 5. otherwise, the default provider for that kind of request.
 
 A route's `to` is a candidate or a list: `provider`, `provider/model`, or
-`provider/{model}`. `pick` orders the candidates: `first`, `cheapest`,
+`provider/{model}`. Each target may appear only once, regardless of its
+`weight`. `pick` orders the candidates: `first`, `cheapest`,
 `fastest`, `weighted` or `random`. `needs = ["tools"]` drops models that
 lack a capability, and `when` limits a route to certain client keys or
 kinds. A failed candidate falls back to the next (`tries`, `backoff`), and
