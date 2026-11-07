@@ -44,7 +44,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   `/videos/{id}/content` or `/remix`; an id is escaped in a call's path.
 - Usage `{"type": "tokens"}` is `Usage`, `{"type": "duration"}` `Seconds`; a
   usage object's other fields, such as `input_token_details`, stay native.
-- A stream that ends before its end event fails `truncated`.
+- Speech and transcription streams stop at their `*.done` event, keeping
+  its usage and leaving later data unread. A stream that ends before its
+  end event fails `truncated`.
 - A client body without its required field (`prompt`, an edit's `image`,
   `file`, `input`) is refused, 400, before any call. A provider's error is
   read leniently, as compatible servers write it, and a client's is written
