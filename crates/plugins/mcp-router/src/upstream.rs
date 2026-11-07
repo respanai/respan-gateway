@@ -46,6 +46,9 @@ impl Run {
             None => None,
         };
         let asking = self.inner.servers.iter().filter_map(|server| {
+            if !self.inner.switches.server_on(server) {
+                return None;
+            }
             let cursor = match &cursors {
                 Some(map) => Some(map.get(server)?.as_str()?.to_owned()),
                 None => None,
@@ -89,6 +92,9 @@ impl Run {
 
     /// `item` of `server`'s list as the client has it, or none if withheld.
     pub(super) fn namespaced(&self, server: &str, field: &str, mut item: Value) -> Option<Value> {
+        if !self.inner.switches.server_on(server) {
+            return None;
+        }
         match field {
             "tools" | "prompts" => {
                 let own = item["name"].as_str()?;
