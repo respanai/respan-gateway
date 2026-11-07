@@ -15,7 +15,7 @@
 //! server's, or a stdio server's child) through the same providers.
 
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -34,6 +34,7 @@ use respan_gateway_plugin_tool_loop::{
 };
 use respan_gateway_realtime_ws::SessionModel;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::config::ToolLoopConfig;
 use crate::mcp::McpServer;
@@ -362,10 +363,14 @@ impl Toolbox for Servers {
     async fn list(&self) -> Vec<Tool> {
         let each = self.shared.servers.iter().map(|s| self.listing(s));
         let all = respan_gateway_core::futures::future::join_all(each).await;
+        let mut all: Vec<Listed> = all.into_iter().flatten().collect();
+        distinguish(&mut all);
         let mut names = self.names.lock();
         let mut offered = Vec::new();
-        for listed in all.into_iter().flatten() {
-            if !self.shared.switches.offers(&listed.server, &listed.tool) {
+        for listed in all {
+            if !self.shared.filter.offers(&listed.offered.name)
+                || !self.shared.switches.offers(&listed.server, &listed.tool)
+            {
                 continue;
             }
             if !self
@@ -490,9 +495,6 @@ impl Servers {
                 let Some(name) = tool["name"].as_str() else {
                     continue;
                 };
-                if !self.shared.filter.offers(&model_name(server, name)) {
-                    continue;
-                }
                 let mut offered = Tool::new(
                     model_name(server, name),
                     match tool["inputSchema"].is_object() {
@@ -639,6 +641,58 @@ fn model_name(server: &str, tool: &str) -> String {
     name[..name.len().min(NAME)].to_owned()
 }
 
+/// Keep unique names as they are. Distinct originals that share a name
+/// take a stable suffix, before filters or switches hide any of them.
+fn distinguish(tools: &mut [Listed]) {
+    let mut owners = HashMap::new();
+    let mut collisions = HashSet::new();
+    for tool in tools.iter() {
+        let original = (tool.server.clone(), tool.tool.clone());
+        if let Some(other) = owners.insert(tool.offered.name.clone(), original.clone())
+            && other != original
+        {
+            collisions.insert(tool.offered.name.clone());
+        }
+    }
+    if collisions.is_empty() {
+        return;
+    }
+    // Reserve every existing name, including one that happens to look
+    // like a generated name. Sort originals so listing order cannot pick
+    // which tool gets a name when generated suffixes also collide.
+    let mut used: HashSet<String> = owners.into_keys().collect();
+    let originals: BTreeMap<_, _> = tools
+        .iter()
+        .filter(|t| collisions.contains(&t.offered.name))
+        .map(|t| ((t.server.clone(), t.tool.clone()), t.offered.name.clone()))
+        .collect();
+    let mut names = HashMap::new();
+    for (original, base) in originals {
+        let mut hash = Sha256::new();
+        hash.update((original.0.len() as u64).to_le_bytes());
+        hash.update(original.0.as_bytes());
+        hash.update(original.1.as_bytes());
+        let hash = format!("{:x}", hash.finalize());
+        for n in 0_u64.. {
+            let suffix = match n {
+                0 => format!("_{}", &hash[..16]),
+                _ => format!("_{}_{n}", &hash[..16]),
+            };
+            let end = base.len().min(NAME - suffix.len());
+            let name = format!("{}{suffix}", &base[..end]);
+            if used.insert(name.clone()) {
+                names.insert(original, name);
+                break;
+            }
+        }
+    }
+    for tool in tools {
+        if let Some(name) = names.get(&(tool.server.clone(), tool.tool.clone())) {
+            tool.offered.name.clone_from(name);
+        }
+    }
+}
+
 /// What a tool answered, as text for the model.
 fn render(result: &Value) -> Outcome {
     let mut parts: Vec<String> = Vec::new();
@@ -676,6 +730,241 @@ fn render(result: &Value) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_core::Provider;
+    use respan_gateway_http::{ClientIo, connect, http_body_util::BodyExt};
+    use respan_gateway_mcp_http::StreamableHttp;
+
+    type Seen = Vec<(String, String)>;
+
+    struct ListAndCall {
+        shared: Arc<Shared>,
+        scope: Option<ToolScope>,
+        seen: Arc<Mutex<Seen>>,
+    }
+
+    #[async_trait]
+    impl Plugin for ListAndCall {
+        async fn on_client(&self, cx: &mut ClientContext) -> Result<Option<Response>, Fault> {
+            if let Some(scope) = &self.scope {
+                cx.extensions_mut().insert(scope.clone());
+            }
+            let servers = Servers::new(self.shared.clone(), cx);
+            let mut seen = Vec::new();
+            for tool in servers.list().await {
+                let answer = servers.call(&tool.name, json!({})).await;
+                assert!(!answer.is_error, "{}", answer.text);
+                seen.push((tool.name, answer.text));
+            }
+            *self.seen.lock() = seen;
+            Ok(Some(Response::stream(
+                stream::empty::<Result<Output, Fault>>(),
+            )))
+        }
+    }
+
+    fn listed(server: &str, tool: &str) -> Listed {
+        Listed {
+            server: server.into(),
+            tool: tool.into(),
+            offered: Tool::new(model_name(server, tool), json!({"type": "object"})),
+        }
+    }
+
+    /// Discover tools and call every offered name through the real MCP
+    /// format. The scripted server answers with the original tool name.
+    async fn offered_tools(
+        listed: Vec<Listed>,
+        filter: ToolFilter,
+        scope: Option<ToolScope>,
+        switches: Arc<ToolSwitches>,
+    ) -> Seen {
+        let mut names = Vec::new();
+        for tool in &listed {
+            if !names.contains(&tool.server) {
+                names.push(tool.server.clone());
+            }
+        }
+        let tools = McpTools::new(names.clone(), DEFAULT_CACHE, filter, switches);
+        let mut gateway = Gateway::new()
+            .client::<Input, Output, ClientIo>(StreamableHttp::default().serving(names))
+            .expect("client");
+        for server in &tools.shared.servers {
+            let mut state = server.state.lock().await;
+            state.session = Some(Opened {
+                id: None,
+                protocol: PROTOCOL.into(),
+            });
+            let offered: Vec<_> = listed
+                .iter()
+                .filter(|t| t.server == server.name)
+                .map(|t| json!({"name": t.tool, "inputSchema": {"type": "object"}}))
+                .collect();
+            let name = server.name.clone();
+            let server = name.clone();
+            let send = connect(
+                move |request: http::Request<Body>| {
+                    let server = server.clone();
+                    let offered = offered.clone();
+                    async move {
+                        let body = BodyExt::collect(request.into_body())
+                            .await
+                            .expect("body")
+                            .to_bytes();
+                        let asked: Value = serde_json::from_slice(&body).expect("request");
+                        let result = match asked["method"].as_str().expect("method") {
+                            "tools/list" => json!({"tools": offered}),
+                            "tools/call" => {
+                                let text = format!(
+                                    "{}:{}",
+                                    server,
+                                    asked["params"]["name"].as_str().expect("name")
+                                );
+                                json!({"content": [{"type": "text", "text": text}]})
+                            }
+                            other => panic!("unexpected method {other}"),
+                        };
+                        let reply = json!({"jsonrpc": "2.0", "id": asked["id"], "result": result});
+                        Ok((
+                            http::Response::builder()
+                                .header("content-type", "application/json")
+                                .body(Body::full(reply.to_string()))
+                                .expect("response"),
+                            None,
+                        ))
+                    }
+                },
+                4096,
+            );
+            gateway = gateway
+                .provider(Provider::new(name, StreamableHttp::default(), send))
+                .expect("provider");
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        gateway = gateway.plugin(ListAndCall {
+            shared: tools.shared.clone(),
+            scope,
+            seen: seen.clone(),
+        });
+        Closer(tools.shared).send(&gateway, Close).await;
+        let seen = seen.lock();
+        seen.clone()
+    }
+
+    async fn all_tools(tools: Vec<Listed>) -> Seen {
+        offered_tools(tools, ToolFilter::default(), None, Arc::default()).await
+    }
+
+    #[tokio::test]
+    async fn tools_with_colliding_model_names_are_all_callable() {
+        let long = "x".repeat(80);
+        for tools in [
+            vec![
+                listed("server", "files.read"),
+                listed("server", "files/read"),
+            ],
+            vec![
+                listed("server", &format!("{long}a")),
+                listed("server", &format!("{long}b")),
+            ],
+            vec![listed("a.b", "read"), listed("a_b", "read")],
+            vec![listed("a", "b__c"), listed("a__b", "c")],
+        ] {
+            let expected: Vec<_> = tools
+                .iter()
+                .map(|t| format!("{}:{}", t.server, t.tool))
+                .collect();
+            let seen = all_tools(tools).await;
+            assert_eq!(seen.len(), expected.len(), "{seen:?}");
+            let names: std::collections::HashSet<_> = seen.iter().map(|(name, _)| name).collect();
+            assert_eq!(names.len(), seen.len());
+            assert!(names.iter().all(|name| {
+                name.len() <= NAME
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+            }));
+            assert_eq!(
+                seen.into_iter()
+                    .map(|(_, called)| called)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_names_stay_stable_when_a_listing_is_reordered() {
+        let mut tools = vec![
+            listed("s", "a.b"),
+            listed("s", "a/b"),
+            listed("github", "search"),
+            listed("other", "read file"),
+        ];
+        let before = all_tools(tools.clone()).await;
+        tools.reverse();
+        let after = all_tools(tools).await;
+        let by_original = |seen: Seen| {
+            seen.into_iter()
+                .map(|(name, original)| (original, name))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let before = by_original(before);
+        assert_eq!(before, by_original(after));
+        assert_eq!(before["github:search"], "github__search");
+        assert_eq!(before["other:read file"], "other__read_file");
+    }
+
+    #[tokio::test]
+    async fn tool_filters_and_scopes_use_the_final_unique_names() {
+        let tools = vec![listed("s", "a.b"), listed("s", "a/b")];
+        let seen = all_tools(tools.clone()).await;
+        assert_eq!(seen.len(), 2);
+        let first = seen[0].0.clone();
+        let second = seen[1].0.clone();
+        let allow = ToolFilter::new(vec![first.clone()], vec![]);
+        assert_eq!(
+            offered_tools(tools.clone(), allow, None, Arc::default()).await,
+            seen[..1]
+        );
+        let deny = ToolFilter::new(vec![], vec![first]);
+        assert_eq!(
+            offered_tools(tools.clone(), deny, None, Arc::default()).await,
+            seen[1..]
+        );
+        let scope = Some(ToolScope::new(vec![second]));
+        assert_eq!(
+            offered_tools(tools.clone(), ToolFilter::default(), scope, Arc::default()).await,
+            seen[1..]
+        );
+        let switches = Arc::new(ToolSwitches::default());
+        switches.set_tool("s", "a.b", false);
+        assert_eq!(
+            offered_tools(tools, ToolFilter::default(), None, switches).await,
+            seen[1..]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_unique_tool_keeps_its_name_even_if_it_matches_a_generated_name() {
+        let mut tools = vec![listed("s", "a.b"), listed("s", "a/b")];
+        let seen = all_tools(tools.clone()).await;
+        assert_eq!(seen.len(), 2);
+        let reserved = &seen[0].0;
+        tools.push(listed(
+            "s",
+            reserved.strip_prefix("s__").expect("server prefix"),
+        ));
+        let seen = all_tools(tools).await;
+        assert_eq!(seen.len(), 3);
+        assert_eq!(&seen[2].0, reserved);
+        assert_ne!(seen[0].0, seen[2].0);
+    }
+
+    #[tokio::test]
+    async fn listing_the_same_original_tool_twice_offers_it_once() {
+        let seen = all_tools(vec![listed("s", "read"), listed("s", "read")]).await;
+        assert_eq!(seen, [("s__read".into(), "s:read".into())]);
+    }
 
     #[test]
     fn a_tool_is_named_for_the_model_after_its_server() {
