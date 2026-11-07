@@ -48,6 +48,7 @@ are:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tool-vendors/elevenlabs-dark.svg"><img src="assets/tool-vendors/elevenlabs.svg" width="20" height="20" alt=""></picture> | [ElevenLabs](https://elevenlabs.io) | Voice | `elevenlabs` | `ELEVENLABS_API_KEY` | `text_to_speech`, `search_voices`, `speech_to_text`, `sound_effect` |
 | | [Exa](https://exa.ai) | Search | `exa` | `EXA_API_KEY` | `search`, `get_contents` |
 | | [Firecrawl](https://firecrawl.dev) | Web scraping and search | `firecrawl` | `FIRECRAWL_API_KEY` | `scrape`, `crawl`, `get_crawl`, `map_site`, `search` |
+| | [Keenable](https://keenable.ai) | Search | `keenable` | None needed; `key` optional | `search`, `fetch` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/tool-vendors`](../crates/tool-vendors/README.md), or a tool added
@@ -174,6 +175,25 @@ Scraping, crawling and search use credits. Scrape and search report the
 credits used in the call's usage metadata when the API returns them.
 `get_crawl` shows the job's total `creditsUsed` in its result; polling does
 not count that total again. Map results carry no usage metadata.
+
+**Keenable**, at `https://api.keenable.ai`, with no key:
+
+- `search` is `POST /v1/search/public`: ranked results, each a title, URL
+  and snippet of the page's text.
+- `fetch` is `GET /v1/fetch/public`: one page as markdown.
+
+Without a key, calls are free and limited per IP (10 a second, 1,000 an
+hour). A `key` goes in `X-API-Key`, to `/v1/search` and `/v1/fetch`, and
+lifts the limits. Needing no key, it is not served from the environment
+alone; name it under `[tools]`:
+
+```toml
+[tools.search]
+vendor = "keenable"
+# key = "env:KEENABLE_API_KEY"
+```
+
+Each call names the gateway in `X-Keenable-Title: respan-gateway`.
 
 **Linkup**, at `https://api.linkup.so/v1`, its key a bearer token:
 

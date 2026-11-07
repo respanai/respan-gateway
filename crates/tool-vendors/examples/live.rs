@@ -1,6 +1,6 @@
 //! Calls each tool vendor's tools against its live API, the check that
 //! moves a vendor from yellow to green. Each vendor with its key in the
-//! environment runs; the others are skipped.
+//! environment runs, and each that needs no key; the others are skipped.
 //!
 //! ```sh
 //! cargo run -p respan-gateway-tool-vendors --example live            # all
@@ -185,6 +185,13 @@ fn steps(vendor: &str) -> Vec<Step> {
             ),
             step("get_crawl", json!({"crawl_id": "${crawl}", "limit": 1})),
         ],
+        "keenable" => vec![
+            step(
+                "search",
+                json!({"query": "Rust 1.0 release date", "max_results": 2}),
+            ),
+            step("fetch", json!({"url": "https://example.com"})),
+        ],
         "linkup" => vec![
             step("search", json!({"q": "Rust 1.0 release date"})),
             step("answer", json!({"q": "When was Rust 1.0 released?"})),
@@ -348,9 +355,14 @@ async fn main() {
         if !only.is_empty() && !only.iter().any(|id| id == vendor.id) {
             continue;
         }
-        let Some(key) = vendor.key_from_env() else {
-            println!("{}: skipped, no {}", vendor.id, vendor.key_env.join(" or "));
-            continue;
+        let key = match vendor.key_from_env() {
+            Some(key) => key,
+            // A vendor that needs no key runs without one.
+            None if vendor.key_env.is_empty() => String::new(),
+            None => {
+                println!("{}: skipped, no {}", vendor.id, vendor.key_env.join(" or "));
+                continue;
+            }
         };
         println!("{}:", vendor.id);
         failed += run(vendor, key).await;
