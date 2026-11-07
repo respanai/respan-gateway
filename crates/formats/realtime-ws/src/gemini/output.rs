@@ -584,7 +584,7 @@ impl Client {
                 // The Live API's audio is always 24 kHz PCM.
                 let pcm = AudioFormat::pcm16(24_000);
                 let converted = self.convert.to(audio, pcm);
-                let converted = converted.ok_or_else(|| refuse("audio of this format"))?;
+                let converted = converted.ok_or_else(|| json::unconvertible_output(audio, pcm))?;
                 let mime = format!("audio/pcm;rate={}", pcm.rate);
                 let data = json!({"mimeType": mime, "data": json::base64(&converted)});
                 (

@@ -27,22 +27,26 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// The `session` object of `s`, but its native, which is its event's;
 /// `refuse`d where it asks for what Mistral does not do.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+    const ONLY: &str = "Mistral realtime only transcribes";
+    if s.purpose == Some(Purpose::Conversation) {
+        let fix = "set the session's purpose to transcription";
+        return Err(json::refused(format!("{ONLY}; {fix}")));
+    }
+    if s.input_transcription == Some(false) {
+        return Err(json::refused(format!("{ONLY}; leave transcription on")));
+    }
     let asks = [
-        (
-            s.purpose == Some(Purpose::Conversation),
-            "a conversation, as it only transcribes,",
-        ),
         (s.instructions.is_some(), "instructions"),
-        (s.output.is_some(), "an output modality"),
-        (s.voice.is_some(), "a voice"),
+        (s.output.is_some(), "output modality"),
+        (s.voice.is_some(), "voice"),
         (s.output_audio.is_some(), "output audio"),
         (s.tools.is_some(), "tools"),
-        (s.tool_choice.is_some(), "a tool choice"),
-        (s.max_output_tokens.is_some(), "an output limit"),
-        (s.input_transcription == Some(false), "no transcription"),
+        (s.tool_choice.is_some(), "tool choice"),
+        (s.max_output_tokens.is_some(), "output token limit"),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {
-        return Err(refuse(what));
+        let fix = format!("so it takes no {what}; leave the session's {what} unset");
+        return Err(json::refused(format!("{ONLY}, {fix}")));
     }
     let mut v = json!({});
     if let Some(format) = s.input_audio {

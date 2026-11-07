@@ -192,14 +192,19 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     let role = match m.role {
         Role::User => "user",
         Role::Assistant => "model",
-        _ => return Err(refuse("a message of this role")),
+        _ => {
+            let role = json::role_name(&m.role);
+            return Err(json::refused(format!(
+                "Gemini Live takes no message with {role} role, only user and model turns; put system text in the session's instructions"
+            )));
+        }
     };
     let part = |c: &Content| match c {
         Content::Text { text, native, .. } if native.is_none() => Ok(json!({"text": text})),
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        _ => Err(refuse("a message part of this kind")),
+        _ => Err(refuse(&format!("{} in a message", json::part_name(c)))),
     };
     let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"role": role, "parts": parts});
@@ -364,7 +369,7 @@ impl Provider {
                             Encoding::Pcm16 => Some(audio.data.clone()),
                             _ => self.convert.to(audio, pcm),
                         };
-                        let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                        let data = data.ok_or_else(|| json::unconvertible_input(audio, pcm))?;
                         if manual && !std::mem::replace(&mut self.activity, true) {
                             out.push(json!({"realtimeInput": {"activityStart": {}}}));
                         }
@@ -373,7 +378,9 @@ impl Provider {
                         (json!({"realtimeInput": {"audio": blob}}), native)
                     }
                     Input::Commit { .. } if !manual => {
-                        return Err(refuse("a commit under the provider's voice detection"));
+                        return Err(json::refused(
+                            "Gemini Live takes the end of the user's turn (`activityEnd`) only when its automatic activity detection is off; set turn detection to manual, or stop committing",
+                        ));
                     }
                     Input::Commit { native } => {
                         (self.activity, self.answered) = (false, true);
@@ -453,7 +460,9 @@ impl Provider {
         let content = shaped(native);
         match self.held.take() {
             None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
-            None => Err(refuse("a response to nothing the client said")),
+            None => Err(refuse(
+                "a request to answer with nothing new said (Gemini Live's `clientContent` with only `turnComplete`)",
+            )),
             Some(Held::Results(results)) => Ok(self.results(&results)),
             Some(Held::Messages(messages)) if content => {
                 let mut v = messages_json(&messages, refuse)?;
@@ -490,7 +499,7 @@ impl Provider {
 
 /// The messages the Live API takes only as they came, in `clientContent`:
 /// it answers any other message at once, as the user's text.
-const UNANSWERED: &str = "a message but the user's text, answered at once,";
+const UNANSWERED: &str = "a message other than one user text message followed by a request to answer (Gemini Live's `clientContent` turns)";
 
 /// Whether `message` is the user's text alone.
 fn said(message: &Message) -> bool {

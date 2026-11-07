@@ -164,7 +164,17 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Role::System => ("system", "input_text"),
         Role::User => ("user", "input_text"),
         Role::Assistant => ("assistant", "output_text"),
-        _ => return Err(refuse("a message of this role")),
+        Role::Developer => {
+            return Err(json::refused(
+                "OpenAI Realtime has no developer role in a conversation item; give the message a system role",
+            ));
+        }
+        _ => {
+            let role = json::role_name(&m.role);
+            return Err(json::refused(format!(
+                "OpenAI Realtime takes no message with {role} role; give it a system, user or assistant role"
+            )));
+        }
     };
     let part = |c: &Content| match c {
         Content::Text {
@@ -173,7 +183,19 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        _ => Err(refuse("a message part of this kind")),
+        Content::Reasoning { .. } => Err(json::refused(
+            "OpenAI Realtime takes no reasoning in a message; remove it",
+        )),
+        Content::Document(_) => Err(json::refused(
+            "OpenAI Realtime takes no document in a message; send its text instead",
+        )),
+        Content::ToolCall { .. } => Err(refuse(
+            "a tool call inside a message (OpenAI Realtime's `function_call` item)",
+        )),
+        Content::ToolResult { .. } => Err(refuse(
+            "a tool result inside a message (OpenAI Realtime's `function_call_output` item)",
+        )),
+        _ => Err(refuse(&format!("{} in a message", json::part_name(c)))),
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});
@@ -271,7 +293,7 @@ impl Provider {
             }
             Input::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.input);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                let data = data.ok_or_else(|| json::unconvertible_input(audio, self.input))?;
                 let v = json!({"type": "input_audio_buffer.append", "audio": json::base64(&data)});
                 (v, native)
             }

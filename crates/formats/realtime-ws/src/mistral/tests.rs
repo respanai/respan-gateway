@@ -99,7 +99,7 @@ fn what_it_cannot_do_is_refused() {
     let fault = refused(|s| s.purpose = Some(Purpose::Conversation));
     assert_eq!(
         fault.message(),
-        "a conversation, as it only transcribes, cannot be translated to mistral-realtime"
+        "Mistral realtime only transcribes; set the session's purpose to transcription"
     );
     let mut other = Session::default();
     other.model = Some("other".into());

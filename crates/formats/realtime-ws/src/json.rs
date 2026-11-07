@@ -5,8 +5,10 @@
 use base64::Engine;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
+use respan_gateway_conversation::{Content, Role};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_realtime::{Audio, AudioFormat, Encoding};
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value};
 
@@ -108,17 +110,89 @@ pub(crate) fn own(native: &Option<NativeFields>) -> Option<&Map<String, Value>> 
     native.as_ref().map(|native| &native.fields)
 }
 
-/// An input `format` cannot write, which could change the answer: the
+/// `format` as its provider names it.
+pub(crate) fn display(format: &str) -> &str {
+    match format {
+        "openai-realtime" => "OpenAI Realtime",
+        "gemini-live" => "Gemini Live",
+        "mistral-realtime" => "Mistral realtime",
+        "responses-ws" => "OpenAI Responses",
+        other => other,
+    }
+}
+
+/// An input `format` cannot write yet, which could change the answer: the
 /// client's fault, closing its session 1008.
 pub(crate) fn untranslatable_input(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
-    Fault::bad_request(message).with(CloseCode(1008))
+    let format = display(format);
+    refused(format!("{what} cannot be translated to {format} yet"))
 }
 
 /// An output `format` cannot write, which fails the session.
 pub(crate) fn untranslatable_output(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
+    let format = display(format);
+    let message = format!("{what} cannot be translated to {format} yet");
     Fault::upstream(message).with(ErrorCode("untranslatable".into()))
+}
+
+/// An input a provider refuses, as `message` says how to fix it: the
+/// client's fault, closing its session 1008.
+pub(crate) fn refused(message: impl Into<String>) -> Fault {
+    Fault::bad_request(message).with(CloseCode(1008))
+}
+
+/// The client's `audio`, which cannot be converted to `to`.
+pub(crate) fn unconvertible_input(audio: &Audio, to: AudioFormat) -> Fault {
+    refused(unconvertible(audio, to))
+}
+
+/// The provider's `audio`, which cannot be converted to `to`.
+pub(crate) fn unconvertible_output(audio: &Audio, to: AudioFormat) -> Fault {
+    let message = unconvertible(audio, to);
+    Fault::upstream(message).with(ErrorCode("untranslatable".into()))
+}
+
+fn unconvertible(audio: &Audio, to: AudioFormat) -> String {
+    let (from, to) = (audio_name(audio.format), audio_name(to));
+    format!("{from} cannot be converted to {to}: audio is resampled only between 1 and 192 kHz")
+}
+
+/// `f` as people name it.
+pub(crate) fn audio_name(f: AudioFormat) -> String {
+    let encoding = match f.encoding {
+        Encoding::Pcm16 => "16-bit PCM",
+        Encoding::Mulaw => "G.711 μ-law",
+        Encoding::Alaw => "G.711 A-law",
+        _ => "audio",
+    };
+    format!("{encoding} at {} Hz", f.rate)
+}
+
+/// `role` as a message's, such as "a developer".
+pub(crate) fn role_name(role: &Role) -> String {
+    match role {
+        Role::System => "a system".into(),
+        Role::Developer => "a developer".into(),
+        Role::User => "a user".into(),
+        Role::Assistant => "an assistant".into(),
+        Role::Native { format, name, .. } => format!("{}'s `{name}`", display(format)),
+        _ => "this".into(),
+    }
+}
+
+/// `part` as a message's, such as "an image".
+pub(crate) fn part_name(part: &Content) -> String {
+    match part {
+        Content::Text { .. } => "text with extra fields".into(),
+        Content::Reasoning { .. } => "reasoning".into(),
+        Content::Image(_) => "an image".into(),
+        Content::Audio(_) => "audio".into(),
+        Content::Document(_) => "a document".into(),
+        Content::ToolCall { .. } => "a tool call".into(),
+        Content::ToolResult { .. } => "a tool result".into(),
+        Content::Native(n) => format!("{}'s part", display(&n.format)),
+        _ => "a part of this kind".into(),
+    }
 }
 
 /// `v` as a frame.

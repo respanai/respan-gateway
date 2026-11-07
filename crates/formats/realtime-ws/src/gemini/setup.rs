@@ -57,7 +57,9 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         .as_ref()
         .is_some_and(|c| *c != ToolChoice::Auto)
     {
-        return Err(refuse("a tool choice but `auto`"));
+        return Err(json::refused(
+            "Gemini Live has no tool choice, as its model picks tools itself; leave the tool choice `auto` or unset",
+        ));
     }
     let mut v = json!({});
     let mut put = |path: &[&str], value: Option<Value>| {
@@ -225,7 +227,9 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
         _ => return Err(refuse("this turn detection")),
     };
     if vad.respond == Some(false) {
-        return Err(refuse("turns the model does not answer"));
+        return Err(json::refused(
+            "Gemini Live answers every turn its voice detection ends; leave answering on, or set turn detection to manual",
+        ));
     }
     let mut v = Map::new();
     if let Some(ms) = vad.silence_ms {
