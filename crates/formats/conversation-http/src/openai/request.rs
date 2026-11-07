@@ -7,8 +7,8 @@
 use crate::fields::media_url;
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    merge_missing, native_fields, only, own_native, read_search, reasoning_of, refused_part,
+    remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -108,7 +108,12 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
                 write_search(OPENAI, search)?.into(),
             );
         }
-        _ => return Err(untranslatable("more than one search in OpenAI Chat")),
+        searches => {
+            return Err(Fault::bad_request(format!(
+                "OpenAI Chat takes one web search, not {}",
+                searches.len()
+            )));
+        }
     }
     let choice = match &chat.options.tool_choice {
         None => None,
@@ -203,7 +208,9 @@ fn openai_result(
 ) -> Result<Map<String, Value>, Fault> {
     // OpenAI's tool messages cannot say the call failed.
     if is_error {
-        return Err(untranslatable("a tool result that is an error"));
+        return Err(Fault::bad_request(
+            "OpenAI Chat cannot mark a tool result as an error; say the error in its text",
+        ));
     }
     let media = |c: &Content| {
         matches!(
@@ -212,7 +219,9 @@ fn openai_result(
         )
     };
     if content.iter().any(media) {
-        return Err(untranslatable("media in an OpenAI tool message"));
+        return Err(Fault::bad_request(
+            "OpenAI Chat takes only text in a tool result, not images, audio or documents",
+        ));
     }
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
@@ -334,10 +343,12 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        _ => return Err(untranslatable("an unsupported kind of part")),
+        part => return Err(refused_part(OPENAI, part)),
     };
     if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
+        return Err(Fault::bad_request(format!(
+            "OpenAI Chat takes a file name only on a document; remove it from the {kind}"
+        )));
     }
     let native = media.native.fields_for(OPENAI);
     let url = || media_url(media);
@@ -345,7 +356,9 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {
             if matches!(media.source, MediaSource::Url(_)) {
-                return Err(untranslatable("a document URL in OpenAI Chat"));
+                return Err(Fault::bad_request(
+                    "OpenAI Chat takes a document's data, not a URL to it; send the file as base64",
+                ));
             }
             let mut v = json!({"type":"file","file":{"file_data":url()}});
             if let Some(name) = &media.name {
@@ -355,12 +368,18 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         }
         _ => {
             let MediaSource::Bytes(bytes) = &media.source else {
-                return Err(untranslatable("an audio URL in OpenAI Chat"));
+                return Err(Fault::bad_request(
+                    "OpenAI Chat takes audio's data, not a URL to it; send the audio as base64",
+                ));
             };
             let encoding = match media.mime_type.as_str() {
                 "audio/wav" | "audio/x-wav" => "wav",
                 "audio/mpeg" => "mp3",
-                _ => return Err(untranslatable("this audio MIME type")),
+                mime => {
+                    return Err(Fault::bad_request(format!(
+                        "OpenAI Chat takes wav and mp3 audio, not {mime}"
+                    )));
+                }
             };
             json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
         }

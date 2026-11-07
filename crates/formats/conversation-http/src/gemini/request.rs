@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    parse_effort, part_name, reasoning_of, refused_part, refused_role, remainder, set,
+    untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -250,9 +251,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+            role => ROLES.name(role).ok_or_else(|| refused_role(GEMINI, role))?,
         };
         let parts: Vec<Value> = m
             .content
@@ -367,7 +366,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        part => Err(refused_part(GEMINI, part)),
     }
 }
 
@@ -381,7 +380,13 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
             Content::Text {
                 text: t, native, ..
             } if native.is_empty() => text.push_str(t),
-            _ => return Err(untranslatable("a tool result that is not text")),
+            part @ Content::Native(_) => return Err(refused_part(GEMINI, part)),
+            part => {
+                return Err(untranslatable(&format!(
+                    "{} in a Gemini tool result",
+                    part_name(part)
+                )));
+            }
         }
     }
     if let Ok(object @ Value::Object(_)) = serde_json::from_str::<Value>(&text) {
@@ -409,7 +414,9 @@ pub fn media_part(media: &Media) -> Value {
 /// An `inlineData` or `fileData` part of `media`, with its native fields.
 fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
-        return Err(untranslatable("a display name on media content"));
+        return Err(untranslatable(
+            "a file name on Gemini media (its `displayName`)",
+        ));
     }
     let native = media.native.fields_for(GEMINI);
     let mut part = media_part(media);
@@ -715,9 +722,15 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         }) => {
             // Gemini always constrains the answer to a schema, and the
             // wrapper's description has no field to instruct the model with.
-            if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
-                    "a schema wrapper description or non-strict schema output in Gemini",
+            if description.is_some() {
+                return Err(Fault::bad_request(
+                    "Gemini has no place for a JSON schema's description; \
+                     put it in the schema or the prompt",
+                ));
+            }
+            if *strict == Some(false) {
+                return Err(Fault::bad_request(
+                    "Gemini always holds its answer to the schema; do not set strict to false",
                 ));
             }
             set_field("responseMimeType", Some("application/json".into()));
@@ -725,7 +738,9 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         }
     }
     if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
+        return Err(untranslatable(
+            "an end user's id for Gemini (its `labels.safety_identifier`)",
+        ));
     }
     if let Some(r) = reasoning_of(chat)? {
         write_thinking(r, &mut config)?;

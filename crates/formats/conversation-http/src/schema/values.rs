@@ -382,7 +382,7 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
         role => roles.name(role),
     };
     let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    role.ok_or_else(|| refused_role(format, &m.role))
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is
@@ -553,6 +553,70 @@ pub(crate) fn unwritable_usage() -> Fault {
 /// A request carrying `what` cannot be sent in another format.
 pub(crate) fn untranslatable(what: &str) -> Fault {
     Fault::bad_request(format!("{what} cannot be translated to another format yet"))
+}
+
+/// The name a client knows format `id` by.
+fn format_name(id: &str) -> &str {
+    match id {
+        "openai-chat" => "OpenAI Chat",
+        "openai-responses" => "OpenAI Responses",
+        "anthropic-messages" => "Anthropic",
+        "gemini-generate" => "Gemini",
+        "bedrock-converse" => "Bedrock",
+        id => id,
+    }
+}
+
+/// A refusal of `part`, which format `to` has no place for where it stands:
+/// one of another format's names it, and that only that format takes it.
+pub(crate) fn refused_part(to: &str, part: &Content) -> Fault {
+    let to = format_name(to);
+    if let Content::Native(raw) = part {
+        let from = format_name(&raw.format);
+        let kind = raw.value["type"]
+            .as_str()
+            .or_else(|| raw.value.as_object()?.keys().next().map(String::as_str))
+            .unwrap_or("unnamed");
+        return Fault::bad_request(format!(
+            "{to} cannot take the {from} part `{kind}`, which only {from} takes; \
+                 remove it from the messages"
+        ));
+    }
+    Fault::bad_request(format!("{to} cannot take {} here", part_name(part)))
+}
+
+/// What `part` is, as a message names it.
+pub(crate) fn part_name(part: &Content) -> &'static str {
+    match part {
+        Content::Text { .. } => "text",
+        Content::Reasoning { .. } => "reasoning",
+        Content::Image(_) => "an image",
+        Content::Audio(_) => "audio",
+        Content::Document(_) => "a document",
+        Content::ToolCall { .. } => "a tool call",
+        Content::ToolResult { .. } => "a tool result",
+        Content::Native(_) => "another format's part",
+        _ => "this kind of part",
+    }
+}
+
+/// A refusal of `role`, which format `to` has no messages of.
+pub(crate) fn refused_role(to: &str, role: &Role) -> Fault {
+    let to = format_name(to);
+    Fault::bad_request(match role {
+        Role::Native { format, name, .. } => {
+            let from = format_name(format);
+            format!(
+                "{to} has no `{name}` role, which only {from} has; \
+                 remove that message or give it a user or assistant role"
+            )
+        }
+        Role::System => format!("{to} has no system role here"),
+        Role::Developer => format!("{to} has no developer role here"),
+        Role::User => format!("{to} has no user role here"),
+        Role::Assistant => format!("{to} has no assistant role here"),
+        _ => format!("{to} has no such role"),
+    })
 }
 
 /// A 502 for content the client's format cannot write anew, such as a tool call.
