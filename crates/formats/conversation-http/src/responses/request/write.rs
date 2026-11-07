@@ -3,7 +3,9 @@
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
+use crate::schema::{
+    NativeFieldsExt, merge_missing, refused_part, refused_role, untranslatable, warn_reasoning,
+};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -47,7 +49,7 @@ pub(in crate::responses) fn write_input(
 }
 
 fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    let no_role = || untranslatable("a role this format has no place for");
+    let no_role = || refused_role(RESPONSES, &m.role);
     let role = match &m.role {
         Role::Native { format, name, .. } if **format == *RESPONSES && name == ITEM_ROLE => {
             return write_opaque(m, items);
@@ -65,7 +67,7 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     for part in &m.content {
         match part {
             Content::Native(n) if *n.format == *RESPONSES => items.push(n.value.as_ref().clone()),
-            _ => return Err(untranslatable("an item in another shape")),
+            part => return Err(refused_part(RESPONSES, part)),
         }
     }
     Ok(())
@@ -90,7 +92,10 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
                 items.push(write_result(id, content, *is_error, native)?);
             }
             Content::Reasoning { .. } | Content::ToolCall { .. } => {
-                return Err(untranslatable("an assistant's content in another role"));
+                return Err(Fault::bad_request(format!(
+                    "OpenAI Responses takes reasoning and tool calls only in an assistant \
+                     message, not a {role} message"
+                )));
             }
             part => parts.push(write_input_part(part)?),
         }
@@ -101,7 +106,10 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
     }
     match extras.is_empty() {
         true => Ok(()),
-        false => Err(untranslatable("a message's fields beside its results")),
+        false => Err(untranslatable(&format!(
+            "a {role} message's {} beside its tool results",
+            field_names(&extras)
+        ))),
     }
 }
 
@@ -151,15 +159,19 @@ fn write_input_part(c: &Content) -> Result<Value, Fault> {
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
         Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Fault::bad_request(
+            "OpenAI Responses does not take audio; send its transcript as text",
+        )),
+        part => Err(refused_part(RESPONSES, part)),
     }
 }
 
 pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
     let image = matches!(c, Content::Image(_));
     if image && media.name.is_some() {
-        return Err(untranslatable("a display name on image content"));
+        return Err(Fault::bad_request(
+            "OpenAI Responses takes a file name only on a document; remove it from the image",
+        ));
     }
     let native = media.native.fields_for(RESPONSES);
     let url = || media_url(media);
@@ -186,7 +198,9 @@ fn write_result(
 ) -> Result<Value, Fault> {
     // A function call output cannot say that the call failed.
     if is_error {
-        return Err(untranslatable("a tool result that is an error"));
+        return Err(Fault::bad_request(
+            "OpenAI Responses cannot mark a tool result as an error; say the error in its text",
+        ));
     }
     let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
     let output: Value = match content.iter().all(plain) {
@@ -226,8 +240,12 @@ impl AsText for Content {
 /// An assistant message: its text runs are message items, its calls and
 /// reasoning items of their own.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    if !m.native.fields_for(RESPONSES).is_empty() {
-        return Err(untranslatable("an assistant message's fields"));
+    let fields = m.native.fields_for(RESPONSES);
+    if !fields.is_empty() {
+        return Err(untranslatable(&format!(
+            "an assistant message's {}",
+            field_names(&fields)
+        )));
     }
     let before = items.len();
     let mut run: Vec<&Content> = Vec::new();
@@ -277,7 +295,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
-            _ => return Err(untranslatable("an unsupported kind of part")),
+            part => return Err(refused_part(RESPONSES, part)),
         }
     }
     flush_assistant(&mut run, items);
@@ -334,4 +352,10 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) {
     v.entry("status").or_insert_with(|| "completed".into());
     v.extend(item);
     items.push(v.into());
+}
+
+/// `fields`' names, quoted: `a`, `b`.
+fn field_names(fields: &Map<String, Value>) -> String {
+    let names: Vec<String> = fields.keys().map(|k| format!("`{k}`")).collect();
+    names.join(", ")
 }

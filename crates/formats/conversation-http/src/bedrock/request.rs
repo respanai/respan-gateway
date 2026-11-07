@@ -16,8 +16,8 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    NativeFieldsExt, arguments_object, reasoning_of, set, stop_json, untranslatable,
-    unwritable_content,
+    NativeFieldsExt, arguments_object, part_name, reasoning_of, refused_part, refused_role, set,
+    stop_json, untranslatable, unwritable_content,
 };
 
 /// The leading system messages as `system` blocks, and the rest; a later
@@ -46,7 +46,12 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
                 Content::Native(raw) if *raw.format == *BEDROCK => {
                     blocks.push(Value::clone(&raw.value));
                 }
-                _ => return Err(untranslatable("a system prompt that is not text")),
+                part @ Content::Native(_) => return Err(refused_part(BEDROCK, part)),
+                _ => {
+                    return Err(Fault::bad_request(
+                        "Bedrock takes only text in a system prompt",
+                    ));
+                }
             }
         }
     }
@@ -63,7 +68,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
             Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
             role => ROLES
                 .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+                .ok_or_else(|| refused_role(BEDROCK, role))?,
         };
         let mut blocks: Vec<Value> = Vec::new();
         for part in m.content.iter().filter(|c| !is_unsigned(c)) {
@@ -153,8 +158,8 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             Ok(json!({ "toolResult": result }))
         }
         Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
-        Content::Audio(_) => Err(untranslatable("audio")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(untranslatable("audio for Bedrock")),
+        part => Err(refused_part(BEDROCK, part)),
     }
 }
 
@@ -171,7 +176,11 @@ fn is_blank(part: &Content) -> bool {
 fn result_block(part: &Content) -> Result<Value, Fault> {
     match part {
         Content::Text { .. } | Content::Image(_) | Content::Document(_) => content_block(part),
-        _ => Err(untranslatable("a tool result that is not text or media")),
+        part @ Content::Native(_) => Err(refused_part(BEDROCK, part)),
+        part => Err(Fault::bad_request(format!(
+            "Bedrock cannot take {} in a tool result",
+            part_name(part)
+        ))),
     }
 }
 
@@ -226,7 +235,9 @@ fn image(media: &Media) -> Result<Value, Fault> {
         ))
     })?;
     if media.name.is_some() {
-        return Err(untranslatable("a display name on an image"));
+        return Err(Fault::bad_request(
+            "Bedrock takes a file name only on a document; remove it from the image",
+        ));
     }
     Ok(json!({ "image": { "format": format, "source": bytes_of(media)? } }))
 }
@@ -313,10 +324,14 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
 pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let o = &chat.options;
     if o.top_k.is_some() {
-        return Err(untranslatable("top_k, which Bedrock takes per model"));
+        return Err(Fault::bad_request(
+            "Bedrock has no common top_k, as each model names its own; leave top_k unset",
+        ));
     }
     if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
+        return Err(Fault::bad_request(
+            "Bedrock does not take an end user's id; leave it unset",
+        ));
     }
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}
@@ -334,7 +349,11 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             let format = json!({ "type": "json_schema", "structure": structure });
             v.insert("outputConfig".into(), json!({ "textFormat": format }));
         }
-        Some(_) => return Err(untranslatable("JSON output without a schema")),
+        Some(_) => {
+            return Err(Fault::bad_request(
+                "Bedrock takes JSON output only with a schema; give a JSON schema",
+            ));
+        }
     }
     let mut config = Map::new();
     set(
@@ -350,13 +369,16 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     }
     if let Some(r) = reasoning_of(chat)? {
         if r.summary == Some(false) {
-            return Err(untranslatable("withholding the thinking"));
+            return Err(Fault::bad_request(
+                "Bedrock always returns its thinking; do not ask for it to be left out",
+            ));
         }
         let thinking = match (r.effort, r.budget_tokens) {
             (Some(Effort::Off), _) => json!({ "type": "disabled" }),
             (Some(_), _) => {
-                return Err(untranslatable(
-                    "a reasoning effort, which Bedrock names per model: give a token budget",
+                return Err(Fault::bad_request(
+                    "Bedrock has no common reasoning effort, as each model names its own; \
+                     give a thinking token budget instead, for a model that takes one",
                 ));
             }
             (None, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget }),
