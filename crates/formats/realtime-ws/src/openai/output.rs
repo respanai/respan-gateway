@@ -382,7 +382,7 @@ impl Client {
             }
             Output::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.output);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                let data = data.ok_or_else(|| json::unconvertible_output(audio, self.output))?;
                 let delta = json::base64(&data);
                 if let Some(response) = &mut self.response {
                     response.delta(&mut self.ids, Part::Audio, delta, out);

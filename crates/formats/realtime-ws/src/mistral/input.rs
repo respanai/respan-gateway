@@ -144,7 +144,7 @@ impl Provider {
             Input::Session(s) => return self.session(s).map(|v| v.into_iter().collect()),
             Input::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.input);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                let data = data.ok_or_else(|| json::unconvertible_input(audio, self.input))?;
                 let mut native = own(native).cloned();
                 let mut frames = Vec::new();
                 for chunk in data.chunks(APPEND) {
@@ -162,7 +162,21 @@ impl Provider {
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 vec![Value::clone(value)]
             }
-            _ => return Err(refuse("this event")),
+            Input::Message { .. }
+            | Input::ToolResult(_)
+            | Input::Respond { .. }
+            | Input::Cancel { .. } => {
+                let what = match event {
+                    Input::Message { .. } => "messages",
+                    Input::ToolResult(_) => "tool results",
+                    Input::Respond { .. } => "requests to answer",
+                    _ => "cancels",
+                };
+                return Err(json::refused(format!(
+                    "Mistral realtime only transcribes, so it takes no {what}; send only audio and commits"
+                )));
+            }
+            _ => return Err(refuse("another format's event")),
         };
         Ok(frames)
     }
@@ -179,7 +193,10 @@ impl Provider {
             s.model = None;
         }
         if s.model.is_some() {
-            return Err(refuse("a change of model"));
+            let model = s.model.as_deref().unwrap_or_default();
+            return Err(json::refused(format!(
+                "Mistral realtime takes its model at connect, with ?model= on the session's URL; it cannot switch to `{model}` mid-session"
+            )));
         }
         // Its voice detection does not change what it transcribes.
         s.turns = None;
