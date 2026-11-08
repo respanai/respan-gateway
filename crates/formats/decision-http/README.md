@@ -4,14 +4,14 @@
 
 | Format | Endpoint | Served by |
 | --- | --- | --- |
-| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`) |
+| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`); Nace (`vendor = "nace"`) |
 | `gemini-decisions` (`GeminiDecisions`) | `POST /v1beta/decisions` in the standalone gateway | Gemini (`vendor = "gemini"`) |
-| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), Fireworks (`vendor = "fireworks"`) and Morph (`vendor = "morph"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`); or any compatible base URL |
+| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), Fireworks (`vendor = "fireworks"`), Morph (`vendor = "morph"`) and Nace (`vendor = "nace"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`); or any compatible base URL |
 
 A provider is called at `/decisions`. A vendor that departs from the
 contract lays its dialect over the format
 (`respan_gateway_http::dialect::Dialected`), a provider format of the
-spec's name: TypeSafe's, Fireworks' and Morph's move the call to `/systemone`.
+spec's name: TypeSafe's, Fireworks', Morph's and Nace's move the call to `/systemone`.
 
 A request is `{"model", "state", "questions": {id: question}}`, each question
 `{"type", "instructions", "criteria"}`: `noul` with criteria
