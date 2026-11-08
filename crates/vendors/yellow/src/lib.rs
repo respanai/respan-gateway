@@ -12,6 +12,7 @@ pub mod empiriolabs;
 pub mod fireworks;
 pub mod groq;
 pub mod mistral;
+pub mod nace;
 pub mod openrouter;
 pub mod perplexity;
 pub mod together;
@@ -33,6 +34,7 @@ pub const ALL: &[&Vendor] = &[
     &mistral::VENDOR,
     &together::VENDOR,
     &fireworks::VENDOR,
+    &nace::VENDOR,
     &azure::VENDOR,
     &vllm::VENDOR,
     &cloudflare::VENDOR,
