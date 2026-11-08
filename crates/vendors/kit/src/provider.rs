@@ -7,6 +7,7 @@ use crate::{Connect, KeyIn, Models, Reach, Upstream, Vendor, located};
 use respan_gateway_core::{Fault, Gateway};
 use respan_gateway_http::http::HeaderMap;
 use respan_gateway_http::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
+use respan_gateway_http::{Body, http};
 use respan_gateway_http_transport::{HttpTransport, Network, reqwest, unreachable};
 use respan_gateway_ws::{Limits, WsTransport};
 
@@ -27,6 +28,7 @@ pub struct VendorProvider {
     /// Each format it speaks, at its base URL, if it has one yet.
     formats: Vec<(&'static dyn Upstream, Option<At>)>,
     key: Key,
+    identity: Option<HeaderValue>,
     limit: usize,
     sessions: Limits,
     network: Network,
@@ -115,6 +117,7 @@ impl VendorProvider {
             vendor: &NONE,
             formats: Vec::new(),
             key: Key::Client,
+            identity: None,
             limit: respan_gateway_http::call::MAX_BODY,
             sessions: Limits::default(),
             network: Network::shared().clone(),
@@ -173,6 +176,14 @@ impl VendorProvider {
     /// With `headers` on every call, as they are, in place of a key.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         self.key = Key::Headers(headers);
+        self
+    }
+
+    /// Identify the calling application in the vendor's declared
+    /// [`client_header`](Vendor::client_header) on every registered HTTP call,
+    /// overriding a value relayed by a format. No effect without that header.
+    pub fn client_identity(mut self, identity: HeaderValue) -> Self {
+        self.identity = Some(identity);
         self
     }
 
@@ -331,11 +342,23 @@ impl VendorProvider {
             client = client.follow_redirects(follow);
         }
         let client = Arc::new(client.with_headers(auth)?);
+        let identity = self
+            .identity
+            .as_ref()
+            .zip(self.vendor.client_header)
+            .map(|(value, name)| {
+                HeaderName::from_bytes(name.as_bytes()).map(|name| (name, value.clone()))
+            })
+            .transpose()
+            .map_err(|e| Fault::config(e.to_string()))?;
         let host = base.split_once("://").map_or(base, |(_, rest)| rest);
         let host = host.split('/').next().unwrap_or_default();
         let who: Arc<str> = format!("provider '{}' at {host}", self.name).into();
         Ok(Arc::new(respan_gateway_http::connect(
-            move |call| {
+            move |mut call: http::Request<Body>| {
+                if let Some((name, value)) = &identity {
+                    call.headers_mut().insert(name.clone(), value.clone());
+                }
                 let (client, who) = (client.clone(), who.clone());
                 async move {
                     client

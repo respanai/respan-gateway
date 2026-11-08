@@ -47,6 +47,9 @@ pub use respan_gateway_sdk::{Ask, FormatFor};
 pub struct Vendor {
     /// Its id, as the gateway's config names it: `vendor = "<id>"`.
     pub id: &'static str,
+    /// The header in which it takes the calling application's identity,
+    /// such as `name/version`. The host supplies it; none unless declared.
+    pub client_header: Option<&'static str>,
     /// The environment variables its key is read from, the first set; none
     /// for a vendor that needs no key.
     pub key_env: &'static [&'static str],
@@ -77,6 +80,7 @@ impl Vendor {
     pub const DEFAULT: Vendor = Vendor {
         id: "",
         key_env: &[],
+        client_header: None,
         formats: &[],
         models: models::openai,
         format_for: None,

@@ -1144,3 +1144,13 @@ async fn fireworks_answers_each_decision_contract_in_its_own() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn providers_carry_the_gateway_release_user_agent() {
+    let (gateway, a, _) = local(TWO).await;
+    request(&gateway, "a/gpt-x").await;
+    let calls = a.requests();
+    assert_eq!(calls.len(), 1);
+    let ua = &calls[0].headers["user-agent"];
+    assert_eq!(*ua, format!("respan-gateway/{}", crate::VERSION));
+}
