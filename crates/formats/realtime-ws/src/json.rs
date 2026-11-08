@@ -2,6 +2,8 @@
 //! kept as its format's, audio in base64, and the faults of what a format
 //! cannot write.
 
+use std::fmt;
+
 use base64::Engine;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
@@ -111,7 +113,7 @@ pub(crate) fn own(native: &Option<NativeFields>) -> Option<&Map<String, Value>> 
 }
 
 /// `format` as its provider names it.
-pub(crate) fn display(format: &str) -> &str {
+pub(crate) fn title(format: &str) -> &str {
     match format {
         "openai-realtime" => "OpenAI Realtime",
         "gemini-live" => "Gemini Live",
@@ -124,26 +126,26 @@ pub(crate) fn display(format: &str) -> &str {
 /// An input `format` cannot write yet, which could change the answer: the
 /// client's fault, closing its session 1008.
 pub(crate) fn untranslatable_input(format: &str, what: &str) -> Fault {
-    let format = display(format);
-    refused(format!("{what} cannot be translated to {format} yet"))
+    let format = title(format);
+    refused_input(format!("{what} cannot be translated to {format} yet"))
 }
 
 /// An output `format` cannot write, which fails the session.
 pub(crate) fn untranslatable_output(format: &str, what: &str) -> Fault {
-    let format = display(format);
+    let format = title(format);
     let message = format!("{what} cannot be translated to {format} yet");
     Fault::upstream(message).with(ErrorCode("untranslatable".into()))
 }
 
 /// An input a provider refuses, as `message` says how to fix it: the
 /// client's fault, closing its session 1008.
-pub(crate) fn refused(message: impl Into<String>) -> Fault {
+pub(crate) fn refused_input(message: impl Into<String>) -> Fault {
     Fault::bad_request(message).with(CloseCode(1008))
 }
 
 /// The client's `audio`, which cannot be converted to `to`.
 pub(crate) fn unconvertible_input(audio: &Audio, to: AudioFormat) -> Fault {
-    refused(unconvertible(audio, to))
+    refused_input(unconvertible(audio, to))
 }
 
 /// The provider's `audio`, which cannot be converted to `to`.
@@ -153,45 +155,57 @@ pub(crate) fn unconvertible_output(audio: &Audio, to: AudioFormat) -> Fault {
 }
 
 fn unconvertible(audio: &Audio, to: AudioFormat) -> String {
-    let (from, to) = (audio_name(audio.format), audio_name(to));
+    let (from, to) = (AudioName(audio.format), AudioName(to));
     format!("{from} cannot be converted to {to}: audio is resampled only between 1 and 192 kHz")
 }
 
-/// `f` as people name it.
-pub(crate) fn audio_name(f: AudioFormat) -> String {
-    let encoding = match f.encoding {
-        Encoding::Pcm16 => "16-bit PCM",
-        Encoding::Mulaw => "G.711 μ-law",
-        Encoding::Alaw => "G.711 A-law",
-        _ => "audio",
-    };
-    format!("{encoding} at {} Hz", f.rate)
-}
+/// An audio format as people name it, such as "16-bit PCM at 24000 Hz".
+pub(crate) struct AudioName(pub AudioFormat);
 
-/// `role` as a message's, such as "a developer".
-pub(crate) fn role_name(role: &Role) -> String {
-    match role {
-        Role::System => "a system".into(),
-        Role::Developer => "a developer".into(),
-        Role::User => "a user".into(),
-        Role::Assistant => "an assistant".into(),
-        Role::Native { format, name, .. } => format!("{}'s `{name}`", display(format)),
-        _ => "this".into(),
+impl fmt::Display for AudioName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let encoding = match self.0.encoding {
+            Encoding::Pcm16 => "16-bit PCM",
+            Encoding::Mulaw => "G.711 μ-law",
+            Encoding::Alaw => "G.711 A-law",
+            _ => "audio",
+        };
+        write!(f, "{encoding} at {} Hz", self.0.rate)
     }
 }
 
-/// `part` as a message's, such as "an image".
-pub(crate) fn part_name(part: &Content) -> String {
-    match part {
-        Content::Text { .. } => "text with extra fields".into(),
-        Content::Reasoning { .. } => "reasoning".into(),
-        Content::Image(_) => "an image".into(),
-        Content::Audio(_) => "audio".into(),
-        Content::Document(_) => "a document".into(),
-        Content::ToolCall { .. } => "a tool call".into(),
-        Content::ToolResult { .. } => "a tool result".into(),
-        Content::Native(n) => format!("{}'s part", display(&n.format)),
-        _ => "a part of this kind".into(),
+/// A role as a message's, such as "a developer".
+pub(crate) struct RoleName<'a>(pub &'a Role);
+
+impl fmt::Display for RoleName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Role::System => f.write_str("a system"),
+            Role::Developer => f.write_str("a developer"),
+            Role::User => f.write_str("a user"),
+            Role::Assistant => f.write_str("an assistant"),
+            Role::Native { format, name, .. } => write!(f, "{}'s `{name}`", title(format)),
+            _ => f.write_str("this"),
+        }
+    }
+}
+
+/// A part as a message's, such as "an image".
+pub(crate) struct PartName<'a>(pub &'a Content);
+
+impl fmt::Display for PartName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Content::Text { .. } => f.write_str("text with extra fields"),
+            Content::Reasoning { .. } => f.write_str("reasoning"),
+            Content::Image(_) => f.write_str("an image"),
+            Content::Audio(_) => f.write_str("audio"),
+            Content::Document(_) => f.write_str("a document"),
+            Content::ToolCall { .. } => f.write_str("a tool call"),
+            Content::ToolResult { .. } => f.write_str("a tool result"),
+            Content::Native(n) => write!(f, "{}'s part", title(&n.format)),
+            _ => f.write_str("a part of this kind"),
+        }
     }
 }
 

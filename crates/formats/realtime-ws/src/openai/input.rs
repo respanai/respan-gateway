@@ -165,13 +165,13 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Role::User => ("user", "input_text"),
         Role::Assistant => ("assistant", "output_text"),
         Role::Developer => {
-            return Err(json::refused(
+            return Err(json::refused_input(
                 "OpenAI Realtime has no developer role in a conversation item; give the message a system role",
             ));
         }
         _ => {
-            let role = json::role_name(&m.role);
-            return Err(json::refused(format!(
+            let role = json::RoleName(&m.role);
+            return Err(json::refused_input(format!(
                 "OpenAI Realtime takes no message with {role} role; give it a system, user or assistant role"
             )));
         }
@@ -183,10 +183,10 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        Content::Reasoning { .. } => Err(json::refused(
+        Content::Reasoning { .. } => Err(json::refused_input(
             "OpenAI Realtime takes no reasoning in a message; remove it",
         )),
-        Content::Document(_) => Err(json::refused(
+        Content::Document(_) => Err(json::refused_input(
             "OpenAI Realtime takes no document in a message; send its text instead",
         )),
         Content::ToolCall { .. } => Err(refuse(
@@ -195,7 +195,7 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Content::ToolResult { .. } => Err(refuse(
             "a tool result inside a message (OpenAI Realtime's `function_call_output` item)",
         )),
-        _ => Err(refuse(&format!("{} in a message", json::part_name(c)))),
+        _ => Err(refuse(&format!("{} in a message", json::PartName(c)))),
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});

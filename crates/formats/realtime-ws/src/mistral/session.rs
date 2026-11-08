@@ -4,7 +4,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
 
-use super::NAME;
+use super::{NAME, takes_no, transcribes_only};
 use crate::json::{self, at, remove, set, string, take, text};
 
 const MODEL: &[&str] = &["session", "model"];
@@ -27,13 +27,13 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// The `session` object of `s`, but its native, which is its event's;
 /// `refuse`d where it asks for what Mistral does not do.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
-    const ONLY: &str = "Mistral realtime only transcribes";
     if s.purpose == Some(Purpose::Conversation) {
-        let fix = "set the session's purpose to transcription";
-        return Err(json::refused(format!("{ONLY}; {fix}")));
+        return Err(transcribes_only(
+            "set the session's purpose to transcription",
+        ));
     }
     if s.input_transcription == Some(false) {
-        return Err(json::refused(format!("{ONLY}; leave transcription on")));
+        return Err(transcribes_only("leave transcription on"));
     }
     let asks = [
         (s.instructions.is_some(), "instructions"),
@@ -45,8 +45,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (s.max_output_tokens.is_some(), "output token limit"),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {
-        let fix = format!("so it takes no {what}; leave the session's {what} unset");
-        return Err(json::refused(format!("{ONLY}, {fix}")));
+        return Err(takes_no(what, &format!("leave the session's {what} unset")));
     }
     let mut v = json!({});
     if let Some(format) = s.input_audio {

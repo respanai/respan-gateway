@@ -193,8 +193,8 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Role::User => "user",
         Role::Assistant => "model",
         _ => {
-            let role = json::role_name(&m.role);
-            return Err(json::refused(format!(
+            let role = json::RoleName(&m.role);
+            return Err(json::refused_input(format!(
                 "Gemini Live takes no message with {role} role, only user and model turns; put system text in the session's instructions"
             )));
         }
@@ -204,7 +204,7 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        _ => Err(refuse(&format!("{} in a message", json::part_name(c)))),
+        _ => Err(refuse(&format!("{} in a message", json::PartName(c)))),
     };
     let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"role": role, "parts": parts});
@@ -378,7 +378,7 @@ impl Provider {
                         (json!({"realtimeInput": {"audio": blob}}), native)
                     }
                     Input::Commit { .. } if !manual => {
-                        return Err(json::refused(
+                        return Err(json::refused_input(
                             "Gemini Live takes the end of the user's turn (`activityEnd`) only when its automatic activity detection is off; set turn detection to manual, or stop committing",
                         ));
                     }

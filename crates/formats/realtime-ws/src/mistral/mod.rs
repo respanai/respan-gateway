@@ -20,6 +20,19 @@ use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
 
+/// A refusal of what only a conversation asks for: `fix` says what to
+/// send instead.
+fn transcribes_only(fix: &str) -> Fault {
+    crate::json::refused_input(format!("Mistral realtime only transcribes; {fix}"))
+}
+
+/// A refusal of `what`, which only a conversation sends: `fix` says what
+/// to send instead.
+fn takes_no(what: &str, fix: &str) -> Fault {
+    let message = format!("Mistral realtime only transcribes, so it takes no {what}; {fix}");
+    crate::json::refused_input(message)
+}
+
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
     path: "/audio/transcriptions/realtime",

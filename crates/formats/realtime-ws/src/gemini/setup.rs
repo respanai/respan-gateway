@@ -57,7 +57,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         .as_ref()
         .is_some_and(|c| *c != ToolChoice::Auto)
     {
-        return Err(json::refused(
+        return Err(json::refused_input(
             "Gemini Live has no tool choice, as its model picks tools itself; leave the tool choice `auto` or unset",
         ));
     }
@@ -227,7 +227,7 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
         _ => return Err(refuse("this turn detection")),
     };
     if vad.respond == Some(false) {
-        return Err(json::refused(
+        return Err(json::refused_input(
             "Gemini Live answers every turn its voice detection ends; leave answering on, or set turn detection to manual",
         ));
     }

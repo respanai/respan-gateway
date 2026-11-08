@@ -7,13 +7,16 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, Turns};
 use serde_json::{Value, json};
 
-use super::{NAME, session};
+use super::{NAME, session, takes_no};
 use crate::audio::Convert;
 use crate::foreign;
 use crate::json::{self, merge, own, string, take, text, untranslatable_input};
 
 /// The most audio one append carries, in bytes.
 const APPEND: usize = 262_144;
+
+/// What a transcription session takes instead of a conversation's events.
+const AUDIO_ONLY: &str = "send only audio and commits";
 
 /// The audio a session takes until one says another.
 const AUDIO: AudioFormat = AudioFormat::pcm16(16_000);
@@ -162,20 +165,10 @@ impl Provider {
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 vec![Value::clone(value)]
             }
-            Input::Message { .. }
-            | Input::ToolResult(_)
-            | Input::Respond { .. }
-            | Input::Cancel { .. } => {
-                let what = match event {
-                    Input::Message { .. } => "messages",
-                    Input::ToolResult(_) => "tool results",
-                    Input::Respond { .. } => "requests to answer",
-                    _ => "cancels",
-                };
-                return Err(json::refused(format!(
-                    "Mistral realtime only transcribes, so it takes no {what}; send only audio and commits"
-                )));
-            }
+            Input::Message { .. } => return Err(takes_no("messages", AUDIO_ONLY)),
+            Input::ToolResult(_) => return Err(takes_no("tool results", AUDIO_ONLY)),
+            Input::Respond { .. } => return Err(takes_no("requests to answer", AUDIO_ONLY)),
+            Input::Cancel { .. } => return Err(takes_no("cancels", AUDIO_ONLY)),
             _ => return Err(refuse("another format's event")),
         };
         Ok(frames)
@@ -194,7 +187,7 @@ impl Provider {
         }
         if s.model.is_some() {
             let model = s.model.as_deref().unwrap_or_default();
-            return Err(json::refused(format!(
+            return Err(json::refused_input(format!(
                 "Mistral realtime takes its model at connect, with ?model= on the session's URL; it cannot switch to `{model}` mid-session"
             )));
         }
