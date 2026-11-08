@@ -6,8 +6,8 @@
 
 use crate::fields::media_url;
 use crate::schema::{
-    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, refused_part,
+    Names, NativeFieldsExt, Refusal, decode_tools, each_tool, effort_name, encode_content,
+    encode_message, merge_missing, native_fields, only, own_native, read_search, reasoning_of,
     remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -208,9 +208,7 @@ fn openai_result(
 ) -> Result<Map<String, Value>, Fault> {
     // OpenAI's tool messages cannot say the call failed.
     if is_error {
-        return Err(Fault::bad_request(
-            "OpenAI Chat cannot mark a tool result as an error; say the error in its text",
-        ));
+        return Err(Refusal::ToolError.by(OPENAI));
     }
     let media = |c: &Content| {
         matches!(
@@ -343,12 +341,10 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        part => return Err(refused_part(OPENAI, part)),
+        part => return Err(Refusal::Part(part).by(OPENAI)),
     };
     if media.name.is_some() && kind != "document" {
-        return Err(Fault::bad_request(format!(
-            "OpenAI Chat takes a file name only on a document; remove it from the {kind}"
-        )));
+        return Err(Refusal::FileName(kind).by(OPENAI));
     }
     let native = media.native.fields_for(OPENAI);
     let url = || media_url(media);
@@ -466,9 +462,7 @@ pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own_native(input, OPENAI, "reasoning_effort"));
     };
     if r.budget_tokens.is_some() {
-        return Err(Fault::bad_request(
-            "OpenAI Chat does not take a reasoning token budget; use a reasoning effort instead",
-        ));
+        return Err(Refusal::ReasoningBudget.by(OPENAI));
     }
     if r.summary == Some(true) {
         return Err(Fault::bad_request(

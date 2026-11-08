@@ -14,9 +14,9 @@ use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
-    NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, part_name, reasoning_of, refused_part, refused_role, remainder, set,
-    untranslatable, write_search,
+    NativeFieldsExt, Refusal, arguments_object, effort_name, merge_fields, merge_missing,
+    native_fields, parse_effort, part_name, reasoning_of, remainder, set, untranslatable,
+    write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -217,9 +217,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
     if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Gemini has no place for a system message after the conversation starts",
-        ));
+        return Err(Refusal::LateSystem.by(GEMINI));
     }
     let mut names = Vec::new();
     let mut parts = Vec::new();
@@ -251,7 +249,9 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES.name(role).ok_or_else(|| refused_role(GEMINI, role))?,
+            role => ROLES
+                .name(role)
+                .ok_or_else(|| Refusal::Role(role).by(GEMINI))?,
         };
         let parts: Vec<Value> = m
             .content
@@ -366,7 +366,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        part => Err(refused_part(GEMINI, part)),
+        part => Err(Refusal::Part(part).by(GEMINI)),
     }
 }
 
@@ -380,7 +380,7 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
             Content::Text {
                 text: t, native, ..
             } if native.is_empty() => text.push_str(t),
-            part @ Content::Native(_) => return Err(refused_part(GEMINI, part)),
+            part @ Content::Native(_) => return Err(Refusal::Part(part).by(GEMINI)),
             part => {
                 return Err(untranslatable(&format!(
                     "{} in a Gemini tool result",
@@ -599,9 +599,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         .or_else(|| native("tools"));
     set(v, "tools", tools);
     if chat.options.parallel_tool_calls == Some(false) {
-        return Err(Fault::bad_request(
-            "Gemini cannot turn off parallel tool calls",
-        ));
+        return Err(Refusal::SerialTools.by(GEMINI));
     }
     let mode = match &chat.options.tool_choice {
         None => None,

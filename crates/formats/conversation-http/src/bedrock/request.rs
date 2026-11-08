@@ -16,8 +16,8 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    NativeFieldsExt, arguments_object, part_name, reasoning_of, refused_part, refused_role, set,
-    stop_json, untranslatable, unwritable_content,
+    NativeFieldsExt, Refusal, arguments_object, reasoning_of, set, stop_json, untranslatable,
+    unwritable_content,
 };
 
 /// The leading system messages as `system` blocks, and the rest; a later
@@ -27,9 +27,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
     if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Bedrock has no place for a system message after the conversation starts",
-        ));
+        return Err(Refusal::LateSystem.by(BEDROCK));
     }
     let mut blocks = Vec::new();
     for message in system {
@@ -46,7 +44,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
                 Content::Native(raw) if *raw.format == *BEDROCK => {
                     blocks.push(Value::clone(&raw.value));
                 }
-                part @ Content::Native(_) => return Err(refused_part(BEDROCK, part)),
+                part @ Content::Native(_) => return Err(Refusal::Part(part).by(BEDROCK)),
                 _ => {
                     return Err(Fault::bad_request(
                         "Bedrock takes only text in a system prompt",
@@ -68,7 +66,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
             Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
             role => ROLES
                 .name(role)
-                .ok_or_else(|| refused_role(BEDROCK, role))?,
+                .ok_or_else(|| Refusal::Role(role).by(BEDROCK))?,
         };
         let mut blocks: Vec<Value> = Vec::new();
         for part in m.content.iter().filter(|c| !is_unsigned(c)) {
@@ -159,7 +157,7 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
         }
         Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
         Content::Audio(_) => Err(untranslatable("audio for Bedrock")),
-        part => Err(refused_part(BEDROCK, part)),
+        part => Err(Refusal::Part(part).by(BEDROCK)),
     }
 }
 
@@ -176,11 +174,7 @@ fn is_blank(part: &Content) -> bool {
 fn result_block(part: &Content) -> Result<Value, Fault> {
     match part {
         Content::Text { .. } | Content::Image(_) | Content::Document(_) => content_block(part),
-        part @ Content::Native(_) => Err(refused_part(BEDROCK, part)),
-        part => Err(Fault::bad_request(format!(
-            "Bedrock cannot take {} in a tool result",
-            part_name(part)
-        ))),
+        part => Err(Refusal::PartIn(part, "a tool result").by(BEDROCK)),
     }
 }
 
@@ -235,9 +229,7 @@ fn image(media: &Media) -> Result<Value, Fault> {
         ))
     })?;
     if media.name.is_some() {
-        return Err(Fault::bad_request(
-            "Bedrock takes a file name only on a document; remove it from the image",
-        ));
+        return Err(Refusal::FileName("image").by(BEDROCK));
     }
     Ok(json!({ "image": { "format": format, "source": bytes_of(media)? } }))
 }
@@ -275,9 +267,7 @@ fn document_name(name: &str) -> String {
 /// `None` offers none.
 pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     if chat.options.parallel_tool_calls == Some(false) {
-        return Err(Fault::bad_request(
-            "Bedrock cannot turn off parallel tool calls",
-        ));
+        return Err(Refusal::SerialTools.by(BEDROCK));
     }
     let tool = |t: &Tool| {
         let mut spec = Map::new();
@@ -329,9 +319,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         ));
     }
     if chat.user.is_some() {
-        return Err(Fault::bad_request(
-            "Bedrock does not take an end user's id; leave it unset",
-        ));
+        return Err(Refusal::Setting("an end user's id").by(BEDROCK));
     }
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}

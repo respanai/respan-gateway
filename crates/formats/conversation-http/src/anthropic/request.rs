@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
-    merge_missing, native_fields, only, own_native, read_search, refused_part, remainder, rest_of,
-    set, take_native, untranslatable, write_search,
+    NativeFieldsExt, Refusal, arguments_object, decode_content, decode_tools, each_tool,
+    encode_content, merge_missing, native_fields, only, own_native, read_search, remainder,
+    rest_of, set, take_native, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -143,10 +143,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             Ok(v)
         }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
-        Content::Audio(_) => Err(Fault::bad_request(
-            "Anthropic does not take audio; send its transcript as text",
-        )),
-        part => Err(refused_part(ANTHROPIC, part)),
+        Content::Audio(_) => Err(Refusal::Audio.by(ANTHROPIC)),
+        part => Err(Refusal::Part(part).by(ANTHROPIC)),
     }
 }
 
@@ -194,9 +192,7 @@ fn read_media(v: &Value) -> Option<Content> {
 /// An image or document block of `media`, refusing what Anthropic cannot say.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
-        return Err(Fault::bad_request(
-            "Anthropic takes a file name only on a document; remove it from the image",
-        ));
+        return Err(Refusal::FileName("image").by(ANTHROPIC));
     }
     let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
@@ -295,7 +291,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             }
             Ok(block)
         }
-        part => Err(refused_part(ANTHROPIC, part)),
+        part => Err(Refusal::Part(part).by(ANTHROPIC)),
     }
 }
 

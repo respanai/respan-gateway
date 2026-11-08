@@ -3,9 +3,7 @@
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{
-    NativeFieldsExt, merge_missing, refused_part, refused_role, untranslatable, warn_reasoning,
-};
+use crate::schema::{NativeFieldsExt, Refusal, merge_missing, untranslatable, warn_reasoning};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -49,7 +47,7 @@ pub(in crate::responses) fn write_input(
 }
 
 fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    let no_role = || refused_role(RESPONSES, &m.role);
+    let no_role = || Refusal::Role(&m.role).by(RESPONSES);
     let role = match &m.role {
         Role::Native { format, name, .. } if **format == *RESPONSES && name == ITEM_ROLE => {
             return write_opaque(m, items);
@@ -67,7 +65,7 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     for part in &m.content {
         match part {
             Content::Native(n) if *n.format == *RESPONSES => items.push(n.value.as_ref().clone()),
-            part => return Err(refused_part(RESPONSES, part)),
+            part => return Err(Refusal::Part(part).by(RESPONSES)),
         }
     }
     Ok(())
@@ -159,19 +157,15 @@ fn write_input_part(c: &Content) -> Result<Value, Fault> {
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
         Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Audio(_) => Err(Fault::bad_request(
-            "OpenAI Responses does not take audio; send its transcript as text",
-        )),
-        part => Err(refused_part(RESPONSES, part)),
+        Content::Audio(_) => Err(Refusal::Audio.by(RESPONSES)),
+        part => Err(Refusal::Part(part).by(RESPONSES)),
     }
 }
 
 pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
     let image = matches!(c, Content::Image(_));
     if image && media.name.is_some() {
-        return Err(Fault::bad_request(
-            "OpenAI Responses takes a file name only on a document; remove it from the image",
-        ));
+        return Err(Refusal::FileName("image").by(RESPONSES));
     }
     let native = media.native.fields_for(RESPONSES);
     let url = || media_url(media);
@@ -198,9 +192,7 @@ fn write_result(
 ) -> Result<Value, Fault> {
     // A function call output cannot say that the call failed.
     if is_error {
-        return Err(Fault::bad_request(
-            "OpenAI Responses cannot mark a tool result as an error; say the error in its text",
-        ));
+        return Err(Refusal::ToolError.by(RESPONSES));
     }
     let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
     let output: Value = match content.iter().all(plain) {
@@ -295,7 +287,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.extend(native.fields_for(RESPONSES));
                 items.push(v.into());
             }
-            part => return Err(refused_part(RESPONSES, part)),
+            part => return Err(Refusal::Part(part).by(RESPONSES)),
         }
     }
     flush_assistant(&mut run, items);
