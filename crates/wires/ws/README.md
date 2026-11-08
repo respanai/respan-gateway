@@ -52,8 +52,9 @@ wire works with the transport and the adapter, such as `passthrough`.
   that left, else the fault's `CloseCode` or 1011) within `close_send`, and
   the answer ends with the fault. The answer's body dropped: Close 1001.
 - The provider's Close 1000 (or no code) ends the answer clean; another code
-  is an `upstream` fault with its `ProviderClose`. Its reason text is not
-  carried.
+  is an `upstream` fault with its `ProviderClose`, its code and reason in
+  the fault's message, and a 400 for 1003, 1007, 1008 or 1009 (the provider
+  refused what it was sent). Its reason text is never sent to the client.
 - The provider dropping with no Close, or silent through a ping, is
   `truncated`; a rejected binary frame or a message over `max_message` is
   `upstream`, and the provider is sent Close 1003 or 1009.
