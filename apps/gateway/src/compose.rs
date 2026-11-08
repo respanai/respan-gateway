@@ -21,6 +21,9 @@ use respan_gateway_vendors::{Network, VendorProvider};
 /// The name of the format that relays what no other served format accepts.
 pub const PASSTHROUGH: &str = "passthrough";
 
+// The declared integration identity is limited to 64 bytes.
+const _: () = assert!("respan/".len() + crate::VERSION.len() <= 64);
+
 /// A provider as configured, with the core provider of each of its formats.
 #[derive(Debug)]
 pub struct Upstream {
@@ -319,7 +322,21 @@ fn upstream(
         Some(vendor) => vendor.provider(name),
         None => VendorProvider::new(name),
     };
-    let mut provider = provider.network(network);
+    // Provider calls identify the running gateway release. The User-Agent is
+    // a default, so passthrough preserves the client's User-Agent; a vendor's
+    // declared identity header is host-owned and replaces any relayed value.
+    let client = network.client("gateway providers", |builder| {
+        Ok(builder
+            .user_agent(format!("respan-gateway/{}", crate::VERSION))
+            .connect_timeout(respan_gateway_http::call::CONNECT_TIMEOUT)
+            .redirect(respan_gateway_http_transport::reqwest::redirect::Policy::none()))
+    })?;
+    let mut provider = provider.network(network).http_client(client);
+    if vendor.is_some_and(|v| v.client_header.is_some()) {
+        let identity = HeaderValue::from_str(&format!("respan/{}", crate::VERSION))
+            .map_err(|e| Fault::internal(e.to_string()))?;
+        provider = provider.client_identity(identity);
+    }
     let names: Vec<&str> = match (&p.formats, vendor) {
         (Some(formats), _) => formats.names(),
         (None, Some(vendor)) => vendor.formats.iter().map(|(f, _)| f.name()).collect(),
