@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::{Connect, KeyIn, Models, Reach, Upstream, Vendor, located};
+use crate::{Connect, KeyIn, Models, Reach, Upstream, Vendor};
 use respan_gateway_core::{Fault, Gateway};
 use respan_gateway_http::http::HeaderMap;
 use respan_gateway_http::http::header::{AUTHORIZATION, HeaderName, HeaderValue};
@@ -96,7 +96,7 @@ impl Vendor {
     pub fn provider(&'static self, name: impl Into<String>) -> VendorProvider {
         let env = |var: &&str| std::env::var(var).ok().filter(|k| !k.trim().is_empty());
         let key = self.key_env.iter().find_map(env);
-        let at = |url: Option<&str>| url.and_then(|url| located(url).ok()).map(At::Own);
+        let at = |url: Option<&str>| url.and_then(|url| (self.locate)(url).ok()).map(At::Own);
         VendorProvider {
             vendor: self,
             formats: self.formats.iter().map(|(f, url)| (*f, at(*url))).collect(),
@@ -397,6 +397,7 @@ pub(crate) fn unreached(fault: &Fault) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::located;
 
     /// A format of no kind, over HTTP or as a session, its paths whole if
     /// `whole`.
