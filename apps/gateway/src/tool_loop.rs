@@ -16,6 +16,7 @@
 
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -478,14 +479,16 @@ impl Servers {
     }
 
     async fn fetch(&self, server: &str) -> Result<Vec<Listed>, Fault> {
-        let (mut tools, mut cursor) = (Vec::new(), None::<String>);
-        for _ in 0..PAGES {
-            let params = match &cursor {
+        let pages = fetch_pages(server, |cursor| async move {
+            let params = match cursor {
                 Some(cursor) => json!({ "cursor": cursor }),
                 None => json!({}),
             };
-            let page = self.request(server, "tools/list", params).await?;
-            let page = page.map_err(|e| Fault::new(e.message))?;
+            self.request(server, "tools/list", params).await
+        })
+        .await?;
+        let mut tools = Vec::new();
+        for page in pages {
             for tool in page["tools"].as_array().into_iter().flatten() {
                 let Some(name) = tool["name"].as_str() else {
                     continue;
@@ -506,10 +509,6 @@ impl Servers {
                     tool: name.to_owned(),
                     offered,
                 });
-            }
-            cursor = page["nextCursor"].as_str().map(str::to_owned);
-            if cursor.is_none() {
-                break;
             }
         }
         Ok(tools)
@@ -624,6 +623,27 @@ impl Servers {
     }
 }
 
+async fn fetch_pages<F, Fut>(server: &str, mut request: F) -> Result<Vec<Value>, Fault>
+where
+    F: FnMut(Option<String>) -> Fut,
+    Fut: Future<Output = Result<Result<Value, RpcError>, Fault>>,
+{
+    let (mut pages, mut cursor) = (Vec::new(), None::<String>);
+    for _ in 0..PAGES {
+        let page = request(cursor.clone())
+            .await?
+            .map_err(|e| Fault::new(e.message))?;
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        pages.push(page);
+        if cursor.is_none() {
+            return Ok(pages);
+        }
+    }
+    Err(Fault::upstream(format!(
+        "the tool server '{server}' has more pages of tools than the limit of {PAGES}"
+    )))
+}
+
 pub(crate) fn message(json: Value) -> Result<Message, Fault> {
     Message::try_from(json).map_err(Fault::internal)
 }
@@ -676,6 +696,37 @@ fn render(result: &Value) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn paged_listing(count: usize) -> Result<Vec<Value>, Fault> {
+        fetch_pages("example", move |cursor| async move {
+            let index = cursor
+                .as_deref()
+                .map_or(0, |cursor| cursor.parse::<usize>().unwrap_or_default());
+            let next = (index + 1 < count).then(|| (index + 1).to_string());
+            Ok(Ok(json!({
+                "tools": [{ "name": format!("tool_{index}") }],
+                "nextCursor": next,
+            })))
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn tool_listing_pagination_requires_a_complete_catalog() {
+        let one = paged_listing(1).await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0]["tools"][0]["name"], "tool_0");
+
+        let eight = paged_listing(8).await.unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(eight.len(), 8);
+        assert_eq!(eight[7]["tools"][0]["name"], "tool_7");
+
+        let error = paged_listing(9)
+            .await
+            .expect_err("ninth page must be rejected");
+        assert!(error.message().contains("tool server 'example'"));
+        assert!(error.message().contains("limit of 8"));
+    }
 
     #[test]
     fn a_tool_is_named_for_the_model_after_its_server() {
