@@ -1091,3 +1091,191 @@ fn a_providers_parts_beyond_their_totals_stay_within_them() {
     assert_eq!(usage.cache_write_input_tokens, 0);
     assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
 }
+
+/// A request as Codex sends one: a function, a namespace of an MCP server's
+/// functions, and a call of one of them in its history.
+fn codex_request() -> Value {
+    json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "ship it" },
+            { "type": "function_call", "call_id": "c0", "name": "deploy", "namespace": "mcp__railway", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c0", "output": "ok" },
+        ],
+        "tools": [
+            { "type": "function", "name": "shell", "strict": false, "parameters": { "type": "object" } },
+            { "type": "namespace", "name": "mcp__railway", "description": "Railway", "tools": [
+                { "type": "function", "name": "deploy", "description": "Deploys", "strict": false,
+                  "parameters": { "type": "object" } },
+            ] },
+            { "type": "web_search" },
+        ],
+    })
+}
+
+/// What a Responses client that sent `request` is answered, from `replies`.
+fn answer(request: &Value, replies: &[Output]) -> Bytes {
+    let request = http::Request::post("/v1/responses").body(Bytes::from(request.to_string()));
+    let request = request.expect("a request");
+    let answer = OpenAiResponses.encode_response(&request, replies);
+    answer.expect("an answer").into_body()
+}
+
+/// A Chat Completions answer that calls each of `names`.
+fn chat_calls(names: &[&str]) -> Vec<Output> {
+    let calls: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            json!({ "id": format!("c{i}"), "type": "function",
+                    "function": { "name": name, "arguments": "{}" } })
+        })
+        .collect();
+    let body = json!({
+        "id": "chatcmpl-1", "object": "chat.completion", "model": "m",
+        "choices": [{ "index": 0, "finish_reason": "tool_calls",
+                      "message": { "role": "assistant", "content": null, "tool_calls": calls } }],
+        "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 },
+    });
+    let mut out = Vec::new();
+    OpenAiChat
+        .decode_body(&body, &mut out)
+        .expect("a Chat answer");
+    out
+}
+
+fn named(item: &Value) -> (&Value, &Value) {
+    (&item["name"], &item["namespace"])
+}
+
+#[test]
+fn a_namespaces_functions_are_offered_and_called_by_their_joined_names() {
+    let chat = decode_request(&codex_request());
+    let sent = OpenAiChat.encode_request(&chat).expect("a Chat request");
+    let names: Vec<&Value> = sent["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|t| &t["function"]["name"])
+        .collect();
+    assert_eq!(names, [&json!("shell"), &json!("mcp__railway__deploy")]);
+    assert_eq!(sent["tools"][1]["function"]["description"], "Deploys");
+    let call = &sent["messages"][1]["tool_calls"][0]["function"];
+    assert_eq!(call["name"], "mcp__railway__deploy");
+}
+
+#[test]
+fn a_namespaced_request_goes_back_to_responses_as_it_came() {
+    let v = codex_request();
+    let chat = decode_request(&v);
+    let Content::ToolCall { name, .. } = &chat.messages[1].content[0] else {
+        panic!("a call");
+    };
+    assert_eq!(name, "mcp__railway__deploy");
+    assert_eq!(round_trip(&v), v);
+}
+
+#[test]
+fn a_call_of_a_namespaces_function_is_answered_with_its_namespace() {
+    let replies = chat_calls(&["mcp__railway__deploy", "mcp__railway__destroy", "shell"]);
+    let body = answer(&codex_request(), &replies);
+    let body: Value = serde_json::from_slice(&body).expect("a body");
+    let output = body["output"].as_array().expect("output");
+    let names: Vec<_> = output.iter().map(named).collect();
+    let none = &Value::Null;
+    assert_eq!(
+        names,
+        [
+            (&json!("deploy"), &json!("mcp__railway")),
+            (&json!("mcp__railway__destroy"), none),
+            (&json!("shell"), none),
+        ]
+    );
+}
+
+#[test]
+fn a_streamed_call_of_a_namespaces_function_is_answered_with_its_namespace() {
+    let replies = chat_calls(&["mcp__railway__deploy", "shell"]);
+    let mut request = codex_request();
+    request["stream"] = true.into();
+    let body = answer(&request, &replies);
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let events: Vec<Value> = text
+        .split("\n\n")
+        .filter_map(|e| event_json(e.as_bytes()))
+        .collect();
+    let items = |kind: &str| -> Vec<&Value> {
+        let of = |e: &&Value| e["type"] == kind;
+        events.iter().filter(of).map(|e| &e["item"]).collect()
+    };
+    let none = &Value::Null;
+    let expected = [
+        (&json!("deploy"), &json!("mcp__railway")),
+        (&json!("shell"), none),
+    ];
+    for kind in ["response.output_item.added", "response.output_item.done"] {
+        let names: Vec<_> = items(kind).into_iter().map(named).collect();
+        assert_eq!(names, expected, "{kind}");
+    }
+    let completed = events.iter().find(|e| e["type"] == "response.completed");
+    let output = &completed.expect("completed")["response"]["output"];
+    let names: Vec<_> = output
+        .as_array()
+        .expect("output")
+        .iter()
+        .map(named)
+        .collect();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn a_namespaced_name_another_tool_has_is_not_read() {
+    let v = json!({
+        "model": "m",
+        "input": "hi",
+        "tools": [
+            { "type": "function", "name": "mcp__railway__deploy", "parameters": { "type": "object" } },
+            { "type": "namespace", "name": "mcp__railway", "tools": [
+                { "type": "function", "name": "deploy", "parameters": { "type": "object" } },
+                { "type": "function", "name": "status", "parameters": { "type": "object" } },
+            ] },
+        ],
+    });
+    let chat = decode_request(&v);
+    let names: Vec<&str> = chat.tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["mcp__railway__deploy", "mcp__railway__status"]);
+    assert_eq!(chat.tools[0].parameters, json!({ "type": "object" }));
+    let replies = chat_calls(&["mcp__railway__deploy", "mcp__railway__status"]);
+    let body: Value = serde_json::from_slice(&answer(&v, &replies)).expect("a body");
+    let output = body["output"].as_array().expect("output");
+    let names: Vec<_> = output.iter().map(named).collect();
+    assert_eq!(
+        names,
+        [
+            (&json!("mcp__railway__deploy"), &Value::Null),
+            (&json!("status"), &json!("mcp__railway")),
+        ]
+    );
+}
+
+#[test]
+fn of_two_namespaces_whose_names_join_alike_the_longer_ones_is_read() {
+    let tool = |name: &str| json!({ "type": "function", "name": name, "parameters": {} });
+    let v = json!({
+        "model": "m",
+        "input": "hi",
+        "tools": [
+            { "type": "namespace", "name": "mcp", "tools": [tool("railway__deploy")] },
+            { "type": "namespace", "name": "mcp__railway", "tools": [tool("deploy")] },
+        ],
+    });
+    let chat = decode_request(&v);
+    let names: Vec<&str> = chat.tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["mcp__railway__deploy"]);
+    let body = answer(&v, &chat_calls(&["mcp__railway__deploy"]));
+    let body: Value = serde_json::from_slice(&body).expect("a body");
+    assert_eq!(
+        named(&body["output"][0]),
+        (&json!("deploy"), &json!("mcp__railway"))
+    );
+}

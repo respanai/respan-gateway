@@ -105,7 +105,11 @@ them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 code interpreter, MCP) and the items they make, refusals, and annotations. A
 relay in this format sends them back. A function tool's `strict` is the kind's:
 a tool that does not say it keeps the Responses default, and a tool another
-format sent is written with `strict: false`. Stop sequences and a failed tool result have no form in a
+format sent is written with `strict: false`. A function tool of a `namespace`,
+as Codex groups an MCP server's, is the kind's named `{namespace}__{name}`
+unless another tool has that name, and so is a call of it; a call of that name
+goes back to a Responses client by its `name` and `namespace` again, whoever
+answered. Stop sequences and a failed tool result have no form in a
 request, and log probabilities are not carried. The module docs say it all.
 
 ## Google Gemini

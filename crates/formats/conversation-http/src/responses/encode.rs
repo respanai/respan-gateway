@@ -1,5 +1,6 @@
 //! Events as Responses, whole or streamed: the encoders.
 
+use super::request::split;
 use super::{
     ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
 };
@@ -87,6 +88,66 @@ fn item_of(
 fn fields_only<'a>(raw: &'a Value, kind: &str) -> Option<&'a Map<String, Value>> {
     (raw["type"] == kind).then_some(())?;
     raw["fields"].as_object()
+}
+
+// --------------------------------------------------------------- namespaces
+
+/// Writes the events as `inner` does, but a call of a function tool of a
+/// namespace in the client's `tools`, which the kind names by the two
+/// joined, by its own name and with its namespace.
+pub(super) struct Namespaced {
+    inner: Box<dyn Encoder<Output>>,
+    tools: Value,
+}
+
+impl Namespaced {
+    /// `inner`, as one of these if the client's request `body` has a
+    /// namespace among its tools.
+    pub(super) fn wrap(inner: Box<dyn Encoder<Output>>, body: &[u8]) -> Box<dyn Encoder<Output>> {
+        #[derive(serde::Deserialize)]
+        struct Tools {
+            #[serde(default)]
+            tools: Value,
+        }
+        let tools = serde_json::from_slice::<Tools>(body).map_or(Value::Null, |b| b.tools);
+        let namespace = |t: &Value| t["type"] == "namespace";
+        match tools.as_array().is_some_and(|t| t.iter().any(namespace)) {
+            true => Box::new(Self { inner, tools }),
+            false => inner,
+        }
+    }
+}
+
+impl Encoder<Output> for Namespaced {
+    fn start(&mut self, frames: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.inner.start(frames)
+    }
+
+    fn encode(&mut self, reply: &Output, frames: &mut Vec<Bytes>) -> Result<(), Fault> {
+        let Output::BlockStart {
+            block,
+            kind: Block::ToolCall { id, name },
+        } = reply
+        else {
+            return self.inner.encode(reply, frames);
+        };
+        let Some((namespace, own)) = split(&self.tools, name) else {
+            return self.inner.encode(reply, frames);
+        };
+        let fields = Map::from_iter([("namespace".into(), namespace.into())]);
+        let kind = Block::ToolCall {
+            id: id.clone(),
+            name: own.into(),
+        };
+        self.inner
+            .encode(&Output::block_fields(RESPONSES, *block, fields), frames)?;
+        self.inner
+            .encode(&Output::block_start(*block, kind), frames)
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, frames: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.inner.end(end, frames)
+    }
 }
 
 // ------------------------------------------------------------------- whole
