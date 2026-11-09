@@ -92,11 +92,7 @@ impl ClientKeys {
         let valid = |key: &str| self.is_key(key);
         let value = |name: &HeaderName| headers.get(name).and_then(|v| v.to_str().ok());
         let holds_key = |name: &HeaderName| match *name == AUTHORIZATION {
-            true => value(name)
-                .and_then(|v| v.split_once(' '))
-                .is_some_and(|(scheme, token)| {
-                    scheme.eq_ignore_ascii_case("bearer") && valid(token)
-                }),
+            true => bearer(headers).is_some_and(valid),
             false => value(name).is_some_and(valid),
         };
         let holders: Vec<HeaderName> = [AUTHORIZATION, X_API_KEY, X_GOOG_API_KEY]
@@ -109,16 +105,14 @@ impl ClientKeys {
         }
     }
 
-    /// The client whose key `headers` present, if any.
+    /// The client whose key `headers` present, if any. A key counts where
+    /// [`ClientKeys::presented`] would take it: under `Authorization` only
+    /// with the `Bearer` scheme.
     fn identify(&self, headers: &HeaderMap) -> Option<&Client> {
-        let bearer = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok());
-        let bearer = bearer
-            .and_then(|v| v.split_once(' '))
-            .map(|(_, token)| token);
         let others = [X_API_KEY, X_GOOG_API_KEY]
             .into_iter()
             .filter_map(|name| headers.get(name)?.to_str().ok());
-        let mut presented = bearer.into_iter().chain(others);
+        let mut presented = bearer(headers).into_iter().chain(others);
         presented.find_map(|key| self.client(key))
     }
 
@@ -147,6 +141,14 @@ fn attribute(req: &mut Request, client: &Client) {
     }
     let calls = std::mem::take(calls);
     req.extensions_mut().insert(calls);
+}
+
+/// The token of an `Authorization: Bearer <token>` header, if `headers` have
+/// one. Another scheme, or none, holds no gateway key.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("bearer").then_some(token)
 }
 
 /// Whether `a` and `b` are equal, in time that depends on their lengths alone.
@@ -566,6 +568,35 @@ mod tests {
         assert!(!admin(&[("x-api-key", "k1")]));
         assert!(!admin(&[]));
         assert!(ClientKeys(Vec::new()).admin_allows(&headers(&[])));
+    }
+
+    #[test]
+    fn an_admin_key_under_another_scheme_does_not_reach_the_admin_api() {
+        let keys = ClientKeys(vec![client("ops", "k2")]);
+        let admin = |value: &str| keys.admin_allows(&headers(&[("authorization", value)]));
+        assert!(admin("Bearer k2"));
+        assert!(admin("bearer k2"));
+        // The rest of the API refuses these, so the admin API does too.
+        for value in ["Basic k2", "Token k2", "Digest k2"] {
+            assert!(
+                !keys.allows(&headers(&[("authorization", value)])),
+                "{value}"
+            );
+            assert!(!admin(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_request_is_named_for_the_key_that_let_it_in() {
+        let keys = ClientKeys(vec![client("a", "k1"), client("b", "k2")]);
+        // `b`'s key lets the request in; `a`'s under another scheme does not.
+        let pairs = [("authorization", "Basic k1"), ("x-api-key", "k2")];
+        assert_eq!(
+            keys.presented(&headers(&pairs)),
+            Presented::Valid(vec![X_API_KEY])
+        );
+        let named = keys.identify(&headers(&pairs)).map(|c| c.name.as_str());
+        assert_eq!(named, Some("b"));
     }
 
     #[test]
