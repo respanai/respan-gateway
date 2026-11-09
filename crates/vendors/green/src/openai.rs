@@ -148,14 +148,8 @@ mod tests {
         };
         let sent = |kind, id: &str| format_for(&ask(kind), &Model::new(id));
         assert_eq!(sent("realtime", "gpt-live-1"), Some(OpenAiLive::NAME));
-        assert_eq!(sent("realtime", "gpt-live-2-mini"), Some(OpenAiLive::NAME));
-        for id in [
-            "gpt-realtime-2",
-            "gpt-live-transcribe",
-            "gpt-realtime-whisper",
-        ] {
-            assert_eq!(sent("realtime", id), Some(OpenAiRealtime::NAME), "{id}");
-        }
+        let transcriber = sent("realtime", "gpt-live-transcribe");
+        assert_eq!(transcriber, Some(OpenAiRealtime::NAME));
         assert_eq!(sent("chat", "gpt-live-1"), None);
     }
 

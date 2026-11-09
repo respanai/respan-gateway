@@ -14,7 +14,7 @@ use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::session::{self as spec, Spec, model_at};
+use crate::session::{self as spec, Spec};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
@@ -27,30 +27,15 @@ pub(crate) const SPEC: Spec = Spec {
     transcribes: false,
 };
 
-/// OpenAI's Live API, which its full-duplex voice models (`gpt-live-1`)
+/// OpenAI's Live API, which its full-duplex Live models (`gpt-live-1`)
 /// speak: a `GET` upgrade to a path ending in `/live/sessions`, and a call
-/// to it after the base URL its SDKs take (`wss://api.openai.com/v1`), with
-/// no query.
+/// to it after `wss://api.openai.com/v1`, with no query.
 ///
-/// Its events are the kind's where the kind has a form for them: the
-/// session's start and updates (`session.start`, `session.update`,
-/// answered by `session.started` and `session.updated`: its model,
-/// instructions, voice and one audio format both ways), the user's audio,
-/// the model's audio, and the transcripts of both, and errors. Its usage,
-/// the seconds of the session billed so far, is told as
-/// [`Output::Seconds`], each the seconds beyond the last; the event stays
-/// native, as do the rest, such as delegation, so a relay to OpenAI keeps
-/// every event.
-///
-/// It names its model in its start, so a session's first event is its
-/// start, naming the model at `?model=` if it names none: its client routes
-/// by `?model=`, as a Gemini Live client does. A call names the model
-/// routing chose ([`SessionModel`](crate::SessionModel)), else the one at
-/// the client's `?model=`, which routing judged, else the one its start
-/// names; with none it is refused, `bad_request`.
-///
-/// It is full duplex: it has no turns or responses. What only another
-/// format says is dropped, emulated or refused, as its README says.
+/// Its session's start and updates, audio, transcripts and errors are the
+/// kind's; its usage, the session's seconds so far, is [`Output::Seconds`]
+/// beyond the last, beside the event; the rest stays native. Its client
+/// routes by `?model=`, as a Gemini Live client does; a call names the
+/// model routing chose, else that one, else the one its start names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiLive;
 
@@ -76,9 +61,9 @@ impl Format<ClientIo, Input, Output> for OpenAiLive {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        let mut client = input::Client::new(model_at(io.request().uri()));
+        let mut client = input::Client::new();
         let read = move |raw: Bytes, out: &mut Vec<Input>| client.read(raw, out);
-        let mut client = output::Client::default();
+        let mut client = output::Client::new();
         let write = Box::new(move |event: &Output, out: &mut Vec<Bytes>| client.write(event, out));
         Ok(SPEC.client(io, Box::new(read), write))
     }
@@ -107,13 +92,13 @@ impl Format<ProviderIo, Output, Input> for OpenAiLive {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let wire = io.extensions().get::<Original>();
         let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let asked = wire.and_then(requested_model);
+        let wire = io.extensions().get::<Original>();
+        let model = chosen.or_else(|| requested_model(wire?));
         let (say, said) = spec::say();
-        let mut provider = input::Provider::new(chosen, asked, say);
+        let mut provider = input::Provider::new(model, say);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
-        let mut provider = output::Provider::default();
+        let mut provider = output::Provider::new();
         let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
         Ok(SPEC.provider(io, None, write, Box::new(read), Some(said)))
     }

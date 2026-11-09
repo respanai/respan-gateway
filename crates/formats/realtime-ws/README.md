@@ -56,18 +56,11 @@ them, so `clientContent` and `toolResponse` are written whole.
 `activityStart`, `audioStreamEnd`, `goAway`, `toolCallCancellation` and
 `sessionResumptionUpdate` stay native.
 
-`OpenAiLive` does the same for OpenAI's Live API: a client's
-`session.start` and `session.update` (its model, instructions, voice, and
-one audio format both ways: PCM at 16 or 24 kHz, or G.711) and
-`session.input_audio.append`; the server's `session.started` and
-`session.updated` (both `Updated`: its start answers the client's),
-`session.output_audio.delta`, `session.input_transcript.delta` and
-`session.output_transcript.delta`, and `error`. Its usage
-(`session.usage.updated`, `session.closed`) is the session's seconds so far:
-each is `Seconds`, the seconds beyond the last, beside the event, which
-stays native. Delegation, decisions, appended instructions, thinking and
-commentary, muting, `session.close` and the rest stay native. It is full
-duplex: it has no turns or responses.
+`OpenAiLive` does the same for OpenAI's Live API: the session's start and
+updates (its model, instructions, voice and one audio format), audio both
+ways, both transcripts and errors. Its usage, the session's seconds so far,
+is `Seconds` beyond the last, beside the event, which stays native, as
+delegation and the rest do. It is full duplex: no turns or responses.
 
 `OpenAiRealtime`, `GeminiLive` and `OpenAiLive` write each other's events
 too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
@@ -120,25 +113,15 @@ What one spec has and the other has not is emulated, dropped or refused:
   Gemini client, which knows a refusal only as a close: 1007 if its cause
   is `Invalid`, and none if `NothingToCancel`.
 
-- To OpenAI Live: its session is fixed at its start, which names its model
-  and takes the client's audio format if it can, else its own (24 kHz PCM),
-  to which the client's audio is converted. A later session that changes
-  nothing is acknowledged, one that changes anything closes the session
-  1008. The provider's voice detection and transcription, which it always
-  does, are dropped; a transcription, text output, turns the client ends,
-  tools, a limit on output tokens, a commit, a message, a tool's answer,
-  and a response to make or cancel are refused. Its client hears the
-  model's audio and transcripts with no response around them, and no
-  usage in tokens; its seconds are no other spec's.
-- From OpenAI Live: its client routes by `?model=`, as a Gemini client
-  does. The first session another format tells of is its
-  `session.started`, with an id made up for it, and the rest
-  `session.updated`; a whole transcript of the user's is written only if
-  none of it was heard; a response's start and end, voice activity and
-  usage in tokens are not written; text and tools' calls, which it has no
-  place for, are refused. OpenAI sends a session to its Live API only
-  with a Live model (`gpt-live-` and a version), and to Realtime with any
-  other.
+- To OpenAI Live: the session is fixed at its start, in the client's
+  audio format if it takes it, else 24 kHz PCM; a later session that
+  changes anything closes it 1008. Voice detection and transcription
+  settings are dropped; anything else it has none of, such as tools, text
+  output, commits, messages and responses, is refused.
+- From OpenAI Live: the first session told of is its `session.started`;
+  turns, responses, token usage and whole transcripts are not written;
+  text and tools' calls are refused. OpenAI sends a session with a Live
+  model (`gpt-live-` and a version) to its Live API, any other to Realtime.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a

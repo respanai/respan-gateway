@@ -21,40 +21,39 @@ pub(super) struct Provider {
     billed: f64,
 }
 
-impl Default for Provider {
-    fn default() -> Self {
+impl Provider {
+    pub(super) fn new() -> Self {
         Self {
             output: DEFAULT_FORMAT,
             billed: 0.0,
         }
     }
-}
 
-impl Provider {
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         let v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
         let mut rest = v.clone();
-        match take(&mut rest, &["type"], string, text) {
-            Some(kind) if self.decode(&kind, rest, out).is_some() => {}
-            Some(kind) => {
-                if let "session.usage.updated" | "session.closed" = kind.as_str() {
-                    self.bill(&v, out);
-                }
-                out.push(Output::native(NAME, v));
-            }
-            None => out.push(Output::native(NAME, v)),
+        let kind = take(&mut rest, &["type"], string, text).unwrap_or_default();
+        if let Some(event) = self.decode(&kind, rest) {
+            out.push(event);
+            return Ok(());
         }
+        // Its usage is the session's seconds so far: billed beyond the last.
+        let seconds = at(&v, &["usage", "seconds"]).and_then(Value::as_f64);
+        if let Some(seconds) = seconds.filter(|s| *s > self.billed) {
+            out.push(Output::Seconds(seconds - self.billed));
+            self.billed = seconds;
+        }
+        out.push(Output::native(NAME, v));
         Ok(())
     }
 
-    /// The events of a server event of type `kind`, whose other fields are
-    /// `rest`; `None`, writing none, for one the kind has no form for or
-    /// one it could not write back as it came.
-    fn decode(&mut self, kind: &str, mut rest: Value, out: &mut Vec<Output>) -> Option<()> {
+    /// A server event of type `kind`, whose other fields are `rest`; `None`
+    /// for one the kind has no form for, or could not write back as it came.
+    fn decode(&mut self, kind: &str, mut rest: Value) -> Option<Output> {
         let v = &mut rest;
         let delta = |v: &mut Value| take(v, &["delta"], string, text);
-        let event = match kind {
+        Some(match kind {
             // Its start answers the client's, as an update does.
             "session.started" | "session.updated" => {
                 let session = session::decode(rest);
@@ -87,73 +86,44 @@ impl Provider {
                 native: json::native(NAME, rest),
             },
             _ => return None,
-        };
-        out.push(event);
-        Some(())
-    }
-
-    /// The seconds `v` bills beyond those billed so far: its usage is the
-    /// session's whole.
-    fn bill(&mut self, v: &Value, out: &mut Vec<Output>) {
-        let Some(seconds) = at(v, &["usage", "seconds"]).and_then(Value::as_f64) else {
-            return;
-        };
-        let more = seconds - self.billed;
-        if more > 0.0 {
-            self.billed = seconds;
-            out.push(Output::Seconds(more));
-        }
+        })
     }
 }
 
-/// The events written to the client. The Live API has no responses or
-/// turns: what tells of them is not written, nor are tokens used. Its
-/// session's start answers the client's, so the first session another
-/// format tells of is its start, with an id made up for it.
+/// The events written to the client. Its session's start answers the
+/// client's, so the first session another format tells of is its start.
+/// It has no turns, responses or token usage, nor a whole transcript of the
+/// user's, whose deltas were written: what tells of them is not written.
 #[derive(Debug)]
 pub(super) struct Client {
     /// The format of the audio it takes, as its session says.
     output: AudioFormat,
-    /// The model's audio in that format.
     convert: Convert,
     /// Whether the session's start was written.
     started: bool,
-    /// Whether part of the user's transcript was written since its last
-    /// whole, which is then not written again.
-    heard: bool,
-    ids: u64,
 }
 
-impl Default for Client {
-    fn default() -> Self {
+impl Client {
+    pub(super) fn new() -> Self {
         Self {
             output: DEFAULT_FORMAT,
             convert: Convert::default(),
             started: false,
-            heard: false,
-            ids: 0,
         }
     }
-}
 
-impl Client {
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
         let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
-        if let Some(mut v) = self.encode(&event)? {
-            // Its audio has no id, as it is many a second.
-            let unnamed = matches!(event, Output::Audio { .. });
-            if !owned(&event) && !unnamed && v.get("event_id").is_none() {
-                v["event_id"] = self.id("event").into();
-            }
+        if let Some(v) = self.encode(&event)? {
             out.push(json::frame(&v)?);
         }
         Ok(())
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_output(NAME, what);
+        let refuse = |what: &str| Err(untranslatable_output(NAME, what));
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
                 let format = s.output_audio.or(s.input_audio);
@@ -162,38 +132,33 @@ impl Client {
                     false => "session.started",
                     true => "session.updated",
                 };
-                let mut v = json!({"type": kind, "session": session::encode(s, format)});
-                if s.native.is_none() {
-                    v["session"]["id"] = self.id("live").into();
-                    v["session"]["status"] = "active".into();
-                }
-                (v, &s.native)
+                (
+                    json!({"type": kind, "session": session::encode(s, format)}),
+                    &s.native,
+                )
             }
             Output::Audio { audio, native } => {
-                let data = self.convert.to(audio, self.output);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
-                let v = json!({"type": "session.output_audio.delta", "delta": json::base64(&data)});
-                (v, native)
+                let Some(data) = self.convert.to(audio, self.output) else {
+                    return refuse("audio of this format");
+                };
+                let delta = json::base64(&data);
+                (
+                    json!({"type": "session.output_audio.delta", "delta": delta}),
+                    native,
+                )
             }
             Output::Transcript { text, native } => (
                 json!({"type": "session.output_transcript.delta", "delta": text}),
                 native,
             ),
-            // It has no whole transcript: what was heard of it was written.
-            Output::InputTranscript { complete: true, .. } if std::mem::take(&mut self.heard) => {
-                return Ok(None);
-            }
             Output::InputTranscript {
                 text,
-                complete,
+                complete: false,
                 native,
-            } => {
-                self.heard = !complete;
-                (
-                    json!({"type": "session.input_transcript.delta", "delta": text}),
-                    native,
-                )
-            }
+            } => (
+                json!({"type": "session.input_transcript.delta", "delta": text}),
+                native,
+            ),
             Output::Error {
                 cause,
                 code,
@@ -201,54 +166,30 @@ impl Client {
                 native,
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
-                // Another format's code is its own: the Live API's type says
-                // the cause.
+                // Its own code it wrote; another's cause is its type.
                 match (native, code) {
                     (Some(_), Some(code)) => v["error"]["code"] = code.as_str().into(),
                     (Some(_), None) => {}
                     (None, _) => {
-                        v["error"]["type"] = match cause {
-                            Cause::Invalid | Cause::NothingToCancel => "invalid_request_error",
-                            _ => "server_error",
+                        let invalid = matches!(cause, Cause::Invalid | Cause::NothingToCancel);
+                        v["error"]["type"] = if invalid {
+                            "invalid_request_error"
+                        } else {
+                            "server_error"
                         }
                         .into();
                     }
                 }
                 (v, native)
             }
-            Output::SpeechStarted { .. }
-            | Output::SpeechStopped { .. }
-            | Output::ResponseStart { .. }
-            | Output::ResponseDone { .. }
-            | Output::Usage(_)
-            | Output::Seconds(_) => return Ok(None),
-            Output::Text { .. } => return Err(refuse("text")),
-            Output::ToolCall { .. } => return Err(refuse("a tool's call")),
+            Output::Text { .. } => return refuse("text"),
+            Output::ToolCall { .. } => return refuse("a tool's call"),
             Output::Native(NativeValue { format, value }) if **format == *NAME => {
                 return Ok(Some(Value::clone(value)));
             }
-            _ => return Err(refuse("another format's event")),
+            _ => return Ok(None),
         };
         merge(&mut v, own(native));
         Ok(Some(v))
-    }
-
-    /// An id made up for what another format has none for: a prefix and a
-    /// number, unique in its session.
-    fn id(&mut self, prefix: &str) -> String {
-        self.ids += 1;
-        format!("{prefix}_gw{}", self.ids)
-    }
-}
-
-/// Whether `event` is the Live API's, saying as it came what it says
-/// beyond the kind's fields.
-fn owned(event: &Output) -> bool {
-    match event {
-        Output::Opened(s) | Output::Updated(s) => s.native.is_some(),
-        Output::Transcript { native, .. }
-        | Output::InputTranscript { native, .. }
-        | Output::Error { native, .. } => native.is_some(),
-        _ => true,
     }
 }

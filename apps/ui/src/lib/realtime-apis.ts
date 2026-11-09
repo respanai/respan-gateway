@@ -105,17 +105,13 @@ export const openaiRealtime: RealtimeApi = {
 
 const LIVE_PATH = "/v1/live/sessions";
 
-/** Whether base64 `audio` is digital silence: its bytes all zero, which encode as `A`s. */
-const silent = (audio: string) => /^A*=*$/.test(audio);
-
 /**
- * OpenAI's Live API, at its own path, its model on `?model=`, which routes
- * it, and the gateway key on `?key=`. It is full duplex: it streams audio
- * all the time, silence included, and has no turns, responses or ids. So
- * the reader drops the silence, and numbers the lines by who speaks: the
- * user's of turn `n` is `user-n`, from its transcript, and the model's
- * `model-n`, from its voice or transcript; the user speaking again ends the
- * model's. Its model stops itself when spoken over: a client cannot cancel.
+ * OpenAI's Live API, its model on `?model=`, which routes it, and the key on
+ * `?key=`. It is full duplex: it streams audio all the time, silence (zero
+ * bytes, all `A`s in base64) included, and has no turns or ids. So the
+ * reader drops the silence and numbers the lines by who speaks: the user's
+ * transcript is `user-n`, the model's voice or transcript `model-n`, and
+ * the user speaking again ends the model's. A client cannot cancel it.
  */
 export const openaiLive: RealtimeApi = {
   id: "openai-live",
@@ -130,68 +126,44 @@ export const openaiLive: RealtimeApi = {
   protocols: () => [],
   modes: ["conversation"],
   opening: (model) => [
-    {
-      type: "session.start",
-      session: { model, audio: { format: { type: "audio/pcm", rate: REALTIME_RATE } } },
-    },
+    { type: "session.start", session: { model, audio: { format: { type: "audio/pcm", rate: REALTIME_RATE } } } },
   ],
   audio: (audio) => ({ type: "session.input_audio.append", audio }),
   reader: () => {
     let turn = 0;
     let speaking: "user" | "model" | null = null;
-    let heard = "";
-    let sounding = false;
     return (message) => {
       const m = message as Json;
+      const delta = String(m.delta ?? "");
       const out: ServerEvent[] = [];
-      const user = `user-${turn}`;
-      const model = `model-${turn}`;
-      const modelSpeaks = () => {
-        if (speaking === "model") return;
-        if (speaking === "user") {
-          out.push({ type: "conversation.item.input_audio_transcription.completed", item_id: user, transcript: heard });
-          out.push({ type: "input_audio_buffer.speech_stopped" });
+      const speaks = (who: "user" | "model") => {
+        if (speaking === who) return;
+        if (who === "user" && speaking === "model") {
+          out.push({ type: "response.done", response: { status: "completed" } });
+          turn += 1;
         }
-        out.push({ type: "conversation.item.created", item: { id: model, role: "assistant" } });
-        speaking = "model";
+        if (who === "model") out.push({ type: "input_audio_buffer.speech_stopped" });
+        out.push({ type: "conversation.item.created", item: { id: `${who}-${turn}`, role: who === "user" ? "user" : "assistant" } });
+        speaking = who;
       };
       switch (m.type) {
-        case "session.input_transcript.delta": {
-          if (speaking !== "user") {
-            if (speaking === "model") {
-              out.push({ type: "response.done", response: { status: "completed" } });
-              turn += 1;
-            }
-            out.push({ type: "conversation.item.created", item: { id: `user-${turn}`, role: "user" } });
-            speaking = "user";
-            heard = "";
-            sounding = false;
-          }
-          heard += String(m.delta ?? "");
-          out.push({ type: "conversation.item.input_audio_transcription.delta", item_id: `user-${turn}`, delta: m.delta });
-          return out;
-        }
-        case "session.output_audio.delta": {
-          const audio = String(m.delta ?? "");
-          if (silent(audio)) {
-            if (sounding) out.push({ type: "response.output_audio.done", item_id: model });
-            sounding = false;
-            return out;
-          }
-          modelSpeaks();
-          sounding = true;
-          out.push({ type: "response.output_audio.delta", item_id: model, content_index: 0, delta: audio });
-          return out;
-        }
+        case "session.input_transcript.delta":
+          speaks("user");
+          out.push({ type: "conversation.item.input_audio_transcription.delta", item_id: `user-${turn}`, delta });
+          break;
+        case "session.output_audio.delta":
+          if (/^A*=*$/.test(delta)) break;
+          speaks("model");
+          out.push({ type: "response.output_audio.delta", item_id: `model-${turn}`, content_index: 0, delta });
+          break;
         case "session.output_transcript.delta":
-          modelSpeaks();
-          out.push({ type: "response.output_audio_transcript.delta", item_id: model, delta: m.delta });
-          return out;
+          speaks("model");
+          out.push({ type: "response.output_audio_transcript.delta", item_id: `model-${turn}`, delta });
+          break;
         case "error":
-          return [{ type: "error", error: { message: String(m.error?.message ?? "") } }];
-        default:
-          return out;
+          out.push({ type: "error", error: { message: String(m.error?.message ?? "") } });
       }
+      return out;
     };
   },
 };
