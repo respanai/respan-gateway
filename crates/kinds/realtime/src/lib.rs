@@ -209,11 +209,7 @@ pub struct Audio {
 impl Audio {
     /// How long it plays, from its length and format.
     pub fn duration(&self) -> Duration {
-        let bytes_per_sample = match self.format.encoding {
-            Encoding::Pcm16 => 2,
-            Encoding::Mulaw | Encoding::Alaw => 1,
-        };
-        let samples = (self.data.len() / bytes_per_sample) as u64;
+        let samples = (self.data.len() / self.format.sample_bytes()) as u64;
         match self.format.rate {
             0 => Duration::ZERO,
             rate => Duration::from_nanos(samples * 1_000_000_000 / u64::from(rate)),
@@ -231,6 +227,14 @@ pub struct AudioFormat {
 }
 
 impl AudioFormat {
+    /// The bytes of one sample.
+    pub const fn sample_bytes(self) -> usize {
+        match self.encoding {
+            Encoding::Pcm16 => 2,
+            Encoding::Mulaw | Encoding::Alaw => 1,
+        }
+    }
+
     /// 16-bit little-endian PCM at `rate`.
     pub const fn pcm16(rate: u32) -> Self {
         Self {
