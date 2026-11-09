@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, Cause, Output, Status};
@@ -165,8 +165,8 @@ impl Decoder<Output> for Provider {
 /// The events written to the client. Its readiness answers its `config`, so
 /// the first session another format tells of is it, and the rest are not
 /// written. The model's transcript goes with its next audio, and the user's
-/// a part at a time, as its words are, not whole; what Phonic has no message
-/// for, such as usage, is not written.
+/// a word at a time, as Phonic tells it, not whole; what Phonic has no
+/// message for, such as usage, is not written.
 #[derive(Debug)]
 pub(super) struct Client {
     /// The format of the audio it takes, as its `config` says.
@@ -176,6 +176,9 @@ pub(super) struct Client {
     ready: bool,
     /// The model's transcript not yet written with its audio.
     said: String,
+    /// The user's word heard so far, and its part's native, written once
+    /// the next word or another event begins.
+    word: Option<(String, Option<NativeFields>)>,
 }
 
 impl Client {
@@ -185,6 +188,7 @@ impl Client {
             convert: Convert::default(),
             ready: false,
             said: String::new(),
+            word: None,
         }
     }
 
@@ -192,9 +196,47 @@ impl Client {
         let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
+        if let Output::InputTranscript {
+            text,
+            complete: false,
+            native,
+        } = &event
+        {
+            return self.hear(text, native, out);
+        }
+        self.spoken(out)?;
         if let Some(v) = self.encode(&event)? {
             out.push(json::frame(&v)?);
         }
+        Ok(())
+    }
+
+    /// A part of the user's transcript: another format's may be a part of
+    /// a word, which a space begins.
+    fn hear(
+        &mut self,
+        text: &str,
+        native: &Option<NativeFields>,
+        out: &mut Vec<Bytes>,
+    ) -> Result<(), Fault> {
+        if text.starts_with(char::is_whitespace) {
+            self.spoken(out)?;
+        }
+        match &mut self.word {
+            Some((word, _)) => word.push_str(text),
+            None => self.word = Some((text.trim_start().to_owned(), native.clone())),
+        }
+        Ok(())
+    }
+
+    /// The user's word heard so far, as its `input_text`.
+    fn spoken(&mut self, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        let Some((word, native)) = self.word.take().filter(|(w, _)| !w.is_empty()) else {
+            return Ok(());
+        };
+        let mut v = json!({"type": "input_text", "text": word});
+        merge(&mut v, own(&native));
+        out.push(json::frame(&v)?);
         Ok(())
     }
 
@@ -221,14 +263,6 @@ impl Client {
                 self.said.push_str(text);
                 return Ok(None);
             }
-            Output::InputTranscript {
-                text,
-                complete: false,
-                native,
-            } => (
-                json!({"type": "input_text", "text": text.trim_start()}),
-                native,
-            ),
             Output::SpeechStarted { native, .. } => (typed("user_started_speaking"), native),
             Output::SpeechStopped { native, .. } => (typed("user_finished_speaking"), native),
             Output::ResponseStart { native, .. } => (typed("assistant_started_speaking"), native),

@@ -239,8 +239,14 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
     let events = [
         Output::Opened(Session::default()),
         Output::Updated(Session::default()),
+        // Another format's parts of a word are one word.
         Output::InputTranscript {
-            text: "Hi".into(),
+            text: "H".into(),
+            complete: false,
+            native: None,
+        },
+        Output::InputTranscript {
+            text: "i".into(),
             complete: false,
             native: None,
         },
@@ -275,6 +281,7 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
             "assistant_finished_speaking"
         ]
     );
+    assert_eq!(written[1]["text"], "Hi");
     assert_eq!(written[2]["text"], "Hello");
     let text = Output::Text {
         text: "x".into(),

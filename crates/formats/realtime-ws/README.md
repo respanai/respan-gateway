@@ -144,7 +144,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   commits, messages and responses, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
-  audio chunk, the user's in parts, not whole, and usage is not written;
+  audio chunk, the user's a word at a time, another format's parts of a
+  word joined, not whole, and usage is not written;
   text and tools' calls are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
