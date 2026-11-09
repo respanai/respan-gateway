@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
-    merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    NativeFieldsExt, Refusal, arguments_object, decode_content, decode_tools, each_tool,
+    encode_content, merge_missing, native_fields, only, own_native, read_search, remainder,
+    rest_of, set, take_native, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -143,8 +143,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             Ok(v)
         }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
-        Content::Audio(_) => Err(untranslatable("this media kind")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Refusal::Audio.by(ANTHROPIC)),
+        part => Err(Refusal::Part(part).by(ANTHROPIC)),
     }
 }
 
@@ -192,7 +192,7 @@ fn read_media(v: &Value) -> Option<Content> {
 /// An image or document block of `media`, refusing what Anthropic cannot say.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
+        return Err(Refusal::FileName("image").by(ANTHROPIC));
     }
     let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
@@ -291,7 +291,7 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             }
             Ok(block)
         }
-        _ => Err(untranslatable("an unsupported kind of part")),
+        part => Err(Refusal::Part(part).by(ANTHROPIC)),
     }
 }
 
@@ -389,7 +389,7 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
+            return Err(Fault::bad_request("`output_config` must be a JSON object"));
         }
         config["effort"] = effort.into();
     }
@@ -403,7 +403,7 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(schema) = schema {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
+            return Err(Fault::bad_request("`output_config` must be a JSON object"));
         }
         config["format"] = json!({"type":"json_schema","schema":schema});
     }
@@ -559,7 +559,9 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own());
     };
     if r.summary == Some(false) {
-        return Err(untranslatable("withholding the thinking in Anthropic"));
+        return Err(untranslatable(
+            "leaving the thinking out of Anthropic's answer (its `display: \"omitted\"`)",
+        ));
     }
     Ok(match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
@@ -575,15 +577,20 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
 /// 1024, a temperature but 1, `top_k`.
 fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
     if budget < 1024 {
-        return Err(untranslatable("a thinking budget under 1024 in Anthropic"));
+        return Err(Fault::bad_request(format!(
+            "Anthropic takes a thinking budget of at least 1024 tokens, not {budget}"
+        )));
     }
-    if input.options.temperature.is_some_and(|t| t != 1.0) {
-        return Err(untranslatable(
-            "a temperature other than 1 beside thinking in Anthropic",
-        ));
+    if let Some(t) = input.options.temperature.filter(|t| *t != 1.0) {
+        return Err(Fault::bad_request(format!(
+            "Anthropic does not take a temperature of {t} while thinking; \
+             leave the temperature unset or turn thinking off"
+        )));
     }
     if input.options.top_k.is_some() {
-        return Err(untranslatable("top_k beside thinking in Anthropic"));
+        return Err(Fault::bad_request(
+            "Anthropic does not take top_k while thinking; leave top_k unset or turn thinking off",
+        ));
     }
     Ok(())
 }

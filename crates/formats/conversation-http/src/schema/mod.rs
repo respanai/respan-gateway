@@ -19,6 +19,7 @@
 
 mod errors;
 mod exchange;
+mod refusal;
 mod values;
 
 #[cfg(test)]
@@ -31,6 +32,7 @@ pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
+pub(crate) use refusal::{Refusal, part_name};
 pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{

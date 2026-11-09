@@ -36,9 +36,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
+    Asked, Names, NativeFieldsExt, Refusal, Schema, UsageFields, arguments_object, check_usage,
+    count, decode_content, decode_message, encode_content, encode_message, merge_details,
+    merge_fields, merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
     unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
@@ -168,9 +168,7 @@ fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
     if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Anthropic has no place for a system message after the conversation starts",
-        ));
+        return Err(Refusal::LateSystem.by(ANTHROPIC));
     }
     if !system.iter().all(unsaid) {
         return Err(Fault::bad_request(

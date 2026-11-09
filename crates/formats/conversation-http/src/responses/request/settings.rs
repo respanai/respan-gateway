@@ -4,8 +4,8 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, native_fields, only, own_native,
-    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
+    NativeFieldsExt, Refusal, decode_tools, each_tool, effort_name, native_fields, only,
+    own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
     write_search,
 };
 use respan_gateway_conversation::{
@@ -228,9 +228,11 @@ pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        Content::Reasoning { .. } => Err(untranslatable("reasoning outside an assistant")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Refusal::Audio.by(RESPONSES)),
+        Content::Reasoning { .. } => Err(Fault::bad_request(
+            "OpenAI Responses takes reasoning only in an assistant message",
+        )),
+        part => Err(Refusal::Part(part).by(RESPONSES)),
     }
 }
 
@@ -277,7 +279,7 @@ pub(in crate::responses) fn write_reasoning(
     let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
     if let Some(r) = reasoning_of(input)? {
         if r.budget_tokens.is_some() {
-            return Err(untranslatable("a reasoning token budget in Responses"));
+            return Err(Refusal::ReasoningBudget.by(RESPONSES));
         }
         if let Some(config) = config.as_object_mut() {
             if let Some(effort) = r.effort {

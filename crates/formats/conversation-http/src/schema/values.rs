@@ -16,6 +16,7 @@ use std::borrow::Cow;
 
 use super::Schema;
 use super::errors::says;
+use super::refusal::Refusal;
 
 /// A tool call's `arguments`, JSON text, as the object they are, `{}` for
 /// none.
@@ -382,7 +383,7 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
         role => roles.name(role),
     };
     let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    role.ok_or_else(|| Refusal::Role(&m.role).by(format))
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is

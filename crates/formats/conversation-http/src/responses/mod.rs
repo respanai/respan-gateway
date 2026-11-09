@@ -76,8 +76,8 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Refusal, Schema, UsageFields, count, merge_details, merge_fields,
+    native_fields, parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -231,7 +231,9 @@ impl Schema for OpenAiResponses {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         if !chat.options.stop.is_empty() {
-            return Err(crate::schema::untranslatable("stop sequences in Responses"));
+            return Err(Fault::bad_request(
+                "OpenAI Responses does not take stop sequences; leave them unset",
+            ));
         }
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
@@ -256,7 +258,7 @@ impl Schema for OpenAiResponses {
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
-            return Err(crate::schema::untranslatable("top_k in Responses"));
+            return Err(Refusal::Setting("top_k").by(RESPONSES));
         }
         Ok(v)
     }
