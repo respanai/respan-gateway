@@ -16,6 +16,7 @@ pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
+pub mod runcrate;
 pub mod together;
 pub mod vllm;
 pub mod xai;
@@ -45,6 +46,7 @@ pub const ALL: &[&Vendor] = &[
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
+    &runcrate::VENDOR,
     &phonic::VENDOR,
 ];
 
