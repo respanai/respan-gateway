@@ -473,6 +473,11 @@ fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let file = file.ok_or_else(|| unreadable("holds no video"))?;
     let mut job = Job::new(GeminiVeo::job_id(&file), Status::InProgress);
     job.model = v["model"].as_str().map(str::to_owned);
+    let fields = ["id", "usage"]
+        .into_iter()
+        .filter_map(|key| v.get(key).cloned().map(|value| (key.to_owned(), value)))
+        .collect();
+    job.native = Some(NativeFields::new(NAME, fields));
     Ok(job)
 }
 
@@ -1005,7 +1010,7 @@ mod tests {
             })
         );
         assert!(matches!(asked, Call::Omni));
-        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "steps": [
+        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "usage": {"total_input_tokens": 12}, "steps": [
             {"type": "model_output", "content": [{"type": "video", "mime_type": "video/mp4",
               "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1x2:download?alt=media"}]},
         ]});
@@ -1013,6 +1018,10 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
+        assert_eq!(
+            job.native.as_ref().and_then(|n| n.fields.get("usage")),
+            Some(&json!({"total_input_tokens": 12}))
+        );
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;
