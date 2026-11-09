@@ -900,6 +900,40 @@ async fn a_hedged_route_takes_whichever_candidate_answers() {
 }
 
 #[test]
+fn duplicate_route_targets_are_refused_whatever_their_weights() {
+    for target in ["a", "a/model"] {
+        for pick in ["first", "weighted"] {
+            for (first, second) in [(1, 1), (1, 2), (2, 1), (2, 2), (2, 3)] {
+                let text = format!(
+                    "{TWO}[routes.smart]\npick = \"{pick}\"\nto = [{{ target = \"{target}\", weight = {first} }}, {{ target = \"{target}\", weight = {second} }}]\n"
+                );
+                assert_eq!(
+                    plan(&text).err(),
+                    Some(format!("routes: smart: to: '{target}' is listed twice")),
+                    "{text}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn distinct_route_targets_keep_their_weights() {
+    for (first, second) in [("a", "b"), ("a/one", "a/two"), ("a/one", "b/one")] {
+        let text = format!(
+            "{TWO}[routes.smart]\npick = \"weighted\"\nto = [{{ target = \"{first}\", weight = 2 }}, {{ target = \"{second}\", weight = 3 }}]\n"
+        );
+        let plan = plan(&text).unwrap_or_else(|e| panic!("{text}\n{e}"));
+        let targets: Vec<_> = plan.routes.rules()[0]
+            .to
+            .iter()
+            .map(|c| (c.to_string(), c.weight))
+            .collect();
+        assert_eq!(targets, [(first.to_owned(), 2), (second.to_owned(), 3)]);
+    }
+}
+
+#[test]
 fn bad_routes_and_retired_settings_are_errors() {
     let cases = [
         (
