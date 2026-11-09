@@ -621,6 +621,8 @@ impl Client {
                 *self.usage.get_or_insert_default() += used;
                 return Ok(Vec::new());
             }
+            // The Live API bills by token: a duration has no place in it.
+            Output::Seconds(_) => return Ok(Vec::new()),
             // The Live API ends a turn of calls, or one interrupted, with
             // its turn's end; a response of its own is followed by it.
             Output::ResponseDone { status, native } => {

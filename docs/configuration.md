@@ -88,8 +88,8 @@ A provider is a `vendor` with its key, or any compatible endpoint given
 `formats` and a `base_url`. The vendors are `openai`, `anthropic`, `gemini`,
 `respan`, `typesafe`, `groq`, `deepseek`, `openrouter`, `xai`, `mistral`,
 `together`, `fireworks`, `nace`, `ollama`, `azure`, `vllm`, `cloudflare`,
-`cerebras`, `perplexity`, `deepinfra` and `empiriolabs`. Each vendor's tier,
-key, formats and base URL are in [Vendors](vendors.md).
+`cerebras`, `perplexity`, `deepinfra`, `empiriolabs` and `phonic`. Each
+vendor's tier, key, formats and base URL are in [Vendors](vendors.md).
 
 ## Network
 

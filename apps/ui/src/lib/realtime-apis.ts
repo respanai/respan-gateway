@@ -8,7 +8,7 @@ import type { Json } from "@/lib/playground-apis";
 import type { ServerEvent } from "@/lib/realtime";
 import { REALTIME_RATE } from "@/lib/realtime-audio";
 
-export type RealtimeApiId = "openai-realtime" | "gemini-live" | "mistral-realtime";
+export type RealtimeApiId = "openai-realtime" | "openai-live" | "gemini-live" | "mistral-realtime" | "phonic-sts";
 
 /** A message a client sends, as the API has it. */
 export type ClientMessage = Record<string, unknown>;
@@ -101,6 +101,71 @@ export const openaiRealtime: RealtimeApi = {
   }),
   cancel: { type: "response.cancel" },
   reader: () => (message) => [message as ServerEvent],
+};
+
+const LIVE_PATH = "/v1/live/sessions";
+
+/**
+ * OpenAI's Live API, its model on `?model=`, which routes it, and the key on
+ * `?key=`. It is full duplex: it streams audio all the time, silence (zero
+ * bytes, all `A`s in base64) included, and has no turns or ids. So the
+ * reader drops the silence and numbers the lines by who speaks: the user's
+ * transcript is `user-n`, the model's voice or transcript `model-n`, and
+ * the user speaking again ends the model's. A client cannot cancel it.
+ */
+export const openaiLive: RealtimeApi = {
+  id: "openai-live",
+  label: "OpenAI Live",
+  path: LIVE_PATH,
+  endpoint: LIVE_PATH,
+  url: (model, key, location) => {
+    const query = new URLSearchParams({ model });
+    if (key) query.set("key", key);
+    return socketUrl(location, `${LIVE_PATH}?${query}`);
+  },
+  protocols: () => [],
+  modes: ["conversation"],
+  opening: (model) => [
+    { type: "session.start", session: { model, audio: { format: { type: "audio/pcm", rate: REALTIME_RATE } } } },
+  ],
+  audio: (audio) => ({ type: "session.input_audio.append", audio }),
+  reader: () => {
+    let turn = 0;
+    let speaking: "user" | "model" | null = null;
+    return (message) => {
+      const m = message as Json;
+      const delta = String(m.delta ?? "");
+      const out: ServerEvent[] = [];
+      const speaks = (who: "user" | "model") => {
+        if (speaking === who) return;
+        if (who === "user" && speaking === "model") {
+          out.push({ type: "response.done", response: { status: "completed" } });
+          turn += 1;
+        }
+        if (who === "model") out.push({ type: "input_audio_buffer.speech_stopped" });
+        out.push({ type: "conversation.item.created", item: { id: `${who}-${turn}`, role: who === "user" ? "user" : "assistant" } });
+        speaking = who;
+      };
+      switch (m.type) {
+        case "session.input_transcript.delta":
+          speaks("user");
+          out.push({ type: "conversation.item.input_audio_transcription.delta", item_id: `user-${turn}`, delta });
+          break;
+        case "session.output_audio.delta":
+          if (/^A*=*$/.test(delta)) break;
+          speaks("model");
+          out.push({ type: "response.output_audio.delta", item_id: `model-${turn}`, content_index: 0, delta });
+          break;
+        case "session.output_transcript.delta":
+          speaks("model");
+          out.push({ type: "response.output_audio_transcript.delta", item_id: `model-${turn}`, delta });
+          break;
+        case "error":
+          out.push({ type: "error", error: { message: String(m.error?.message ?? "") } });
+      }
+      return out;
+    };
+  },
 };
 
 const GEMINI_PATH = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -256,4 +321,80 @@ export const mistralRealtime: RealtimeApi = {
   },
 };
 
-export const realtimeApis: RealtimeApi[] = [openaiRealtime, geminiLive, mistralRealtime];
+const PHONIC_PATH = "/v1/sts/ws";
+
+/**
+ * Phonic's speech-to-speech, its model on `?model=`, which routes it, and
+ * the key on `?key=`. Its turns have no ids, so the reader numbers them:
+ * the user's line and the model's of turn `n` are `user-n` and `model-n`.
+ * The user's transcript comes a word at a time, unspaced; each audio chunk
+ * carries the text it speaks. It streams audio all the time, silence
+ * included, which the reader drops. Its server notices a barge-in itself;
+ * a client cannot cancel it.
+ */
+export const phonicSts: RealtimeApi = {
+  id: "phonic-sts",
+  label: "Phonic",
+  path: PHONIC_PATH,
+  endpoint: PHONIC_PATH,
+  url: (model, key, location) => {
+    const query = new URLSearchParams({ model });
+    if (key) query.set("key", key);
+    return socketUrl(location, `${PHONIC_PATH}?${query}`);
+  },
+  protocols: () => [],
+  modes: ["conversation"],
+  opening: (model) => [
+    { type: "config", model, input_format: `pcm_${REALTIME_RATE}`, output_format: `pcm_${REALTIME_RATE}` },
+  ],
+  audio: (audio) => ({ type: "audio_chunk", audio }),
+  reader: () => {
+    let turn = 0;
+    let heard = false;
+    return (message) => {
+      const m = message as Json;
+      const user = `user-${turn}`;
+      const model = `model-${turn}`;
+      const done = (status: string): ServerEvent[] => {
+        turn += 1;
+        return [{ type: "response.done", response: { status } }];
+      };
+      switch (m.type) {
+        case "user_started_speaking":
+          heard = false;
+          return [
+            { type: "input_audio_buffer.speech_started" },
+            { type: "conversation.item.created", item: { id: user, role: "user" } },
+          ];
+        case "input_text": {
+          const delta = `${heard ? " " : ""}${m.text ?? ""}`;
+          heard = true;
+          return [{ type: "conversation.item.input_audio_transcription.delta", item_id: user, delta }];
+        }
+        case "assistant_started_speaking":
+          return [
+            { type: "input_audio_buffer.speech_stopped" },
+            { type: "conversation.item.created", item: { id: model, role: "assistant" } },
+          ];
+        case "audio_chunk": {
+          const out: ServerEvent[] = [];
+          if (!/^A*=*$/.test(String(m.audio ?? ""))) {
+            out.push({ type: "response.output_audio.delta", item_id: model, content_index: 0, delta: m.audio });
+          }
+          if (m.text) out.push({ type: "response.output_audio_transcript.delta", item_id: model, delta: m.text });
+          return out;
+        }
+        case "assistant_finished_speaking":
+          return done("completed");
+        case "interrupted_response":
+          return done("cancelled");
+        case "error":
+          return [{ type: "error", error: { message: String(m.error?.message ?? "") } }];
+        default:
+          return [];
+      }
+    };
+  },
+};
+
+export const realtimeApis: RealtimeApi[] = [openaiRealtime, openaiLive, geminiLive, mistralRealtime, phonicSts];

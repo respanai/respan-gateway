@@ -141,6 +141,55 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
+async fn several_chat_choices_are_refused_before_calling_any_provider() {
+    let openai = FakeOpenAi::start().await;
+    let anthropic = FakeAnthropic::start().await;
+    let text = format!(
+        "providers = {{ openai = {{ vendor = \"openai\", base_url = \"{}\", key = \"sk-openai\" }}, anthropic = {{ vendor = \"anthropic\", base_url = \"{}\", key = \"sk-ant\" }} }}\n",
+        openai.base_url(),
+        anthropic.base_url()
+    );
+    let gateway = resolve(&text).unwrap_or_else(|e| panic!("gateway: {e}"));
+    for (model, n) in [
+        ("anthropic/claude-sonnet-4-5", "2"),
+        ("anthropic/claude-sonnet-4-5", "2.0"),
+        ("anthropic/claude-sonnet-4-5", "2e0"),
+        ("openai/gpt-4.1-mini", "2"),
+    ] {
+        let body = format!(
+            r#"{{"model":"{model}","messages":[{{"role":"user","content":"hi"}}],"n":{n}}}"#
+        );
+        let (response, _) = serve(&gateway, post("/v1/chat/completions", body)).await;
+        let (status, _, body) = read_whole(response).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{model}, n={n}: {body:?}");
+        let body = body.expect("error body");
+        let error: serde_json::Value = serde_json::from_slice(&body).expect("OpenAI error");
+        assert_eq!(
+            error["error"]["message"],
+            "several choices (n > 1) cannot be represented"
+        );
+    }
+    gateway.idle().await;
+    assert!(openai.requests().is_empty());
+    assert!(anthropic.requests().is_empty());
+
+    anthropic.answer(Answer::text("hi"));
+    let one = r#"{"model":"anthropic/claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}],"n":1}"#;
+    let (response, _) = serve(&gateway, post("/v1/chat/completions", one)).await;
+    let (status, _, body) = read_whole(response).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    gateway.idle().await;
+    assert_eq!(anthropic.requests().len(), 1);
+    assert!(
+        anthropic.requests()[0]
+            .object()
+            .expect("request JSON")
+            .get("n")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn the_example_config_routes_by_model_both_ways() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;
@@ -245,6 +294,11 @@ fn a_vendor_is_every_format_it_speaks() {
                 "wss://api.openai.com/v1"
             ),
             entry(
+                "openai-live",
+                "openai:openai-live",
+                "wss://api.openai.com/v1"
+            ),
+            entry(
                 "openai-images",
                 "openai:openai-images",
                 "https://api.openai.com/v1"
@@ -317,6 +371,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "anthropic-messages",
             "openai-responses",
             "openai-realtime",
+            "openai-live",
             "openai-images",
             "openai-transcriptions",
             "openai-speech",
@@ -326,6 +381,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-images",
             "gemini-live",
             "mistral-realtime",
+            "phonic-sts",
             "gemini-veo",
             "decisions",
             "openai-decisions",
