@@ -68,7 +68,8 @@ delegation and the rest do. It is full duplex: no turns or responses.
 `PhonicSts` does the same for Phonic's speech-to-speech: its `config` (its
 model, system prompt, voice and both audio formats), audio both ways, the
 user's turns (`user_started_speaking`, `user_finished_speaking`) and
-transcript (`input_text`), the model's turns
+transcript (`input_text`, a word at a time, spaced as it is told), the
+model's turns
 (`assistant_started_speaking`, `assistant_finished_speaking`,
 `interrupted_response`) and the transcript each audio chunk carries, and
 errors. It bills a conversation by its minutes and says no usage, so the
@@ -143,8 +144,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   commits, messages and responses, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
-  audio chunk, only the user's whole transcript is written, and usage is
-  not; text and tools' calls are refused.
+  audio chunk, the user's in parts, not whole, and usage is not written;
+  text and tools' calls are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a

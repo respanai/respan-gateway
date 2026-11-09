@@ -150,11 +150,13 @@ describe("Phonic", () => {
     });
   });
 
-  it("numbers its lines by turn, the model's from its audio's text", () => {
+  it("numbers its lines by turn, spaces the user's words, and plays no silence", () => {
     const read = phonicSts.reader();
+    expect(read({ type: "audio_chunk", audio: "AAAA", text: "" })).toEqual([]);
     const state = [
       { type: "user_started_speaking" },
-      { type: "input_text", text: "What time is it?" },
+      { type: "input_text", text: "What" },
+      { type: "input_text", text: "time?" },
       { type: "assistant_started_speaking" },
       { type: "audio_chunk", audio: "AQID", text: "It is noon." },
       { type: "assistant_finished_speaking" },
@@ -167,9 +169,9 @@ describe("Phonic", () => {
         phase: "live",
       });
     expect(lines(state).map(({ role, text, done }) => ({ role, text, done }))).toEqual([
-      { role: "user", text: "What time is it?", done: true },
+      { role: "user", text: "What time?", done: false },
       { role: "assistant", text: "It is noon.", done: true },
-      { role: "user", text: "Thanks.", done: true },
+      { role: "user", text: "Thanks.", done: false },
     ]);
   });
 });

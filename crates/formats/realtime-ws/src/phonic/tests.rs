@@ -103,6 +103,7 @@ fn every_event_is_written_back_as_it_came() {
         json!({"type": "user_started_speaking"}),
         json!({"type": "user_finished_speaking"}),
         json!({"type": "input_text", "text": "Hi", "language": "en"}),
+        json!({"type": "input_text", "text": "there", "language": "en"}),
         json!({"type": "assistant_started_speaking"}),
         json!({"type": "audio_chunk", "audio": "AAEC", "text": "Hello"}),
         json!({"type": "interrupted_response", "text": "Hel"}),
@@ -114,10 +115,12 @@ fn every_event_is_written_back_as_it_came() {
     let mut provider = clocked(applied, &now);
     let events = read(&server, |raw, out| provider.decode(raw, out));
     assert!(matches!(&events[1], Output::Updated(_)));
+    // The user's words come one at a time, a space before each but the first.
+    assert!(matches!(&events[5], Output::InputTranscript { text, .. } if text == " there"));
     // A chunk's text is the model's transcript, told before its audio.
-    assert!(matches!(&events[6], Output::Transcript { text, .. } if text == "Hello"));
+    assert!(matches!(&events[7], Output::Transcript { text, .. } if text == "Hello"));
     let interrupted = Status::Interrupted;
-    assert!(matches!(&events[8], Output::ResponseDone { status, .. } if *status == interrupted));
+    assert!(matches!(&events[9], Output::ResponseDone { status, .. } if *status == interrupted));
     assert_eq!(heard(DEFAULT_FORMAT, &events).expect("written"), server);
 }
 

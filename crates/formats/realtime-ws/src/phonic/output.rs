@@ -22,6 +22,8 @@ pub(super) struct Provider {
     /// When the seconds so far were billed until, from the conversation's
     /// creation.
     billed: Option<Instant>,
+    /// Whether a word of the user's turn was told.
+    heard: bool,
 }
 
 impl Provider {
@@ -30,6 +32,7 @@ impl Provider {
             applied,
             clock,
             billed: None,
+            heard: false,
         }
     }
 
@@ -78,20 +81,30 @@ impl Provider {
                     native: json::native(NAME, rest),
                 }
             }
+            // The user's transcript, a word at a time, which a space
+            // parts from the turn's last.
             "input_text" => {
-                let Some(said) = take(v, &["text"], string, text) else {
+                let Some(word) = take(v, &["text"], string, text) else {
                     return false;
                 };
+                let space = if std::mem::replace(&mut self.heard, true) {
+                    " "
+                } else {
+                    ""
+                };
                 Output::InputTranscript {
-                    text: said,
-                    complete: true,
+                    text: format!("{space}{word}"),
+                    complete: false,
                     native: json::native(NAME, rest),
                 }
             }
-            "user_started_speaking" => Output::SpeechStarted {
-                at_ms: None,
-                native: json::native(NAME, rest),
-            },
+            "user_started_speaking" => {
+                self.heard = false;
+                Output::SpeechStarted {
+                    at_ms: None,
+                    native: json::native(NAME, rest),
+                }
+            }
             "user_finished_speaking" => Output::SpeechStopped {
                 at_ms: None,
                 native: json::native(NAME, rest),
@@ -151,9 +164,9 @@ impl Decoder<Output> for Provider {
 
 /// The events written to the client. Its readiness answers its `config`, so
 /// the first session another format tells of is it, and the rest are not
-/// written. The model's transcript goes with its next audio, and only the
-/// user's whole transcript is written; what Phonic has no message for, such
-/// as usage, is not written.
+/// written. The model's transcript goes with its next audio, and the user's
+/// a part at a time, as its words are, not whole; what Phonic has no message
+/// for, such as usage, is not written.
 #[derive(Debug)]
 pub(super) struct Client {
     /// The format of the audio it takes, as its `config` says.
@@ -210,9 +223,12 @@ impl Client {
             }
             Output::InputTranscript {
                 text,
-                complete: true,
+                complete: false,
                 native,
-            } => (json!({"type": "input_text", "text": text}), native),
+            } => (
+                json!({"type": "input_text", "text": text.trim_start()}),
+                native,
+            ),
             Output::SpeechStarted { native, .. } => (typed("user_started_speaking"), native),
             Output::SpeechStopped { native, .. } => (typed("user_finished_speaking"), native),
             Output::ResponseStart { native, .. } => (typed("assistant_started_speaking"), native),

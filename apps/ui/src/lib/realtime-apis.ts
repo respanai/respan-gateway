@@ -327,8 +327,10 @@ const PHONIC_PATH = "/v1/sts/ws";
  * Phonic's speech-to-speech, its model on `?model=`, which routes it, and
  * the key on `?key=`. Its turns have no ids, so the reader numbers them:
  * the user's line and the model's of turn `n` are `user-n` and `model-n`.
- * Each audio chunk carries the text it speaks. Its server notices a
- * barge-in itself; a client cannot cancel it.
+ * The user's transcript comes a word at a time, unspaced; each audio chunk
+ * carries the text it speaks. It streams audio all the time, silence
+ * included, which the reader drops. Its server notices a barge-in itself;
+ * a client cannot cancel it.
  */
 export const phonicSts: RealtimeApi = {
   id: "phonic-sts",
@@ -348,6 +350,7 @@ export const phonicSts: RealtimeApi = {
   audio: (audio) => ({ type: "audio_chunk", audio }),
   reader: () => {
     let turn = 0;
+    let heard = false;
     return (message) => {
       const m = message as Json;
       const user = `user-${turn}`;
@@ -358,21 +361,26 @@ export const phonicSts: RealtimeApi = {
       };
       switch (m.type) {
         case "user_started_speaking":
+          heard = false;
           return [
             { type: "input_audio_buffer.speech_started" },
             { type: "conversation.item.created", item: { id: user, role: "user" } },
           ];
-        case "input_text":
-          return [{ type: "conversation.item.input_audio_transcription.completed", item_id: user, transcript: m.text }];
+        case "input_text": {
+          const delta = `${heard ? " " : ""}${m.text ?? ""}`;
+          heard = true;
+          return [{ type: "conversation.item.input_audio_transcription.delta", item_id: user, delta }];
+        }
         case "assistant_started_speaking":
           return [
             { type: "input_audio_buffer.speech_stopped" },
             { type: "conversation.item.created", item: { id: model, role: "assistant" } },
           ];
         case "audio_chunk": {
-          const out: ServerEvent[] = [
-            { type: "response.output_audio.delta", item_id: model, content_index: 0, delta: m.audio },
-          ];
+          const out: ServerEvent[] = [];
+          if (!/^A*=*$/.test(String(m.audio ?? ""))) {
+            out.push({ type: "response.output_audio.delta", item_id: model, content_index: 0, delta: m.audio });
+          }
           if (m.text) out.push({ type: "response.output_audio_transcript.delta", item_id: model, delta: m.text });
           return out;
         }
