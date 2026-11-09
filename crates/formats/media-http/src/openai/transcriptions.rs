@@ -497,6 +497,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_transcription_stream_stops_at_its_done_event() {
+        let stream = concat!(
+            "data: {\"type\":\"transcript.text.delta\",\"delta\":\"hi\"}\n\n",
+            "data: {\"type\":\"transcript.text.done\",\"text\":\"hi\",\"usage\":{\"type\":\"tokens\",\"input_tokens\":2,\"output_tokens\":3,\"total_tokens\":5}}\n\n",
+            "data: {\"error\":{\"message\":\"after completion\"}}\n\n",
+        );
+        let head = http::Response::builder()
+            .header("content-type", "text/event-stream")
+            .body(())
+            .expect("response")
+            .into_parts()
+            .0;
+        for cut in 0..=stream.len() {
+            let mut decoder = read_response(&head);
+            let mut events = Vec::new();
+            for part in [&stream.as_bytes()[..cut], &stream.as_bytes()[cut..]] {
+                decoder
+                    .decode(Bytes::copy_from_slice(part), &mut events)
+                    .unwrap_or_else(|e| panic!("cut at {cut}: {e}"));
+            }
+            assert!(decoder.done(), "cut at {cut}");
+            decoder.end(Ok(()), &mut events).expect("complete");
+            assert_eq!(
+                events,
+                [
+                    Output::Delta(Delta::new("hi")),
+                    Output::Transcript(Transcript::new("hi")),
+                    Output::Usage(Usage::new(2, 3)),
+                ],
+                "cut at {cut}"
+            );
+        }
+    }
+
+    #[test]
     fn a_transcript_renders_as_subrip_and_webvtt() {
         let mut t = Transcript::new("Hi there. Bye.");
         t.segments = vec![
