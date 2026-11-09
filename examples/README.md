@@ -2,16 +2,16 @@
 
 | Folder | What's in it |
 | --- | --- |
-| [rust](rust/README.md) | Runnable examples of building on the gateway's crates, one self-contained file each: guardrails, PII masking, billing, fallback, an LLM judge, MCP, realtime. |
+| [recipes](recipes/README.md) | Runnable Rust examples of building on the gateway's crates, one self-contained file each: guardrails, PII masking, billing, fallback, an LLM judge, MCP, realtime. |
 | [research](research/) | Deep dives into how LLM inference works and what it costs, with the experiments and data behind them. |
 
-## Rust
+## Recipes
 
 ```bash
 cargo run -p respan-gateway-examples --example billing
 ```
 
-See [rust/README.md](rust/README.md) for the full list.
+See [recipes/README.md](recipes/README.md) for the full list.
 
 ## Research
 

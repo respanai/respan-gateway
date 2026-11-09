@@ -208,4 +208,4 @@ first session is then a transcription, unless it says otherwise; a session
 that says nothing of it is a conversation.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
-[realtime examples](../../../examples/rust/realtime.rs).
+[realtime examples](../../../examples/recipes/realtime.rs).

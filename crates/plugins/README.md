@@ -18,7 +18,7 @@ write one, see the [plugin guide](../../docs/plugins.md).
 
 Billing is application policy, not a supported plugin export: `Pricing`
 measures what calls cost, and what to do with it is the host's. See
-[the billing examples](../../examples/rust/README.md#billing-policies) for pricing,
+[the billing examples](../../examples/recipes/README.md#billing-policies) for pricing,
 conservative per-attempt accounting, nested wallets and per-turn reservations.
 Their support modules are private to the examples, not a replacement billing
 crate. Provider usage is the conversation kind's typed `Usage`.

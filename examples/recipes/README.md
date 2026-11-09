@@ -1,4 +1,4 @@
-# Examples
+# Recipes
 
 Runnable examples of building on the gateway's crates. Each is one
 self-contained file under 1,000 lines: read it top to bottom. Its first
