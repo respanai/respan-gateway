@@ -4,7 +4,7 @@
 
 *What a prompt cache is on the GPU, why it disappears, how providers price it, and how to stop paying for the same text twice.*
 
-**Deep dive into caching**
+**How caching works**
 
 - [1 - Prompt caching is now more important than anything in inference cost](#1---prompt-caching-is-now-more-important-than-anything-in-inference-cost)
 - [2 - Agent cost is almost all input, and it grows faster than the session](#2---agent-cost-is-almost-all-input-and-it-grows-faster-than-the-session)
