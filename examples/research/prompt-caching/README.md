@@ -1,8 +1,31 @@
 # From the GPU to your bill: a deep dive into prompt caching
 
-# Deep dive into caching
+*What a prompt cache is on the GPU, why it disappears, how providers price it, and how to stop paying for the same text twice.*
 
-## 1 - Prompt caching is now more important than anything in inference cost
+**Deep dive into caching**
+
+- [1 - Prompt caching is now more important than anything in inference cost](#1---prompt-caching-is-now-more-important-than-anything-in-inference-cost)
+- [2 - Agent cost is almost all input, and it grows faster than the session](#2---agent-cost-is-almost-all-input-and-it-grows-faster-than-the-session)
+- [3 - The cache stores the model's work, not your text](#3---the-cache-stores-the-models-work-not-your-text)
+- [4 - A cache is born in GPU memory, but it can't stay there long](#4---a-cache-is-born-in-gpu-memory-but-it-cant-stay-there-long)
+- [5 - Guess: why Anthropic offers a 5-minute and a 1-hour cache](#5---guess-why-anthropic-offers-a-5-minute-and-a-1-hour-cache)
+
+**How inference providers set prices**
+
+- [6 - Cache prices are copied, not calculated](#6---cache-prices-are-copied-not-calculated)
+
+**How to stop paying for the same text twice**
+
+- [7 - Know what hit rate to expect](#7---know-what-hit-rate-to-expect)
+- [8 - Keep the cache warm](#8---keep-the-cache-warm)
+- [9 - Check your harness, not just your prompt](#9---check-your-harness-not-just-your-prompt)
+- [10 - Think twice before switching models](#10---think-twice-before-switching-models)
+
+**Cache-aware routing**
+
+- [11 - Does your router count the cache?](#11---does-your-router-count-the-cache)
+
+### 1 - Prompt caching is now more important than anything in inference cost
 
 Everyone knows what prompt caching is, roughly: when you send the same prompt again, the provider reuses the work and saves you money. But not a lot of people have looked further, including me.
 
@@ -12,7 +35,7 @@ However, caching breaks quietly. Change a single character at the beginning of t
 
 In this article, I'm trying to break down caching from what happens inside the GPU to the bill: why switching to a cheaper model can make your bill go up, which coding agents quietly break their own cache, and what eviction actually looks like on an H100 I rented.
 
-## 2 - Agent cost is almost all input, and it grows faster than the session
+### 2 - Agent cost is almost all input, and it grows faster than the session
 
 We know that every turn resends the whole session. Here is what that does to the numbers.
 
@@ -28,7 +51,7 @@ Also, inference cost is about GPU compute time. Within one read, time grows fast
 
 It's not even exponential; it's almost quadratic. Some providers now price that in: Haiku 5.5 costs five times as much per token above 100K, and GPT-6.1 Sol twice as much above 272K.
 
-## 3 - The cache stores the model's work, not your text
+### 3 - The cache stores the model's work, not your text
 
 When a model reads your prompt, it doesn't keep the words. For every token, at every layer, it works out what that token means in context and stores the result as vectors. That's the reading cost from the last section.
 
@@ -48,7 +71,7 @@ Three facts about the cache explain most of what happens in the rest of this art
 
 ![One long session's cache can fill a whole GPU](img/kv-size.png)
 
-## 4 - A cache is born in GPU memory, but it can't stay there long
+### 4 - A cache is born in GPU memory, but it can't stay there long
 
 The cache is created where the model does its math: in GPU memory. On a gaming card that's called VRAM. Data-center GPUs use HBM, which is faster and much scarcer. An H100 has 80 GB. Nvidia's newest chips, B300 and Rubin, have 288 GB.
 
@@ -74,7 +97,7 @@ So a cache hit is not guaranteed. I ran two copies of the model side by side and
 
 With a shared pool, any machine can fetch your cache, but it still has to pull it over first, so landing on the right machine is still faster.
 
-## 5 - Guess: why Anthropic offers a 5-minute and a 1-hour cache
+### 5 - Guess: why Anthropic offers a 5-minute and a 1-hour cache
 
 Anthropic sells two cache lifetimes, five minutes and an hour, and nothing in between.
 
@@ -84,9 +107,7 @@ The longer a cache sits on a device, the more it costs to keep, and at some poin
 
 Now look at Anthropic's two options again. Five minutes is about as long as a cache is worth keeping on the GPU. An hour is far too long for the GPU, but fits comfortably in CPU memory. So when you pick an option, you're also telling Anthropic where your cache should live.
 
-# How inference providers set prices
-
-## 6 - Cache prices are copied, not calculated
+### 6 - Cache prices are copied, not calculated
 
 On open models, a host's cache discount usually sits around what the model's maker charges on its own API. Most of Kimi K3's hosts charge 10% for a cache hit, the same as Moonshot. GLM's hosts sit around Z.ai's 19%, and DeepSeek's around DeepSeek's 2%.
 
@@ -94,9 +115,7 @@ But OpenAI doesn't sell gpt-oss-120b itself, so there's no maker's price to foll
 
 ![Hosts copy the model maker's cache price](img/host-cache-prices.png)
 
-# How to stop paying for the same text twice
-
-## 7 - Know what hit rate to expect
+### 7 - Know what hit rate to expect
 
 Every request is part old, part new. The old part, the history or instructions the provider has already seen, can come from the cache. The new part never can. So the best hit rate you can get depends on how much of each request is old, and that depends on what you're building.
 
@@ -104,7 +123,7 @@ Every request is part old, part new. The old part, the history or instructions t
 
 If you're well below what your kind of workload should get, something is breaking the cache. Anthropic and OpenAI now tell you what it was through their cache diagnostics.
 
-## 8 - Keep the cache warm
+### 8 - Keep the cache warm
 
 Once reads cost 5% of input, writes become the expensive part. In a long coding session on Opus 5.5, writes are 60% of the bill.
 
@@ -112,21 +131,19 @@ Once reads cost 5% of input, writes become the expensive part. In a long coding 
 
 So the biggest lever is not letting the cache go cold. Come back after it has expired and the next message pays to write the whole history again. Pay for a longer cache lifetime if you need one.
 
-## 9 - Check your harness, not just your prompt
+### 9 - Check your harness, not just your prompt
 
 Most cache misses I found weren't the user's fault. They were bugs in the harness, the tool that builds each request for you, like Claude Code, Codex or Cline. And they show up nowhere except the bill.
 
 ![Every layer of the prompt has broken someone's cache](img/harness-layers.png)
 
-## 10 - Think twice before switching models
+### 10 - Think twice before switching models
 
 Switching models mid-session throws the cache away, because the cache belongs to one model. The new model has to read the whole history from scratch and pay to write it. That's how a cheaper model can make the next turn more expensive, and why it has to earn the switch back.
 
 ![A cheaper model has to earn back the switch](img/switch-payback.png)
 
-# Cache-aware routing
-
-## 11 - Does your router count the cache?
+### 11 - Does your router count the cache?
 
 A model router used to be pretty simple: pick the cheapest model that can finish the task. Caching makes it more complicated. The cheapest model for this request isn't always the cheapest for the session, because switching throws the cache away. A router has to understand the economics of caching, everything we've covered above, and pick the model on top of that. Most routers still don't:
 
