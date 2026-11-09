@@ -73,6 +73,8 @@ pub(super) struct Provider {
     voiced: bool,
     /// The session as its `config` started it, once it did.
     applied: Applied,
+    /// The session as the client asked it, which a later one is judged by.
+    asked: Option<Session>,
     say: Say,
     /// The format of the audio it takes, as its `config` said.
     input: AudioFormat,
@@ -85,6 +87,7 @@ impl Provider {
             model,
             voiced,
             applied,
+            asked: None,
             say,
             input: DEFAULT_FORMAT,
             convert: Convert::default(),
@@ -103,7 +106,7 @@ impl Provider {
 
     fn encode(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
         let refuse = |what: &str| Err(untranslatable_input(NAME, what));
-        let started = self.applied.lock().is_some();
+        let started = self.asked.is_some();
         match event {
             Input::Session(s) if !started => Ok(vec![self.start(s)?]),
             Input::Session(s) => self.update(s).map(|()| Vec::new()),
@@ -135,6 +138,7 @@ impl Provider {
     /// format's names another vendor's. The provider's voice detection and
     /// transcription, which it always does, are dropped.
     fn start(&mut self, s: &Session) -> Result<Value, Fault> {
+        self.asked = Some(s.clone());
         let mut s = s.clone();
         s.model = self.model.take().or(s.model);
         s.voice = s.voice.filter(|_| self.voiced);
@@ -160,15 +164,16 @@ impl Provider {
     }
 
     /// A later session, which another format's client may send: one that
-    /// changes nothing, acknowledged, as the rest is fixed at its start.
+    /// changes nothing the client asked, acknowledged with the session as
+    /// it was applied, as the rest is fixed at its start.
     fn update(&mut self, s: &Session) -> Result<(), Fault> {
-        let applied = self.applied.lock().clone().unwrap_or_default();
-        if let Some(field) = changes(&applied, s) {
+        if let Some(field) = changes(self.asked.as_ref().unwrap_or(s), s) {
             let fixed = format!(
                 "Phonic fixes a session's configuration at its config: this update changes `{field}`"
             );
             return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
         }
+        let applied = self.applied.lock().clone().unwrap_or_default();
         let _ = self.say.unbounded_send(Output::Updated(applied));
         Ok(())
     }

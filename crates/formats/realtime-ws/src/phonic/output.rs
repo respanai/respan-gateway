@@ -149,7 +149,11 @@ impl Decoder<Output> for Provider {
         if kind == "conversation_created" {
             self.billed = Some((self.clock)());
         }
-        self.bill(out);
+        // Not at each of its many audio chunks: the next other frame, or
+        // its end, bills their seconds.
+        if kind != "audio_chunk" {
+            self.bill(out);
+        }
         if !self.events(&kind, rest, out) {
             out.push(Output::native(NAME, v));
         }
@@ -164,9 +168,10 @@ impl Decoder<Output> for Provider {
 
 /// The events written to the client. Its readiness answers its `config`, so
 /// the first session another format tells of is it, and the rest are not
-/// written. The model's transcript goes with its next audio, and the user's
-/// a word at a time, as Phonic tells it, not whole; what Phonic has no
-/// message for, such as usage, is not written.
+/// written. The model's transcript goes with its next audio, or, told after
+/// the last, with an empty chunk at its turn's end; the user's goes a word
+/// at a time, as Phonic tells it, not whole; what Phonic has no message
+/// for, such as usage, is not written.
 #[derive(Debug)]
 pub(super) struct Client {
     /// The format of the audio it takes, as its `config` says.
@@ -205,6 +210,9 @@ impl Client {
             return self.hear(text, native, out);
         }
         self.spoken(out)?;
+        if matches!(event, Output::ResponseDone { .. }) {
+            self.unsaid(out)?;
+        }
         if let Some(v) = self.encode(&event)? {
             out.push(json::frame(&v)?);
         }
@@ -237,6 +245,17 @@ impl Client {
         let mut v = json!({"type": "input_text", "text": word});
         merge(&mut v, own(&native));
         out.push(json::frame(&v)?);
+        Ok(())
+    }
+
+    /// The model's transcript told after its last audio, in an empty chunk.
+    fn unsaid(&mut self, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        if !self.said.is_empty() {
+            let said = std::mem::take(&mut self.said);
+            out.push(json::frame(
+                &json!({"type": "audio_chunk", "audio": "", "text": said}),
+            )?);
+        }
         Ok(())
     }
 

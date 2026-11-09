@@ -54,7 +54,8 @@ type Clock = Box<dyn FnMut() -> Instant + Send>;
 /// and transcript, interruptions and errors are the kind's; the rest, such
 /// as tools and its own `say`, stays native. It bills a conversation by its
 /// minutes and says no usage, so the seconds since its conversation was
-/// created are [`Output::Seconds`] at each frame and at its end. Its client
+/// created are [`Output::Seconds`] at each frame but its audio, and at its
+/// end. Its client
 /// routes by `?model=`, as a Gemini Live client does; a call names the
 /// model routing chose, else that one, else the one its `config` names.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

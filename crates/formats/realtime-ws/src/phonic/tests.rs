@@ -200,11 +200,18 @@ fn what_phonic_has_none_of_is_refused() {
             "{events:?}"
         );
     }
-    // A later session that changes nothing is acknowledged.
+    // A later session that changes nothing the client asked is
+    // acknowledged, though another format's voice and its model were not
+    // what Phonic was told.
     let (say, mut said) = spec::say();
-    let mut provider = input::Provider::new(None, true, Applied::default(), say);
+    let mut provider =
+        input::Provider::new(Some("phonic-1".into()), false, Applied::default(), say);
+    let asked = session(|s| {
+        s.model = Some("alias".into());
+        s.voice = Some("alloy".into());
+    });
     let written =
-        frames(&[start.clone(), start], |e, out| provider.write(e, out)).expect("written");
+        frames(&[asked.clone(), asked], |e, out| provider.write(e, out)).expect("written");
     assert_eq!(written.len(), 1);
     assert!(matches!(said.try_recv(), Ok(Output::Updated(_))));
 }
@@ -228,6 +235,8 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
             native: None,
         },
         Output::Seconds(1.0),
+        // Told after its last audio: with an empty chunk at its turn's end.
+        transcript(" there."),
         Output::ResponseDone {
             status: Status::Cancelled,
             native: None,
@@ -241,13 +250,13 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
             "ready_to_start_conversation",
             "input_text",
             "audio_chunk",
+            "audio_chunk",
             "assistant_finished_speaking"
         ]
     );
-    assert_eq!(
-        (&written[1]["text"], &written[2]["text"]),
-        (&json!("Hi"), &json!("Hello"))
-    );
+    let texts: Vec<&Value> = written[1..4].iter().map(|f| &f["text"]).collect();
+    assert_eq!(texts, ["Hi", "Hello", " there."]);
+    assert_eq!(written[3]["audio"], "");
     assert!(
         heard(&[Output::Text {
             text: "x".into(),

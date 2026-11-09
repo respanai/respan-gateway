@@ -73,8 +73,8 @@ model's turns
 (`assistant_started_speaking`, `assistant_finished_speaking`,
 `interrupted_response`) and the transcript each audio chunk carries, and
 errors. It bills a conversation by its minutes and says no usage, so the
-seconds since its `conversation_created` are `Seconds` at each frame and at
-its end. Tools, `say`, `generate_reply` and the rest stay native.
+seconds since its `conversation_created` are `Seconds` at each frame but
+its audio, and at its end. Tools, `say`, `generate_reply` and the rest stay native.
 
 `OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
 too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
@@ -147,7 +147,7 @@ What one spec has and the other has not is emulated, dropped or refused:
   output, commits, messages and responses, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
-  audio chunk, the user's a word at a time, another format's parts of a
+  audio chunk, or with an empty one at its turn's end, the user's a word at a time, another format's parts of a
   word joined, not whole, and usage is not written;
   text and tools' calls are refused.
 
