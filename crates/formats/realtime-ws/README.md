@@ -13,6 +13,9 @@ a format per spec:
   binary frames, which its transport takes as text.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
+- `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
+  Live models (`gpt-live-1`) speak, at `/live/sessions` after
+  `wss://api.openai.com/v1`, with no query.
 - `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native
@@ -53,8 +56,14 @@ them, so `clientContent` and `toolResponse` are written whole.
 `activityStart`, `audioStreamEnd`, `goAway`, `toolCallCancellation` and
 `sessionResumptionUpdate` stay native.
 
-`OpenAiRealtime` and `GeminiLive` write each other's events too: see
-[Translation](#translation). `ResponsesWs` decodes every frame to the
+`OpenAiLive` does the same for OpenAI's Live API: the session's start and
+updates (its model, instructions, voice and one audio format), audio both
+ways, both transcripts and errors. Its usage, the session's seconds so far,
+is `Seconds` beyond the last, beside the event, which stays native, as
+delegation and the rest do. It is full duplex: no turns or responses.
+
+`OpenAiRealtime`, `GeminiLive` and `OpenAiLive` write each other's events
+too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
 kind's `Input::Native` or `Output::Native`, tagged with its name, and
 writes no other format's.
 
@@ -104,6 +113,16 @@ What one spec has and the other has not is emulated, dropped or refused:
   Gemini client, which knows a refusal only as a close: 1007 if its cause
   is `Invalid`, and none if `NothingToCancel`.
 
+- To OpenAI Live: the session is fixed at its start, in the client's
+  audio format if it takes it, else 24 kHz PCM; a later session that
+  changes anything closes it 1008. Voice detection and transcription
+  settings are dropped; anything else it has none of, such as tools, text
+  output, commits, messages and responses, is refused.
+- From OpenAI Live: the first session told of is its `session.started`;
+  turns, responses, token usage and whole transcripts are not written;
+  text and tools' calls are refused. OpenAI sends a session with a Live
+  model (`gpt-live-` and a version) to its Live API, any other to Realtime.
+
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a
 conversation (`type: "realtime"`) is refused. It has no voice detection: its
@@ -146,11 +165,11 @@ cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 
 A session's first input arrives only once it is routed, so routing reads
 its model from the handshake: `requested_model(&Original)` is `?model=`,
-OpenAI's and, by the gateway's convention, a Gemini client's. The model
-routing chose goes in the call as `SessionModel`, which OpenAI's and
-Mistral's providers dial (else the client's `?model=`; with neither the
-session is refused), and into the opening `Session` by
-`realtime::set_model`, which Gemini's setup names. Each provider writes its
+OpenAI's and, by the gateway's convention, a Gemini or OpenAI Live
+client's. The model routing chose goes in the call as `SessionModel`, which
+OpenAI's and Mistral's providers dial (else the client's `?model=`; with
+neither the session is refused), and into the opening `Session` by
+`realtime::set_model`, which Gemini's setup and OpenAI Live's start name. Each provider writes its
 own query, never the client's.
 
 A transcription is one from its connect, as OpenAI's is: its client asks

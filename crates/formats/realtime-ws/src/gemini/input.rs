@@ -7,8 +7,7 @@ use respan_gateway_conversation::{Content, Message, Role};
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    Audio, AudioFormat, Encoding, Input, Output, Purpose, Session, Status, ToolChoice, ToolResult,
-    Turns,
+    Audio, AudioFormat, Encoding, Input, Output, Session, Status, ToolResult, Turns,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
@@ -412,7 +411,7 @@ impl Provider {
     fn update(&mut self, s: &Session) -> Result<(), Fault> {
         let mut state = self.shared.lock();
         let applied = state.applied.get_or_insert_default();
-        if let Some(field) = changes(applied, s) {
+        if let Some(field) = session::changes(applied, s) {
             let fixed = format!(
                 "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
             );
@@ -505,52 +504,6 @@ fn said(message: &Message) -> bool {
 /// Whether `event` begins the user's activity.
 fn at_start(event: &Value) -> bool {
     json::at(event, &["realtimeInput", "activityStart"]).is_some()
-}
-
-/// The first field `s` sets to other than `applied` has.
-fn changes(applied: &Session, s: &Session) -> Option<&'static str> {
-    fn differs<T: PartialEq>(new: &Option<T>, old: &Option<T>) -> bool {
-        new.is_some() && new != old
-    }
-    let auto = |c: &Option<ToolChoice>| match c {
-        Some(ToolChoice::Auto) | None => None,
-        Some(c) => Some(c.clone()),
-    };
-    [
-        // A session that says no purpose is a conversation.
-        (
-            "type",
-            differs(&s.purpose, &applied.purpose.or(Some(Purpose::Conversation))),
-        ),
-        ("model", differs(&s.model, &applied.model)),
-        (
-            "instructions",
-            differs(&s.instructions, &applied.instructions),
-        ),
-        ("output_modalities", differs(&s.output, &applied.output)),
-        ("voice", differs(&s.voice, &applied.voice)),
-        ("turn_detection", differs(&s.turns, &applied.turns)),
-        (
-            "transcription",
-            differs(&s.input_transcription, &applied.input_transcription),
-        ),
-        (
-            "output_transcription",
-            differs(&s.output_transcription, &applied.output_transcription),
-        ),
-        ("tools", differs(&s.tools, &applied.tools)),
-        (
-            "tool_choice",
-            differs(&auto(&s.tool_choice), &auto(&applied.tool_choice)),
-        ),
-        (
-            "max_output_tokens",
-            differs(&s.max_output_tokens, &applied.max_output_tokens),
-        ),
-        ("native", differs(&s.native, &applied.native)),
-    ]
-    .into_iter()
-    .find_map(|(field, changed)| changed.then_some(field))
 }
 
 /// Whether an event's `native` says it came as `clientContent`.

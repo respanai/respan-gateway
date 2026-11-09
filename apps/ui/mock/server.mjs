@@ -30,6 +30,7 @@ const kindOf = {
   "anthropic-messages": "chat",
   "gemini-generate": "chat",
   "openai-realtime": "realtime",
+  "openai-live": "realtime",
   "gemini-live": "realtime",
   "responses-ws": "responses",
   "openai-images": "image",
@@ -57,6 +58,7 @@ const providers = [
       "openai-responses",
       "openai-realtime",
       "responses-ws",
+      "openai-live",
       "openai-images",
       "openai-transcriptions",
       "openai-speech",
@@ -176,6 +178,7 @@ const routes = {
     },
     { format: "openai-realtime", kind: "realtime", endpoints: ["GET /v1/realtime"] },
     { format: "responses-ws", kind: "responses", endpoints: ["GET /v1/responses"] },
+    { format: "openai-live", kind: "realtime", endpoints: ["GET /v1/live/sessions (WebSocket)"] },
     {
       format: "openai-images",
       kind: "image",

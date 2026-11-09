@@ -24,7 +24,7 @@ Each vendor is in one of two tiers:
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `responses-ws`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `responses-ws`, `openai-live`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/anthropic-dark.svg"><img src="assets/vendors/anthropic.svg" width="20" height="20" alt=""></picture> | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `anthropic-messages` |
 | <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-generate`, `openai-chat`, `gemini-live`, `gemini-images`, `gemini-veo`, `openai-embeddings` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |
@@ -74,8 +74,10 @@ base URL as `openai-chat`. Gemini's own formats, `gemini-generate`
 take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. Session formats take a `wss://` URL as their
-SDK does: `wss://api.openai.com/v1` for `openai-realtime` and
-`responses-ws`, `wss://generativelanguage.googleapis.com` for `gemini-live`,
+SDK does: `wss://api.openai.com/v1` for `openai-realtime`,
+`responses-ws` and `openai-live` (OpenAI's Live API, which its Live models
+such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
+`wss://generativelanguage.googleapis.com` for `gemini-live`,
 `wss://api.mistral.ai/v1` for `mistral-realtime`: Mistral's realtime
 transcription, the key a bearer token and the model at `?model=`, which
 transcribes for an OpenAI Realtime or Gemini Live transcription as its own

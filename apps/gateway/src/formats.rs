@@ -26,7 +26,8 @@ use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs, SessionModel, requested_model,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, ResponsesWs, SessionModel,
+    requested_model,
 };
 
 /// The kinds of traffic this binary carries, as the admin API and routing
@@ -242,6 +243,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
         session(kind::RESPONSES, ResponsesWs, ResponsesWs::PATH, false),
+        session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),
         KnownFormat::of(

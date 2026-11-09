@@ -13,7 +13,8 @@ event each. Its formats, over WebSocket, are
 - `Output`: the session `Opened` and `Updated`, `SpeechStarted` and
   `SpeechStopped` (barge-in), `InputTranscript`, then a response:
   `ResponseStart`, its `Audio`, `Text`, `Transcript` and `ToolCall`s,
-  `Usage`, and `ResponseDone` with its `Status`; and `Error`, with its
+  `Usage`, and `ResponseDone` with its `Status`; `Seconds` billed, from a
+  provider that bills by duration; and `Error`, with its
   `Cause` (`Invalid`, `NothingToCancel`, `Provider`) beside the provider's
   own code.
 - `Audio` is decoded bytes in an `AudioFormat` (16-bit PCM at a rate, or
@@ -25,8 +26,8 @@ that format; crossing to another, it is dropped. Messages, tools and token usage
 conversation kind's.
 
 Formats translate through these events, OpenAI Realtime and Gemini Live
-both ways, so a plugin reads any session the same: it meters `Usage` and
-`Audio::duration()`, vets `Session.tools` and `ToolCall`s, or pins the
+both ways, so a plugin reads any session the same: it meters `Usage`,
+`Seconds` and `Audio::duration()`, vets `Session.tools` and `ToolCall`s, or pins the
 `Session` (`set_model(m)` is the filter routing asks for a model with).
 
 The crate is the kind's types alone, depending on `respan-gateway-core`,
