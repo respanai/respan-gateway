@@ -558,8 +558,8 @@ impl Servers {
     }
 
     /// A request of `method` to `server`, answered with its result or the
-    /// server's error. A failure to reach it, or a session it lost, is a
-    /// fault, after one try with a new session.
+    /// server's error. Lists are retried once with a new session; a tool
+    /// call only if it surely did not run.
     async fn request(
         &self,
         server: &str,
@@ -578,6 +578,9 @@ impl Servers {
                 Ok(answered) => return Ok(answered),
                 Err(fault) => {
                     self.forget(server, &opened).await;
+                    if method != "tools/list" && !unrun(&fault) {
+                        return Err(fault);
+                    }
                     failed = Some(fault);
                 }
             }
@@ -628,6 +631,18 @@ pub(crate) fn message(json: Value) -> Result<Message, Fault> {
     Message::try_from(json).map_err(Fault::internal)
 }
 
+/// As in the MCP router, only a lost session or a refused connection says
+/// that a tool call surely did not run.
+fn unrun(fault: &Fault) -> bool {
+    let lost = fault
+        .get::<respan_gateway_http_faults::Status>()
+        .is_some_and(|s| s.0 == http::StatusCode::NOT_FOUND);
+    lost || fault.code() == "no_session"
+        || fault
+            .cause::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::ConnectionRefused)
+}
+
 /// The name a tool has for the model: the server and the tool, fit for every
 /// chat API (letters, digits, `_` and `-`, at most 64).
 fn model_name(server: &str, tool: &str) -> String {
@@ -676,6 +691,178 @@ fn render(result: &Value) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_core::Provider;
+    use respan_gateway_http::{ClientIo, connect, http_body_util::BodyExt};
+    use respan_gateway_mcp_http::StreamableHttp;
+    use std::sync::atomic::AtomicUsize;
+
+    type Reply = Result<Result<Value, RpcError>, Fault>;
+
+    struct Request {
+        shared: Arc<Shared>,
+        method: &'static str,
+        reply: Arc<Mutex<Option<Reply>>>,
+    }
+
+    #[async_trait]
+    impl Plugin for Request {
+        async fn on_client(&self, cx: &mut ClientContext) -> Result<Option<Response>, Fault> {
+            let servers = Servers::new(self.shared.clone(), cx);
+            let params = json!({"name": "write", "arguments": {}});
+            *self.reply.lock() = Some(servers.request("test", self.method, params).await);
+            Ok(Some(Response::stream(
+                stream::empty::<Result<Output, Fault>>(),
+            )))
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    enum Failure {
+        LostReply,
+        NoAnswer,
+        ExpiredSession,
+        NoSession,
+        ConnectionRefused,
+        ServerError,
+    }
+
+    /// A real MCP exchange without sockets: the first request fails, and
+    /// another would succeed, recording whether it was sent twice.
+    async fn request_with_failure(method: &'static str, failure: Failure) -> (usize, Reply) {
+        let tools = McpTools::new(
+            vec!["test".into()],
+            Duration::ZERO,
+            ToolFilter::default(),
+            Arc::default(),
+        );
+        tools.shared.servers[0].state.lock().await.session = Some(Opened {
+            id: Some("old".into()),
+            protocol: PROTOCOL.into(),
+        });
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let seen = attempts.clone();
+        let send = connect(
+            move |request: http::Request<Body>| {
+                let seen = seen.clone();
+                async move {
+                    let body = BodyExt::collect(request.into_body())
+                        .await
+                        .expect("body")
+                        .to_bytes();
+                    let asked: Value = serde_json::from_slice(&body).expect("request");
+                    let result = match asked["method"].as_str().expect("method") {
+                        "initialize" => json!({
+                            "protocolVersion": PROTOCOL, "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "test", "version": "1"}
+                        }),
+                        "notifications/initialized" => {
+                            return Ok((
+                                http::Response::builder()
+                                    .status(202)
+                                    .body(Body::default())
+                                    .expect("ack"),
+                                None,
+                            ));
+                        }
+                        received => {
+                            assert_eq!(received, method);
+                            if seen.fetch_add(1, Ordering::Relaxed) == 0 {
+                                if matches!(failure, Failure::NoSession) {
+                                    return Err(Fault::upstream("session expired").with(
+                                        respan_gateway_core::ErrorCode("no_session".into()),
+                                    ));
+                                }
+                                let error = match failure {
+                                    Failure::LostReply => Some(std::io::ErrorKind::ConnectionReset),
+                                    Failure::ConnectionRefused => {
+                                        Some(std::io::ErrorKind::ConnectionRefused)
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(kind) = error {
+                                    return Err(Fault::upstream("the reply was lost")
+                                        .with_source(std::io::Error::from(kind)));
+                                }
+                                let (status, body) = match failure {
+                                    Failure::NoAnswer => (
+                                        200,
+                                        json!({"jsonrpc": "2.0", "method": "notifications/message"}),
+                                    ),
+                                    Failure::ExpiredSession => {
+                                        (404, json!({"error": "session expired"}))
+                                    }
+                                    Failure::ServerError => (500, json!({"error": "reply failed"})),
+                                    _ => unreachable!(),
+                                };
+                                return Ok((
+                                    http::Response::builder()
+                                        .status(status)
+                                        .header("content-type", "application/json")
+                                        .body(Body::full(body.to_string()))
+                                        .expect("failure"),
+                                    None,
+                                ));
+                            }
+                            json!({"content": [{"type": "text", "text": "done"}]})
+                        }
+                    };
+                    let body = json!({"jsonrpc": "2.0", "id": asked["id"], "result": result});
+                    Ok((
+                        http::Response::builder()
+                            .header("content-type", "application/json")
+                            .header("mcp-session-id", "new")
+                            .body(Body::full(body.to_string()))
+                            .expect("response"),
+                        None,
+                    ))
+                }
+            },
+            4096,
+        );
+        let reply = Arc::new(Mutex::new(None));
+        let gateway = Gateway::new()
+            .client::<Input, Output, ClientIo>(StreamableHttp::default().serving(["test"]))
+            .expect("client")
+            .provider(Provider::new("test", StreamableHttp::default(), send))
+            .expect("provider")
+            .plugin(Request {
+                shared: tools.shared.clone(),
+                method,
+                reply: reply.clone(),
+            });
+        Closer(tools.shared).send(&gateway, Close).await;
+        let answer = reply.lock().take().expect("request ran");
+        (attempts.load(Ordering::Relaxed), answer)
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_is_not_repeated_when_its_reply_is_lost() {
+        for failure in [Failure::LostReply, Failure::NoAnswer, Failure::ServerError] {
+            let (attempts, reply) = request_with_failure("tools/call", failure).await;
+            assert_eq!(attempts, 1, "the tool might already have run");
+            assert!(reply.is_err(), "the uncertain result must reach the caller");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_tool_call_is_retried_when_it_could_not_have_run() {
+        for failure in [
+            Failure::ExpiredSession,
+            Failure::NoSession,
+            Failure::ConnectionRefused,
+        ] {
+            let (attempts, reply) = request_with_failure("tools/call", failure).await;
+            assert!(matches!(reply, Ok(Ok(_))), "{reply:?}");
+            assert_eq!(attempts, 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn listing_tools_is_retried_when_its_reply_is_lost() {
+        let (attempts, reply) = request_with_failure("tools/list", Failure::LostReply).await;
+        assert!(matches!(reply, Ok(Ok(_))), "{reply:?}");
+        assert_eq!(attempts, 2);
+    }
 
     #[test]
     fn a_tool_is_named_for_the_model_after_its_server() {
