@@ -26,7 +26,7 @@ use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, ResponsesWs, SessionModel,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, PhonicSts, ResponsesWs, SessionModel,
     requested_model,
 };
 
@@ -285,6 +285,7 @@ pub fn formats() -> Vec<KnownFormat> {
             false,
         )
         .model(realtime()),
+        session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
             .job_ids("veo_")
             .model(Model::of(video::Input::model, video::Input::set_model)),

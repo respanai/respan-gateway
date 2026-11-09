@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialRealtime, realtimeReducer, type RealtimeState } from "./realtime";
 import type { ServedFormat } from "./api";
 import { servedApis } from "./playground-apis";
-import { geminiLive, mistralRealtime, openaiLive, realtimeApis } from "./realtime-apis";
+import { geminiLive, mistralRealtime, openaiLive, phonicSts, realtimeApis } from "./realtime-apis";
 
 /** The state a session reaches from Gemini Live's `messages`, as the page reads them. */
 function geminiSession(...messages: unknown[]): RealtimeState {
@@ -131,6 +131,45 @@ describe("OpenAI Live", () => {
       { role: "user", text: "What time is it?", done: false },
       { role: "assistant", text: "It is noon.", done: true },
       { role: "user", text: "Thanks.", done: false },
+    ]);
+  });
+});
+
+describe("Phonic", () => {
+  it("configures its session at its path, its model and key in its query", () => {
+    const url = new URL(phonicSts.url("phonic-1", "sk-1", { protocol: "https:", host: "gw.test" }, "conversation"));
+    expect([url.pathname, url.searchParams.get("model"), url.searchParams.get("key")]).toEqual([
+      "/v1/sts/ws",
+      "phonic-1",
+      "sk-1",
+    ]);
+    expect(phonicSts.opening("phonic-1", "conversation")[0]).toMatchObject({
+      type: "config",
+      input_format: "pcm_24000",
+      output_format: "pcm_24000",
+    });
+  });
+
+  it("numbers its lines by turn, the model's from its audio's text", () => {
+    const read = phonicSts.reader();
+    const state = [
+      { type: "user_started_speaking" },
+      { type: "input_text", text: "What time is it?" },
+      { type: "assistant_started_speaking" },
+      { type: "audio_chunk", audio: "AQID", text: "It is noon." },
+      { type: "assistant_finished_speaking" },
+      { type: "user_started_speaking" },
+      { type: "input_text", text: "Thanks." },
+    ]
+      .flatMap((m) => read(m))
+      .reduce<RealtimeState>((s, event) => realtimeReducer(s, { type: "event", event }), {
+        ...initialRealtime,
+        phase: "live",
+      });
+    expect(lines(state).map(({ role, text, done }) => ({ role, text, done }))).toEqual([
+      { role: "user", text: "What time is it?", done: true },
+      { role: "assistant", text: "It is noon.", done: true },
+      { role: "user", text: "Thanks.", done: true },
     ]);
   });
 });

@@ -8,7 +8,7 @@ import type { Json } from "@/lib/playground-apis";
 import type { ServerEvent } from "@/lib/realtime";
 import { REALTIME_RATE } from "@/lib/realtime-audio";
 
-export type RealtimeApiId = "openai-realtime" | "openai-live" | "gemini-live" | "mistral-realtime";
+export type RealtimeApiId = "openai-realtime" | "openai-live" | "gemini-live" | "mistral-realtime" | "phonic-sts";
 
 /** A message a client sends, as the API has it. */
 export type ClientMessage = Record<string, unknown>;
@@ -321,4 +321,72 @@ export const mistralRealtime: RealtimeApi = {
   },
 };
 
-export const realtimeApis: RealtimeApi[] = [openaiRealtime, openaiLive, geminiLive, mistralRealtime];
+const PHONIC_PATH = "/v1/sts/ws";
+
+/**
+ * Phonic's speech-to-speech, its model on `?model=`, which routes it, and
+ * the key on `?key=`. Its turns have no ids, so the reader numbers them:
+ * the user's line and the model's of turn `n` are `user-n` and `model-n`.
+ * Each audio chunk carries the text it speaks. Its server notices a
+ * barge-in itself; a client cannot cancel it.
+ */
+export const phonicSts: RealtimeApi = {
+  id: "phonic-sts",
+  label: "Phonic",
+  path: PHONIC_PATH,
+  endpoint: PHONIC_PATH,
+  url: (model, key, location) => {
+    const query = new URLSearchParams({ model });
+    if (key) query.set("key", key);
+    return socketUrl(location, `${PHONIC_PATH}?${query}`);
+  },
+  protocols: () => [],
+  modes: ["conversation"],
+  opening: (model) => [
+    { type: "config", model, input_format: `pcm_${REALTIME_RATE}`, output_format: `pcm_${REALTIME_RATE}` },
+  ],
+  audio: (audio) => ({ type: "audio_chunk", audio }),
+  reader: () => {
+    let turn = 0;
+    return (message) => {
+      const m = message as Json;
+      const user = `user-${turn}`;
+      const model = `model-${turn}`;
+      const done = (status: string): ServerEvent[] => {
+        turn += 1;
+        return [{ type: "response.done", response: { status } }];
+      };
+      switch (m.type) {
+        case "user_started_speaking":
+          return [
+            { type: "input_audio_buffer.speech_started" },
+            { type: "conversation.item.created", item: { id: user, role: "user" } },
+          ];
+        case "input_text":
+          return [{ type: "conversation.item.input_audio_transcription.completed", item_id: user, transcript: m.text }];
+        case "assistant_started_speaking":
+          return [
+            { type: "input_audio_buffer.speech_stopped" },
+            { type: "conversation.item.created", item: { id: model, role: "assistant" } },
+          ];
+        case "audio_chunk": {
+          const out: ServerEvent[] = [
+            { type: "response.output_audio.delta", item_id: model, content_index: 0, delta: m.audio },
+          ];
+          if (m.text) out.push({ type: "response.output_audio_transcript.delta", item_id: model, delta: m.text });
+          return out;
+        }
+        case "assistant_finished_speaking":
+          return done("completed");
+        case "interrupted_response":
+          return done("cancelled");
+        case "error":
+          return [{ type: "error", error: { message: String(m.error?.message ?? "") } }];
+        default:
+          return [];
+      }
+    };
+  },
+};
+
+export const realtimeApis: RealtimeApi[] = [openaiRealtime, openaiLive, geminiLive, mistralRealtime, phonicSts];

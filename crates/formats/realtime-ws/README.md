@@ -16,6 +16,9 @@ a format per spec:
 - `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
   Live models (`gpt-live-1`) speak, at `/live/sessions` after
   `wss://api.openai.com/v1`, with no query.
+- `PhonicSts`, `phonic-sts`: Phonic's speech-to-speech, which its models
+  (`phonic-1`) speak, at `/sts/ws` after `wss://api.phonic.ai/v1`, with no
+  query.
 - `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native
@@ -62,7 +65,17 @@ ways, both transcripts and errors. Its usage, the session's seconds so far,
 is `Seconds` beyond the last, beside the event, which stays native, as
 delegation and the rest do. It is full duplex: no turns or responses.
 
-`OpenAiRealtime`, `GeminiLive` and `OpenAiLive` write each other's events
+`PhonicSts` does the same for Phonic's speech-to-speech: its `config` (its
+model, system prompt, voice and both audio formats), audio both ways, the
+user's turns (`user_started_speaking`, `user_finished_speaking`) and
+transcript (`input_text`), the model's turns
+(`assistant_started_speaking`, `assistant_finished_speaking`,
+`interrupted_response`) and the transcript each audio chunk carries, and
+errors. It bills a conversation by its minutes and says no usage, so the
+seconds since its `conversation_created` are `Seconds` at each frame and at
+its end. Tools, `say`, `generate_reply` and the rest stay native.
+
+`OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
 too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
 kind's `Input::Native` or `Output::Native`, tagged with its name, and
 writes no other format's.
@@ -122,6 +135,16 @@ What one spec has and the other has not is emulated, dropped or refused:
   turns, responses, token usage and whole transcripts are not written;
   text and tools' calls are refused. OpenAI sends a session with a Live
   model (`gpt-live-` and a version) to its Live API, any other to Realtime.
+- To Phonic: the session is fixed at its `config`, each audio format the
+  client's if it takes it, else 44.1 kHz PCM; a later session that changes
+  anything closes it 1008. Audio is sent in chunks of at most 40 ms, the
+  longest it takes. Voice detection and transcription settings are
+  dropped; anything else it has none of, such as tools, text output,
+  commits, messages and responses, is refused.
+- From Phonic: the first session told of is its
+  `ready_to_start_conversation`; the model's transcript goes with its next
+  audio chunk, only the user's whole transcript is written, and usage is
+  not; text and tools' calls are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a

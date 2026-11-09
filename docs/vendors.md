@@ -50,6 +50,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
 | <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `decisions` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
+| | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -81,7 +82,9 @@ such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://api.mistral.ai/v1` for `mistral-realtime`: Mistral's realtime
 transcription, the key a bearer token and the model at `?model=`, which
 transcribes for an OpenAI Realtime or Gemini Live transcription as its own
-clients transcribe with theirs.
+clients transcribe with theirs; `wss://api.phonic.ai/v1` for `phonic-sts`:
+Phonic's speech-to-speech, which its models such as `phonic-1` speak, the
+key a bearer token and the model in its `config`.
 Perplexity's Agent API speaks `openai-responses` alone, at
 `https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
 such as `openai/gpt-5.6-sol`.

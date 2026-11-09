@@ -15,9 +15,9 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media_http::bedrock::BedrockEmbeddings;
 
-use respan_gateway_vendor_kit::{
-    Ask, BoxFuture, Dialect, Dialected, KeyIn, Model, Models, Rewrite, Vendor, VendorProvider,
-};
+use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, KeyIn, Model, Rewrite, Vendor};
+
+use crate::no_models;
 
 /// Where a region's runtime is: `AWS_REGION`'s, unless a host says.
 const BASE_URL: &str = "https://bedrock-runtime.{AWS_REGION}.amazonaws.com";
@@ -67,11 +67,6 @@ fn format_for(ask: &Ask, model: &Model) -> Option<&'static str> {
         true => AnthropicMessages::NAME,
         false => BedrockConverse::NAME,
     })
-}
-
-/// Its models are its account's: none are listed.
-fn no_models(_: &VendorProvider) -> BoxFuture<'_, Models> {
-    Box::pin(async { Ok(Vec::new()) })
 }
 
 #[cfg(test)]

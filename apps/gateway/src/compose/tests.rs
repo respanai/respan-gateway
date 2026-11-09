@@ -381,6 +381,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-images",
             "gemini-live",
             "mistral-realtime",
+            "phonic-sts",
             "gemini-veo",
             "decisions",
             "openai-decisions",
