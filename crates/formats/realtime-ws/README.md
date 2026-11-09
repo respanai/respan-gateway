@@ -126,6 +126,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   Search, non-blocking functions and video are refused. An error closes a
   Gemini client, which knows a refusal only as a close: 1007 if its cause
   is `Invalid`, and none if `NothingToCancel`.
+  From any client, an audio format OpenAI does not take (PCM at a rate
+  but 24 kHz) is left out, and the audio converted to 24 kHz PCM.
 
 - To OpenAI Live: the session is fixed at its start, in the client's
   audio format if it takes it, else 24 kHz PCM; a later session that
@@ -139,9 +141,10 @@ What one spec has and the other has not is emulated, dropped or refused:
 - To Phonic: the session is fixed at its `config`, each audio format the
   client's if it takes it, else 44.1 kHz PCM; a later session that changes
   anything closes it 1008. Audio is sent in chunks of at most 40 ms, the
-  longest it takes. Voice detection and transcription settings are
-  dropped; anything else it has none of, such as tools, text output,
-  commits, messages and responses, is refused.
+  longest it takes. A voice is kept only from a Phonic client, as another
+  format's names another vendor's. Voice detection and transcription
+  settings are dropped; anything else it has none of, such as tools, text
+  output, commits, messages and responses, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
   audio chunk, the user's a word at a time, another format's parts of a

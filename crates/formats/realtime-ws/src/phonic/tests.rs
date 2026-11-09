@@ -41,8 +41,12 @@ fn read<T>(
 
 /// What `events` are written as to a provider, its model `model`.
 fn sent(model: Option<&str>, events: &[Input]) -> Result<Vec<Value>, Fault> {
-    let mut provider =
-        input::Provider::new(model.map(str::to_owned), Applied::default(), spec::say().0);
+    let mut provider = input::Provider::new(
+        model.map(str::to_owned),
+        true,
+        Applied::default(),
+        spec::say().0,
+    );
     frames(events, |e, out| provider.write(e, out))
 }
 
@@ -220,7 +224,7 @@ fn what_phonic_has_none_of_is_refused() {
     }
     // A later session that changes nothing is acknowledged.
     let (say, mut said) = spec::say();
-    let mut provider = input::Provider::new(None, Applied::default(), say);
+    let mut provider = input::Provider::new(None, true, Applied::default(), say);
     let written =
         frames(&[start.clone(), start], |e, out| provider.write(e, out)).expect("written");
     assert_eq!(written.len(), 1);

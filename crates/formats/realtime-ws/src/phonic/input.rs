@@ -69,6 +69,8 @@ impl Client {
 pub(super) struct Provider {
     /// The model routing chose, else the one at the client's `?model=`.
     model: Option<String>,
+    /// Whether its client is Phonic's, whose voice names one of Phonic's.
+    voiced: bool,
     /// The session as its `config` started it, once it did.
     applied: Applied,
     say: Say,
@@ -78,9 +80,10 @@ pub(super) struct Provider {
 }
 
 impl Provider {
-    pub(super) fn new(model: Option<String>, applied: Applied, say: Say) -> Self {
+    pub(super) fn new(model: Option<String>, voiced: bool, applied: Applied, say: Say) -> Self {
         Self {
             model,
+            voiced,
             applied,
             say,
             input: DEFAULT_FORMAT,
@@ -128,11 +131,13 @@ impl Provider {
     /// The session's `config`: the model routing chose, else the
     /// handshake's, which routing judged, else its own; each audio format
     /// the client's if Phonic takes it, else its own, which the audio is
-    /// converted to. The provider's voice detection and transcription,
-    /// which it always does, are dropped.
+    /// converted to; a voice only from a Phonic client, as another
+    /// format's names another vendor's. The provider's voice detection and
+    /// transcription, which it always does, are dropped.
     fn start(&mut self, s: &Session) -> Result<Value, Fault> {
         let mut s = s.clone();
         s.model = self.model.take().or(s.model);
+        s.voice = s.voice.filter(|_| self.voiced);
         let unsupported = [
             (s.purpose == Some(Purpose::Transcription), "a transcription"),
             (s.output == Some(Modality::Text), "text output"),

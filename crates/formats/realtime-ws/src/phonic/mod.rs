@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{AudioFormat, Input, Output, Session};
@@ -116,9 +117,12 @@ impl Format<ProviderIo, Output, Input> for PhonicSts {
         let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
         let wire = io.extensions().get::<Original>();
         let model = chosen.or_else(|| requested_model(wire?));
+        let voiced = wire
+            .and_then(Original::get)
+            .is_some_and(|head| path_ends_with(head.uri(), SPEC.path));
         let applied = Applied::default();
         let (say, said) = spec::say();
-        let mut provider = input::Provider::new(model, applied.clone(), say);
+        let mut provider = input::Provider::new(model, voiced, applied.clone(), say);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
         let read = output::Provider::new(applied, Box::new(Instant::now));
         Ok(SPEC.provider(io, None, write, Box::new(read), Some(said)))
