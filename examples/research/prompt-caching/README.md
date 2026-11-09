@@ -157,4 +157,4 @@ That makes the best moments to switch easy to spot: at the start of a session, r
 
 ---
 
-*How I tested: the GPU experiments ran on one rented H100 (RunPod, about $2) with Qwen3-8B on vLLM 0.33. Session costs are modelled from published list prices as of November 2026. Host prices come from OpenRouter's public endpoints API on November 6, 2026. The GPU experiments, with scripts and raw results, are in [experiments](experiments/).*
+*How I tested: the GPU experiments ran on one rented H100 (RunPod, about $2) with Qwen3-8B on vLLM 0.33. Session costs are modelled from published list prices as of November 2026. Host prices come from OpenRouter's public endpoints API on November 6, 2026. The GPU experiments, with scripts and raw results, are in [experiments](experiments/), and the code for every chart is in [charts](charts/).*
