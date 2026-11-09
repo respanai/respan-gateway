@@ -10,7 +10,7 @@ use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
-use respan_gateway_realtime::{Input, Output};
+use respan_gateway_realtime::{Input, Output, Purpose, Session, ToolChoice};
 use respan_gateway_ws::WsTransport;
 
 use serde_json::Value;
@@ -33,10 +33,12 @@ pub(crate) fn say() -> (Say, Said) {
 
 /// Every spec of the crate, which a client's request is matched against
 /// together, and whose natives each other's writers know what to do with.
-pub(crate) const SPECS: [&Spec; 4] = [
+pub(crate) const SPECS: [&Spec; 6] = [
     &crate::openai::SPEC,
     &crate::gemini::SPEC,
     &crate::mistral::SPEC,
+    &crate::live::SPEC,
+    &crate::phonic::SPEC,
     &crate::responses::SPEC,
 ];
 
@@ -188,6 +190,54 @@ pub(crate) fn model_query(model: &str) -> String {
     form_urlencoded::Serializer::new(String::new())
         .append_pair("model", model)
         .finish()
+}
+
+/// The first field `s` sets to other than `applied` has, named as OpenAI
+/// Realtime names it: what a spec that fixes its session at its start
+/// refuses to change.
+pub(crate) fn changes(applied: &Session, s: &Session) -> Option<&'static str> {
+    fn differs<T: PartialEq>(new: &Option<T>, old: &Option<T>) -> bool {
+        new.is_some() && new != old
+    }
+    let auto = |c: &Option<ToolChoice>| match c {
+        Some(ToolChoice::Auto) | None => None,
+        Some(c) => Some(c.clone()),
+    };
+    [
+        // A session that says no purpose is a conversation.
+        (
+            "type",
+            differs(&s.purpose, &applied.purpose.or(Some(Purpose::Conversation))),
+        ),
+        ("model", differs(&s.model, &applied.model)),
+        (
+            "instructions",
+            differs(&s.instructions, &applied.instructions),
+        ),
+        ("output_modalities", differs(&s.output, &applied.output)),
+        ("voice", differs(&s.voice, &applied.voice)),
+        ("turn_detection", differs(&s.turns, &applied.turns)),
+        (
+            "transcription",
+            differs(&s.input_transcription, &applied.input_transcription),
+        ),
+        (
+            "output_transcription",
+            differs(&s.output_transcription, &applied.output_transcription),
+        ),
+        ("tools", differs(&s.tools, &applied.tools)),
+        (
+            "tool_choice",
+            differs(&auto(&s.tool_choice), &auto(&applied.tool_choice)),
+        ),
+        (
+            "max_output_tokens",
+            differs(&s.max_output_tokens, &applied.max_output_tokens),
+        ),
+        ("native", differs(&s.native, &applied.native)),
+    ]
+    .into_iter()
+    .find_map(|(field, changed)| changed.then_some(field))
 }
 
 /// The events of `frames`, with what was `said` first whenever there is

@@ -138,6 +138,16 @@ fn modality_json(m: Modality) -> Option<Value> {
     }
 }
 
+/// Whether OpenAI takes audio in `format`: 16-bit PCM at 24 kHz, or G.711.
+pub(super) fn takes(format: AudioFormat) -> bool {
+    [
+        AudioFormat::pcm16(24_000),
+        AudioFormat::MULAW,
+        AudioFormat::ALAW,
+    ]
+    .contains(&format)
+}
+
 /// A GA audio format: `audio/pcm` at its rate, or G.711.
 pub(super) fn audio_format(v: &Value) -> Option<AudioFormat> {
     match v["type"].as_str()? {
