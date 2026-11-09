@@ -82,6 +82,13 @@ allow = ["github__search_*"]            # Offer only what you would let any clie
 max_steps = 8
 ```
 
+The model sees tools as `<server>__<tool>`, with other characters replaced
+by `_` and names shortened to 64 characters. If distinct tools would have
+the same name, each gets a stable suffix; other names stay as they were.
+`allow`, `deny`, and client tool scopes match these final names. Names are
+assigned before filters or switches hide tools, so those do not change
+which original tool a name calls.
+
 A tool's description and output are untrusted input to the model. Offer
 only tools from servers you trust, and use `deny` to keep destructive ones
 out. A client can opt one request out with `x-respan-tool-loop: off`.
