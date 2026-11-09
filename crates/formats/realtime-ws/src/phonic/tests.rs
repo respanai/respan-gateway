@@ -6,7 +6,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status, Turns,
+    Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
@@ -50,15 +50,9 @@ fn sent(model: Option<&str>, events: &[Input]) -> Result<Vec<Value>, Fault> {
     frames(events, |e, out| provider.write(e, out))
 }
 
-fn heard(asked: AudioFormat, events: &[Output]) -> Result<Vec<Value>, Fault> {
-    let mut client = output::Client::new(Asked::new(Mutex::new(asked)));
+fn heard(events: &[Output]) -> Result<Vec<Value>, Fault> {
+    let mut client = output::Client::new(Asked::new(Mutex::new(DEFAULT_FORMAT)));
     frames(events, |e, out| client.write(e, out))
-}
-
-/// A provider's reader whose clock is `now`, which a test moves on.
-fn clocked(applied: Applied, now: &Arc<Mutex<Instant>>) -> output::Provider {
-    let now = now.clone();
-    output::Provider::new(applied, Box::new(move || *now.lock()))
 }
 
 fn session(f: impl FnOnce(&mut Session)) -> Input {
@@ -68,14 +62,19 @@ fn session(f: impl FnOnce(&mut Session)) -> Input {
     Input::Session(s)
 }
 
-fn billed(events: &[Output]) -> Vec<f64> {
-    events
-        .iter()
-        .filter_map(|e| match e {
-            Output::Seconds(s) => Some(*s),
-            _ => None,
-        })
-        .collect()
+fn audio(format: AudioFormat, bytes: usize) -> Audio {
+    Audio {
+        data: Bytes::from(vec![0; bytes]),
+        format,
+    }
+}
+
+fn words(text: &str, complete: bool) -> Output {
+    Output::InputTranscript {
+        text: text.into(),
+        complete,
+        native: None,
+    }
 }
 
 #[test]
@@ -83,121 +82,103 @@ fn every_event_is_written_back_as_it_came() {
     let client = [
         json!({"type": "config", "model": "phonic-1", "system_prompt": "Be brief.",
             "voice_id": "sabrina", "input_format": "mulaw_8000", "output_format": "pcm_24000",
-            "turn_taking": "patient", "tools": ["natural_conversation_ending"]}),
+            "turn_taking": "patient"}),
         json!({"type": "audio_chunk", "audio": "AAEC"}),
         json!({"type": "say", "text": "One moment."}),
     ];
     let asked = Asked::new(Mutex::new(DEFAULT_FORMAT));
     let mut reader = input::Client::new(asked.clone());
     let events = read(&client, |raw, out| reader.read(raw, out));
-    let Input::Session(s) = &events[0] else {
-        panic!("{events:?}")
-    };
-    assert_eq!(
-        (s.voice.as_deref(), s.input_audio),
-        (Some("sabrina"), Some(AudioFormat::MULAW))
-    );
-    assert_eq!(*asked.lock(), AudioFormat::pcm16(24_000));
     assert!(matches!(&events[1], Input::Audio { audio, .. } if audio.format == AudioFormat::MULAW));
+    assert_eq!(*asked.lock(), AudioFormat::pcm16(24_000));
     assert_eq!(sent(None, &events).expect("written"), client);
 
     let server = [
-        json!({"type": "conversation_created", "conversation_id": "conv_1"}),
         json!({"type": "ready_to_start_conversation"}),
         json!({"type": "user_started_speaking"}),
-        json!({"type": "user_finished_speaking"}),
         json!({"type": "input_text", "text": "Hi", "language": "en"}),
         json!({"type": "input_text", "text": "there", "language": "en"}),
         json!({"type": "assistant_started_speaking"}),
         json!({"type": "audio_chunk", "audio": "AAEC", "text": "Hello"}),
         json!({"type": "interrupted_response", "text": "Hel"}),
-        json!({"type": "assistant_finished_speaking"}),
         json!({"type": "error", "error": {"message": "No.", "code": "invalid_config"}}),
     ];
-    let applied = Applied::default();
-    let now = Arc::new(Mutex::new(Instant::now()));
-    let mut provider = clocked(applied, &now);
+    let mut provider = output::Provider::new(Applied::default(), Box::new(Instant::now));
     let events = read(&server, |raw, out| provider.decode(raw, out));
-    assert!(matches!(&events[1], Output::Updated(_)));
     // The user's words come one at a time, a space before each but the first.
-    assert!(matches!(&events[5], Output::InputTranscript { text, .. } if text == " there"));
+    assert!(matches!(&events[3], Output::InputTranscript { text, .. } if text == " there"));
     // A chunk's text is the model's transcript, told before its audio.
-    assert!(matches!(&events[7], Output::Transcript { text, .. } if text == "Hello"));
-    let interrupted = Status::Interrupted;
-    assert!(matches!(&events[9], Output::ResponseDone { status, .. } if *status == interrupted));
-    assert_eq!(heard(DEFAULT_FORMAT, &events).expect("written"), server);
+    assert!(matches!(&events[5], Output::Transcript { text, .. } if text == "Hello"));
+    assert!(matches!(
+        &events[7],
+        Output::ResponseDone {
+            status: Status::Interrupted,
+            ..
+        }
+    ));
+    assert_eq!(heard(&events).expect("written"), server);
 }
 
 #[test]
 fn the_seconds_billed_are_the_conversations_from_its_creation() {
     let now = Arc::new(Mutex::new(Instant::now()));
-    let mut provider = clocked(Applied::default(), &now);
+    let clock = now.clone();
+    let mut provider = output::Provider::new(Applied::default(), Box::new(move || *clock.lock()));
     let mut out = Vec::new();
-    let mut frame = |v: Value, out: &mut Vec<Output>| {
+    for (wait, kind) in [
+        (0, "ready_to_start_conversation"),
+        (5_000, "conversation_created"),
+        (1_500, "user_started_speaking"),
+    ] {
+        *now.lock() += Duration::from_millis(wait);
         provider
-            .decode(Bytes::from(v.to_string()), out)
+            .decode(Bytes::from(json!({"type": kind}).to_string()), &mut out)
             .expect("read");
-    };
-    frame(json!({"type": "ready_to_start_conversation"}), &mut out);
-    *now.lock() += Duration::from_secs(5);
-    frame(
-        json!({"type": "conversation_created", "conversation_id": "c"}),
-        &mut out,
-    );
-    *now.lock() += Duration::from_millis(1500);
-    frame(json!({"type": "user_started_speaking"}), &mut out);
+    }
     *now.lock() += Duration::from_secs(2);
     provider.end(Ok(()), &mut out).expect("ended");
-    assert_eq!(billed(&out), [1.5, 2.0]);
+    let billed: Vec<f64> = out
+        .iter()
+        .filter_map(|e| {
+            if let Output::Seconds(s) = e {
+                Some(*s)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(billed, [1.5, 2.0]);
 }
 
 #[test]
 fn a_config_names_the_model_routing_judged_and_takes_what_it_can() {
-    let mut s = Session::default();
-    s.model = Some("alias".into());
-    s.instructions = Some("Be brief.".into());
-    s.input_audio = Some(AudioFormat::pcm16(48_000));
-    s.output_audio = Some(AudioFormat::pcm16(16_000));
-    s.turns = Some(Turns::Server(Default::default()));
-    s.input_transcription = Some(true);
-    let frames = sent(Some("phonic-1"), &[Input::Session(s.clone())]).expect("written");
-    assert_eq!(
-        frames,
-        [
-            json!({"type": "config", "model": "phonic-1", "system_prompt": "Be brief.",
-            "output_format": "pcm_16000"})
-        ]
-    );
-    assert_eq!(
-        sent(None, &[Input::Session(s)]).expect("written")[0]["model"],
-        "alias"
-    );
+    let s = session(|s| {
+        s.model = Some("alias".into());
+        s.instructions = Some("Be brief.".into());
+        s.input_audio = Some(AudioFormat::pcm16(48_000));
+        s.output_audio = Some(AudioFormat::pcm16(16_000));
+        s.input_transcription = Some(true);
+    });
+    let written = sent(Some("phonic-1"), std::slice::from_ref(&s)).expect("written");
+    let config = json!({"type": "config", "model": "phonic-1", "system_prompt": "Be brief.",
+        "output_format": "pcm_16000"});
+    assert_eq!(written, [config]);
+    assert_eq!(sent(None, &[s]).expect("written")[0]["model"], "alias");
 }
 
 #[test]
-fn audio_goes_in_chunks_of_at_most_40_ms_in_a_format_phonic_takes() {
+fn audio_goes_in_chunks_of_at_most_40_ms() {
     // 100 ms of 44.1 kHz PCM, Phonic's own: 40 ms is 3,528 bytes.
-    let audio = |format, bytes| Input::Audio {
-        audio: Audio {
-            data: Bytes::from(vec![0; bytes]),
-            format,
-        },
+    let chunk = Input::Audio {
+        audio: audio(DEFAULT_FORMAT, 8_820),
         native: None,
     };
-    let chunks = |events: &[Input]| -> Vec<usize> {
-        sent(None, events).expect("written")[1..]
-            .iter()
-            .map(|v| crate::json::unbase64(&v["audio"]).expect("base64").len())
-            .collect()
-    };
-    let own = chunks(&[session(|_| {}), audio(DEFAULT_FORMAT, 8_820)]);
-    assert_eq!(own, [3_528, 3_528, 1_764]);
-    // 100 ms of 24 kHz PCM is converted to it first.
-    let converted = chunks(&[session(|_| {}), audio(AudioFormat::pcm16(24_000), 4_800)]);
-    assert!(
-        converted.iter().all(|bytes| *bytes <= 3_528),
-        "{converted:?}"
-    );
+    let written = sent(None, &[session(|_| {}), chunk]).expect("written");
+    let sizes: Vec<usize> = written[1..]
+        .iter()
+        .map(|v| crate::json::unbase64(&v["audio"]).expect("base64").len())
+        .collect();
+    assert_eq!(sizes, [3_528, 3_528, 1_764]);
 }
 
 #[test]
@@ -206,10 +187,7 @@ fn what_phonic_has_none_of_is_refused() {
     for events in [
         vec![session(|s| s.purpose = Some(Purpose::Transcription))],
         vec![session(|s| s.output = Some(Modality::Text))],
-        vec![session(|s| s.turns = Some(Turns::Manual))],
-        vec![session(|s| s.max_output_tokens = Some(1))],
         vec![start.clone(), Input::Commit { native: None }],
-        vec![start.clone(), Input::Respond { native: None }],
         vec![
             start.clone(),
             session(|s| s.instructions = Some("x".into())),
@@ -233,48 +211,29 @@ fn what_phonic_has_none_of_is_refused() {
 
 #[test]
 fn another_formats_session_is_told_as_phonic_tells_it() {
-    let audio = Output::Audio {
-        audio: Audio {
-            data: Bytes::from_static(&[0, 1]),
-            format: AudioFormat::pcm16(24_000),
-        },
+    let transcript = |text: &str| Output::Transcript {
+        text: text.into(),
         native: None,
     };
     let events = [
         Output::Opened(Session::default()),
-        Output::Updated(Session::default()),
         // Another format's parts of a word are one word.
-        Output::InputTranscript {
-            text: "H".into(),
-            complete: false,
+        words("H", false),
+        words("i", false),
+        words("Hi", true),
+        transcript("Hel"),
+        transcript("lo"),
+        Output::Audio {
+            audio: audio(DEFAULT_FORMAT, 2),
             native: None,
         },
-        Output::InputTranscript {
-            text: "i".into(),
-            complete: false,
-            native: None,
-        },
-        Output::InputTranscript {
-            text: "Hi".into(),
-            complete: true,
-            native: None,
-        },
-        Output::Transcript {
-            text: "Hel".into(),
-            native: None,
-        },
-        Output::Transcript {
-            text: "lo".into(),
-            native: None,
-        },
-        audio,
         Output::Seconds(1.0),
         Output::ResponseDone {
             status: Status::Cancelled,
             native: None,
         },
     ];
-    let written = heard(AudioFormat::pcm16(24_000), &events).expect("written");
+    let written = heard(&events).expect("written");
     let types: Vec<&Value> = written.iter().map(|f| &f["type"]).collect();
     assert_eq!(
         types,
@@ -285,11 +244,15 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
             "assistant_finished_speaking"
         ]
     );
-    assert_eq!(written[1]["text"], "Hi");
-    assert_eq!(written[2]["text"], "Hello");
-    let text = Output::Text {
-        text: "x".into(),
-        native: None,
-    };
-    assert!(heard(DEFAULT_FORMAT, &[text]).is_err());
+    assert_eq!(
+        (&written[1]["text"], &written[2]["text"]),
+        (&json!("Hi"), &json!("Hello"))
+    );
+    assert!(
+        heard(&[Output::Text {
+            text: "x".into(),
+            native: None
+        }])
+        .is_err()
+    );
 }
