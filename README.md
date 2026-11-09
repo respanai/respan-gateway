@@ -164,6 +164,8 @@ and refuses to start on a public address.
 [vendors](docs/vendors.md) · [tool vendors](docs/tool-vendors.md) ·
 [MCP and tools](docs/mcp.md) · [`gateway.example.toml`](gateway.example.toml)
 
+**Reading:** [From the GPU to your bill: a deep dive into prompt caching](docs/prompt-caching.md)
+
 ## Supported API formats
 
 Call the gateway in any format on the left, and it reaches every provider on
