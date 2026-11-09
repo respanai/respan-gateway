@@ -148,9 +148,10 @@ fn what_the_live_api_has_none_of_is_refused() {
             "{events:?}"
         );
     }
-    // A later session that changes nothing is acknowledged.
+    // A later session that changes nothing the client asked is
+    // acknowledged, though routing chose another model.
     let (say, mut said) = spec::say();
-    let mut provider = input::Provider::new(None, say);
+    let mut provider = input::Provider::new(Some("gpt-live-2".into()), say);
     let written =
         frames(&[start.clone(), start], |e, out| provider.write(e, out)).expect("written");
     assert_eq!(written.len(), 1);
