@@ -9,7 +9,8 @@
 //! ([`Input::Message`]). Each answer is a response: [`Output::ResponseStart`],
 //! its [`Output::Audio`], [`Output::Text`], [`Output::Transcript`] and
 //! [`Output::ToolCall`]s, then [`Output::ResponseDone`] with how it ended,
-//! [`Output::Usage`] among them. A user who speaks over the model barges in:
+//! [`Output::Usage`] among them; a provider that bills by duration says
+//! [`Output::Seconds`] instead. A user who speaks over the model barges in:
 //! [`Output::SpeechStarted`], and the response ends [`Status::Interrupted`].
 //!
 //! What the kind has no form for stays as its format has it ([`NativeFields`],
@@ -359,6 +360,9 @@ pub enum Output {
     },
     /// Usage the provider reports for a response, as an increment.
     Usage(Usage),
+    /// Seconds of the session the provider bills, as an increment, where it
+    /// bills by duration rather than by token.
+    Seconds(f64),
     /// The response ended.
     ResponseDone {
         /// How.

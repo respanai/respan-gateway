@@ -430,6 +430,8 @@ impl Client {
                 *self.usage.get_or_insert_default() += usage;
                 return Ok(());
             }
+            // OpenAI Realtime bills by token: a duration has no place in it.
+            Output::Seconds(_) => return Ok(()),
             Output::ResponseDone { status, native } => {
                 let (said, reason) = spelled(status).ok_or_else(|| refuse("this status"))?;
                 let mut v = json!({"type": "response.done", "response": {"status": said}});

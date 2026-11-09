@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { initialRealtime, realtimeReducer, type RealtimeState } from "./realtime";
 import type { ServedFormat } from "./api";
 import { servedApis } from "./playground-apis";
-import { geminiLive, mistralRealtime, realtimeApis } from "./realtime-apis";
+import { geminiLive, mistralRealtime, openaiLive, realtimeApis } from "./realtime-apis";
 
 /** The state a session reaches from Gemini Live's `messages`, as the page reads them. */
 function geminiSession(...messages: unknown[]): RealtimeState {
@@ -99,6 +99,69 @@ describe("Gemini Live", () => {
     expect(read({ usageMetadata: { totalTokenCount: 3 } })).toEqual([]);
     const thought = read({ serverContent: { modelTurn: { parts: [{ text: "planning", thought: true }] } } });
     expect(thought.some((e) => e.type === "response.output_text.delta")).toBe(false);
+  });
+});
+
+describe("OpenAI Live", () => {
+  /** The state a session reaches from OpenAI Live's `messages`, as the page reads them. */
+  function liveSession(...messages: unknown[]): RealtimeState {
+    const read = openaiLive.reader();
+    const live: RealtimeState = { ...initialRealtime, phase: "live" };
+    return messages
+      .flatMap((m) => read(m))
+      .reduce<RealtimeState>((state, event) => realtimeReducer(state, { type: "event", event }), live);
+  }
+
+  it("starts its session at its path, its model and key in its query", () => {
+    const url = new URL(openaiLive.url("gpt-live-1", "sk-1", { protocol: "https:", host: "gw.test" }, "conversation"));
+    expect(url.pathname).toBe("/v1/live/sessions");
+    expect(url.searchParams.get("model")).toBe("gpt-live-1");
+    expect(url.searchParams.get("key")).toBe("sk-1");
+    expect(openaiLive.opening("gpt-live-1", "conversation")).toEqual([
+      {
+        type: "session.start",
+        session: { model: "gpt-live-1", audio: { format: { type: "audio/pcm", rate: 24000 } } },
+      },
+    ]);
+    expect(openaiLive.audio("AAEC")).toEqual({ type: "session.input_audio.append", audio: "AAEC" });
+    expect(openaiLive.cancel).toBeUndefined();
+  });
+
+  it("numbers its lines by who speaks, the user speaking again ending the model's", () => {
+    const state = liveSession(
+      { type: "session.started", session: { model: "gpt-live-1" } },
+      { type: "session.input_transcript.delta", delta: "What time" },
+      { type: "session.input_transcript.delta", delta: " is it?" },
+      { type: "session.output_audio.delta", delta: "AQID" },
+      { type: "session.output_transcript.delta", delta: "It is noon." },
+      { type: "session.input_transcript.delta", delta: "Thanks." },
+    );
+    expect(lines(state)).toEqual([
+      { role: "user", text: "What time is it?", done: true, interrupted: false },
+      { role: "assistant", text: "It is noon.", done: true, interrupted: false },
+      { role: "user", text: "Thanks.", done: false, interrupted: false },
+    ]);
+  });
+
+  it("plays only what is not silence, and the model's speaking ends at its silence", () => {
+    const read = openaiLive.reader();
+    expect(read({ type: "session.output_audio.delta", delta: "AAAAAA==" })).toEqual([]);
+    const said = read({ type: "session.output_audio.delta", delta: "AQID" });
+    expect(said.find((e) => e.type === "response.output_audio.delta")).toEqual({
+      type: "response.output_audio.delta",
+      item_id: "model-0",
+      content_index: 0,
+      delta: "AQID",
+    });
+    expect(read({ type: "session.output_audio.delta", delta: "AAAA" })).toEqual([
+      { type: "response.output_audio.done", item_id: "model-0" },
+    ]);
+  });
+
+  it("reads its errors, and ignores its usage and the rest", () => {
+    const read = openaiLive.reader();
+    expect(read({ type: "error", error: { message: "No." } })).toEqual([{ type: "error", error: { message: "No." } }]);
+    expect(read({ type: "session.usage.updated", usage: { seconds: 1 } })).toEqual([]);
   });
 });
 

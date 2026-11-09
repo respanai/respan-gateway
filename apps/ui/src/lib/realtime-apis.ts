@@ -8,7 +8,7 @@ import type { Json } from "@/lib/playground-apis";
 import type { ServerEvent } from "@/lib/realtime";
 import { REALTIME_RATE } from "@/lib/realtime-audio";
 
-export type RealtimeApiId = "openai-realtime" | "gemini-live" | "mistral-realtime";
+export type RealtimeApiId = "openai-realtime" | "openai-live" | "gemini-live" | "mistral-realtime";
 
 /** A message a client sends, as the API has it. */
 export type ClientMessage = Record<string, unknown>;
@@ -101,6 +101,99 @@ export const openaiRealtime: RealtimeApi = {
   }),
   cancel: { type: "response.cancel" },
   reader: () => (message) => [message as ServerEvent],
+};
+
+const LIVE_PATH = "/v1/live/sessions";
+
+/** Whether base64 `audio` is digital silence: its bytes all zero, which encode as `A`s. */
+const silent = (audio: string) => /^A*=*$/.test(audio);
+
+/**
+ * OpenAI's Live API, at its own path, its model on `?model=`, which routes
+ * it, and the gateway key on `?key=`. It is full duplex: it streams audio
+ * all the time, silence included, and has no turns, responses or ids. So
+ * the reader drops the silence, and numbers the lines by who speaks: the
+ * user's of turn `n` is `user-n`, from its transcript, and the model's
+ * `model-n`, from its voice or transcript; the user speaking again ends the
+ * model's. Its model stops itself when spoken over: a client cannot cancel.
+ */
+export const openaiLive: RealtimeApi = {
+  id: "openai-live",
+  label: "OpenAI Live",
+  path: LIVE_PATH,
+  endpoint: LIVE_PATH,
+  url: (model, key, location) => {
+    const query = new URLSearchParams({ model });
+    if (key) query.set("key", key);
+    return socketUrl(location, `${LIVE_PATH}?${query}`);
+  },
+  protocols: () => [],
+  modes: ["conversation"],
+  opening: (model) => [
+    {
+      type: "session.start",
+      session: { model, audio: { format: { type: "audio/pcm", rate: REALTIME_RATE } } },
+    },
+  ],
+  audio: (audio) => ({ type: "session.input_audio.append", audio }),
+  reader: () => {
+    let turn = 0;
+    let speaking: "user" | "model" | null = null;
+    let heard = "";
+    let sounding = false;
+    return (message) => {
+      const m = message as Json;
+      const out: ServerEvent[] = [];
+      const user = `user-${turn}`;
+      const model = `model-${turn}`;
+      const modelSpeaks = () => {
+        if (speaking === "model") return;
+        if (speaking === "user") {
+          out.push({ type: "conversation.item.input_audio_transcription.completed", item_id: user, transcript: heard });
+          out.push({ type: "input_audio_buffer.speech_stopped" });
+        }
+        out.push({ type: "conversation.item.created", item: { id: model, role: "assistant" } });
+        speaking = "model";
+      };
+      switch (m.type) {
+        case "session.input_transcript.delta": {
+          if (speaking !== "user") {
+            if (speaking === "model") {
+              out.push({ type: "response.done", response: { status: "completed" } });
+              turn += 1;
+            }
+            out.push({ type: "conversation.item.created", item: { id: `user-${turn}`, role: "user" } });
+            speaking = "user";
+            heard = "";
+            sounding = false;
+          }
+          heard += String(m.delta ?? "");
+          out.push({ type: "conversation.item.input_audio_transcription.delta", item_id: `user-${turn}`, delta: m.delta });
+          return out;
+        }
+        case "session.output_audio.delta": {
+          const audio = String(m.delta ?? "");
+          if (silent(audio)) {
+            if (sounding) out.push({ type: "response.output_audio.done", item_id: model });
+            sounding = false;
+            return out;
+          }
+          modelSpeaks();
+          sounding = true;
+          out.push({ type: "response.output_audio.delta", item_id: model, content_index: 0, delta: audio });
+          return out;
+        }
+        case "session.output_transcript.delta":
+          modelSpeaks();
+          out.push({ type: "response.output_audio_transcript.delta", item_id: model, delta: m.delta });
+          return out;
+        case "error":
+          return [{ type: "error", error: { message: String(m.error?.message ?? "") } }];
+        default:
+          return out;
+      }
+    };
+  },
 };
 
 const GEMINI_PATH = "/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent";
@@ -256,4 +349,4 @@ export const mistralRealtime: RealtimeApi = {
   },
 };
 
-export const realtimeApis: RealtimeApi[] = [openaiRealtime, geminiLive, mistralRealtime];
+export const realtimeApis: RealtimeApi[] = [openaiRealtime, openaiLive, geminiLive, mistralRealtime];
