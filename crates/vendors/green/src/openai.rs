@@ -1,6 +1,6 @@
-//! OpenAI: Chat Completions, Responses, Realtime and Responses over WebSocket, its
-//! media endpoints (images, transcriptions, speech, embeddings), and its
-//! decisions. Its Videos API and Sora models were removed on 2026-09-24, with
+//! OpenAI: Chat Completions, Responses, Realtime, Responses over WebSocket,
+//! its Live API, its media endpoints (images, transcriptions, speech,
+//! embeddings), and its decisions. Its Videos API and Sora models were removed on 2026-09-24, with
 //! no replacement; the format stays, as what clients send for any provider of
 //! video.
 
@@ -15,7 +15,7 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
-use respan_gateway_realtime_ws::{OpenAiRealtime, ResponsesWs};
+use respan_gateway_realtime_ws::{OpenAiLive, OpenAiRealtime, ResponsesWs};
 use serde_json::{Map, Value};
 
 use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, Model, Rewrite, Vendor};
@@ -33,6 +33,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiResponses, Some(BASE_URL)),
         (&OpenAiRealtime, Some(BASE_URL)),
         (&ResponsesWs, Some(BASE_URL)),
+        (&OpenAiLive, Some(BASE_URL)),
         (&OpenAiImages, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
         (&OpenAiSpeech, Some(BASE_URL)),

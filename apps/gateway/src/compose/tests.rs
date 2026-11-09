@@ -245,6 +245,11 @@ fn a_vendor_is_every_format_it_speaks() {
                 "wss://api.openai.com/v1"
             ),
             entry(
+                "openai-live",
+                "openai:openai-live",
+                "wss://api.openai.com/v1"
+            ),
+            entry(
                 "openai-images",
                 "openai:openai-images",
                 "https://api.openai.com/v1"
@@ -317,6 +322,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "anthropic-messages",
             "openai-responses",
             "openai-realtime",
+            "openai-live",
             "openai-images",
             "openai-transcriptions",
             "openai-speech",

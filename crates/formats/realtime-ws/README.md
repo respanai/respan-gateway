@@ -13,6 +13,11 @@ a format per spec:
   binary frames, which its transport takes as text.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
+- `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
+  voice models (`gpt-live-1`) speak, at `/live/sessions` after
+  `wss://api.openai.com/v1`, with no query: its client names the model in
+  its first event, `session.start`. Every event is native, so it
+  translates to no other format.
 - `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native
@@ -54,9 +59,9 @@ them, so `clientContent` and `toolResponse` are written whole.
 `sessionResumptionUpdate` stay native.
 
 `OpenAiRealtime` and `GeminiLive` write each other's events too: see
-[Translation](#translation). `ResponsesWs` decodes every frame to the
-kind's `Input::Native` or `Output::Native`, tagged with its name, and
-writes no other format's.
+[Translation](#translation). `ResponsesWs` and `OpenAiLive` decode every
+frame to the kind's `Input::Native` or `Output::Native`, tagged with their
+name, and write no other format's.
 
 Plugins filter events with `cx.filter(|e: &mut Output| ..)` (client edge)
 or `px.filter(..)` (provider edge), and drop one with a `Filter` that does

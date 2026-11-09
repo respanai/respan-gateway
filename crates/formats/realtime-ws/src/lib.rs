@@ -5,6 +5,8 @@
 //! - [`OpenAiRealtime`]: OpenAI Realtime, `openai-realtime`.
 //! - [`GeminiLive`]: Gemini Live, `gemini-live`.
 //! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
+//! - [`OpenAiLive`]: OpenAI's Live API, `openai-live`, whose events are
+//!   all native, as its full-duplex voice models speak them.
 //! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
 //!   which is not realtime: it streams Responses over a socket, and uses the
 //!   kind's types only as native events.
@@ -18,7 +20,7 @@
 //! cannot change the answer, or refused: an input `bad_request`, closing
 //! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
 //! frame to the kind's native event of its name, and writes no other
-//! format's. A frame that is not JSON fails: the client's, `bad_request`;
+//! format's; so does [`OpenAiLive`]. A frame that is not JSON fails: the client's, `bad_request`;
 //! the provider's, `upstream`. A handshake one refuses is answered
 //! text/plain with the fault's error code, never its message.
 
@@ -26,12 +28,14 @@ mod audio;
 mod foreign;
 mod gemini;
 mod json;
+mod live;
 mod mistral;
 mod openai;
 mod responses;
 mod session;
 
 pub use gemini::GeminiLive;
+pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;
 pub use openai::OpenAiRealtime;
 pub use responses::ResponsesWs;
