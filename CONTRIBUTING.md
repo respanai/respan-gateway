@@ -31,7 +31,7 @@ The rules that keep it that way:
 - **Plugins are compiled in** and use only public APIs. The binary composes
   its plugins exactly as an outside author would. See [docs/plugins.md](docs/plugins.md).
 - **Policy belongs to applications.** Prices, billing stores, durable jobs
-  and tenant rules are the host's. `examples/` shows them without making them
+  and tenant rules are the host's. `examples/rust/` shows them without making them
   supported APIs.
 
 Each crate's `README.md` documents its public contract.
@@ -50,7 +50,8 @@ Each crate's `README.md` documents its public contract.
 | `apps/gateway/` | The binary: config, composition, client keys, request log, admin API |
 | `apps/ui/` | The web UI (React), embedded in the binary |
 | `python/` | The PyPI package, a PyO3 extension over `apps/gateway` |
-| `examples/` | Runnable examples, one self-contained file each: billing, guardrails, PII, admission, jobs, … |
+| `examples/rust/` | Runnable examples, one self-contained file each: billing, guardrails, PII, admission, jobs, … |
+| `examples/research/` | Write-ups with the experiments behind them, such as the prompt caching deep dive |
 | `docs/` | User docs: configuration, vendors, tool vendors, MCP and plugins |
 
 ## Development

@@ -36,5 +36,5 @@ transport's head wait and polled per-frame body gaps. Other transports can
 choose a different classifier without importing HTTP.
 
 Used by: [routing](../routing/README.md)'s `Dispatch`,
-[fallback](../../../examples/fallback.rs),
-[attachments](../../../examples/attachments.rs).
+[fallback](../../../examples/rust/fallback.rs),
+[attachments](../../../examples/rust/attachments.rs).

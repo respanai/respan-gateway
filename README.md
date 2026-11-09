@@ -164,7 +164,7 @@ and refuses to start on a public address.
 [vendors](docs/vendors.md) · [tool vendors](docs/tool-vendors.md) ·
 [MCP and tools](docs/mcp.md) · [`gateway.example.toml`](gateway.example.toml)
 
-**Reading:** [From the GPU to your bill: a deep dive into prompt caching](docs/prompt-caching.md)
+**Reading:** [From the GPU to your bill: a deep dive into prompt caching](examples/research/prompt-caching/README.md)
 
 ## Supported API formats
 

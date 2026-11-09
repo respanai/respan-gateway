@@ -1,6 +1,6 @@
 # Prompt caching experiments
 
-The GPU experiments behind [From the GPU to your bill: a deep dive into prompt caching](../prompt-caching.md). They open up a KV cache on one H100 and measure what the article describes: how much a cache hit saves, why only the beginning of a prompt can be reused, how a full GPU evicts old caches, how fast a cache comes back from CPU memory, and how routing decides whether a turn finds its cache.
+The GPU experiments behind [From the GPU to your bill: a deep dive into prompt caching](../README.md). They open up a KV cache on one H100 and measure what the article describes: how much a cache hit saves, why only the beginning of a prompt can be reused, how a full GPU evicts old caches, how fast a cache comes back from CPU memory, and how routing decides whether a turn finds its cache.
 
 Everything runs on one NVIDIA H100 80GB with Qwen3-8B on vLLM. Our run (November 7, 2026, vLLM 0.33.0, torch 2.14) took about 30 minutes and cost about $2 on a rented GPU. Raw results are in [`results/`](results/).
 

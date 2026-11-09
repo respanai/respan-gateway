@@ -17,7 +17,7 @@ members = [
     "crates/serve",
     "apps/gateway",
     "python",
-    "examples",
+    "examples/rust",
 ]
 resolver = "3"
 

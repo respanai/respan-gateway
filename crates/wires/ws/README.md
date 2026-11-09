@@ -110,4 +110,4 @@ into a session. Where that shows:
   the client offered it and it is no key.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
-[realtime examples](../../../examples/realtime).
+[realtime examples](../../../examples/rust/realtime.rs).
