@@ -62,7 +62,7 @@
 //!   is native to this format. A prompt Gemini blocks (`promptFeedback`
 //!   with no candidate) is filtered.
 //! - `usageMetadata` gives [`Output::Usage`]: `promptTokenCount` and
-//!   `toolUsePromptTokenCount` are the input, `candidatesTokenCount` and
+//!   billable `toolUsePromptTokenCount` are the input, `candidatesTokenCount` and
 //!   `thoughtsTokenCount` the output,
 //!   `cachedContentTokenCount` the cached input.
 //! - What else a response says is an [`Output::Native`] of this format, which
@@ -488,6 +488,15 @@ fn google_status(status: StatusCode) -> &'static str {
 /// Usage as `usageMetadata` has it, if there is any: the output without the
 /// thoughts as `candidatesTokenCount`, and their sum as the total.
 pub fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
+    usage_body_grounded(u, native, false)
+}
+
+/// Usage written with grounding known to be free of input-token charges.
+pub fn usage_body_grounded(
+    u: &Usage,
+    native: &Map<String, Value>,
+    search_grounded: bool,
+) -> Option<Value> {
     if u.is_empty() && native.is_empty() {
         return None;
     }
@@ -496,7 +505,9 @@ pub fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
         .and_then(Value::as_u64)
         .unwrap_or(0);
     let mut body = json!({
-        "promptTokenCount": u.input_tokens.saturating_sub(tool_use),
+        "promptTokenCount": u
+            .input_tokens
+            .saturating_sub(if search_grounded { 0 } else { tool_use }),
         "totalTokenCount": u.input_tokens.saturating_add(u.output_tokens),
     });
     let candidates = u.output_tokens.saturating_sub(u.reasoning_tokens);
@@ -515,11 +526,18 @@ pub fn usage_body(u: &Usage, native: &Map<String, Value>) -> Option<Value> {
 
 /// Usage totals of a `usageMetadata`; the thoughts are part of the output.
 pub fn usage_of(u: &Value) -> Result<Usage, Fault> {
+    usage_of_grounded(u, false)
+}
+
+/// Usage as `usageMetadata`, excluding free search-grounding context.
+pub fn usage_of_grounded(u: &Value, search_grounded: bool) -> Result<Usage, Fault> {
     let n = |key: &str| count(u.get(key));
     let thoughts = n("thoughtsTokenCount")?.unwrap_or(0);
     let tool_use = n("toolUsePromptTokenCount")?.unwrap_or(0);
     Ok(Usage {
-        input_tokens: n("promptTokenCount")?.unwrap_or(0).saturating_add(tool_use),
+        input_tokens: n("promptTokenCount")?
+            .unwrap_or(0)
+            .saturating_add(if search_grounded { 0 } else { tool_use }),
         output_tokens: n("candidatesTokenCount")?
             .unwrap_or(0)
             .saturating_add(thoughts),
@@ -527,6 +545,17 @@ pub fn usage_of(u: &Value) -> Result<Usage, Fault> {
         reasoning_tokens: thoughts,
         ..Usage::default()
     })
+}
+
+/// Whether Gemini's grounding metadata describes Google Search or Maps.
+pub fn search_grounded(v: &Value) -> bool {
+    let metadata = &v["groundingMetadata"];
+    metadata["webSearchQueries"]
+        .as_array()
+        .is_some_and(|queries| !queries.is_empty())
+        || metadata["groundingChunks"]
+            .as_array()
+            .is_some_and(|chunks| chunks.iter().any(|chunk| chunk["maps"].is_object()))
 }
 
 /// What a usage object says that has no unit.

@@ -326,6 +326,31 @@ fn every_server_message_is_written_back_as_it_came() {
 }
 
 #[test]
+fn search_grounding_does_not_count_tool_context_as_input() {
+    let applied = Shared::default();
+    let messages = [
+        json!({
+            "serverContent": {
+                "groundingMetadata": { "webSearchQueries": ["weather"] }
+            }
+        }),
+        json!({
+            "serverContent": { "turnComplete": true },
+            "usageMetadata": {
+                "promptTokenCount": 10, "toolUsePromptTokenCount": 150,
+                "responseTokenCount": 20
+            }
+        }),
+    ];
+    let events = outputs(&applied, &messages);
+    let usage = events.iter().find_map(|event| match event {
+        Output::Usage(usage) => Some(usage.tokens.input_tokens),
+        _ => None,
+    });
+    assert_eq!(usage, Some(10));
+}
+
+#[test]
 fn the_setup_written_is_the_session_its_completion_says() {
     let applied = Shared::default();
     let events = inputs(&[json!({"setup": {"model": "models/m"}})]).expect("written");

@@ -10,7 +10,9 @@ use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
-use super::{BLOCKED, GEMINI, SYNTHETIC, extra_usage, finish_of, usage_of};
+use super::{
+    BLOCKED, GEMINI, SYNTHETIC, extra_usage, finish_of, search_grounded, usage_of_grounded,
+};
 
 /// A block of text or reasoning that is open, and may take more.
 #[derive(Debug, Clone, Copy)]
@@ -37,6 +39,7 @@ pub struct GeminiDecoder {
     response: Map<String, Value>,
     candidate: Map<String, Value>,
     usage: Map<String, Value>,
+    search_grounded: bool,
 }
 
 impl Default for GeminiDecoder {
@@ -53,6 +56,7 @@ impl Default for GeminiDecoder {
             response: Map::new(),
             candidate: Map::new(),
             usage: Map::new(),
+            search_grounded: false,
         }
     }
 }
@@ -192,6 +196,7 @@ impl GeminiDecoder {
             self.response = last;
         }
         let candidates = v["candidates"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+        self.search_grounded |= candidates.iter().any(search_grounded);
         for (at, c) in candidates.iter().enumerate() {
             if at > 0 {
                 self.other(json!({ "type": "candidate", "candidate": c }), out);
@@ -222,7 +227,9 @@ impl GeminiDecoder {
         }
         let usage = &v["usageMetadata"];
         if usage.is_object() {
-            let step = self.totals.increment(&usage_of(usage)?);
+            let step = self
+                .totals
+                .increment(&usage_of_grounded(usage, self.search_grounded)?);
             if !step.is_empty() {
                 out.push(Output::Usage(step));
             }

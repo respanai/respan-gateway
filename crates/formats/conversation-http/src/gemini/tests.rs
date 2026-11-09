@@ -446,6 +446,52 @@ fn a_tool_use_prompt_is_input_and_is_written_back_as_it_came() {
 }
 
 #[test]
+fn search_grounding_does_not_count_tool_context_as_input() {
+    let body = json!({
+        "candidates": [{
+            "content": { "role": "model", "parts": [{ "text": "answer" }] },
+            "groundingMetadata": { "webSearchQueries": ["weather"] },
+            "finishReason": "STOP", "index": 0
+        }],
+        "usageMetadata": {
+            "promptTokenCount": 10, "toolUsePromptTokenCount": 150,
+            "candidatesTokenCount": 20, "totalTokenCount": 180
+        }
+    });
+    let events = decode_body(&body);
+    let usage = events.iter().find_map(|event| match event {
+        Output::Usage(usage) => Some(usage.input_tokens),
+        _ => None,
+    });
+    assert_eq!(usage, Some(10));
+    let written = body_of(&events).expect("body");
+    assert_eq!(written["usageMetadata"]["promptTokenCount"], 10);
+    assert_eq!(written["usageMetadata"]["toolUsePromptTokenCount"], 150);
+
+    let url_context = json!({
+        "promptTokenCount": 10, "toolUsePromptTokenCount": 150,
+        "candidatesTokenCount": 20
+    });
+    assert_eq!(usage_of(&url_context).expect("usage").input_tokens, 160);
+
+    let mut grounding = text_chunk("answer");
+    grounding["candidates"][0]["groundingMetadata"] = json!({ "webSearchQueries": ["weather"] });
+    let mut usage = last_chunk("", "STOP");
+    usage["usageMetadata"] = json!({
+        "promptTokenCount": 10, "toolUsePromptTokenCount": 150,
+        "candidatesTokenCount": 20
+    });
+    let events = decode(&[grounding, usage]).expect("stream");
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Output::Usage(Usage {
+            input_tokens: 10,
+            ..
+        })
+    )));
+}
+
+#[test]
 fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     let chunk = json!({ "candidates": [{ "content": { "role": "model", "parts": [
         { "text": "ok" },

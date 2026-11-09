@@ -49,6 +49,8 @@ pub(super) struct Provider {
     /// Whether the model answers the user's turn, in a transcription,
     /// whose answer is dropped.
     answered: bool,
+    /// Whether the current response used Google Search or Maps grounding.
+    search_grounded: bool,
 }
 
 impl Provider {
@@ -60,6 +62,7 @@ impl Provider {
             told: false,
             heard: String::new(),
             answered: false,
+            search_grounded: false,
         }
     }
 
@@ -72,7 +75,8 @@ impl Provider {
         }
         // A model that only transcribes ends its generation, never a turn.
         let generated = v["serverContent"]["generationComplete"] == true;
-        let used = usage(&mut v);
+        self.search_grounded |= search_grounded(&v);
+        let used = usage(&mut v, self.search_grounded);
         let mut events = Vec::new();
         let shared = self.shared.clone();
         let mut said = Vec::new();
@@ -83,6 +87,12 @@ impl Provider {
             });
         }
         said.extend(used.map(Output::Usage));
+        let ended = events
+            .iter()
+            .any(|event| matches!(event, Output::ResponseDone { .. }));
+        if ended {
+            self.search_grounded = false;
+        }
         let rest = v.as_object().filter(|rest| !rest.is_empty());
         match events
             .iter_mut()
@@ -400,7 +410,7 @@ fn reason(status: &Status) -> Option<&str> {
 
 /// The usage `v` reports, its counts above zero taken; the rest of its
 /// `usageMetadata` stays, if empty, as the message's.
-fn usage(v: &mut Value) -> Option<Usage> {
+fn usage(v: &mut Value, search_grounded: bool) -> Option<Usage> {
     let metadata = v.get_mut("usageMetadata")?.as_object_mut()?;
     let mut taken = |key: &str| match metadata.get(key).and_then(count) {
         Some(n) => {
@@ -416,12 +426,34 @@ fn usage(v: &mut Value) -> Option<Usage> {
     let tool_use = metadata
         .get("toolUsePromptTokenCount")
         .and_then(Value::as_u64);
-    used.tokens.input_tokens = prompt + tool_use.unwrap_or(0);
+    used.tokens.input_tokens = prompt
+        + if search_grounded {
+            0
+        } else {
+            tool_use.unwrap_or(0)
+        };
     used.tokens.output_tokens = response + thoughts;
     used.tokens.reasoning_tokens = thoughts;
     used.input_audio_tokens = audio(metadata.get_mut("promptTokensDetails"));
     used.output_audio_tokens = audio(metadata.get_mut("responseTokensDetails"));
     Some(used)
+}
+
+/// Whether Gemini's grounding metadata describes Google Search or Maps.
+fn search_grounded(v: &Value) -> bool {
+    let metadata = &v["groundingMetadata"];
+    metadata["webSearchQueries"]
+        .as_array()
+        .is_some_and(|queries| !queries.is_empty())
+        || metadata["groundingChunks"]
+            .as_array()
+            .is_some_and(|chunks| chunks.iter().any(|chunk| chunk["maps"].is_object()))
+        || v["serverContent"]["groundingMetadata"]["webSearchQueries"]
+            .as_array()
+            .is_some_and(|queries| !queries.is_empty())
+        || v["serverContent"]["groundingMetadata"]["groundingChunks"]
+            .as_array()
+            .is_some_and(|chunks| chunks.iter().any(|chunk| chunk["maps"].is_object()))
 }
 
 /// The count of the `AUDIO` entry of `details`, taken.
