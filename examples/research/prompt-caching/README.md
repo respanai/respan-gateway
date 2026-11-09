@@ -1,5 +1,7 @@
 # From the GPU to your bill: a deep dive into prompt caching
 
+![From the GPU to your bill: a deep dive into prompt caching](img/cover.png)
+
 *What a prompt cache is on the GPU, why it disappears, how providers price it, and how to stop paying for the same text twice.*
 
 **Deep dive into caching**
