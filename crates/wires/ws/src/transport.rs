@@ -63,12 +63,14 @@ fn is_handshake(name: &HeaderName) -> bool {
 ///   clean.
 /// - It ends `Err` (the client left, or a filter or plugin refused an
 ///   input): the provider is sent Close (1001 for a client that left, else
-///   the fault's [`CloseCode`](crate::CloseCode) or 1011), and the answer
-///   ends with that fault. A frame of it that is no text is a `config`
-///   fault. The answer's body dropped: Close 1001.
+///   the fault's [`CloseCode`](crate::CloseCode), else 1008 for the
+///   client's fault or 1011), and the answer ends with that fault. A frame
+///   of it that is no text is a `config` fault. The answer's body dropped:
+///   Close 1001.
 /// - The provider sends Close with no code or 1000: the answer ends clean.
-///   With another code: an `Upstream` fault with that
-///   [`ProviderClose`](crate::ProviderClose), and, on a call with
+///   With another code: the fault of that
+///   [`ProviderClose`](crate::ProviderClose), its code and reason in the
+///   message, the client's for 1003, 1007 or 1009, and, on a call with
 ///   [`Relayed`] (as `respan_gateway_plugin_relay::Relay` marks a call to a
 ///   provider of its client's own format), that `CloseCode` too.
 /// - The provider's connection breaks with no Close, or it is silent

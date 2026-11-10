@@ -8,9 +8,7 @@ use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
-use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
+use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 
@@ -382,7 +380,12 @@ fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Faul
         role => roles.name(role),
     };
     let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    role.ok_or_else(|| {
+        Fault::from(Unsupported::new(
+            Why::Input,
+            "a role this format has no place for",
+        ))
+    })
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is
@@ -453,9 +456,9 @@ pub(crate) fn read_search(format: &str, fields: Map<String, Value>) -> ProviderT
 /// its hints among them.
 pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
     let ProviderTool::WebSearch { native } = tool else {
-        return Err(untranslatable(
-            "a provider tool this format has no form for",
-        ));
+        return Err(
+            Unsupported::new(Why::Input, "a provider tool this format has no form for").into(),
+        );
     };
     Ok(native.fields_for(format))
 }
@@ -537,10 +540,13 @@ impl Names<Finish> {
                 fallback: Some(fallback),
                 ..
             } => self.reason(fallback),
-            Finish::Native { format, reason, .. } => Err(unwritable(Some(format!(
-                "{format}'s finish reason `{reason}`"
-            )))),
-            _ => self.name(finish).ok_or_else(unwritable_content),
+            Finish::Native { format, reason, .. } => {
+                let what = format!("{format}'s finish reason `{reason}`");
+                Err(Unsupported::new(Why::Output, what).into())
+            }
+            _ => self
+                .name(finish)
+                .ok_or_else(|| Unsupported::new(Why::Output, UNWRITABLE).into()),
         }
     }
 }
@@ -550,26 +556,9 @@ pub(crate) fn unwritable_usage() -> Fault {
     Fault::config("a plugin's change cannot be made: this format cannot represent the usage")
 }
 
-/// A request carrying `what` cannot be sent in another format.
-pub(crate) fn untranslatable(what: &str) -> Fault {
-    Fault::bad_request(format!("{what} cannot be translated to another format yet"))
-}
-
-/// A 502 for content the client's format cannot write anew, such as a tool call.
-pub(crate) fn unwritable_content() -> Fault {
-    unwritable(None)
-}
-
-fn unwritable(what: Option<String>) -> Fault {
-    let message = "the response holds content that cannot yet be written anew in this format";
-    let message = match what {
-        Some(what) => format!("{message}: {what}"),
-        None => message.to_owned(),
-    };
-    Fault::new(message)
-        .with(ErrorCode("untranslatable".into()))
-        .with(Status(StatusCode::BAD_GATEWAY))
-}
+/// What of a provider's answer the client's format cannot write anew, such
+/// as a tool call.
+pub(crate) const UNWRITABLE: &str = "a part of the provider's answer";
 
 /// A stream that ended before its end event, unless it is `done`.
 pub(crate) fn ended(done: bool) -> Result<(), Fault> {
@@ -656,7 +645,7 @@ pub(crate) fn effort_name(effort: Effort) -> Result<&'static str, Fault> {
         Effort::High => "high",
         Effort::XHigh => "xhigh",
         Effort::Max => "max",
-        _ => return Err(untranslatable("a reasoning effort with no name")),
+        _ => return Err(Unsupported::new(Why::Input, "a reasoning effort with no name").into()),
     })
 }
 

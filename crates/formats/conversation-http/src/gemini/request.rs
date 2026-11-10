@@ -9,13 +9,13 @@ use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
     Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::{Fault, NativeFields, Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    parse_effort, reasoning_of, remainder, set, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -250,9 +250,12 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+            role => ROLES.name(role).ok_or_else(|| {
+                Fault::from(Unsupported::new(
+                    Why::Input,
+                    "a role this format has no place for",
+                ))
+            })?,
         };
         let parts: Vec<Value> = m
             .content
@@ -367,7 +370,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        _ => Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
     }
 }
 
@@ -381,7 +384,7 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
             Content::Text {
                 text: t, native, ..
             } if native.is_empty() => text.push_str(t),
-            _ => return Err(untranslatable("a tool result that is not text")),
+            _ => return Err(Unsupported::new(Why::Input, "a tool result that is not text").into()),
         }
     }
     if let Ok(object @ Value::Object(_)) = serde_json::from_str::<Value>(&text) {
@@ -409,7 +412,7 @@ pub fn media_part(media: &Media) -> Value {
 /// An `inlineData` or `fileData` part of `media`, with its native fields.
 fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
-        return Err(untranslatable("a display name on media content"));
+        return Err(Unsupported::new(Why::Input, "a display name on media content").into());
     }
     let native = media.native.fields_for(GEMINI);
     let mut part = media_part(media);
@@ -604,7 +607,11 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Tool(name)) => {
             Some(json!({ "mode": "ANY", "allowedFunctionNames": [name] }))
         }
-        Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
+        Some(_) => {
+            return Err(
+                Unsupported::new(Why::Input, "a tool choice this format has no form for").into(),
+            );
+        }
     };
     let mut config = native("toolConfig").unwrap_or_else(|| json!({}));
     if let Some(mode) = mode {
@@ -716,16 +723,18 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             // Gemini always constrains the answer to a schema, and the
             // wrapper's description has no field to instruct the model with.
             if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
+                return Err(Unsupported::new(
+                    Why::Input,
                     "a schema wrapper description or non-strict schema output in Gemini",
-                ));
+                )
+                .into());
             }
             set_field("responseMimeType", Some("application/json".into()));
             set_field("responseJsonSchema", Some(schema.clone()));
         }
     }
     if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
+        return Err(Unsupported::new(Why::Input, "an end user's id").into());
     }
     if let Some(r) = reasoning_of(chat)? {
         write_thinking(r, &mut config)?;

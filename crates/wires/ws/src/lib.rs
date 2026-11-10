@@ -12,7 +12,7 @@
 //! - [`serve`]: a client's upgrade, through a gateway, for an adapter that
 //!   hosts sessions, such as `respan_gateway_serve`.
 //! - [`CloseCode`] and [`ProviderClose`]: the code a client is closed with,
-//!   and the one a provider closed with.
+//!   and the fault of a provider's Close.
 //! - [`Limits`]: what either edge takes of a session, in bytes and time.
 //!
 //! Frames carry text. [`WsTransport::with_binary_text`] can normalize a
@@ -21,6 +21,8 @@
 //! (`respan_gateway_realtime_ws`).
 
 use std::time::Duration;
+
+use respan_gateway_core::{Fault, FaultKind};
 
 mod session;
 mod transport;
@@ -72,8 +74,9 @@ impl Default for Limits {
 }
 
 /// The WebSocket close code a fault asks for, an extension ([`Fault::with`]) that
-/// the client edge sends as its Close in place of 1011: a plugin's
-/// `Fault::new(msg).with(CloseCode(1008))`. A provider's own code is a
+/// an edge sends as its Close in place of its kind's: 1008 for the
+/// client's, 1001 for an abandoned one, else 1011. A plugin's
+/// `Fault::new(msg).with(CloseCode(4000))`. A provider's own code is a
 /// [`ProviderClose`], which reaches the client only as this: set by a
 /// plugin, or by [`WsTransport`] on a call
 /// [`Relayed`](respan_gateway_http::raw::Relayed), as
@@ -95,12 +98,36 @@ impl CloseCode {
     }
 }
 
-/// The code a provider closed its session with, other than 1000: an extension on
-/// the `upstream` fault [`WsTransport`] ends the answer with. It says why
-/// the provider ended; whether the client is told is a plugin's choice
-/// ([`CloseCode`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProviderClose(pub u16);
+/// A provider's Close with a code other than 1000, which the fault
+/// [`WsTransport`] ends the answer with is made of (`Fault::from`), and
+/// which it keeps as an extension. Its message names the code and reason. A
+/// code that refuses what the provider was sent (RFC 6455 7.4.1: 1003, data
+/// it cannot take; 1007, data inconsistent with its type; 1009, a message
+/// too big) is the client's fault; any other, 1008's policy among them, the
+/// provider's. Whether the client is closed with the code is a plugin's
+/// choice ([`CloseCode`]); the reason is never sent to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProviderClose {
+    /// The Close's code.
+    pub code: u16,
+    /// The Close's reason, empty if it gave none.
+    pub reason: String,
+}
+
+impl From<ProviderClose> for Fault {
+    fn from(close: ProviderClose) -> Self {
+        let ProviderClose { code, reason } = &close;
+        let message = match reason.is_empty() {
+            true => format!("the provider closed the session with {code}"),
+            false => format!("the provider closed the session with {code}: {reason}"),
+        };
+        let kind = match code {
+            1003 | 1007 | 1009 => FaultKind::Client,
+            _ => FaultKind::Provider,
+        };
+        Fault::of(kind, message).with(close)
+    }
+}
 
 #[cfg(test)]
 mod tests {

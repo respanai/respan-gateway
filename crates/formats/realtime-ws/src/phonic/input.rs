@@ -1,18 +1,17 @@
 //! What the client says: Phonic's client messages as the kind's [`Input`],
 //! read at the client's edge and written at the provider's.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 use crate::session::{Say, changes};
 
 /// The longest audio chunk Phonic takes, in milliseconds.
@@ -105,7 +104,6 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_input(NAME, what));
         let started = self.asked.is_some();
         match event {
             Input::Session(s) if !started => Ok(vec![self.start(s)?]),
@@ -113,7 +111,11 @@ impl Provider {
             _ if !started => Err(Fault::internal("a Phonic session begins with its config")),
             Input::Audio { audio, native } => {
                 let Some(data) = self.convert.to(audio, self.input) else {
-                    return refuse("audio of this format");
+                    return Err(
+                        Unsupported::new(Why::Input, format!("audio in {}", audio.format))
+                            .to(NAME)
+                            .into(),
+                    );
                 };
                 let chunks = data.chunks(chunk_bytes(self.input)).map(|chunk| {
                     let mut v = json!({"type": "audio_chunk", "audio": json::base64(chunk)});
@@ -127,7 +129,7 @@ impl Provider {
             }
             // Commits, messages, tools' answers, responses and cancels: it
             // has none of them as the kind has them.
-            _ => refuse("this event"),
+            _ => Err(Unsupported::new(Why::Input, "this event").to(NAME).into()),
         }
     }
 
@@ -150,7 +152,7 @@ impl Provider {
             (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
-            return Err(untranslatable_input(NAME, what));
+            return Err(Unsupported::new(Why::Input, *what).to(NAME).into());
         }
         s.input_audio = s.input_audio.filter(|f| session::takes(*f));
         s.output_audio = s.output_audio.filter(|f| session::takes(*f));
@@ -168,10 +170,9 @@ impl Provider {
     /// it was applied, as the rest is fixed at its start.
     fn update(&mut self, s: &Session) -> Result<(), Fault> {
         if let Some(field) = changes(self.asked.as_ref().unwrap_or(s), s) {
-            let fixed = format!(
-                "Phonic fixes a session's configuration at its config: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            let what = format!("changing `{field}` after its config");
+            let refused = Unsupported::new(Why::Lasting, what).to(NAME);
+            return Err(refused.fix("open a new session").into());
         }
         let applied = self.applied.lock().clone().unwrap_or_default();
         let _ = self.say.unbounded_send(Output::Updated(applied));

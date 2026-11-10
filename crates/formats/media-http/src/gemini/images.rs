@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{invalid, kept, native_of};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -115,10 +115,8 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         ));
     }
     if input.mask.is_some() {
-        return Err(
-            Fault::bad_request("Gemini edits by prompt, and takes no mask")
-                .with(ErrorCode("unsupported".into())),
-        );
+        let refused = Unsupported::new(Why::Lasting, "an edit's mask").to("Gemini");
+        return Err(refused.fix("describe the edit in the prompt").into());
     }
     head.uri = format!("/models/{model}:generateContent")
         .parse()

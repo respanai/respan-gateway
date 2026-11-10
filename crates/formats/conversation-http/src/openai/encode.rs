@@ -1,10 +1,10 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
+    Gate, NativeFieldsExt, Schema, UNWRITABLE, check_usage, fits, merge_into, unix_now,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
@@ -233,7 +233,8 @@ impl Chunks {
 
     fn slot(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let slot = self.blocks.iter_mut().find(|s| s.block == block);
-        slot.filter(|s| !s.ended).ok_or_else(unwritable_content)
+        slot.filter(|s| !s.ended)
+            .ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))
     }
 
     fn open(&mut self, block: u32, kind: &Block, out: &mut BytesMut) -> Result<(), Fault> {
@@ -241,7 +242,7 @@ impl Chunks {
             // A start repeated for an open block opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(unwritable_content()),
+                false => Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
             };
         }
         self.begin(out);
@@ -272,7 +273,7 @@ impl Chunks {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.slot(block)?;
         if !fits(part, &slot.kind) {
-            return Err(unwritable_content());
+            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
         }
         let text = part.as_str();
         if text.is_empty() {
@@ -285,7 +286,7 @@ impl Chunks {
                 slot.arguments = true;
                 json!({ "tool_calls": [call_json(Some(index), None, None, text)] })
             }
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         };
         self.delta(out, delta);
         Ok(())
@@ -294,7 +295,7 @@ impl Chunks {
     /// End a block: a call that had no arguments has none, as JSON.
     fn close(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.blocks.iter_mut().find(|s| s.block == block);
-        let slot = slot.ok_or_else(unwritable_content)?;
+        let slot = slot.ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))?;
         let bare = slot.call.filter(|_| !slot.arguments && !slot.ended);
         (slot.arguments, slot.ended) = (true, true);
         if let Some(index) = bare {
@@ -356,7 +357,7 @@ impl Chunks {
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         }
         Ok(())
     }

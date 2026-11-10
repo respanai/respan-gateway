@@ -61,15 +61,14 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
     merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals, set,
-    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, untranslatable,
-    usage_extra,
+    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
     Role, Usage,
 };
-use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Provider, Unsupported, Why};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
@@ -315,7 +314,7 @@ impl Schema for OpenAiChat {
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
         if chat.options.top_k.is_some() {
-            return Err(untranslatable("top_k in OpenAI Chat"));
+            return Err(Unsupported::new(Why::Input, "top_k in OpenAI Chat").into());
         }
         Ok(v)
     }

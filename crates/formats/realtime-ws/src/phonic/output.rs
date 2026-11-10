@@ -3,7 +3,7 @@
 
 use std::time::Instant;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, Cause, Output, Status};
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::{Applied, Asked, Clock, DEFAULT_FORMAT, NAME};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_output};
+use crate::json::{self, merge, own, string, take, text};
 
 /// A provider's frames as events, and the session's seconds.
 pub(super) struct Provider {
@@ -260,7 +260,6 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_output(NAME, what));
         let typed = |kind: &str| json!({"type": kind});
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
@@ -272,7 +271,12 @@ impl Client {
             Output::Audio { audio, native } => {
                 let asked = *self.asked.lock();
                 let Some(data) = self.convert.to(audio, asked) else {
-                    return refuse("audio of this format");
+                    return Err(Unsupported::new(
+                        Why::Output,
+                        format!("audio in {}", audio.format),
+                    )
+                    .to(NAME)
+                    .into());
                 };
                 let said = std::mem::take(&mut self.said);
                 let v = json!({"type": "audio_chunk", "audio": json::base64(&data), "text": said});
@@ -302,8 +306,14 @@ impl Client {
                 }
                 (v, native)
             }
-            Output::Text { .. } => return refuse("text"),
-            Output::ToolCall { .. } => return refuse("a tool's call"),
+            Output::Text { .. } => {
+                return Err(Unsupported::new(Why::Output, "text").to(NAME).into());
+            }
+            Output::ToolCall { .. } => {
+                return Err(Unsupported::new(Why::Output, "a tool's call")
+                    .to(NAME)
+                    .into());
+            }
             Output::Native(NativeValue { format, value }) if **format == *NAME => {
                 return Ok(Some(Value::clone(value)));
             }

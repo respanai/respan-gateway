@@ -1,10 +1,8 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
-use crate::schema::{
-    Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
-};
+use crate::schema::{Gate, Schema, UNWRITABLE, check_usage, fits, merge_fields, own_fields};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
@@ -74,7 +72,7 @@ impl EventStream {
 
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(unwritable_content)
+        found.ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))
     }
 
     /// Opens a block on the wire, with what it held while it waited.
@@ -89,7 +87,7 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         };
         let held = wb.held.take();
         let mut content = content;
@@ -145,7 +143,7 @@ impl EventStream {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(unwritable_content()),
+                false => Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
             };
         }
         self.begin(out);
@@ -163,7 +161,7 @@ impl EventStream {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let wb = self.find(block)?;
         if wb.ended || !fits(part, &wb.kind) {
-            return Err(unwritable_content());
+            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
         }
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
@@ -305,7 +303,7 @@ impl EventStream {
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         }
         Ok(())
     }

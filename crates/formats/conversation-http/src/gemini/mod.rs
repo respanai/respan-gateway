@@ -82,12 +82,12 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
-    merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
+    Asked, Names, NativeFieldsExt, Schema, UNWRITABLE, UsageFields, block_fields, check_usage,
+    count, merge_details, merge_fields, native_fields, set, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
-use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Provider, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode, request::Parts as RequestHead};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
@@ -342,7 +342,7 @@ impl Schema for GeminiGenerate {
     }
 
     fn encode_part(_: &respan_gateway_conversation::Content) -> Result<Value, Fault> {
-        Err(unwritable_content())
+        Err(Unsupported::new(Why::Output, UNWRITABLE).into())
     }
 
     fn stream_encoder(&self, _asked: Asked) -> Box<dyn Encoder<Output>> {
@@ -410,7 +410,7 @@ impl Schema for GeminiGenerate {
                         (Some((block, f)), _) => fields.push((block, f.clone())),
                         (None, Some("part")) => parts.push(raw["part"].clone()),
                         _ if body.add(raw) => {}
-                        _ => return Err(unwritable_content()),
+                        _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
                     }
                 }
                 // Another format's: only a client of that format could read it.

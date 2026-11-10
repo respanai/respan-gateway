@@ -99,14 +99,14 @@ fn what_it_cannot_do_is_refused() {
     let fault = refused(|s| s.purpose = Some(Purpose::Conversation));
     assert_eq!(
         fault.message(),
-        "a conversation, as it only transcribes, cannot be translated to mistral-realtime"
+        "mistral-realtime does not support a conversation; it only transcribes, so send audio and commits alone"
     );
     let mut other = Session::default();
     other.model = Some("other".into());
     let opening = Input::Session(Session::default());
     sent(&[opening, Input::Session(other)]).expect_err("a model is taken at connect");
     let fault = sent(&[Input::Respond { native: None }]).expect_err("refused");
-    assert_eq!(fault.code(), "bad_request");
+    assert_eq!(fault.code(), "unsupported");
 }
 
 #[test]

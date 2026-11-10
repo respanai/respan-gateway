@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Status, Usage};
 use serde_json::{Value, json};
@@ -11,9 +11,7 @@ use serde_json::{Value, json};
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{
-    self, at, count, merge, number, own, set, string, take, text, untranslatable_output,
-};
+use crate::json::{self, at, count, merge, number, own, set, string, take, text};
 
 /// A count of [`Usage`].
 type Counter = fn(&mut Usage) -> &mut u64;
@@ -295,7 +293,6 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output, out: &mut Vec<Value>) -> Result<(), Fault> {
-        let refuse = |what: &str| untranslatable_output(NAME, what);
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
                 self.output = s.output_audio.unwrap_or(self.output);
@@ -303,7 +300,7 @@ impl Client {
                     Output::Opened(_) => "session.created",
                     _ => "session.updated",
                 };
-                let mut session = session::encode(s, refuse)?;
+                let mut session = session::encode(s, Why::Output)?;
                 if s.native.is_none() && session.get("type").is_none() {
                     session["type"] = "realtime".into();
                 }
@@ -382,7 +379,12 @@ impl Client {
             }
             Output::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.output);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                let data = data.ok_or_else(|| {
+                    Fault::from(
+                        Unsupported::new(Why::Output, format!("audio in {}", audio.format))
+                            .to(NAME),
+                    )
+                })?;
                 let delta = json::base64(&data);
                 if let Some(response) = &mut self.response {
                     response.delta(&mut self.ids, Part::Audio, delta, out);
@@ -433,7 +435,9 @@ impl Client {
             // OpenAI Realtime bills by token: a duration has no place in it.
             Output::Seconds(_) => return Ok(()),
             Output::ResponseDone { status, native } => {
-                let (said, reason) = spelled(status).ok_or_else(|| refuse("this status"))?;
+                let (said, reason) = spelled(status).ok_or_else(|| {
+                    Fault::from(Unsupported::new(Why::Output, "this status").to(NAME))
+                })?;
                 let mut v = json!({"type": "response.done", "response": {"status": said}});
                 if let Some(reason) = reason {
                     v["response"]["status_details"] = json!({"type": said, "reason": reason});
@@ -482,7 +486,11 @@ impl Client {
                 out.push(Value::clone(value));
                 return Ok(());
             }
-            _ => return Err(refuse("another format's event")),
+            _ => {
+                return Err(Unsupported::new(Why::Output, "another format's event")
+                    .to(NAME)
+                    .into());
+            }
         };
         merge(&mut v, own(native));
         out.push(v);

@@ -1,18 +1,17 @@
 //! What the client says: the Live API's client events as the kind's
 //! [`Input`], read at the client's edge and written at the provider's.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 use crate::session::{Say, changes};
 
 /// A session's audio format until it says another.
@@ -95,7 +94,6 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_input(NAME, what));
         match event {
             Input::Session(s) if self.started.is_none() => self.start(s).map(Some),
             Input::Session(s) => self.update(s),
@@ -104,7 +102,11 @@ impl Provider {
             )),
             Input::Audio { audio, native } => {
                 let Some(data) = self.convert.to(audio, self.input) else {
-                    return refuse("audio of this format");
+                    return Err(
+                        Unsupported::new(Why::Input, format!("audio in {}", audio.format))
+                            .to(NAME)
+                            .into(),
+                    );
                 };
                 let mut v =
                     json!({"type": "session.input_audio.append", "audio": json::base64(&data)});
@@ -115,7 +117,7 @@ impl Provider {
                 Ok(Some(Value::clone(value)))
             }
             // Commits, messages, tools' answers and responses: it has none.
-            _ => refuse("this event"),
+            _ => Err(Unsupported::new(Why::Input, "this event").to(NAME).into()),
         }
     }
 
@@ -136,7 +138,7 @@ impl Provider {
             (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
-            return Err(untranslatable_input(NAME, what));
+            return Err(Unsupported::new(Why::Input, *what).to(NAME).into());
         }
         let format = [s.input_audio, s.output_audio]
             .into_iter()
@@ -156,10 +158,9 @@ impl Provider {
         let mut asked = s.clone();
         let native = asked.native.take();
         if let Some(field) = changes(started, &asked) {
-            let fixed = format!(
-                "OpenAI Live fixes a session's configuration at its start: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            let what = format!("changing `{field}` after its start");
+            let refused = Unsupported::new(Why::Lasting, what).to(NAME);
+            return Err(refused.fix("open a new session").into());
         }
         if let Some(native) = native {
             let mut v = json!({"type": "session.update"});

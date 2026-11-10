@@ -76,13 +76,13 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Schema, UNWRITABLE, UsageFields, count, merge_details, merge_fields,
+    native_fields, parts_within_totals, unsupported_fields, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
-use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Provider, Unsupported, Why};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
@@ -231,7 +231,7 @@ impl Schema for OpenAiResponses {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         if !chat.options.stop.is_empty() {
-            return Err(crate::schema::untranslatable("stop sequences in Responses"));
+            return Err(Unsupported::new(Why::Input, "stop sequences in Responses").into());
         }
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
@@ -256,7 +256,7 @@ impl Schema for OpenAiResponses {
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
-            return Err(crate::schema::untranslatable("top_k in Responses"));
+            return Err(Unsupported::new(Why::Input, "top_k in Responses").into());
         }
         Ok(v)
     }
@@ -361,7 +361,7 @@ pub(crate) fn status_of(finish: &Finish) -> Result<(&'static str, Option<String>
             fallback: Some(fallback),
             ..
         } => status_of(fallback)?,
-        _ => return Err(unwritable_content()),
+        _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
     })
 }
 

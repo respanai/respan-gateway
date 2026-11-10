@@ -20,6 +20,9 @@ use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
 
+/// What a client asking Mistral for a conversation is told to send instead.
+const ONLY_TRANSCRIBES: &str = "it only transcribes, so send audio and commits alone";
+
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
     path: "/audio/transcriptions/realtime",

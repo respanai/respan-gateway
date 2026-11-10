@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Encoding, Input, Output, Session, Status, ToolResult, Turns,
@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use super::{Answering, NAME, Shared, setup};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, untranslatable_input};
+use crate::json::{self, merge, own};
 use crate::session::{self, Say};
 
 /// A client's messages as events: its `setup` first and once, and each
@@ -187,18 +187,29 @@ fn message(turn: &Value) -> Option<Message> {
     Some(message)
 }
 
-fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn message_json(m: &Message) -> Result<Value, Fault> {
     let role = match m.role {
         Role::User => "user",
         Role::Assistant => "model",
-        _ => return Err(refuse("a message of this role")),
+        Role::System | Role::Developer => {
+            let refused = Unsupported::new(Why::Lasting, "a system or developer message");
+            let fix = "put its text in the session's instructions";
+            return Err(refused.to(NAME).fix(fix).into());
+        }
+        _ => {
+            return Err(Unsupported::new(Why::Input, "a message of this role")
+                .to(NAME)
+                .into());
+        }
     };
     let part = |c: &Content| match c {
         Content::Text { text, native, .. } if native.is_none() => Ok(json!({"text": text})),
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        _ => Err(refuse("a message part of this kind")),
+        _ => Err(Fault::from(
+            Unsupported::new(Why::Input, "a message part of this kind").to(NAME),
+        )),
     };
     let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"role": role, "parts": parts});
@@ -305,12 +316,11 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input, out: &mut Vec<Value>) -> Result<(), Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
         let answered = std::mem::take(&mut self.answered);
         let (mut v, native) = match event {
             Input::Session(s) if !self.opened => {
                 self.opened = true;
-                out.push(setup::encode(s, refuse)?);
+                out.push(setup::encode(s)?);
                 self.shared.lock().applied = Some(s.clone());
                 return Ok(());
             }
@@ -331,7 +341,7 @@ impl Provider {
                 if shaped(native)
                     && let Some(Held::Messages(messages)) = self.held.take()
                 {
-                    out.push(messages_json(&messages, refuse)?);
+                    out.push(messages_json(&messages)?);
                 }
                 return Ok(());
             }
@@ -363,7 +373,12 @@ impl Provider {
                             Encoding::Pcm16 => Some(audio.data.clone()),
                             _ => self.convert.to(audio, pcm),
                         };
-                        let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                        let data = data.ok_or_else(|| {
+                            Fault::from(
+                                Unsupported::new(Why::Input, format!("audio in {}", audio.format))
+                                    .to(NAME),
+                            )
+                        })?;
                         if manual && !std::mem::replace(&mut self.activity, true) {
                             out.push(json!({"realtimeInput": {"activityStart": {}}}));
                         }
@@ -372,7 +387,9 @@ impl Provider {
                         (json!({"realtimeInput": {"audio": blob}}), native)
                     }
                     Input::Commit { .. } if !manual => {
-                        return Err(refuse("a commit under the provider's voice detection"));
+                        let what = "ending a turn under its automatic activity detection";
+                        let refused = Unsupported::new(Why::Lasting, what).to(NAME);
+                        return Err(refused.fix("set turn detection to manual").into());
                     }
                     Input::Commit { native } => {
                         (self.activity, self.answered) = (false, true);
@@ -390,7 +407,11 @@ impl Provider {
                         out.push(Value::clone(value));
                         return Ok(());
                     }
-                    _ => return Err(refuse("another format's event")),
+                    _ => {
+                        return Err(Unsupported::new(Why::Input, "another format's event")
+                            .to(NAME)
+                            .into());
+                    }
                 }
             }
         };
@@ -412,10 +433,9 @@ impl Provider {
         let mut state = self.shared.lock();
         let applied = state.applied.get_or_insert_default();
         if let Some(field) = session::changes(applied, s) {
-            let fixed = format!(
-                "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            let what = format!("changing `{field}` after its setup");
+            let refused = Unsupported::new(Why::Lasting, what).to(NAME);
+            return Err(refused.fix("open a new session").into());
         }
         // Audio formats are each chunk's own.
         applied.input_audio = s.input_audio.or(applied.input_audio);
@@ -448,14 +468,17 @@ impl Provider {
     /// alone; tools' answers; or a complete turn of nothing more, as it
     /// came.
     fn respond(&mut self, native: &Option<NativeFields>) -> Result<Value, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
         let content = shaped(native);
         match self.held.take() {
             None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
-            None => Err(refuse("a response to nothing the client said")),
+            None => Err(
+                Unsupported::new(Why::Input, "a response to nothing the client said")
+                    .to(NAME)
+                    .into(),
+            ),
             Some(Held::Results(results)) => Ok(self.results(&results)),
             Some(Held::Messages(messages)) if content => {
-                let mut v = messages_json(&messages, refuse)?;
+                let mut v = messages_json(&messages)?;
                 v["clientContent"]["turnComplete"] = true.into();
                 Ok(v)
             }
@@ -463,7 +486,7 @@ impl Provider {
                 [Input::Message { message, native }] if native.is_none() && said(message) => {
                     Ok(json!({"realtimeInput": {"text": message.text()}}))
                 }
-                _ => Err(refuse(UNANSWERED)),
+                _ => Err(Unsupported::new(Why::Input, UNANSWERED).to(NAME).into()),
             },
         }
     }
@@ -480,7 +503,9 @@ impl Provider {
     fn flush(&mut self, out: &mut Vec<Value>) -> Result<(), Fault> {
         match self.held.take() {
             None => {}
-            Some(Held::Messages(_)) => return Err(untranslatable_input(NAME, UNANSWERED)),
+            Some(Held::Messages(_)) => {
+                return Err(Unsupported::new(Why::Input, UNANSWERED).to(NAME).into());
+            }
             Some(Held::Results(results)) => out.push(self.results(&results)),
         }
         Ok(())
@@ -514,12 +539,12 @@ fn shaped(native: &Option<NativeFields>) -> bool {
 }
 
 /// Messages as one `clientContent`, with what each event kept.
-fn messages_json(messages: &[Input], refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn messages_json(messages: &[Input]) -> Result<Value, Fault> {
     let mut turns = Vec::new();
     let mut kept = Map::new();
     for event in messages {
         if let Input::Message { message, native } = event {
-            turns.push(message_json(message, refuse)?);
+            turns.push(message_json(message)?);
             if let Some(fields) = own(native) {
                 kept.extend(fields.clone());
             }

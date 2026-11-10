@@ -30,6 +30,13 @@ protocols and adapters all depend on it directly.
   typed extensions (`fault.with(..)`, `fault.get::<T>()`) any protocol can
   render: `RetryAfter`, `ErrorCode` and `Details`. `Fault::upstream(..)`
   and the like make one.
+- `Unsupported`: what a provider or the gateway does not take, which a
+  fault is made of (`Fault::from`, or `?`). Its `Why` gives the kind and
+  code: `Lasting`, the provider never takes it (the client's,
+  `unsupported`, with what to send instead); `Input`, the gateway does not
+  yet write the client's ask in the provider's terms (the client's,
+  `untranslatable`); `Output`, nor the provider's answer in the client's
+  (the gateway's, `untranslatable`). The fault keeps it as an extension.
 - `NativeFields { format, fields }` preserves unsupported fields on a typed
   value; `NativeValue { format, value }` an entire unsupported value. The
   format ID names the wire schema, not a provider deployment, so formats can

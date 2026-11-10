@@ -22,13 +22,17 @@ the vendors that speak them
 - `.with_binary_text(true)` accepts a provider's binary messages containing
   UTF-8 text, such as Gemini Live's JSON. These become text messages toward
   the client; invalid UTF-8 is a fault. Disabled by default.
-- `CloseCode(u16)`: an extension on a `Fault` that picks the code the client is
-  closed with, in place of 1011. A code no Close may carry (1004 to 1006,
-  1015 to 2999, outside 1000 to 4999) is sent as 1011.
-- `ProviderClose(u16)`: the code a provider closed with, other than 1000, on
-  the `upstream` fault the transport ends the answer with. The client is told
-  it only as a `CloseCode`, which the transport adds on a call `Relayed`
-  (`Relay`), or a plugin sets.
+- `CloseCode(u16)`: an extension on a `Fault` that picks the code a peer is
+  closed with, in place of its kind's: 1008 for the client's fault, 1001 for
+  an abandoned one, else 1011. A code no Close may carry (1004 to 1006, 1015
+  to 2999, outside 1000 to 4999) is sent as 1011.
+- `ProviderClose { code, reason }`: a provider's Close other than 1000, the
+  fault the transport ends the answer with (`Fault::from`), kept on it as an
+  extension. Its message names the code and reason. 1003, 1007 and 1009
+  (RFC 6455 7.4.1: what the provider was sent is refused) are the client's
+  fault, any other code the provider's. The client is told the code only as
+  a `CloseCode`, which the transport adds on a call `Relayed` (`Relay`), or a
+  plugin sets; the reason, never.
 - `Limits { max_message, close_wait, close_send, ping_after }`: what an edge
   takes, with defaults and their reasons on the type: 16 MiB messages, 5 s
   for the other side's part of a close, 1 s for a Close to leave, a ping
@@ -49,11 +53,11 @@ wire works with the transport and the adapter, such as `passthrough`.
 - The call's body ends clean: the provider is sent Close 1000, and its end,
   however it comes within `close_wait`, ends the answer clean.
 - The call's body ends `Err`: the provider is sent Close (1001 for a client
-  that left, else the fault's `CloseCode` or 1011) within `close_send`, and
-  the answer ends with the fault. The answer's body dropped: Close 1001.
+  that left, else the fault's `CloseCode`, else 1008 for the client's fault
+  or 1011) within `close_send`, and the answer ends with the fault. The
+  answer's body dropped: Close 1001.
 - The provider's Close 1000 (or no code) ends the answer clean; another code
-  is an `upstream` fault with its `ProviderClose`. Its reason text is not
-  carried.
+  is the fault of its `ProviderClose`, its reason in the fault's message.
 - The provider dropping with no Close, or silent through a ping, is
   `truncated`; a rejected binary frame or a message over `max_message` is
   `upstream`, and the provider is sent Close 1003 or 1009.
@@ -102,7 +106,8 @@ into a session. Where that shows:
   binary audio would require a format that carried each event's frame kind.
 - **Close mapping.** A close is only a clean end, or an `Err` with typed extensions
   (`ProviderClose`, `CloseCode`) on the fault. The client's close code and
-  reason, and the provider's reason text, cannot cross.
+  reason cannot cross, and the provider's reason reaches only the fault's
+  message.
 - **The Upgrade dance.** A call keeps `Upgrade`, `prepare_call` gives it
   `Connection: upgrade`, and the transport leaves the handshake's own
   `Sec-WebSocket-Key`, `-Version` and `-Extensions` to the WebSocket library.

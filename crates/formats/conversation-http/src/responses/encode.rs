@@ -4,12 +4,12 @@ use super::{
     ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
 };
 use crate::schema::{
-    Gate, block_fields, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    Gate, UNWRITABLE, block_fields, check_usage, fits, merge_fields, merge_into, unix_now,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
 };
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Encoder, raw::RawReply};
 use respan_gateway_sse::event;
@@ -71,7 +71,7 @@ fn item_of(
                 _ => summary(text),
             },
         }),
-        _ => return Err(unwritable_content()),
+        _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
     };
     let skip_status = status == "in_progress";
     let fields: Map<String, Value> = fields
@@ -159,7 +159,7 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     Some(t) if t.starts_with("response.") => {}
                     Some(ANNOTATION | USAGE_FIELDS | RESPONSE_FIELDS) => {}
                     _ if block_fields(raw).is_some() => {}
-                    _ => return Err(unwritable_content()),
+                    _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
                 }
             }
             // Another format's: only a client of that format could read it.
@@ -292,7 +292,7 @@ impl Events {
 
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(unwritable_content)
+        found.ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))
     }
 
     /// Opens a block on the wire, with what it held while it waited.
@@ -378,7 +378,7 @@ impl Events {
                     "output_index": index, "summary_index": 0, "delta": text,
                 }));
             }
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         }
         events.into_iter().for_each(|e| self.emit(out, e));
         Ok(())
@@ -457,7 +457,7 @@ impl Events {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(unwritable_content()),
+                false => Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
             };
         }
         self.begin(out);
@@ -484,7 +484,7 @@ impl Events {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.find(block)?;
         if slot.ended || !fits(part, &slot.kind) {
-            return Err(unwritable_content());
+            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
         }
         match (slot.index, part.as_str().is_empty()) {
             (_, true) => Ok(()),
@@ -522,7 +522,7 @@ impl Events {
     ) -> Result<(), Fault> {
         let slot = self.find(block)?;
         if slot.kind != Block::Text || slot.ended {
-            return Err(unwritable_content());
+            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
         }
         let n = slot.annotations.len();
         slot.annotations.push(annotation.clone());
@@ -622,7 +622,9 @@ impl Events {
                 } else if raw["type"] == ANNOTATION {
                     let block = raw["block"].as_u64().and_then(|b| u32::try_from(b).ok());
                     self.annotate(
-                        block.ok_or_else(unwritable_content)?,
+                        block.ok_or_else(|| {
+                            Fault::from(Unsupported::new(Why::Output, UNWRITABLE))
+                        })?,
                         &raw["annotation"],
                         out,
                     )?;
@@ -639,7 +641,7 @@ impl Events {
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(unwritable_content()),
+            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
         }
         Ok(())
     }

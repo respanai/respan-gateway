@@ -9,7 +9,7 @@ use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
+use respan_gateway_core::{Connection, Fault, Format, NativeFields, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -146,11 +146,6 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
     }
 }
 
-/// An operation Veo has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("Veo cannot {what}")).with(ErrorCode("unsupported".into()))
-}
-
 /// The operation a job `id` names, else a 404.
 fn operation_of(id: &str) -> Result<String, Fault> {
     GeminiVeo::operation(id).ok_or_else(|| Fault::not_found(format!("no Veo video has id {id}")))
@@ -199,7 +194,9 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
         }
         Input::Content { id, variant, url } => {
             if *variant != Variant::Video {
-                return Err(unsupported("make a thumbnail or a spritesheet"));
+                return Err(Unsupported::new(Why::Lasting, "thumbnails or spritesheets")
+                    .to("Veo")
+                    .into());
             }
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
@@ -207,10 +204,26 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
-        _ => return Err(unsupported("answer this request")),
+        Input::Remix { .. } => {
+            return Err(Unsupported::new(Why::Lasting, "remixing a video")
+                .to("Veo")
+                .into());
+        }
+        Input::Delete { .. } => {
+            return Err(Unsupported::new(Why::Lasting, "deleting a video")
+                .to("Veo")
+                .into());
+        }
+        Input::List { .. } => {
+            return Err(Unsupported::new(Why::Lasting, "listing videos")
+                .to("Veo")
+                .into());
+        }
+        _ => {
+            return Err(Unsupported::new(Why::Lasting, "this request")
+                .to("Veo")
+                .into());
+        }
     };
     head.method = method;
     head.uri = path

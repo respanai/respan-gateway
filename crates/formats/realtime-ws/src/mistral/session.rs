@@ -1,10 +1,10 @@
 //! A session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Unsupported, Why};
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
 
-use super::NAME;
+use super::{NAME, ONLY_TRANSCRIBES};
 use crate::json::{self, at, remove, set, string, take, text};
 
 const MODEL: &[&str] = &["session", "model"];
@@ -25,13 +25,11 @@ pub(super) fn decode(mut v: Value) -> Session {
 }
 
 /// The `session` object of `s`, but its native, which is its event's;
-/// `refuse`d where it asks for what Mistral does not do.
-pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// refused where it asks for what Mistral, which only transcribes, does not
+/// do.
+pub(super) fn encode(s: &Session) -> Result<Value, Fault> {
     let asks = [
-        (
-            s.purpose == Some(Purpose::Conversation),
-            "a conversation, as it only transcribes,",
-        ),
+        (s.purpose == Some(Purpose::Conversation), "a conversation"),
         (s.instructions.is_some(), "instructions"),
         (s.output.is_some(), "an output modality"),
         (s.voice.is_some(), "a voice"),
@@ -39,14 +37,19 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (s.tools.is_some(), "tools"),
         (s.tool_choice.is_some(), "a tool choice"),
         (s.max_output_tokens.is_some(), "an output limit"),
-        (s.input_transcription == Some(false), "no transcription"),
+        (
+            s.input_transcription == Some(false),
+            "turning transcription off",
+        ),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {
-        return Err(refuse(what));
+        let refused = Unsupported::new(Why::Lasting, *what).to(NAME);
+        return Err(refused.fix(ONLY_TRANSCRIBES).into());
     }
     let mut v = json!({});
     if let Some(format) = s.input_audio {
-        let format = audio_format_json(format).ok_or_else(|| refuse("an audio format"))?;
+        let format = audio_format_json(format)
+            .ok_or_else(|| Fault::from(Unsupported::new(Why::Input, "an audio format").to(NAME)))?;
         set(&mut v, &FORMAT[1..], format);
     }
     Ok(v)

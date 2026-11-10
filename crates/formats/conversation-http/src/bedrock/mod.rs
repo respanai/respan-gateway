@@ -58,10 +58,10 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of, unwritable_content,
+    Asked, Framing, Names, NativeFieldsExt, Schema, UNWRITABLE, native_fields, rest_of,
 };
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
-use respan_gateway_core::{Connection, Fault, Format, Provider};
+use respan_gateway_core::{Connection, Fault, Format, Provider, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
@@ -188,7 +188,7 @@ impl Schema for BedrockConverse {
     }
 
     fn encode_part(_: &Content) -> Result<Value, Fault> {
-        Err(unwritable_content())
+        Err(Unsupported::new(Why::Output, UNWRITABLE).into())
     }
 
     fn is_response(v: &Value) -> bool {

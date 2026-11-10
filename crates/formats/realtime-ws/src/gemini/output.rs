@@ -9,7 +9,7 @@
 
 use std::sync::atomic::Ordering;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Purpose, Status, Usage};
 use respan_gateway_ws::CloseCode;
@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use super::{Answering, NAME, Shared, State};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, at, count, merge, own, set, string, take, text, untranslatable_output};
+use crate::json::{self, at, count, merge, own, set, string, take, text};
 
 /// What a turn the client cancelled says that is dropped: its content, and
 /// its end, as its response already ended.
@@ -544,7 +544,6 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Vec<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_output(NAME, what);
         let interrupted = json!({"serverContent": {"interrupted": true}});
         let content = |field: &str, value: Value| json!({"serverContent": {field: value}});
         let (v, native) = match event {
@@ -584,7 +583,12 @@ impl Client {
                 // The Live API's audio is always 24 kHz PCM.
                 let pcm = AudioFormat::pcm16(24_000);
                 let converted = self.convert.to(audio, pcm);
-                let converted = converted.ok_or_else(|| refuse("audio of this format"))?;
+                let converted = converted.ok_or_else(|| {
+                    Fault::from(
+                        Unsupported::new(Why::Output, format!("audio in {}", audio.format))
+                            .to(NAME),
+                    )
+                })?;
                 let mime = format!("audio/pcm;rate={}", pcm.rate);
                 let data = json!({"mimeType": mime, "data": json::base64(&converted)});
                 (
@@ -670,7 +674,11 @@ impl Client {
             Output::Native(NativeValue { format, value }) if **format == *NAME => {
                 (Value::clone(value), &None)
             }
-            _ => return Err(refuse("another format's event")),
+            _ => {
+                return Err(Unsupported::new(Why::Output, "another format's event")
+                    .to(NAME)
+                    .into());
+            }
         };
         let mut v = v;
         merge(&mut v, own(native));

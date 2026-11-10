@@ -66,16 +66,17 @@ use respan_gateway_http::rules::header_tokens;
 /// | Client's upgrade fails | as when it drops | nothing |
 /// | Client sends a binary frame, or a message over `max_message` | input ends `Err(bad_request)` with its [`CloseCode`]; provider is sent that Close | Close 1003 (binary) or 1009 (too large); the response is read to its end, unsent |
 /// | Provider sends Close 1000 (or no code) | dropped | Close 1000; ends clean |
-/// | Provider sends Close with another code | dropped | an `upstream` fault with that [`ProviderClose`]: Close 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
+/// | Provider sends Close with another code | dropped | the fault of that [`ProviderClose`]: Close 1008 for 1003, 1007 or 1009, else 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
 /// | Provider drops, no Close, or is silent through a ping | dropped | Close 1011 `truncated` |
 /// | Provider sends a binary frame or a message over `max_message` | it is sent Close 1003 or 1009 | Close 1011 `upstream` |
 /// | Provider is unreachable, or refuses the upgrade | (no session) | the client's format answers the handshake: 502, or under the provider's status |
 /// | `stop` completes | provider is sent Close 1001 | Close 1001 |
-/// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent Close 1011, or the fault's [`CloseCode`] | Close 1011, or the fault's [`CloseCode`] |
-/// | A fault ends the response | provider is sent Close 1001 | Close 1011, or the fault's [`CloseCode`] (1001 if `abandoned`) |
+/// | A filter, format or plugin refuses an input | input ends `Err(fault)`; provider is sent the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another | the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another |
+/// | A fault ends the response | provider is sent Close 1001 | the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another (1001 if `abandoned`) |
 ///
-/// A provider's close reason text is not relayed, nor is a client's close
-/// code or reason. A session that has ended ignores `stop`.
+/// A provider's close reason is kept in its fault's message, never sent to
+/// the client, and a client's close code or reason is not relayed. A
+/// session that has ended ignores `stop`.
 pub async fn serve<S>(
     gateway: &Gateway,
     head: http::request::Parts,
@@ -289,9 +290,11 @@ where
             }
             Sent::Failed(fault) => {
                 end.fail(fault.clone());
-                let code = match fault.is(FaultKind::Abandoned) {
-                    true => 1001,
-                    false => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
+                let code = match (fault.kind(), fault.get::<CloseCode>()) {
+                    (FaultKind::Abandoned, _) => 1001,
+                    (_, Some(code)) => code.sendable(),
+                    (FaultKind::Client, None) => 1008,
+                    _ => 1011,
                 };
                 close(&mut sink, code, fault.code(), limits.close_send).await;
                 return Err(fault);
@@ -456,11 +459,15 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
                 break refused(1003, "a binary frame: only text frames are carried");
             }
             Some(Ok(Message::Close(frame))) => {
-                let code = frame.map(|f| u16::from(f.code));
+                let close = frame.map(|f| ProviderClose {
+                    code: u16::from(f.code),
+                    reason: f.reason.to_string(),
+                });
+                let code = close.as_ref().map(|c| c.code);
                 let clean = closing.load(Ordering::SeqCst) || matches!(code, None | Some(1000));
-                if let (Edge::Provider { relayed, .. }, false, Some(code)) = (edge, clean, code) {
-                    let mut fault = Fault::upstream("the provider closed the session")
-                        .with(ProviderClose(code));
+                if let (Edge::Provider { relayed, .. }, false, Some(close)) = (edge, clean, close) {
+                    let code = close.code;
+                    let mut fault = Fault::from(close);
                     if relayed {
                         fault = fault.with(CloseCode(code));
                     }

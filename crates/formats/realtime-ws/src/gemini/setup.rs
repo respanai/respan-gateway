@@ -1,6 +1,6 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Unsupported, Why};
 use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, ToolChoice, Turns, Vad};
 use serde_json::{Map, Value, json};
 
@@ -39,7 +39,7 @@ pub(super) fn decode(mut v: Value) -> Session {
         Some(json!([{"text": t}]))
     });
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.turns = take(v, DETECTION, turns, |t| detection_json(t, refuse).ok());
+    s.turns = take(v, DETECTION, turns, |t| detection_json(t).ok());
     if let Some(Turns::Server(vad)) = &mut s.turns {
         vad.interrupt = take(v, HANDLING, handling, |i| handling_json(*i));
     }
@@ -50,14 +50,15 @@ pub(super) fn decode(mut v: Value) -> Session {
     s
 }
 
-/// The `setup` message of `s`, refused by `refuse` where it says what the
+/// The `setup` message of `s`, refused where it says what the
 /// Live API cannot. Its audio formats are each chunk's own.
-pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+pub(super) fn encode(s: &Session) -> Result<Value, Fault> {
     if s.tool_choice
         .as_ref()
         .is_some_and(|c| *c != ToolChoice::Auto)
     {
-        return Err(refuse("a tool choice but `auto`"));
+        let refused = Unsupported::new(Why::Lasting, "a tool choice other than `auto`");
+        return Err(refused.to(NAME).fix("leave the tool choice unset").into());
     }
     let mut v = json!({});
     let mut put = |path: &[&str], value: Option<Value>| {
@@ -80,13 +81,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         s.instructions.as_ref().map(|t| json!([{"text": t}])),
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
-    put(
-        DETECTION,
-        s.turns
-            .as_ref()
-            .map(|t| detection_json(t, refuse))
-            .transpose()?,
-    );
+    put(DETECTION, s.turns.as_ref().map(detection_json).transpose()?);
     if let Some(Turns::Server(vad)) = &s.turns {
         put(HANDLING, vad.interrupt.and_then(handling_json));
     }
@@ -105,12 +100,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }
     }
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of a
-/// setup are written back as the Live API's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a setup field could not be written back")
 }
 
 /// Whether a transcription is asked for: an object; one that says nothing
@@ -218,14 +207,20 @@ fn turns(v: &Value) -> Option<Turns> {
     Some(Turns::Server(vad))
 }
 
-fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn detection_json(turns: &Turns) -> Result<Value, Fault> {
     let vad = match turns {
         Turns::Manual => return Ok(json!({"disabled": true})),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => {
+            return Err(Unsupported::new(Why::Input, "this turn detection")
+                .to(NAME)
+                .into());
+        }
     };
     if vad.respond == Some(false) {
-        return Err(refuse("turns the model does not answer"));
+        let what = "turns its voice detection ends without an answer";
+        let refused = Unsupported::new(Why::Lasting, what).to(NAME);
+        return Err(refused.fix("set turn detection to manual").into());
     }
     let mut v = Map::new();
     if let Some(ms) = vad.silence_ms {

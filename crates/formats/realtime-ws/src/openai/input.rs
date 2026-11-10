@@ -2,7 +2,7 @@
 //! [`Input`], read at the client's edge and written at the provider's.
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
 use serde_json::{Value, json};
@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 
 /// A client's frames as events, beginning with the session the handshake
 /// asked for, its model the one at `?model=`: the client's first
@@ -145,7 +145,7 @@ fn message(item: &Value) -> Option<Message> {
     let mut message = Message::new(role, "");
     message.content = parts.iter().map(part).collect();
     message.native = json::native(NAME, std::mem::take(rest));
-    let written = message_json(&message, |_| Fault::internal("unwritable"));
+    let written = message_json(&message);
     (written.ok().as_ref() == Some(item)).then_some(message)
 }
 
@@ -159,21 +159,42 @@ fn part(p: &Value) -> Content {
 }
 
 /// A message as an item: its text typed as its role's.
-fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn message_json(m: &Message) -> Result<Value, Fault> {
     let (role, text) = match m.role {
         Role::System => ("system", "input_text"),
         Role::User => ("user", "input_text"),
         Role::Assistant => ("assistant", "output_text"),
-        _ => return Err(refuse("a message of this role")),
-    };
-    let part = |c: &Content| match c {
-        Content::Text {
-            text: t, native, ..
-        } if native.is_none() => Ok(json!({"type": text, "text": t})),
-        Content::Native(NativeValue { format, value }) if **format == *NAME => {
-            Ok(Value::clone(value))
+        Role::Developer => {
+            let refused = Unsupported::new(Why::Lasting, "a developer message");
+            return Err(refused.to(NAME).fix("give it the system role").into());
         }
-        _ => Err(refuse("a message part of this kind")),
+        _ => {
+            return Err(Unsupported::new(Why::Input, "a message of this role")
+                .to(NAME)
+                .into());
+        }
+    };
+    let part = |c: &Content| {
+        let refused = match c {
+            Content::Text {
+                text: t, native, ..
+            } if native.is_none() => return Ok(json!({"type": text, "text": t})),
+            Content::Native(NativeValue { format, value }) if **format == *NAME => {
+                return Ok(Value::clone(value));
+            }
+            Content::Reasoning { .. } => {
+                Unsupported::new(Why::Lasting, "reasoning in a message").fix("leave it out")
+            }
+            Content::Document(_) => {
+                Unsupported::new(Why::Lasting, "a document in a message").fix("send its text")
+            }
+            Content::ToolCall { .. } | Content::ToolResult { .. } => {
+                Unsupported::new(Why::Input, "a tool call or result inside a message")
+                    .fix("send it as its own item")
+            }
+            _ => Unsupported::new(Why::Input, "a message part of this kind"),
+        };
+        Err(Fault::from(refused.to(NAME)))
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});
@@ -221,7 +242,6 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
         let (mut v, native) = match event {
             Input::Session(s) => {
                 // OpenAI takes its model at connect: the first session's is
@@ -243,7 +263,7 @@ impl Provider {
                 if let Some(format) = s.input_audio {
                     self.input = format;
                 }
-                let session = session::encode(&s, refuse)?;
+                let session = session::encode(&s, Why::Input)?;
                 let mut v = json!({"type": "session.update", "session": session});
                 merge(&mut v, own(&s.native));
                 if v["session"].get("type").is_none() {
@@ -275,13 +295,17 @@ impl Provider {
             }
             Input::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.input);
-                let data = data.ok_or_else(|| refuse("audio of this format"))?;
+                let data = data.ok_or_else(|| {
+                    Fault::from(
+                        Unsupported::new(Why::Input, format!("audio in {}", audio.format)).to(NAME),
+                    )
+                })?;
                 let v = json!({"type": "input_audio_buffer.append", "audio": json::base64(&data)});
                 (v, native)
             }
             Input::Commit { native } => (json!({"type": "input_audio_buffer.commit"}), native),
             Input::Message { message, native } => {
-                let item = message_json(message, refuse)?;
+                let item = message_json(message)?;
                 (
                     json!({"type": "conversation.item.create", "item": item}),
                     native,
@@ -298,7 +322,11 @@ impl Provider {
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 return Ok(Some(Value::clone(value)));
             }
-            _ => return Err(refuse("another format's event")),
+            _ => {
+                return Err(Unsupported::new(Why::Input, "another format's event")
+                    .to(NAME)
+                    .into());
+            }
         };
         merge(&mut v, own(native));
         Ok(Some(v))
