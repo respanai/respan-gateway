@@ -3,7 +3,7 @@
 | Folder | What's in it |
 | --- | --- |
 | [recipes](recipes/README.md) | Runnable Rust examples of building on the gateway's crates, one self-contained file each: guardrails, PII masking, billing, fallback, an LLM judge, MCP, realtime. |
-| [research](research/) | Deep dives into how LLM inference works and what it costs, with the experiments and data behind them. |
+| [research](research/) | Deep dives into how LLM inference works and what it costs, backed by experiments and data. |
 
 ## Recipes
 
@@ -17,4 +17,4 @@ See [recipes/README.md](recipes/README.md) for the full list.
 
 | Topic | Shows |
 | --- | --- |
-| [From the GPU to your bill: a deep dive into prompt caching](research/prompt-caching/README.md) | What a prompt cache is on the GPU, why it gets evicted, how providers price it, how harnesses break it, and what a router has to know to keep it. With [vLLM experiments](research/prompt-caching/experiments/) on an H100. |
+| [From the GPU to your bill: a deep dive into prompt caching](research/prompt-caching/README.md) | What a prompt cache is on the GPU, why it gets evicted, how providers price it, how harnesses break it, and what a router has to know to keep it. With vLLM experiments on an H100. |

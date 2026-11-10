@@ -51,7 +51,7 @@ Each crate's `README.md` documents its public contract.
 | `apps/ui/` | The web UI (React), embedded in the binary |
 | `python/` | The PyPI package, a PyO3 extension over `apps/gateway` |
 | `examples/recipes/` | Runnable examples, one self-contained file each: billing, guardrails, PII, admission, jobs, … |
-| `examples/research/` | Write-ups with the experiments behind them, such as the prompt caching deep dive |
+| `examples/research/` | Long-form write-ups, such as the prompt caching deep dive |
 | `docs/` | User docs: configuration, vendors, tool vendors, MCP and plugins |
 
 ## Development
