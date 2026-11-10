@@ -4,7 +4,7 @@ use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
 use crate::schema::{
-    NativeFieldsExt, failed_result, merge_missing, untranslatable, warn_reasoning,
+    FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, untranslatable, warn_reasoning,
 };
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
@@ -187,14 +187,8 @@ fn write_result(
     native: &Option<NativeFields>,
 ) -> Result<Value, Fault> {
     // A function call output cannot say that the call failed: its text does.
-    let failed;
-    let content = match is_error {
-        true => {
-            failed = failed_result(content);
-            &failed[..]
-        }
-        false => content,
-    };
+    let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
+    let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
     let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
     let output: Value = match content.iter().all(plain) {
         true => content
