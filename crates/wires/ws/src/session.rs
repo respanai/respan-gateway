@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error, Message, Utf8Bytes};
 
-use crate::{CloseCode, Limits, ProviderClose};
+use crate::{CloseCode, Limits};
 use respan_gateway_http::rules::header_tokens;
 
 /// Hand a client's WebSocket upgrade, `head`, to `gateway`, and pump its
@@ -465,11 +465,7 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
                 let code = frame.map(|f| u16::from(f.code));
                 let clean = closing.load(Ordering::SeqCst) || matches!(code, None | Some(1000));
                 if let (Edge::Provider { relayed, .. }, false, Some(code)) = (edge, clean, code) {
-                    let message = match reason.is_empty() {
-                        true => format!("the provider closed the session with {code}"),
-                        false => format!("the provider closed the session with {code}: {reason}"),
-                    };
-                    let mut fault = Fault::upstream(message).with(ProviderClose(code));
+                    let mut fault = Fault::from(crate::Error::ProviderClosed { code, reason });
                     if relayed {
                         fault = fault.with(CloseCode(code));
                     }

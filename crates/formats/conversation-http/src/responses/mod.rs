@@ -75,14 +75,10 @@ mod request;
 mod tests;
 
 use crate::openai::error_type;
-use crate::schema::UNWRITABLE;
 use crate::schema::{
     Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
     parts_within_totals, unsupported_fields, usage_extra,
 };
-use respan_gateway_core::ErrorCode;
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
 use respan_gateway_core::Provider;
@@ -235,10 +231,9 @@ impl Schema for OpenAiResponses {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         if !chat.options.stop.is_empty() {
-            return Err(Fault::bad_request(
-                "stop sequences in Responses cannot be translated to another format yet",
-            )
-            .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "stop sequences in Responses",
+            )));
         }
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
@@ -263,10 +258,9 @@ impl Schema for OpenAiResponses {
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
-            return Err(Fault::bad_request(
-                "top_k in Responses cannot be translated to another format yet",
-            )
-            .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "top_k in Responses",
+            )));
         }
         Ok(v)
     }
@@ -372,9 +366,7 @@ pub(crate) fn status_of(finish: &Finish) -> Result<(&'static str, Option<String>
             ..
         } => status_of(fallback)?,
         _ => {
-            return Err(Fault::new(UNWRITABLE)
-                .with(ErrorCode("untranslatable".into()))
-                .with(Status(StatusCode::BAD_GATEWAY)));
+            return Err(Fault::from(crate::Error::Unwritable));
         }
     })
 }

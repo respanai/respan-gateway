@@ -10,7 +10,6 @@ use crate::schema::{
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
 };
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
@@ -104,10 +103,11 @@ pub(in crate::responses) fn write_tools(
         Some(ToolChoice::None) => Some("none".into()),
         Some(ToolChoice::Required) => Some("required".into()),
         Some(ToolChoice::Tool(name)) => Some(json!({ "type": "function", "name": name })),
-        Some(_) => return Err(Fault::bad_request(
-            "a tool choice this format has no form for cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     set(v, "tool_choice", choice);
     set(
@@ -231,18 +231,15 @@ pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(Fault::bad_request(
-            "audio in Responses cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
-        Content::Reasoning { .. } => Err(Fault::bad_request(
-            "reasoning outside an assistant cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
-        _ => Err(Fault::bad_request(
-            "an unsupported kind of part cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable(
+            "audio in Responses",
+        ))),
+        Content::Reasoning { .. } => Err(Fault::from(crate::Error::Untranslatable(
+            "reasoning outside an assistant",
+        ))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -289,10 +286,9 @@ pub(in crate::responses) fn write_reasoning(
     let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
     if let Some(r) = reasoning_of(input)? {
         if r.budget_tokens.is_some() {
-            return Err(Fault::bad_request(
-                "a reasoning token budget in Responses cannot be translated to another format yet",
-            )
-            .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a reasoning token budget in Responses",
+            )));
         }
         if let Some(config) = config.as_object_mut() {
             if let Some(effort) = r.effort {

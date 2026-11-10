@@ -22,6 +22,8 @@
 
 use std::time::Duration;
 
+mod error;
+pub use error::Error;
 mod session;
 mod transport;
 

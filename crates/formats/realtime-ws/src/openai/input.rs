@@ -2,7 +2,6 @@
 //! [`Input`], read at the client's edge and written at the provider's.
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
@@ -223,8 +222,10 @@ impl Provider {
 
     fn encode(&mut self, event: &Input) -> Result<Option<Value>, Fault> {
         let refuse = |what: &str| {
-            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("unsupported".into()))
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let (mut v, native) = match event {
             Input::Session(s) => {

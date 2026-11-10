@@ -1,7 +1,6 @@
 //! What the client says: Mistral's client events as the kind's [`Input`],
 //! read at the client's edge, and the kind's written to Mistral's session.
 
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
@@ -141,8 +140,10 @@ impl Provider {
 
     fn frames(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
         let refuse = |what: &str| {
-            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("unsupported".into()))
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let frames = match event {
             Input::Session(s) => return self.session(s).map(|v| v.into_iter().collect()),
@@ -174,8 +175,10 @@ impl Provider {
     /// A session as its update, if it says anything to update.
     fn session(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
         let refuse = |what: &str| {
-            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("unsupported".into()))
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         // Mistral takes its model at connect: the first session's is the
         // one at its URL, and a later one that names it again changes

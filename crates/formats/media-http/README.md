@@ -3,6 +3,12 @@
 `respan-gateway-media-http` is the [media kinds](../../kinds/media/README.md)
 over HTTP.
 
+`Error` is what a format cannot do, a `Fault` by `?`: `Unsupported`, an ask
+the provider never takes, the client's, coded `unsupported`;
+`UnwritableStatus`, a video's status the client's format cannot write, a
+502 coded `untranslatable`. The fault keeps it as its source
+(`Fault::cause`).
+
 `openai::{OpenAiImages, OpenAiTranscriptions, OpenAiSpeech, OpenAiVideos,
 OpenAiEmbeddings}`, named `openai-images`, `openai-transcriptions`,
 `openai-speech`, `openai-videos` and `openai-embeddings`: OpenAI's endpoints, as OpenAI and compatible vendors serve

@@ -1,14 +1,10 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
-use crate::schema::UNWRITABLE;
 use crate::schema::{Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
@@ -235,11 +231,8 @@ impl Chunks {
 
     fn slot(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let slot = self.blocks.iter_mut().find(|s| s.block == block);
-        slot.filter(|s| !s.ended).ok_or_else(|| {
-            Fault::new(UNWRITABLE)
-                .with(ErrorCode("untranslatable".into()))
-                .with(Status(StatusCode::BAD_GATEWAY))
-        })
+        slot.filter(|s| !s.ended)
+            .ok_or_else(|| Fault::from(crate::Error::Unwritable))
     }
 
     fn open(&mut self, block: u32, kind: &Block, out: &mut BytesMut) -> Result<(), Fault> {
@@ -247,9 +240,7 @@ impl Chunks {
             // A start repeated for an open block opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(Fault::new(UNWRITABLE)
-                    .with(ErrorCode("untranslatable".into()))
-                    .with(Status(StatusCode::BAD_GATEWAY))),
+                false => Err(Fault::from(crate::Error::Unwritable)),
             };
         }
         self.begin(out);
@@ -280,9 +271,7 @@ impl Chunks {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.slot(block)?;
         if !fits(part, &slot.kind) {
-            return Err(Fault::new(UNWRITABLE)
-                .with(ErrorCode("untranslatable".into()))
-                .with(Status(StatusCode::BAD_GATEWAY)));
+            return Err(Fault::from(crate::Error::Unwritable));
         }
         let text = part.as_str();
         if text.is_empty() {
@@ -296,9 +285,7 @@ impl Chunks {
                 json!({ "tool_calls": [call_json(Some(index), None, None, text)] })
             }
             _ => {
-                return Err(Fault::new(UNWRITABLE)
-                    .with(ErrorCode("untranslatable".into()))
-                    .with(Status(StatusCode::BAD_GATEWAY)));
+                return Err(Fault::from(crate::Error::Unwritable));
             }
         };
         self.delta(out, delta);
@@ -308,11 +295,7 @@ impl Chunks {
     /// End a block: a call that had no arguments has none, as JSON.
     fn close(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.blocks.iter_mut().find(|s| s.block == block);
-        let slot = slot.ok_or_else(|| {
-            Fault::new(UNWRITABLE)
-                .with(ErrorCode("untranslatable".into()))
-                .with(Status(StatusCode::BAD_GATEWAY))
-        })?;
+        let slot = slot.ok_or_else(|| Fault::from(crate::Error::Unwritable))?;
         let bare = slot.call.filter(|_| !slot.arguments && !slot.ended);
         (slot.arguments, slot.ended) = (true, true);
         if let Some(index) = bare {
@@ -375,9 +358,7 @@ impl Chunks {
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
             _ => {
-                return Err(Fault::new(UNWRITABLE)
-                    .with(ErrorCode("untranslatable".into()))
-                    .with(Status(StatusCode::BAD_GATEWAY)));
+                return Err(Fault::from(crate::Error::Unwritable));
             }
         }
         Ok(())

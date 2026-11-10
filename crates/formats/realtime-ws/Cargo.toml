@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
 parking_lot.workspace = true
 form_urlencoded.workspace = true
 respan-gateway-http-faults.workspace = true

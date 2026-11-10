@@ -81,20 +81,17 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::UNWRITABLE;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
     merge_details, merge_fields, native_fields, set, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode, request::Parts as RequestHead};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
-use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value, json};
 
 use decode::GeminiDecoder;
@@ -345,9 +342,7 @@ impl Schema for GeminiGenerate {
     }
 
     fn encode_part(_: &respan_gateway_conversation::Content) -> Result<Value, Fault> {
-        Err(Fault::new(UNWRITABLE)
-            .with(ErrorCode("untranslatable".into()))
-            .with(Status(StatusCode::BAD_GATEWAY)))
+        Err(Fault::from(crate::Error::Unwritable))
     }
 
     fn stream_encoder(&self, _asked: Asked) -> Box<dyn Encoder<Output>> {
@@ -416,9 +411,7 @@ impl Schema for GeminiGenerate {
                         (None, Some("part")) => parts.push(raw["part"].clone()),
                         _ if body.add(raw) => {}
                         _ => {
-                            return Err(Fault::new(UNWRITABLE)
-                                .with(ErrorCode("untranslatable".into()))
-                                .with(Status(StatusCode::BAD_GATEWAY)));
+                            return Err(Fault::from(crate::Error::Unwritable));
                         }
                     }
                 }

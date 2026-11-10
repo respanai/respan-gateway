@@ -7,10 +7,7 @@
 //! the client's own format carries the client's spec headers and query
 //! parameters ([`Schema::CARRIED`]).
 
-use crate::schema::UNWRITABLE;
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::FaultKind;
-use respan_gateway_http_faults::Status;
 use std::sync::Arc;
 
 use respan_gateway_conversation::Usage;
@@ -356,11 +353,9 @@ struct UnaryEncoder<C> {
 
 impl<C: Schema> UnaryEncoder<C> {
     pub(crate) fn encode_into(&mut self, reply: &Output, _out: &mut BytesMut) -> Result<(), Fault> {
-        self.whole.push(reply).map_err(|_| {
-            Fault::new(UNWRITABLE)
-                .with(ErrorCode("untranslatable".into()))
-                .with(Status(StatusCode::BAD_GATEWAY))
-        })
+        self.whole
+            .push(reply)
+            .map_err(|_| Fault::from(crate::Error::Unwritable))
     }
 
     pub(crate) fn end_into(

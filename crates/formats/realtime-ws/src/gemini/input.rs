@@ -1,7 +1,6 @@
 //! What the client says: the Live API's client messages as the kind's
 //! [`Input`], read at the client's edge and written at the provider's.
 
-use respan_gateway_core::ErrorCode;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation::{Content, Message, Role};
@@ -307,8 +306,10 @@ impl Provider {
 
     fn encode(&mut self, event: &Input, out: &mut Vec<Value>) -> Result<(), Fault> {
         let refuse = |what: &str| {
-            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("unsupported".into()))
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let answered = std::mem::take(&mut self.answered);
         let (mut v, native) = match event {
@@ -453,8 +454,10 @@ impl Provider {
     /// came.
     fn respond(&mut self, native: &Option<NativeFields>) -> Result<Value, Fault> {
         let refuse = |what: &str| {
-            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("unsupported".into()))
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let content = shaped(native);
         match self.held.take() {
@@ -488,10 +491,10 @@ impl Provider {
         match self.held.take() {
             None => {}
             Some(Held::Messages(_)) => {
-                return Err(Fault::bad_request(format!(
-                    "{UNANSWERED} cannot be translated to {NAME}"
-                ))
-                .with(ErrorCode("unsupported".into())));
+                return Err(Fault::from(crate::Error::Untranslatable {
+                    format: NAME,
+                    what: UNANSWERED.to_string(),
+                }));
             }
             Some(Held::Results(results)) => out.push(self.results(&results)),
         }

@@ -23,6 +23,10 @@ a format per spec:
   `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
   streams Responses over a socket, and uses the kind's types only as native
   events.
+- `Error`: what a format cannot translate, a `Fault` by `?`:
+  `Untranslatable`, a client's event, the client's, coded `unsupported`;
+  `Unwritable`, a provider's, the gateway's, a 502 coded `untranslatable`.
+  The fault keeps it as its source (`Fault::cause`).
 
 Each is served at a path ending in its own, but not in another's that ends
 in it (Mistral's in OpenAI's `/realtime`), and sends to it;

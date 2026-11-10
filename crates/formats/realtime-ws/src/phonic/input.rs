@@ -1,7 +1,6 @@
 //! What the client says: Phonic's client messages as the kind's [`Input`],
 //! read at the client's edge and written at the provider's.
 
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
@@ -106,10 +105,10 @@ impl Provider {
 
     fn encode(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
         let refuse = |what: &str| {
-            Err(
-                Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                    .with(ErrorCode("unsupported".into())),
-            )
+            Err(Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            }))
         };
         let started = self.asked.is_some();
         match event {
@@ -155,10 +154,10 @@ impl Provider {
             (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
-            return Err(
-                Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
-                    .with(ErrorCode("unsupported".into())),
-            );
+            return Err(Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            }));
         }
         s.input_audio = s.input_audio.filter(|f| session::takes(*f));
         s.output_audio = s.output_audio.filter(|f| session::takes(*f));

@@ -1,10 +1,8 @@
 //! What the model says: the Live API's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::StatusCode;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output};
 use serde_json::{Value, json};
 
@@ -126,9 +124,10 @@ impl Client {
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
         let refuse = |what: &str| {
-            Err(Fault::new(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("untranslatable".into()))
-                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY)))
+            Err(Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            }))
         };
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {

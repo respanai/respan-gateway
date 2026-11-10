@@ -3,15 +3,11 @@
 //! `additionalModelRequestFields`. What the kind has but Converse has no
 //! field for, such as `top_k`, an end user's id or an effort, is refused.
 
-use crate::schema::UNWRITABLE;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
 };
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeFields};
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value, json};
 
 use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
@@ -47,10 +43,11 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
                 Content::Native(raw) if *raw.format == *BEDROCK => {
                     blocks.push(Value::clone(&raw.value));
                 }
-                _ => return Err(Fault::bad_request(
-                    "a system prompt that is not text cannot be translated to another format yet",
-                )
-                .with(ErrorCode("unsupported".into()))),
+                _ => {
+                    return Err(Fault::from(crate::Error::Untranslatable(
+                        "a system prompt that is not text",
+                    )));
+                }
             }
         }
     }
@@ -65,9 +62,11 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| Fault::bad_request("a role this format has no place for cannot be translated to another format yet").with(ErrorCode("unsupported".into())))?,
+            role => ROLES.name(role).ok_or_else(|| {
+                Fault::from(crate::Error::Untranslatable(
+                    "a role this format has no place for",
+                ))
+            })?,
         };
         let mut blocks: Vec<Value> = Vec::new();
         for part in m.content.iter().filter(|c| !is_unsigned(c)) {
@@ -157,14 +156,10 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             Ok(json!({ "toolResult": result }))
         }
         Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
-        Content::Audio(_) => Err(Fault::bad_request(
-            "audio cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
-        _ => Err(Fault::bad_request(
-            "an unsupported kind of part cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable("audio"))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -181,10 +176,9 @@ fn is_blank(part: &Content) -> bool {
 fn result_block(part: &Content) -> Result<Value, Fault> {
     match part {
         Content::Text { .. } | Content::Image(_) | Content::Document(_) => content_block(part),
-        _ => Err(Fault::bad_request(
-            "a tool result that is not text or media cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "a tool result that is not text or media",
+        ))),
     }
 }
 
@@ -199,9 +193,7 @@ fn reasoning(text: &str, native: &Option<NativeFields>) -> Result<Value, Fault> 
         Some(signature) => Ok(json!({
             "reasoningContent": { "reasoningText": { "text": text, "signature": signature } }
         })),
-        None => Err(Fault::new(UNWRITABLE)
-            .with(ErrorCode("untranslatable".into()))
-            .with(Status(StatusCode::BAD_GATEWAY))),
+        None => Err(Fault::from(crate::Error::Unwritable)),
     }
 }
 
@@ -241,10 +233,9 @@ fn image(media: &Media) -> Result<Value, Fault> {
         ))
     })?;
     if media.name.is_some() {
-        return Err(Fault::bad_request(
-            "a display name on an image cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a display name on an image",
+        )));
     }
     Ok(json!({ "image": { "format": format, "source": bytes_of(media)? } }))
 }
@@ -307,10 +298,11 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::None) => return Ok(()),
         Some(ToolChoice::Required) => Some(json!({ "any": {} })),
         Some(ToolChoice::Tool(name)) => Some(json!({ "tool": { "name": name } })),
-        Some(_) => return Err(Fault::bad_request(
-            "a tool choice this format has no form for cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     let mut tools: Vec<Value> = Vec::new();
     for t in &chat.tools {
@@ -334,16 +326,14 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
 pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let o = &chat.options;
     if o.top_k.is_some() {
-        return Err(Fault::bad_request(
-            "top_k, which Bedrock takes per model cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "top_k, which Bedrock takes per model",
+        )));
     }
     if chat.user.is_some() {
-        return Err(Fault::bad_request(
-            "an end user's id cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "an end user's id",
+        )));
     }
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}
@@ -362,10 +352,9 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             v.insert("outputConfig".into(), json!({ "textFormat": format }));
         }
         Some(_) => {
-            return Err(Fault::bad_request(
-                "JSON output without a schema cannot be translated to another format yet",
-            )
-            .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "JSON output without a schema",
+            )));
         }
     }
     let mut config = Map::new();
@@ -382,15 +371,16 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     }
     if let Some(r) = reasoning_of(chat)? {
         if r.summary == Some(false) {
-            return Err(Fault::bad_request(
-                "withholding the thinking cannot be translated to another format yet",
-            )
-            .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "withholding the thinking",
+            )));
         }
         let thinking = match (r.effort, r.budget_tokens) {
             (Some(Effort::Off), _) => json!({ "type": "disabled" }),
             (Some(_), _) => {
-                return Err(Fault::bad_request("a reasoning effort, which Bedrock names per model: give a token budget cannot be translated to another format yet").with(ErrorCode("unsupported".into())));
+                return Err(Fault::from(crate::Error::Untranslatable(
+                    "a reasoning effort, which Bedrock names per model: give a token budget",
+                )));
             }
             (None, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget }),
             (None, None) => return Ok(()),

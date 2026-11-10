@@ -11,9 +11,8 @@ use super::{
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
@@ -451,11 +450,7 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         Status::Failed => "failed",
         Status::Native { format, status, .. } if &**format == NAME => status,
         _ => {
-            return Err(
-                Fault::new(format!("a video status cannot be written in {NAME}"))
-                    .with(ErrorCode("untranslatable".into()))
-                    .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY)),
-            );
+            return Err(Fault::from(crate::Error::UnwritableStatus(NAME)));
         }
     };
     let error = job

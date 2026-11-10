@@ -9,7 +9,7 @@ use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
+use respan_gateway_core::{Connection, Fault, Format, NativeFields};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -194,10 +194,9 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
         }
         Input::Content { id, variant, url } => {
             if *variant != Variant::Video {
-                return Err(
-                    Fault::bad_request("Veo cannot make a thumbnail or a spritesheet")
-                        .with(ErrorCode("unsupported".into())),
-                );
+                return Err(Fault::from(crate::Error::Unsupported(
+                    "Veo cannot make a thumbnail or a spritesheet",
+                )));
             }
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
@@ -206,21 +205,24 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             (Method::GET, content_path(url)?, None, Call::Content)
         }
         Input::Remix { .. } => {
-            return Err(Fault::bad_request("Veo cannot remix a video")
-                .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Unsupported(
+                "Veo cannot remix a video",
+            )));
         }
         Input::Delete { .. } => {
-            return Err(Fault::bad_request("Veo cannot delete a video")
-                .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Unsupported(
+                "Veo cannot delete a video",
+            )));
         }
         Input::List { .. } => {
-            return Err(
-                Fault::bad_request("Veo cannot list videos").with(ErrorCode("unsupported".into()))
-            );
+            return Err(Fault::from(crate::Error::Unsupported(
+                "Veo cannot list videos",
+            )));
         }
         _ => {
-            return Err(Fault::bad_request("Veo cannot answer this request")
-                .with(ErrorCode("unsupported".into())));
+            return Err(Fault::from(crate::Error::Unsupported(
+                "Veo cannot answer this request",
+            )));
         }
     };
     head.method = method;

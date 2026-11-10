@@ -30,6 +30,10 @@ the vendors that speak them
   the `upstream` fault the transport ends the answer with, whose message
   names the code and the Close's reason. The client is told the code only as a `CloseCode`, which the transport adds on a call `Relayed`
   (`Relay`), or a plugin sets.
+- `Error`: what ends a session, a `Fault` by `?`: `ProviderClosed { code,
+  reason }`, a provider's Close, the provider's, its code and reason in the
+  message and its code a `ProviderClose`. The fault keeps it as its source
+  (`Fault::cause`).
 - `Limits { max_message, close_wait, close_send, ping_after }`: what an edge
   takes, with defaults and their reasons on the type: 16 MiB messages, 5 s
   for the other side's part of a close, 1 s for a Close to leave, a ping

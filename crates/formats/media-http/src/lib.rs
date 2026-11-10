@@ -10,6 +10,8 @@
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
 
+mod error;
+pub use error::Error;
 pub mod bedrock;
 mod edge;
 pub mod gemini;

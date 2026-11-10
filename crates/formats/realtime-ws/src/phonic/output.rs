@@ -1,8 +1,6 @@
 //! What the model says: Phonic's server messages as the kind's [`Output`],
 //! read at the provider's edge and written at the client's.
 
-use respan_gateway_core::ErrorCode;
-use respan_gateway_http::http::StatusCode;
 use std::time::Instant;
 
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
@@ -263,9 +261,10 @@ impl Client {
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
         let refuse = |what: &str| {
-            Err(Fault::new(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("untranslatable".into()))
-                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY)))
+            Err(Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            }))
         };
         let typed = |kind: &str| json!({"type": kind});
         let (mut v, native) = match event {

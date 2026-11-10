@@ -35,7 +35,6 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::UNWRITABLE;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
@@ -45,13 +44,10 @@ use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
     block_fields,
 };
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
-use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo, http};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
-use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value, json};
 
 use decode::AnthropicDecoder;
@@ -415,17 +411,12 @@ impl Schema for AnthropicMessages {
                         Block::Text => json!({ "type": "text", "text": part.text }),
                         Block::Reasoning => json!({ "type": "thinking", "thinking": part.text }),
                         Block::ToolCall { id, name } => {
-                            let input = arguments_object(&part.text).map_err(|_| {
-                                Fault::new(UNWRITABLE)
-                                    .with(ErrorCode("untranslatable".into()))
-                                    .with(Status(StatusCode::BAD_GATEWAY))
-                            })?;
+                            let input = arguments_object(&part.text)
+                                .map_err(|_| Fault::from(crate::Error::Unwritable))?;
                             json!({ "type": "tool_use", "id": id, "name": name, "input": input })
                         }
                         _ => {
-                            return Err(Fault::new(UNWRITABLE)
-                                .with(ErrorCode("untranslatable".into()))
-                                .with(Status(StatusCode::BAD_GATEWAY)));
+                            return Err(Fault::from(crate::Error::Unwritable));
                         }
                     };
                     let mut block = block;
@@ -486,16 +477,12 @@ impl Schema for AnthropicMessages {
                                     }
                                 }
                                 _ => {
-                                    return Err(Fault::new(UNWRITABLE)
-                                        .with(ErrorCode("untranslatable".into()))
-                                        .with(Status(StatusCode::BAD_GATEWAY)));
+                                    return Err(Fault::from(crate::Error::Unwritable));
                                 }
                             }
                         }
                         _ => {
-                            return Err(Fault::new(UNWRITABLE)
-                                .with(ErrorCode("untranslatable".into()))
-                                .with(Status(StatusCode::BAD_GATEWAY)));
+                            return Err(Fault::from(crate::Error::Unwritable));
                         }
                     }
                 }
@@ -504,11 +491,8 @@ impl Schema for AnthropicMessages {
             }
         }
         for (place, text) in input {
-            content[place]["input"] = arguments_object(&text).map_err(|_| {
-                Fault::new(UNWRITABLE)
-                    .with(ErrorCode("untranslatable".into()))
-                    .with(Status(StatusCode::BAD_GATEWAY))
-            })?;
+            content[place]["input"] =
+                arguments_object(&text).map_err(|_| Fault::from(crate::Error::Unwritable))?;
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         let (id, model) = whole

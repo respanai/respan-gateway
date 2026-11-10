@@ -7,8 +7,6 @@
 //! would be written as several, such as a turn of two parts, reaches its
 //! client as several, each saying its part.
 
-use respan_gateway_core::ErrorCode;
-use respan_gateway_http::http::StatusCode;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
@@ -547,9 +545,10 @@ impl Client {
 
     fn encode(&mut self, event: &Output) -> Result<Vec<Value>, Fault> {
         let refuse = |what: &str| {
-            Fault::new(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("untranslatable".into()))
-                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY))
+            Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let interrupted = json!({"serverContent": {"interrupted": true}});
         let content = |field: &str, value: Value| json!({"serverContent": {field: value}});

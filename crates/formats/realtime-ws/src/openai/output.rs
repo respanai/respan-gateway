@@ -1,8 +1,6 @@
 //! What the model says: OpenAI Realtime's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
-use respan_gateway_core::ErrorCode;
-use respan_gateway_http::http::StatusCode;
 use std::collections::HashMap;
 
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
@@ -296,9 +294,10 @@ impl Client {
 
     fn encode(&mut self, event: &Output, out: &mut Vec<Value>) -> Result<(), Fault> {
         let refuse = |what: &str| {
-            Fault::new(format!("{what} cannot be translated to {NAME}"))
-                .with(ErrorCode("untranslatable".into()))
-                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY))
+            Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            })
         };
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {

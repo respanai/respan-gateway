@@ -1644,6 +1644,7 @@ dependencies = [
  "respan-gateway-sse",
  "serde",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -1824,6 +1825,7 @@ dependencies = [
  "respan-gateway-media",
  "respan-gateway-sse",
  "serde_json",
+ "thiserror",
  "uuid",
 ]
 
@@ -1991,6 +1993,7 @@ dependencies = [
  "respan-gateway-realtime",
  "respan-gateway-ws",
  "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -2157,6 +2160,7 @@ dependencies = [
  "rustls",
  "rustls-native-certs",
  "serde_json",
+ "thiserror",
  "tokio",
  "tokio-tungstenite",
 ]

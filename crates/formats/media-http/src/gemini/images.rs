@@ -115,10 +115,9 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         ));
     }
     if input.mask.is_some() {
-        return Err(
-            Fault::bad_request("Gemini edits by prompt, and takes no mask")
-                .with(ErrorCode("unsupported".into())),
-        );
+        return Err(Fault::from(crate::Error::Unsupported(
+            "Gemini edits by prompt, and takes no mask",
+        )));
     }
     head.uri = format!("/models/{model}:generateContent")
         .parse()

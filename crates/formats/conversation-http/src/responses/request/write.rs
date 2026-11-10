@@ -5,7 +5,6 @@ use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
 use crate::schema::{NativeFieldsExt, merge_missing, warn_reasoning};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
-use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
@@ -49,10 +48,9 @@ pub(in crate::responses) fn write_input(
 
 fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     let no_role = || {
-        Fault::bad_request(
-            "a role this format has no place for cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))
+        Fault::from(crate::Error::Untranslatable(
+            "a role this format has no place for",
+        ))
     };
     let role = match &m.role {
         Role::Native { format, name, .. } if **format == *RESPONSES && name == ITEM_ROLE => {
@@ -72,10 +70,9 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
         match part {
             Content::Native(n) if *n.format == *RESPONSES => items.push(n.value.as_ref().clone()),
             _ => {
-                return Err(Fault::bad_request(
-                    "an item in another shape cannot be translated to another format yet",
-                )
-                .with(ErrorCode("unsupported".into())));
+                return Err(Fault::from(crate::Error::Untranslatable(
+                    "an item in another shape",
+                )));
             }
         }
     }
@@ -101,7 +98,9 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
                 items.push(write_result(id, content, *is_error, native)?);
             }
             Content::Reasoning { .. } | Content::ToolCall { .. } => {
-                return Err(Fault::bad_request("an assistant's content in another role cannot be translated to another format yet").with(ErrorCode("unsupported".into())));
+                return Err(Fault::from(crate::Error::Untranslatable(
+                    "an assistant's content in another role",
+                )));
             }
             part => parts.push(write_input_part(part)?),
         }
@@ -112,10 +111,9 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
     }
     match extras.is_empty() {
         true => Ok(()),
-        false => Err(Fault::bad_request(
-            "a message's fields beside its results cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        false => Err(Fault::from(crate::Error::Untranslatable(
+            "a message's fields beside its results",
+        ))),
     }
 }
 
@@ -165,24 +163,21 @@ fn write_input_part(c: &Content) -> Result<Value, Fault> {
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
         Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Audio(_) => Err(Fault::bad_request(
-            "audio in Responses cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
-        _ => Err(Fault::bad_request(
-            "an unsupported kind of part cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into()))),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable(
+            "audio in Responses",
+        ))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
 pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
     let image = matches!(c, Content::Image(_));
     if image && media.name.is_some() {
-        return Err(Fault::bad_request(
-            "a display name on image content cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a display name on image content",
+        )));
     }
     let native = media.native.fields_for(RESPONSES);
     let url = || media_url(media);
@@ -209,10 +204,9 @@ fn write_result(
 ) -> Result<Value, Fault> {
     // A function call output cannot say that the call failed.
     if is_error {
-        return Err(Fault::bad_request(
-            "a tool result that is an error cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a tool result that is an error",
+        )));
     }
     let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
     let output: Value = match content.iter().all(plain) {
@@ -253,10 +247,9 @@ impl AsText for Content {
 /// reasoning items of their own.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     if !m.native.fields_for(RESPONSES).is_empty() {
-        return Err(Fault::bad_request(
-            "an assistant message's fields cannot be translated to another format yet",
-        )
-        .with(ErrorCode("unsupported".into())));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "an assistant message's fields",
+        )));
     }
     let before = items.len();
     let mut run: Vec<&Content> = Vec::new();
@@ -307,10 +300,9 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 items.push(v.into());
             }
             _ => {
-                return Err(Fault::bad_request(
-                    "an unsupported kind of part cannot be translated to another format yet",
-                )
-                .with(ErrorCode("unsupported".into())));
+                return Err(Fault::from(crate::Error::Untranslatable(
+                    "an unsupported kind of part",
+                )));
             }
         }
     }

@@ -84,6 +84,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "s
 serde = { version = "1", features = ["derive"] }
 serde_path_to_error = "0.1"
 serde_json = { version = "1", features = ["preserve_order"] }
+thiserror = "2"
 bytesize = "2"
 humantime = "2"
 csv = "1"
