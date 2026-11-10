@@ -19,4 +19,11 @@ respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true
 respan-gateway-http.workspace = true
 serde_json.workspace = true
+serde = { workspace = true, optional = true }
 
+[features]
+# `Serialize` and `Deserialize` for a kept `Turn`, for a store several gateways share.
+serde = ["dep:serde", "respan-gateway-conversation/serde"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

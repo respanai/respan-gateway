@@ -1921,7 +1921,9 @@ dependencies = [
  "respan-gateway-conversation-http",
  "respan-gateway-core",
  "respan-gateway-http",
+ "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 
