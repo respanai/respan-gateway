@@ -6,9 +6,10 @@
 
 use crate::fields::media_url;
 use crate::schema::{
-    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    failed_result, merge_missing, native_fields, only, own_native, read_search, reasoning_of,
-    remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_name,
+    encode_content, encode_message, merge_missing, native_fields, only, own_native, read_search,
+    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning,
+    write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -202,14 +203,8 @@ fn openai_result(
     is_error: bool,
 ) -> Result<Map<String, Value>, Fault> {
     // OpenAI's tool messages cannot say the call failed: their text does.
-    let failed;
-    let content = match is_error {
-        true => {
-            failed = failed_result(content);
-            &failed[..]
-        }
-        false => content,
-    };
+    let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
+    let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
     let media = |c: &Content| {
         matches!(
             c,
@@ -222,7 +217,7 @@ fn openai_result(
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
     v.insert("tool_call_id".into(), id.into());
-    v.insert("content".into(), encode_content::<OpenAiChat>(content)?);
+    v.insert("content".into(), encode_content::<OpenAiChat>(&content)?);
     Ok(v)
 }
 

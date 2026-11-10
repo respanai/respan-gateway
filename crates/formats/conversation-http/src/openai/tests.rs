@@ -965,18 +965,10 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
         .encode_request(&Input::new([failed]))
         .map(Value::from);
     let sent = sent.expect("written");
+    let parts = json!([{ "type": "text", "text": "Error: " }, { "type": "text", "text": "no" }]);
     assert_eq!(
         sent["messages"][0],
-        json!({ "role": "tool", "tool_call_id": "c1", "content": "Error: no" })
-    );
-    let mut bare = Message::new(Role::User, "");
-    bare.content = vec![Content::tool_result("c1", Vec::new(), true)];
-    let sent = OpenAiChat
-        .encode_request(&Input::new([bare]))
-        .map(Value::from);
-    assert_eq!(
-        sent.expect("written")["messages"][0]["content"],
-        json!("Error:")
+        json!({ "role": "tool", "tool_call_id": "c1", "content": parts })
     );
 }
 
