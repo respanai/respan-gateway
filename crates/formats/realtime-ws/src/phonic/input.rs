@@ -7,7 +7,6 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, NAME, session};
@@ -180,7 +179,7 @@ impl Provider {
             let fixed = format!(
                 "Phonic fixes a session's configuration at its config: this update changes `{field}`"
             );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            return Err(Fault::bad_request(fixed));
         }
         let applied = self.applied.lock().clone().unwrap_or_default();
         let _ = self.say.unbounded_send(Output::Updated(applied));

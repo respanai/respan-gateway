@@ -35,7 +35,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.voice = take(v, VOICE, string, text);
     s.input_audio = take_format(v, INPUT_FORMAT);
     s.output_audio = take_format(v, OUTPUT_FORMAT);
-    s.turns = take(v, TURN_DETECTION, turns, |t| turns_json(t, refuse).ok());
+    s.turns = take(v, TURN_DETECTION, turns, |t| turns_json(t).ok());
     // A transcription's settings, such as its model, stay where they are.
     s.input_transcription = take(
         v,
@@ -78,7 +78,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         TURN_DETECTION,
         s.turns
             .as_ref()
-            .map(|t| turns_json(t, refuse))
+            .map(|t| turns_json(t).map_err(refuse))
             .transpose()?,
     );
     put(
@@ -98,12 +98,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         s.max_output_tokens.as_ref().and_then(number),
     );
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of an
-/// OpenAI frame are written back as OpenAI's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a session field could not be written back")
 }
 
 fn purpose(v: &Value) -> Option<Purpose> {
@@ -203,12 +197,12 @@ fn turns(v: &Value) -> Option<Turns> {
 }
 
 /// Turn detection as GA has it: none for manual turns, else server VAD, or
-/// what type its native names.
-fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// what type its native names; `Err` names what it cannot write.
+fn turns_json(turns: &Turns) -> Result<Value, &'static str> {
     let vad = match turns {
         Turns::Manual => return Ok(Value::Null),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return Err("this turn detection"),
     };
     let mut v = Map::new();
     let mut put = |key: &str, value: Option<Value>| {

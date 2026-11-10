@@ -217,7 +217,7 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
     let fault = provider
         .write(&Input::Session(changed), &mut frames)
         .expect_err("refused");
-    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1008)));
+    assert_eq!(fault.kind(), FaultKind::Client);
     assert!(
         fault
             .message()

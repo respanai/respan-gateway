@@ -419,7 +419,7 @@ impl Provider {
             let fixed = format!(
                 "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
             );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            return Err(Fault::bad_request(fixed));
         }
         // Audio formats are each chunk's own.
         applied.input_audio = s.input_audio.or(applied.input_audio);

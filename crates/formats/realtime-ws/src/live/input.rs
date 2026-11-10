@@ -7,7 +7,6 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{NAME, session};
@@ -168,7 +167,7 @@ impl Provider {
             let fixed = format!(
                 "OpenAI Live fixes a session's configuration at its start: this update changes `{field}`"
             );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            return Err(Fault::bad_request(fixed));
         }
         if let Some(native) = native {
             let mut v = json!({"type": "session.update"});
