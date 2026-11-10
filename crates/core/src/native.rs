@@ -11,6 +11,7 @@ pub type FormatId = Arc<str>;
 /// A foreign encoder drops them: a field whose meaning other formats share
 /// belongs in the kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NativeFields {
     /// The wire format that defines these fields.
     pub format: FormatId,
@@ -35,6 +36,7 @@ impl NativeFields {
 
 /// An entire value whose meaning belongs to one wire format.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct NativeValue {
     /// The wire format that understands the value.
     pub format: FormatId,

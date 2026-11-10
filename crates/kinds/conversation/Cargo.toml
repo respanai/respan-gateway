@@ -14,3 +14,8 @@ workspace = true
 bytes.workspace = true
 respan-gateway-core.workspace = true
 serde_json.workspace = true
+serde = { workspace = true, optional = true }
+
+[features]
+# `Serialize` and `Deserialize` for a conversation's messages, for a host that keeps them.
+serde = ["dep:serde", "respan-gateway-core/serde", "bytes/serde"]

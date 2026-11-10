@@ -5,6 +5,7 @@ use respan_gateway_core::NativeFields;
 
 /// Media content with its representation separated from its meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Media {
     /// MIME type, such as `image/png`, `audio/wav`, or `application/pdf`.
     pub mime_type: String,
@@ -30,6 +31,7 @@ impl Media {
 
 /// The source of a media value. Wire encoders choose base64 or URL syntax.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MediaSource {
     /// A remote resource.
     Url(String),
