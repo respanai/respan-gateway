@@ -34,6 +34,8 @@ protocols and adapters all depend on it directly.
   value; `NativeValue { format, value }` an entire unsupported value. The
   format ID names the wire schema, not a provider deployment, so formats can
   reject unsafe cross-format forwarding. Neither carries transport state.
+  With the `serde` feature both are `Serialize` and `Deserialize`, for a
+  host that keeps them.
 
 Core defines no request/event kinds or `Format` implementations. Each kind
 names its pair `Input` / `Output`, in the crate that owns it:

@@ -23,6 +23,7 @@
 mod store;
 
 use parking_lot::{Mutex, MutexGuard};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -31,6 +32,7 @@ use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{
     ClientContext, Fault, Filter, NativeFields, Plugin, ProviderContext, Result, async_trait,
+    futures::future::join_all,
 };
 use respan_gateway_http::raw::Original;
 use serde_json::Value;
@@ -75,11 +77,11 @@ impl Responses {
 
 /// The conversation up to and including response `id`, oldest first, if
 /// none of it expired.
-fn conversation(store: &dyn Store, id: &str) -> Option<Vec<Message>> {
+async fn conversation(store: &dyn Store, id: &str) -> Option<Vec<Message>> {
     let mut turns = Vec::new();
     let mut next = Some(id.to_owned());
     while let Some(id) = next.take() {
-        let turn = store.get(&id)?;
+        let turn = store.get(&id).await?;
         if turns.len() == MAX_DEPTH {
             return None;
         }
@@ -153,12 +155,18 @@ impl Plugin for Responses {
             return Ok(());
         }
         if px.client().format() != RESPONSES {
-            return self.carry_reasoning(px);
+            return self.carry_reasoning(px).await;
         }
         let Some(pending) = px.extensions().get::<Pending>().cloned() else {
             return Ok(());
         };
-        let (store, keep, target) = (self.store.clone(), self.keep, px.format().to_owned());
+        let (keep, target) = (self.keep, px.format().to_owned());
+        // Read before the call, as a shared store answers in its own time.
+        let parent = px.input::<Input>().ok().and_then(previous_response_id);
+        let before = match &parent {
+            Some(id) => conversation(&*self.store, id).await,
+            None => None,
+        };
         // OpenAI's own Responses keep its responses, but not the gateway's:
         // a conversation that crossed to another provider (a fallback's) is
         // sent whole, as to one that keeps nothing.
@@ -167,11 +175,7 @@ impl Plugin for Responses {
             return px.filter(move |input: &mut Input| {
                 let ours = input.native.as_mut().filter(|n| &*n.format == RESPONSES);
                 let Some(native) = ours else { return Ok(()) };
-                let parent = native
-                    .fields
-                    .get("previous_response_id")
-                    .and_then(Value::as_str);
-                let Some(before) = parent.and_then(|id| conversation(&*store, id)) else {
+                let Some(before) = before.clone() else {
                     return Ok(());
                 };
                 native.fields.shift_remove("previous_response_id");
@@ -194,7 +198,7 @@ impl Plugin for Responses {
             let instructions = instructions(&pending, input);
             let added = input.messages[instructions..].to_vec();
             if let Some(id) = &parent {
-                let before = conversation(&*store, id).ok_or_else(|| {
+                let before = before.clone().ok_or_else(|| {
                     Fault::bad_request(format!(
                         "previous_response_id '{id}' is no response this gateway keeps: it keeps \
                          a response of a provider of another format for {}s, in a conversation of up to {MAX_DEPTH} responses",
@@ -237,17 +241,26 @@ impl Responses {
     /// it is the one to write it, puts back the reasoning kept for its tool
     /// calls; and the reasoning this call's answer gives before its tool
     /// calls is kept under their ids.
-    fn carry_reasoning(&self, px: &mut ProviderContext) -> Result<()> {
+    async fn carry_reasoning(&self, px: &mut ProviderContext) -> Result<()> {
         // Only Responses writes, and answers with, its own reasoning.
         if px.format() != RESPONSES {
             return Ok(());
         }
-        let store = self.store.clone();
+        // Read before the call, as a shared store answers in its own time.
+        let calls = px
+            .input::<Input>()
+            .map(unreasoned_calls)
+            .unwrap_or_default();
+        let read = calls.into_iter().map(|id| async move {
+            let turn = self.store.get(&call_key(&id)).await?;
+            let reasoning: Vec<Content> =
+                turn.messages.into_iter().flat_map(|m| m.content).collect();
+            Some((id, reasoning))
+        });
+        let kept: HashMap<String, Vec<Content>> =
+            join_all(read).await.into_iter().flatten().collect();
         px.filter(move |input: &mut Input| {
-            put_back(input, |id| {
-                let turn = store.get(&call_key(id))?;
-                Some(turn.messages.into_iter().flat_map(|m| m.content).collect())
-            });
+            put_back(input, |id| kept.get(id).cloned());
             Ok(())
         })?;
         px.filter(KeepReasoning {
@@ -255,6 +268,32 @@ impl Responses {
             said: Assembled::default(),
         })
     }
+}
+
+/// The `previous_response_id` a Responses request names.
+fn previous_response_id(input: &Input) -> Option<String> {
+    let native = input.native.as_ref().filter(|n| &*n.format == RESPONSES)?;
+    let parent = native.fields.get("previous_response_id")?.as_str()?;
+    Some(parent.to_owned())
+}
+
+/// The first call's id of each assistant message [`put_back`] may give
+/// reasoning to: one with tool calls and none of its own.
+fn unreasoned_calls(input: &Input) -> Vec<String> {
+    (input.messages.iter())
+        .filter(|m| m.role == Role::Assistant)
+        .filter(|m| {
+            !m.content
+                .iter()
+                .any(|p| matches!(p, Content::Reasoning { .. }))
+        })
+        .filter_map(|m| {
+            m.content.iter().find_map(|p| match p {
+                Content::ToolCall { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+        })
+        .collect()
 }
 
 /// `input` with the reasoning `earlier` finds for each assistant message
@@ -396,7 +435,135 @@ fn new_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_conversation_http::openai::OpenAiChat;
+    use respan_gateway_core::futures::{FutureExt, StreamExt};
+    use respan_gateway_core::{Gateway, Provider};
+    use respan_gateway_http::Body;
     use respan_gateway_http::bytes::Bytes;
+    use respan_gateway_http::http;
+
+    /// Turns two gateways share, read back only after a yield, as over a
+    /// network.
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<HashMap<String, Turn>>>);
+
+    #[async_trait]
+    impl Store for Shared {
+        fn put(&self, key: String, turn: Turn) {
+            self.0.lock().insert(key, turn);
+        }
+
+        async fn get(&self, key: &str) -> Option<Turn> {
+            tokio::task::yield_now().await;
+            self.0.lock().get(key).cloned()
+        }
+    }
+
+    /// A gateway over `store` whose one provider speaks Chat Completions,
+    /// answering `answer` and keeping each body it is sent.
+    fn translating(store: Shared, answer: &'static str, sent: Arc<Mutex<Vec<Value>>>) -> Gateway {
+        let connect = respan_gateway_http::connect(
+            move |request: http::Request<Body>| {
+                let sent = Arc::clone(&sent);
+                async move {
+                    let chunks: Vec<_> = request.into_body().collect().await;
+                    let body: Vec<u8> = chunks
+                        .into_iter()
+                        .flat_map(|c| c.map(|c| c.to_vec()).unwrap_or_default())
+                        .collect();
+                    sent.lock()
+                        .push(serde_json::from_slice(&body).unwrap_or_default());
+                    let reply = serde_json::json!({
+                        "id": "chatcmpl-1", "object": "chat.completion", "created": 1, "model": "m",
+                        "choices": [{"index": 0, "finish_reason": "stop",
+                            "message": {"role": "assistant", "content": answer}}],
+                        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+                    });
+                    let mut response = http::Response::new(Body::full(reply.to_string()));
+                    let json = http::HeaderValue::from_static("application/json");
+                    response
+                        .headers_mut()
+                        .insert(http::header::CONTENT_TYPE, json);
+                    Ok((response, None))
+                }
+                .boxed()
+            },
+            1 << 20,
+        );
+        Gateway::new()
+            .client::<Input, Output, _>(OpenAiResponses)
+            .and_then(|g| g.provider(Provider::new("chat", OpenAiChat, connect)))
+            .and_then(|g| g.target("chat"))
+            .map(|g| g.plugin(Responses::with_store(Duration::from_secs(60), store)))
+            .expect("a gateway")
+    }
+
+    async fn respond(gateway: &Gateway, body: Value) -> Value {
+        let mut request = http::Request::new(Body::full(body.to_string()));
+        *request.method_mut() = http::Method::POST;
+        *request.uri_mut() = http::Uri::from_static("/v1/responses");
+        let (response, _) = respan_gateway_http::handle(gateway, request, 1 << 20).await;
+        let chunks: Vec<_> = response.into_body().collect().await;
+        let bytes: Vec<u8> = chunks
+            .into_iter()
+            .flat_map(|c| c.map(|c| c.to_vec()).unwrap_or_default())
+            .collect();
+        gateway.idle().await;
+        serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+
+    /// The calls whose reasoning is read ahead are those `put_back` fills.
+    #[test]
+    fn only_an_unreasoned_assistants_first_call_is_read_ahead() {
+        let mut called = Message::new(Role::Assistant, "");
+        called.content = vec![
+            Content::tool_call("c1", "f", "{}"),
+            Content::tool_call("c2", "f", "{}"),
+        ];
+        let mut reasoned = called.clone();
+        reasoned.content.insert(
+            0,
+            Content::Reasoning {
+                text: "r".into(),
+                native: None,
+            },
+        );
+        let mut user = Message::new(Role::User, "hi");
+        user.content.push(Content::tool_call("c3", "f", "{}"));
+        let mut input = Input::new([user, called, reasoned]);
+        assert_eq!(unreasoned_calls(&input), ["c1"]);
+        put_back(&mut input, |id| {
+            (id == "c1").then(|| {
+                vec![Content::Reasoning {
+                    text: "kept".into(),
+                    native: None,
+                }]
+            })
+        });
+        assert!(
+            matches!(&input.messages[1].content[0], Content::Reasoning { text, .. } if text == "kept")
+        );
+    }
+
+    /// A follow-up reaching another gateway than its response is sent the
+    /// whole conversation, read from the store they share.
+    #[tokio::test]
+    async fn a_follow_up_on_another_gateway_reads_the_conversation_they_share() {
+        let (store, sent) = (Shared::default(), Arc::new(Mutex::new(Vec::new())));
+        let first = translating(store.clone(), "Paris", Arc::clone(&sent));
+        let second = translating(store, "2M", Arc::clone(&sent));
+        let asked = serde_json::json!({"model": "m", "input": "capital of France?"});
+        let answer = respond(&first, asked).await;
+        let id = answer["id"].as_str().expect("an id").to_owned();
+        assert!(id.starts_with("resp_"), "{answer}");
+        let follow_up = serde_json::json!({"model": "m", "input": "its population?", "previous_response_id": id});
+        respond(&second, follow_up).await;
+        let sent = sent.lock();
+        let said: Vec<&str> = (sent[1]["messages"].as_array().expect("messages").iter())
+            .filter_map(|m| m["content"].as_str())
+            .collect();
+        assert_eq!(said, ["capital of France?", "Paris", "its population?"]);
+    }
 
     #[test]
     fn a_request_that_says_store_false_is_not_kept() {

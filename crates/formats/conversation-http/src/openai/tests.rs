@@ -958,10 +958,18 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
     let mut shown = Message::new(Role::User, "");
     shown.content = vec![Content::tool_result("c1", vec![image], false)];
     assert!(OpenAiChat.encode_request(&Input::new([shown])).is_err());
-    // OpenAI cannot say a call failed.
+    // OpenAI cannot flag a call that failed: its text says so.
     let mut failed = Message::new(Role::User, "");
     failed.content = vec![Content::tool_result("c1", vec!["no".into()], true)];
-    assert!(OpenAiChat.encode_request(&Input::new([failed])).is_err());
+    let sent = OpenAiChat
+        .encode_request(&Input::new([failed]))
+        .map(Value::from);
+    let sent = sent.expect("written");
+    let parts = json!([{ "type": "text", "text": "Error: " }, { "type": "text", "text": "no" }]);
+    assert_eq!(
+        sent["messages"][0],
+        json!({ "role": "tool", "tool_call_id": "c1", "content": parts })
+    );
 }
 
 #[test]

@@ -34,11 +34,11 @@ pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event}
 pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
-    Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
-    fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
-    read_search, remainder, set, source_url, stop_json, take_strict, take_text, tidy,
-    unsupported_fields, usage_extra, warn_reasoning, write_search,
+    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, Totals, UsageFields, arguments_object,
+    check_usage, count, decode_content, decode_message, decode_tools, each_tool, encode_content,
+    encode_message, ended, fits, merge_fields, merge_into, merge_missing, native_fields, only,
+    own_fields, own_shapes, read_search, remainder, set, source_url, stop_json, take_strict,
+    take_text, tidy, unsupported_fields, usage_extra, warn_reasoning, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 

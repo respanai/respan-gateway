@@ -557,6 +557,10 @@ pub(crate) fn unwritable_usage() -> Fault {
     Fault::config("a plugin's change cannot be made: this format cannot represent the usage")
 }
 
+/// The text a failed tool result leads with in a format that cannot flag it,
+/// as Anthropic's `is_error` and Gemini's `error` do.
+pub(crate) const FAILED_RESULT_PREFIX: &str = "Error: ";
+
 /// A stream that ended before its end event, unless it is `done`.
 pub(crate) fn ended(done: bool) -> Result<(), Fault> {
     match done {

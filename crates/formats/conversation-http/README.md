@@ -109,8 +109,10 @@ them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 code interpreter, MCP) and the items they make, refusals, and annotations. A
 relay in this format sends them back. A function tool's `strict` is the kind's:
 a tool that does not say it keeps the Responses default, and a tool another
-format sent is written with `strict: false`. Stop sequences and a failed tool result have no form in a
-request, and log probabilities are not carried. The module docs say it all.
+format sent is written with `strict: false`. Stop sequences have no form in a
+request, and log probabilities are not carried. A failed tool result, which
+neither Responses nor Chat Completions can flag, is written as its output led
+by `Error: `. The module docs say it all.
 
 ## Google Gemini
 

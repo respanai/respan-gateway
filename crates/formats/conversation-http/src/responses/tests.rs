@@ -397,11 +397,15 @@ fn another_formats_conversation_is_written_as_responses() {
 }
 
 #[test]
-fn a_failed_tool_result_and_audio_cannot_be_written() {
+fn a_failed_tool_results_output_says_it_failed() {
     let mut results = Message::new(Role::User, "");
     results.content = vec![Content::tool_result("c", vec!["boom".into()], true)];
     let chat = Input::new([results]);
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
+    let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.expect("written")["input"][0],
+        json!({ "type": "function_call_output", "call_id": "c", "output": "Error: boom" })
+    );
 }
 
 #[test]

@@ -24,6 +24,10 @@ after it was last read, up to about 256 MiB, the stalest dropped first. It
 is one gateway's: not across a restart, nor shared between gateways, so a
 client whose requests reach several gateways must reach the one that kept
 its conversation, or use a `Store` they share (`Responses::with_store`).
+A turn is read before the call it is sent on (`Store::get` is async), so a
+shared store may answer over the network; `put` returns at once, such a
+store writing the turn after. The `serde` feature makes a `Turn`
+`Serialize` and `Deserialize`, for such a store to write.
 The memory budget includes retained format-specific JSON values and fields.
 
 ```rust,ignore
