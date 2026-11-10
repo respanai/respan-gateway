@@ -15,7 +15,8 @@ spec's name: TypeSafe's and Fireworks' move the call to `/systemone`.
 A request is `{"model", "state", "questions": {id: question}}`, each question
 `{"type", "instructions", "criteria"}`: `noul` with criteria
 `{"true", "false"}`, `choice` with `{option: description or null}`, `score`
-with a list of levels. A response is `{"model", "answers": {id: answer},
+with a list of levels, `number`, and `box` (answered with `{"box": {"top",
+"bottom", "left", "right"}}`, each a fraction of the image). A response is `{"model", "answers": {id: answer},
 "usage": {"input_tokens", "output_tokens"}}`, answered whole in JSON.
 
 A question of another type is refused, 400, before any provider is called.
