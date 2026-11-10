@@ -68,6 +68,8 @@ pub(super) struct Provider {
     say: Say,
     /// The session as it was started, once it was.
     started: Option<Session>,
+    /// The session as the client asked it, which a later one is judged by.
+    asked: Option<Session>,
     /// The format of the audio it takes, as its start said.
     input: AudioFormat,
     convert: Convert,
@@ -79,6 +81,7 @@ impl Provider {
             model,
             say,
             started: None,
+            asked: None,
             input: DEFAULT_FORMAT,
             convert: Convert::default(),
         }
@@ -125,6 +128,7 @@ impl Provider {
     /// The provider's voice detection and transcription, which it always
     /// does, are dropped.
     fn start(&mut self, s: &Session) -> Result<Value, Fault> {
+        self.asked = Some(s.clone());
         let mut s = s.clone();
         s.model = self.model.take().or(s.model);
         let unsupported = [
@@ -150,12 +154,13 @@ impl Provider {
     }
 
     /// A later session: the Live client's own update, as it came; else one
-    /// that changes nothing, acknowledged, as the rest is fixed at its start.
+    /// that changes nothing the client asked, acknowledged with the session
+    /// as it was started, as the rest is fixed at its start.
     fn update(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
-        let started = self.started.get_or_insert_default();
-        let mut asked = s.clone();
-        let native = asked.native.take();
-        if let Some(field) = changes(started, &asked) {
+        let mut later = s.clone();
+        let native = later.native.take();
+        let asked = self.asked.clone().unwrap_or_default();
+        if let Some(field) = changes(&asked, &later) {
             let fixed = format!(
                 "OpenAI Live fixes a session's configuration at its start: this update changes `{field}`"
             );
@@ -166,7 +171,8 @@ impl Provider {
             merge(&mut v, Some(&native.fields));
             return Ok(Some(v));
         }
-        let _ = self.say.unbounded_send(Output::Updated(started.clone()));
+        let started = self.started.clone().unwrap_or_default();
+        let _ = self.say.unbounded_send(Output::Updated(started));
         Ok(None)
     }
 }
