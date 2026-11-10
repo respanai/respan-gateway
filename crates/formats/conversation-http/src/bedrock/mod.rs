@@ -57,9 +57,7 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{
-    Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of, unwritable_content,
-};
+use crate::schema::{Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
@@ -188,7 +186,7 @@ impl Schema for BedrockConverse {
     }
 
     fn encode_part(_: &Content) -> Result<Value, Fault> {
-        Err(unwritable_content())
+        Err(Fault::from(crate::Error::Unwritable))
     }
 
     fn is_response(v: &Value) -> bool {

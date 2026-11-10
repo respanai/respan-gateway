@@ -1,8 +1,6 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
-use crate::schema::{
-    Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
-};
+use crate::schema::{Gate, Schema, check_usage, fits, merge_fields, own_fields};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
@@ -74,7 +72,7 @@ impl EventStream {
 
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(unwritable_content)
+        found.ok_or_else(|| Fault::from(crate::Error::Unwritable))
     }
 
     /// Opens a block on the wire, with what it held while it waited.
@@ -89,7 +87,9 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
-            _ => return Err(unwritable_content()),
+            _ => {
+                return Err(Fault::from(crate::Error::Unwritable));
+            }
         };
         let held = wb.held.take();
         let mut content = content;
@@ -145,7 +145,7 @@ impl EventStream {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(unwritable_content()),
+                false => Err(Fault::from(crate::Error::Unwritable)),
             };
         }
         self.begin(out);
@@ -163,7 +163,7 @@ impl EventStream {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let wb = self.find(block)?;
         if wb.ended || !fits(part, &wb.kind) {
-            return Err(unwritable_content());
+            return Err(Fault::from(crate::Error::Unwritable));
         }
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
@@ -305,7 +305,9 @@ impl EventStream {
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(unwritable_content()),
+            _ => {
+                return Err(Fault::from(crate::Error::Unwritable));
+            }
         }
         Ok(())
     }

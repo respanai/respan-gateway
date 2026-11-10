@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use super::{GEMINI, ROLES, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    parse_effort, reasoning_of, remainder, set, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -250,9 +250,11 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+            role => ROLES.name(role).ok_or_else(|| {
+                Fault::from(crate::Error::Untranslatable(
+                    "a role this format has no place for",
+                ))
+            })?,
         };
         let parts: Vec<Value> = m
             .content
@@ -367,7 +369,9 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -381,7 +385,11 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
             Content::Text {
                 text: t, native, ..
             } if native.is_empty() => text.push_str(t),
-            _ => return Err(untranslatable("a tool result that is not text")),
+            _ => {
+                return Err(Fault::from(crate::Error::Untranslatable(
+                    "a tool result that is not text",
+                )));
+            }
         }
     }
     if let Ok(object @ Value::Object(_)) = serde_json::from_str::<Value>(&text) {
@@ -409,7 +417,9 @@ pub fn media_part(media: &Media) -> Value {
 /// An `inlineData` or `fileData` part of `media`, with its native fields.
 fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
-        return Err(untranslatable("a display name on media content"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a display name on media content",
+        )));
     }
     let native = media.native.fields_for(GEMINI);
     let mut part = media_part(media);
@@ -604,7 +614,11 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Tool(name)) => {
             Some(json!({ "mode": "ANY", "allowedFunctionNames": [name] }))
         }
-        Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     let mut config = native("toolConfig").unwrap_or_else(|| json!({}));
     if let Some(mode) = mode {
@@ -716,16 +730,18 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             // Gemini always constrains the answer to a schema, and the
             // wrapper's description has no field to instruct the model with.
             if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
+                return Err(Fault::from(crate::Error::Untranslatable(
                     "a schema wrapper description or non-strict schema output in Gemini",
-                ));
+                )));
             }
             set_field("responseMimeType", Some("application/json".into()));
             set_field("responseJsonSchema", Some(schema.clone()));
         }
     }
     if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "an end user's id",
+        )));
     }
     if let Some(r) = reasoning_of(chat)? {
         write_thinking(r, &mut config)?;

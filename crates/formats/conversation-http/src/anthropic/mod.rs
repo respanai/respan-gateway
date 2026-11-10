@@ -38,8 +38,7 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
-    unwritable_content, usage_extra,
+    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -412,11 +411,13 @@ impl Schema for AnthropicMessages {
                         Block::Text => json!({ "type": "text", "text": part.text }),
                         Block::Reasoning => json!({ "type": "thinking", "thinking": part.text }),
                         Block::ToolCall { id, name } => {
-                            let input =
-                                arguments_object(&part.text).map_err(|_| unwritable_content())?;
+                            let input = arguments_object(&part.text)
+                                .map_err(|_| Fault::from(crate::Error::Unwritable))?;
                             json!({ "type": "tool_use", "id": id, "name": name, "input": input })
                         }
-                        _ => return Err(unwritable_content()),
+                        _ => {
+                            return Err(Fault::from(crate::Error::Unwritable));
+                        }
                     };
                     let mut block = block;
                     if let Some(i) = fields.iter().position(|(b, _)| *b == part.block) {
@@ -475,10 +476,14 @@ impl Schema for AnthropicMessages {
                                         None => input.push((place, json.to_owned())),
                                     }
                                 }
-                                _ => return Err(unwritable_content()),
+                                _ => {
+                                    return Err(Fault::from(crate::Error::Unwritable));
+                                }
                             }
                         }
-                        _ => return Err(unwritable_content()),
+                        _ => {
+                            return Err(Fault::from(crate::Error::Unwritable));
+                        }
                     }
                 }
                 // Another format's: only a client of that format could read it.
@@ -486,7 +491,8 @@ impl Schema for AnthropicMessages {
             }
         }
         for (place, text) in input {
-            content[place]["input"] = arguments_object(&text).map_err(|_| unwritable_content())?;
+            content[place]["input"] =
+                arguments_object(&text).map_err(|_| Fault::from(crate::Error::Unwritable))?;
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         let (id, model) = whole

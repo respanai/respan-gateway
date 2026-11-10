@@ -5,8 +5,7 @@ use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
     NativeFieldsExt, decode_tools, each_tool, effort_name, native_fields, only, own_native,
-    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
-    write_search,
+    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -104,7 +103,11 @@ pub(in crate::responses) fn write_tools(
         Some(ToolChoice::None) => Some("none".into()),
         Some(ToolChoice::Required) => Some("required".into()),
         Some(ToolChoice::Tool(name)) => Some(json!({ "type": "function", "name": name })),
-        Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     set(v, "tool_choice", choice);
     set(
@@ -228,9 +231,15 @@ pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        Content::Reasoning { .. } => Err(untranslatable("reasoning outside an assistant")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable(
+            "audio in Responses",
+        ))),
+        Content::Reasoning { .. } => Err(Fault::from(crate::Error::Untranslatable(
+            "reasoning outside an assistant",
+        ))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -277,7 +286,9 @@ pub(in crate::responses) fn write_reasoning(
     let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
     if let Some(r) = reasoning_of(input)? {
         if r.budget_tokens.is_some() {
-            return Err(untranslatable("a reasoning token budget in Responses"));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a reasoning token budget in Responses",
+            )));
         }
         if let Some(config) = config.as_object_mut() {
             if let Some(effort) = r.effort {

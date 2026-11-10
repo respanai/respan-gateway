@@ -15,10 +15,7 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// The cache marker of a block, Anthropic's `cache_control`, which Converse
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
-use crate::schema::{
-    NativeFieldsExt, arguments_object, reasoning_of, set, stop_json, untranslatable,
-    unwritable_content,
-};
+use crate::schema::{NativeFieldsExt, arguments_object, reasoning_of, set, stop_json};
 
 /// The leading system messages as `system` blocks, and the rest; a later
 /// system message is refused.
@@ -46,7 +43,11 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
                 Content::Native(raw) if *raw.format == *BEDROCK => {
                     blocks.push(Value::clone(&raw.value));
                 }
-                _ => return Err(untranslatable("a system prompt that is not text")),
+                _ => {
+                    return Err(Fault::from(crate::Error::Untranslatable(
+                        "a system prompt that is not text",
+                    )));
+                }
             }
         }
     }
@@ -61,9 +62,11 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+            role => ROLES.name(role).ok_or_else(|| {
+                Fault::from(crate::Error::Untranslatable(
+                    "a role this format has no place for",
+                ))
+            })?,
         };
         let mut blocks: Vec<Value> = Vec::new();
         for part in m.content.iter().filter(|c| !is_unsigned(c)) {
@@ -153,8 +156,10 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             Ok(json!({ "toolResult": result }))
         }
         Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
-        Content::Audio(_) => Err(untranslatable("audio")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable("audio"))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -171,7 +176,9 @@ fn is_blank(part: &Content) -> bool {
 fn result_block(part: &Content) -> Result<Value, Fault> {
     match part {
         Content::Text { .. } | Content::Image(_) | Content::Document(_) => content_block(part),
-        _ => Err(untranslatable("a tool result that is not text or media")),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "a tool result that is not text or media",
+        ))),
     }
 }
 
@@ -186,7 +193,7 @@ fn reasoning(text: &str, native: &Option<NativeFields>) -> Result<Value, Fault> 
         Some(signature) => Ok(json!({
             "reasoningContent": { "reasoningText": { "text": text, "signature": signature } }
         })),
-        None => Err(unwritable_content()),
+        None => Err(Fault::from(crate::Error::Unwritable)),
     }
 }
 
@@ -226,7 +233,9 @@ fn image(media: &Media) -> Result<Value, Fault> {
         ))
     })?;
     if media.name.is_some() {
-        return Err(untranslatable("a display name on an image"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a display name on an image",
+        )));
     }
     Ok(json!({ "image": { "format": format, "source": bytes_of(media)? } }))
 }
@@ -289,7 +298,11 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::None) => return Ok(()),
         Some(ToolChoice::Required) => Some(json!({ "any": {} })),
         Some(ToolChoice::Tool(name)) => Some(json!({ "tool": { "name": name } })),
-        Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     let mut tools: Vec<Value> = Vec::new();
     for t in &chat.tools {
@@ -313,10 +326,14 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
 pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let o = &chat.options;
     if o.top_k.is_some() {
-        return Err(untranslatable("top_k, which Bedrock takes per model"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "top_k, which Bedrock takes per model",
+        )));
     }
     if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "an end user's id",
+        )));
     }
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}
@@ -334,7 +351,11 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             let format = json!({ "type": "json_schema", "structure": structure });
             v.insert("outputConfig".into(), json!({ "textFormat": format }));
         }
-        Some(_) => return Err(untranslatable("JSON output without a schema")),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "JSON output without a schema",
+            )));
+        }
     }
     let mut config = Map::new();
     set(
@@ -350,14 +371,16 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     }
     if let Some(r) = reasoning_of(chat)? {
         if r.summary == Some(false) {
-            return Err(untranslatable("withholding the thinking"));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "withholding the thinking",
+            )));
         }
         let thinking = match (r.effort, r.budget_tokens) {
             (Some(Effort::Off), _) => json!({ "type": "disabled" }),
             (Some(_), _) => {
-                return Err(untranslatable(
+                return Err(Fault::from(crate::Error::Untranslatable(
                     "a reasoning effort, which Bedrock names per model: give a token budget",
-                ));
+                )));
             }
             (None, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget }),
             (None, None) => return Ok(()),

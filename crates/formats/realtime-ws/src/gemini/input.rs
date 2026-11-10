@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use super::{Answering, NAME, Shared, setup};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, untranslatable_input};
+use crate::json::{self, merge, own};
 use crate::session::{self, Say};
 
 /// A client's messages as events: its `setup` first and once, and each
@@ -305,7 +305,12 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input, out: &mut Vec<Value>) -> Result<(), Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let answered = std::mem::take(&mut self.answered);
         let (mut v, native) = match event {
             Input::Session(s) if !self.opened => {
@@ -415,7 +420,7 @@ impl Provider {
             let fixed = format!(
                 "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
             );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            return Err(Fault::bad_request(fixed));
         }
         // Audio formats are each chunk's own.
         applied.input_audio = s.input_audio.or(applied.input_audio);
@@ -448,7 +453,12 @@ impl Provider {
     /// alone; tools' answers; or a complete turn of nothing more, as it
     /// came.
     fn respond(&mut self, native: &Option<NativeFields>) -> Result<Value, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let content = shaped(native);
         match self.held.take() {
             None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
@@ -480,7 +490,12 @@ impl Provider {
     fn flush(&mut self, out: &mut Vec<Value>) -> Result<(), Fault> {
         match self.held.take() {
             None => {}
-            Some(Held::Messages(_)) => return Err(untranslatable_input(NAME, UNANSWERED)),
+            Some(Held::Messages(_)) => {
+                return Err(Fault::from(crate::Error::Untranslatable {
+                    format: NAME,
+                    what: UNANSWERED.to_string(),
+                }));
+            }
             Some(Held::Results(results)) => out.push(self.results(&results)),
         }
         Ok(())

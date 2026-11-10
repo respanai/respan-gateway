@@ -15,6 +15,8 @@
 //! native to one format reaches only a client of that format: another
 //! drops it from a response.
 
+mod error;
+pub use error::Error;
 pub mod fields;
 mod schema;
 pub use schema::{Asked, Framing, Schema, StreamResponse, merge_details, read_provider_error};

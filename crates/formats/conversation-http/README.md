@@ -22,6 +22,10 @@ events.
   (`Framing::Own`), as Converse's AWS event stream.
 - `StreamResponse(bool)`: a call extension choosing whether the provider is
   asked to stream; without it the call follows the client's request.
+- `Error`: what a format cannot translate, a `Fault` by `?`: `Untranslatable`,
+  a request's part, the client's, coded `unsupported`; `Unwritable` and
+  `UnwritableFinish`, a response's, a 502 coded `untranslatable`. The fault
+  keeps it as its source (`Fault::cause`).
 
 The helpers the formats share (messages and parts, the `native` fields a
 value keeps for its own format, usage totals and the faults of what cannot be

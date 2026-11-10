@@ -27,7 +27,7 @@ use respan_gateway_sse::event_data;
 use serde_json::{Map, Value};
 
 use super::errors::{answer, failure_json, said_error, says_error};
-use super::values::{shows, unwritable_content};
+use super::values::shows;
 use super::{Framing, Schema, StreamResponse};
 
 /// The call of `input` in `schema`'s format, a JSON `POST` to
@@ -353,7 +353,9 @@ struct UnaryEncoder<C> {
 
 impl<C: Schema> UnaryEncoder<C> {
     pub(crate) fn encode_into(&mut self, reply: &Output, _out: &mut BytesMut) -> Result<(), Fault> {
-        self.whole.push(reply).map_err(|_| unwritable_content())
+        self.whole
+            .push(reply)
+            .map_err(|_| Fault::from(crate::Error::Unwritable))
     }
 
     pub(crate) fn end_into(

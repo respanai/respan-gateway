@@ -106,7 +106,7 @@ fn what_it_cannot_do_is_refused() {
     let opening = Input::Session(Session::default());
     sent(&[opening, Input::Session(other)]).expect_err("a model is taken at connect");
     let fault = sent(&[Input::Respond { native: None }]).expect_err("refused");
-    assert_eq!(fault.code(), "bad_request");
+    assert_eq!(fault.code(), "unsupported");
 }
 
 #[test]

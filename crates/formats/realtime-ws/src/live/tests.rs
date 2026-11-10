@@ -1,7 +1,6 @@
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, FaultKind};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Purpose, Session, Turns};
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{input, output};
@@ -142,11 +141,7 @@ fn what_the_live_api_has_none_of_is_refused() {
         ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
-        assert_eq!(
-            fault.get::<CloseCode>(),
-            Some(&CloseCode(1008)),
-            "{events:?}"
-        );
+        assert_eq!(fault.kind(), FaultKind::Client, "{events:?}");
     }
     // A later session that changes nothing is acknowledged.
     let (say, mut said) = spec::say();

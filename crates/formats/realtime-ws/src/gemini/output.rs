@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use super::{Answering, NAME, Shared, State};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, at, count, merge, own, set, string, take, text, untranslatable_output};
+use crate::json::{self, at, count, merge, own, set, string, take, text};
 
 /// What a turn the client cancelled says that is dropped: its content, and
 /// its end, as its response already ended.
@@ -544,7 +544,12 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Vec<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_output(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let interrupted = json!({"serverContent": {"interrupted": true}});
         let content = |field: &str, value: Value| json!({"serverContent": {field: value}});
         let (v, native) = match event {

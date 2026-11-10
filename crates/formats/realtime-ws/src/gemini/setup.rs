@@ -39,7 +39,7 @@ pub(super) fn decode(mut v: Value) -> Session {
         Some(json!([{"text": t}]))
     });
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.turns = take(v, DETECTION, turns, |t| detection_json(t, refuse).ok());
+    s.turns = take(v, DETECTION, turns, |t| detection_json(t).ok());
     if let Some(Turns::Server(vad)) = &mut s.turns {
         vad.interrupt = take(v, HANDLING, handling, |i| handling_json(*i));
     }
@@ -84,7 +84,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         DETECTION,
         s.turns
             .as_ref()
-            .map(|t| detection_json(t, refuse))
+            .map(|t| detection_json(t).map_err(refuse))
             .transpose()?,
     );
     if let Some(Turns::Server(vad)) = &s.turns {
@@ -105,12 +105,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }
     }
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of a
-/// setup are written back as the Live API's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a setup field could not be written back")
 }
 
 /// Whether a transcription is asked for: an object; one that says nothing
@@ -218,14 +212,15 @@ fn turns(v: &Value) -> Option<Turns> {
     Some(Turns::Server(vad))
 }
 
-fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// Activity detection; `Err` names what it cannot write.
+fn detection_json(turns: &Turns) -> Result<Value, &'static str> {
     let vad = match turns {
         Turns::Manual => return Ok(json!({"disabled": true})),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return Err("this turn detection"),
     };
     if vad.respond == Some(false) {
-        return Err(refuse("turns the model does not answer"));
+        return Err("turns the model does not answer");
     }
     let mut v = Map::new();
     if let Some(ms) = vad.silence_ms {

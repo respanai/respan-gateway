@@ -6,13 +6,12 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 use crate::session::{Say, changes};
 
 /// The longest audio chunk Phonic takes, in milliseconds.
@@ -105,7 +104,12 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_input(NAME, what));
+        let refuse = |what: &str| {
+            Err(Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            }))
+        };
         let started = self.asked.is_some();
         match event {
             Input::Session(s) if !started => Ok(vec![self.start(s)?]),
@@ -150,7 +154,10 @@ impl Provider {
             (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
-            return Err(untranslatable_input(NAME, what));
+            return Err(Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            }));
         }
         s.input_audio = s.input_audio.filter(|f| session::takes(*f));
         s.output_audio = s.output_audio.filter(|f| session::takes(*f));
@@ -171,7 +178,7 @@ impl Provider {
             let fixed = format!(
                 "Phonic fixes a session's configuration at its config: this update changes `{field}`"
             );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
+            return Err(Fault::bad_request(fixed));
         }
         let applied = self.applied.lock().clone().unwrap_or_default();
         let _ = self.say.unbounded_send(Output::Updated(applied));

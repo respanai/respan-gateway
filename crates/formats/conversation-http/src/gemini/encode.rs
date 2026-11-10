@@ -1,8 +1,7 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Schema, arguments_object, block_fields, check_usage, merge_fields, merge_into,
-    own_fields, unwritable_content,
+    Gate, Schema, arguments_object, block_fields, check_usage, merge_fields, merge_into, own_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::{Fault, NativeValue};
@@ -80,14 +79,16 @@ pub(super) fn part_of(kind: &Block, text: &str) -> Result<Value, Fault> {
         Block::Text => json!({ "text": text }),
         Block::Reasoning => json!({ "text": text, "thought": true }),
         Block::ToolCall { id, name } => {
-            let args = arguments_object(text).map_err(|_| unwritable_content())?;
+            let args = arguments_object(text).map_err(|_| Fault::from(crate::Error::Unwritable))?;
             let mut call = json!({ "name": name, "args": args });
             if !is_synthetic(id) {
                 call["id"] = id.as_str().into();
             }
             json!({ "functionCall": call })
         }
-        _ => return Err(unwritable_content()),
+        _ => {
+            return Err(Fault::from(crate::Error::Unwritable));
+        }
     })
 }
 
@@ -205,7 +206,7 @@ pub(super) struct EventStream {
 impl EventStream {
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(unwritable_content)
+        found.ok_or_else(|| Fault::from(crate::Error::Unwritable))
     }
 
     /// A response of these `parts`, with the finish and usage if `last`.
@@ -264,14 +265,14 @@ impl EventStream {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(unwritable_content()),
+                false => Err(Fault::from(crate::Error::Unwritable)),
             };
         }
         if !matches!(
             kind,
             Block::Text | Block::Reasoning | Block::ToolCall { .. }
         ) {
-            return Err(unwritable_content());
+            return Err(Fault::from(crate::Error::Unwritable));
         }
         let at = self.pending.iter().position(|(b, _)| *b == block);
         let fields = at.map(|i| self.pending.remove(i).1);
@@ -288,7 +289,7 @@ impl EventStream {
     fn say(&mut self, block: u32, delta: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.find(block)?;
         if slot.ended || !crate::schema::fits(delta, &slot.kind) {
-            return Err(unwritable_content());
+            return Err(Fault::from(crate::Error::Unwritable));
         }
         if delta.as_str().is_empty() {
             return Ok(());
@@ -392,12 +393,16 @@ impl EventStream {
                     }
                     (None, Some("part")) => self.emit(vec![raw["part"].clone()], out)?,
                     _ if self.fields.add(raw) => {}
-                    _ => return Err(unwritable_content()),
+                    _ => {
+                        return Err(Fault::from(crate::Error::Unwritable));
+                    }
                 }
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(unwritable_content()),
+            _ => {
+                return Err(Fault::from(crate::Error::Unwritable));
+            }
         }
         Ok(())
     }

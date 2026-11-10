@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
 respan-gateway-sse.workspace = true
 respan-gateway-eventstream.workspace = true
 respan-gateway-http-faults.workspace = true

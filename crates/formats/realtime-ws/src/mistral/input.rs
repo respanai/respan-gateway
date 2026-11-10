@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 
 /// The most audio one append carries, in bytes.
 const APPEND: usize = 262_144;
@@ -139,7 +139,12 @@ impl Provider {
     }
 
     fn frames(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let frames = match event {
             Input::Session(s) => return self.session(s).map(|v| v.into_iter().collect()),
             Input::Audio { audio, native } => {
@@ -169,7 +174,12 @@ impl Provider {
 
     /// A session as its update, if it says anything to update.
     fn session(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         // Mistral takes its model at connect: the first session's is the
         // one at its URL, and a later one that names it again changes
         // nothing.

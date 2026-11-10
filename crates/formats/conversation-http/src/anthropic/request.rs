@@ -6,7 +6,7 @@
 use crate::schema::{
     NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
     merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    take_native, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -107,7 +107,11 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Required) => Some(json!({ "type": "any" })),
         Some(ToolChoice::Tool(name)) => Some(json!({ "type": "tool", "name": name })),
         None => one_at_a_time.then(|| json!({ "type": "auto" })),
-        Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
+        Some(_) => {
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "a tool choice this format has no form for",
+            )));
+        }
     };
     if let Some(c) = choice
         .as_mut()
@@ -143,8 +147,10 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             Ok(v)
         }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
-        Content::Audio(_) => Err(untranslatable("this media kind")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Audio(_) => Err(Fault::from(crate::Error::Untranslatable("this media kind"))),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -192,7 +198,9 @@ fn read_media(v: &Value) -> Option<Content> {
 /// An image or document block of `media`, refusing what Anthropic cannot say.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a display name on image or audio content",
+        )));
     }
     let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
@@ -291,7 +299,9 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             }
             Ok(block)
         }
-        _ => Err(untranslatable("an unsupported kind of part")),
+        _ => Err(Fault::from(crate::Error::Untranslatable(
+            "an unsupported kind of part",
+        ))),
     }
 }
 
@@ -371,9 +381,9 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
         Effort::XHigh => Some("xhigh"),
         Effort::Max => Some("max"),
         _ => {
-            return Err(untranslatable(
+            return Err(Fault::from(crate::Error::Untranslatable(
                 "a reasoning effort Anthropic has no level for",
-            ));
+            )));
         }
     })
 }
@@ -389,7 +399,9 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "non-object output_config",
+            )));
         }
         config["effort"] = effort.into();
     }
@@ -403,7 +415,9 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(schema) = schema {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
+            return Err(Fault::from(crate::Error::Untranslatable(
+                "non-object output_config",
+            )));
         }
         config["format"] = json!({"type":"json_schema","schema":schema});
     }
@@ -559,7 +573,9 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own());
     };
     if r.summary == Some(false) {
-        return Err(untranslatable("withholding the thinking in Anthropic"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "withholding the thinking in Anthropic",
+        )));
     }
     Ok(match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
@@ -575,15 +591,19 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
 /// 1024, a temperature but 1, `top_k`.
 fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
     if budget < 1024 {
-        return Err(untranslatable("a thinking budget under 1024 in Anthropic"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "a thinking budget under 1024 in Anthropic",
+        )));
     }
     if input.options.temperature.is_some_and(|t| t != 1.0) {
-        return Err(untranslatable(
+        return Err(Fault::from(crate::Error::Untranslatable(
             "a temperature other than 1 beside thinking in Anthropic",
-        ));
+        )));
     }
     if input.options.top_k.is_some() {
-        return Err(untranslatable("top_k beside thinking in Anthropic"));
+        return Err(Fault::from(crate::Error::Untranslatable(
+            "top_k beside thinking in Anthropic",
+        )));
     }
     Ok(())
 }

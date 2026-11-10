@@ -2,13 +2,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, FaultKind};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, input, output};
@@ -194,11 +193,7 @@ fn what_phonic_has_none_of_is_refused() {
         ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
-        assert_eq!(
-            fault.get::<CloseCode>(),
-            Some(&CloseCode(1008)),
-            "{events:?}"
-        );
+        assert_eq!(fault.kind(), FaultKind::Client, "{events:?}");
     }
     // A later session that changes nothing the client asked is
     // acknowledged, though another format's voice and its model were not

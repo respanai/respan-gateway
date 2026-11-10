@@ -25,6 +25,8 @@
 //! the provider's, `upstream`. A handshake one refuses is answered
 //! text/plain with the fault's error code, never its message.
 
+mod error;
+pub use error::Error;
 mod audio;
 mod foreign;
 mod gemini;

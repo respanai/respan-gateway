@@ -22,6 +22,8 @@
 
 use std::time::Duration;
 
+mod error;
+pub use error::Error;
 mod session;
 mod transport;
 
@@ -72,8 +74,9 @@ impl Default for Limits {
 }
 
 /// The WebSocket close code a fault asks for, an extension ([`Fault::with`]) that
-/// the client edge sends as its Close in place of 1011: a plugin's
-/// `Fault::new(msg).with(CloseCode(1008))`. A provider's own code is a
+/// the client edge sends as its Close in place of its kind's: 1008 for the
+/// client's, 1001 for an abandoned one, else 1011. A plugin's
+/// `Fault::new(msg).with(CloseCode(4000))`. A provider's own code is a
 /// [`ProviderClose`], which reaches the client only as this: set by a
 /// plugin, or by [`WsTransport`] on a call
 /// [`Relayed`](respan_gateway_http::raw::Relayed), as
@@ -96,8 +99,8 @@ impl CloseCode {
 }
 
 /// The code a provider closed its session with, other than 1000: an extension on
-/// the `upstream` fault [`WsTransport`] ends the answer with. It says why
-/// the provider ended; whether the client is told is a plugin's choice
+/// the `upstream` fault [`WsTransport`] ends the answer with, whose message
+/// names the code and the Close's reason. It says why the provider ended; whether the client is told is a plugin's choice
 /// ([`CloseCode`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProviderClose(pub u16);

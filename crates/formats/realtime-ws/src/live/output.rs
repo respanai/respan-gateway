@@ -10,7 +10,7 @@ use super::input::DEFAULT_FORMAT;
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, at, merge, own, string, take, text, untranslatable_output};
+use crate::json::{self, at, merge, own, string, take, text};
 
 /// A provider's frames as events.
 #[derive(Debug)]
@@ -123,7 +123,12 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_output(NAME, what));
+        let refuse = |what: &str| {
+            Err(Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            }))
+        };
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
                 let format = s.output_audio.or(s.input_audio);

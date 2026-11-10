@@ -11,9 +11,7 @@ use serde_json::{Value, json};
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{
-    self, at, count, merge, number, own, set, string, take, text, untranslatable_output,
-};
+use crate::json::{self, at, count, merge, number, own, set, string, take, text};
 
 /// A count of [`Usage`].
 type Counter = fn(&mut Usage) -> &mut u64;
@@ -295,7 +293,12 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output, out: &mut Vec<Value>) -> Result<(), Fault> {
-        let refuse = |what: &str| untranslatable_output(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
                 self.output = s.output_audio.unwrap_or(self.output);

@@ -23,7 +23,7 @@ use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::{Error, Message, Utf8Bytes};
 
-use crate::{CloseCode, Limits, ProviderClose};
+use crate::{CloseCode, Limits};
 use respan_gateway_http::rules::header_tokens;
 
 /// Hand a client's WebSocket upgrade, `head`, to `gateway`, and pump its
@@ -71,8 +71,8 @@ use respan_gateway_http::rules::header_tokens;
 /// | Provider sends a binary frame or a message over `max_message` | it is sent Close 1003 or 1009 | Close 1011 `upstream` |
 /// | Provider is unreachable, or refuses the upgrade | (no session) | the client's format answers the handshake: 502, or under the provider's status |
 /// | `stop` completes | provider is sent Close 1001 | Close 1001 |
-/// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent Close 1011, or the fault's [`CloseCode`] | Close 1011, or the fault's [`CloseCode`] |
-/// | A fault ends the response | provider is sent Close 1001 | Close 1011, or the fault's [`CloseCode`] (1001 if `abandoned`) |
+/// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another | the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another |
+/// | A fault ends the response | provider is sent Close 1001 | the fault's [`CloseCode`], else 1008 for the client's fault, 1011 for another (1001 if `abandoned`) |
 ///
 /// A provider's close reason text is not relayed, nor is a client's close
 /// code or reason. A session that has ended ignores `stop`.
@@ -289,9 +289,11 @@ where
             }
             Sent::Failed(fault) => {
                 end.fail(fault.clone());
-                let code = match fault.is(FaultKind::Abandoned) {
-                    true => 1001,
-                    false => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
+                let code = match (fault.kind(), fault.get::<CloseCode>()) {
+                    (FaultKind::Abandoned, _) => 1001,
+                    (_, Some(code)) => code.sendable(),
+                    (FaultKind::Client, None) => 1008,
+                    _ => 1011,
                 };
                 close(&mut sink, code, fault.code(), limits.close_send).await;
                 return Err(fault);
@@ -456,11 +458,14 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
                 break refused(1003, "a binary frame: only text frames are carried");
             }
             Some(Ok(Message::Close(frame))) => {
+                let reason = frame
+                    .as_ref()
+                    .map(|f| f.reason.to_string())
+                    .unwrap_or_default();
                 let code = frame.map(|f| u16::from(f.code));
                 let clean = closing.load(Ordering::SeqCst) || matches!(code, None | Some(1000));
                 if let (Edge::Provider { relayed, .. }, false, Some(code)) = (edge, clean, code) {
-                    let mut fault = Fault::upstream("the provider closed the session")
-                        .with(ProviderClose(code));
+                    let mut fault = Fault::from(crate::Error::ProviderClosed { code, reason });
                     if relayed {
                         fault = fault.with(CloseCode(code));
                     }

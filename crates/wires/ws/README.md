@@ -23,12 +23,17 @@ the vendors that speak them
   UTF-8 text, such as Gemini Live's JSON. These become text messages toward
   the client; invalid UTF-8 is a fault. Disabled by default.
 - `CloseCode(u16)`: an extension on a `Fault` that picks the code the client is
-  closed with, in place of 1011. A code no Close may carry (1004 to 1006,
+  closed with, in place of its kind's: 1008 for the client's fault, 1001
+  for an abandoned one, else 1011. A code no Close may carry (1004 to 1006,
   1015 to 2999, outside 1000 to 4999) is sent as 1011.
 - `ProviderClose(u16)`: the code a provider closed with, other than 1000, on
-  the `upstream` fault the transport ends the answer with. The client is told
-  it only as a `CloseCode`, which the transport adds on a call `Relayed`
+  the `upstream` fault the transport ends the answer with, whose message
+  names the code and the Close's reason. The client is told the code only as a `CloseCode`, which the transport adds on a call `Relayed`
   (`Relay`), or a plugin sets.
+- `Error`: what ends a session, a `Fault` by `?`: `ProviderClosed { code,
+  reason }`, a provider's Close, the provider's, its code and reason in the
+  message and its code a `ProviderClose`. The fault keeps it as its source
+  (`Fault::cause`).
 - `Limits { max_message, close_wait, close_send, ping_after }`: what an edge
   takes, with defaults and their reasons on the type: 16 MiB messages, 5 s
   for the other side's part of a close, 1 s for a Close to leave, a ping

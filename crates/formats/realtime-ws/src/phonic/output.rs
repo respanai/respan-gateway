@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use super::{Applied, Asked, Clock, DEFAULT_FORMAT, NAME};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_output};
+use crate::json::{self, merge, own, string, take, text};
 
 /// A provider's frames as events, and the session's seconds.
 pub(super) struct Provider {
@@ -260,7 +260,12 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| Err(untranslatable_output(NAME, what));
+        let refuse = |what: &str| {
+            Err(Fault::from(crate::Error::Unwritable {
+                format: NAME,
+                what: what.to_string(),
+            }))
+        };
         let typed = |kind: &str| json!({"type": kind});
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {

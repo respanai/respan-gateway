@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, own, string, take, text};
 
 /// A client's frames as events, beginning with the session the handshake
 /// asked for, its model the one at `?model=`: the client's first
@@ -221,7 +221,12 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input) -> Result<Option<Value>, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
+        let refuse = |what: &str| {
+            Fault::from(crate::Error::Untranslatable {
+                format: NAME,
+                what: what.to_string(),
+            })
+        };
         let (mut v, native) = match event {
             Input::Session(s) => {
                 // OpenAI takes its model at connect: the first session's is
