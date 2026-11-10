@@ -3,7 +3,9 @@
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{NativeFieldsExt, merge_missing, untranslatable, warn_reasoning};
+use crate::schema::{
+    NativeFieldsExt, failed_result, merge_missing, untranslatable, warn_reasoning,
+};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -184,10 +186,15 @@ fn write_result(
     is_error: bool,
     native: &Option<NativeFields>,
 ) -> Result<Value, Fault> {
-    // A function call output cannot say that the call failed.
-    if is_error {
-        return Err(untranslatable("a tool result that is an error"));
-    }
+    // A function call output cannot say that the call failed: its text does.
+    let failed;
+    let content = match is_error {
+        true => {
+            failed = failed_result(content);
+            &failed[..]
+        }
+        false => content,
+    };
     let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
     let output: Value = match content.iter().all(plain) {
         true => content

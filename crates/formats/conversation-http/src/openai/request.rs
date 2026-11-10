@@ -7,8 +7,8 @@
 use crate::fields::media_url;
 use crate::schema::{
     Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    failed_result, merge_missing, native_fields, only, own_native, read_search, reasoning_of,
+    remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -201,10 +201,15 @@ fn openai_result(
     content: &[Content],
     is_error: bool,
 ) -> Result<Map<String, Value>, Fault> {
-    // OpenAI's tool messages cannot say the call failed.
-    if is_error {
-        return Err(untranslatable("a tool result that is an error"));
-    }
+    // OpenAI's tool messages cannot say the call failed: their text does.
+    let failed;
+    let content = match is_error {
+        true => {
+            failed = failed_result(content);
+            &failed[..]
+        }
+        false => content,
+    };
     let media = |c: &Content| {
         matches!(
             c,
