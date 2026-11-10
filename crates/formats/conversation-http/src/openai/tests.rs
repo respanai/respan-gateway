@@ -953,11 +953,27 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
             { "role": "user", "content": "and then?" },
         ]))
     );
-    // OpenAI's tool messages hold text alone.
-    let image = Content::Image(Media::new("image/png", MediaSource::Url("u".into())));
+    // OpenAI's tool messages hold text alone: a result's media follows it.
+    let image = Content::Image(Media::new(
+        "image/png",
+        MediaSource::Url("https://x.test/a.png".into()),
+    ));
     let mut shown = Message::new(Role::User, "");
-    shown.content = vec![Content::tool_result("c1", vec![image], false)];
-    assert!(OpenAiChat.encode_request(&Input::new([shown])).is_err());
+    shown.content = vec![Content::tool_result(
+        "c1",
+        vec!["read".into(), image],
+        false,
+    )];
+    let sent = OpenAiChat
+        .encode_request(&Input::new([shown]))
+        .map(Value::from);
+    let sent = sent.expect("written");
+    assert_eq!(
+        sent["messages"][0],
+        json!({ "role": "tool", "tool_call_id": "c1", "content": "read" })
+    );
+    assert_eq!(sent["messages"][1]["role"], "user");
+    assert_eq!(sent["messages"][1]["content"][0]["type"], "image_url");
     // OpenAI cannot flag a call that failed: its text says so.
     let mut failed = Message::new(Role::User, "");
     failed.content = vec![Content::tool_result("c1", vec!["no".into()], true)];
