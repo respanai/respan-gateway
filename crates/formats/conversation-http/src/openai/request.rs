@@ -196,19 +196,7 @@ fn openai_calls(calls: &[&Content]) -> Vec<Value> {
     out
 }
 
-/// A tool message's text when its result is media alone.
-const RESULT_IN_NEXT_MESSAGE: &str = "The result is in the next message.";
-
-/// Whether `c` is media, which an OpenAI tool message cannot hold.
-fn is_media(c: &Content) -> bool {
-    matches!(
-        c,
-        Content::Image(_) | Content::Audio(_) | Content::Document(_)
-    )
-}
-
-/// A tool message answering call `id` with `content`'s text, else a line
-/// that points to its media, which is the caller's to send.
+/// A tool message answering call `id` with `content`.
 fn openai_result(
     id: &str,
     content: &[Content],
@@ -216,22 +204,17 @@ fn openai_result(
 ) -> Result<Map<String, Value>, Fault> {
     // OpenAI's tool messages cannot say the call failed: their text does.
     let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
-    let said = content.iter().filter(|c| !is_media(c)).cloned();
-    let mut text: Vec<Content> = failed.into_iter().chain(said).collect();
-    if text.is_empty() && content.iter().any(is_media) {
-        text.push(Content::from(RESULT_IN_NEXT_MESSAGE));
-    }
+    let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
     v.insert("tool_call_id".into(), id.into());
-    v.insert("content".into(), encode_content::<OpenAiChat>(&text)?);
+    v.insert("content".into(), encode_content::<OpenAiChat>(&content)?);
     Ok(v)
 }
 
 /// A message as OpenAI's: each result a tool message of its own, then, if
-/// it says more, the message and its calls in `tool_calls`; the results'
-/// media leads that message, each result's after a line naming its call,
-/// as a tool message holds text alone. It has no
+/// it says more, the message and its calls in `tool_calls`. A tool message
+/// holds text alone, so the results' media leads that message. It has no
 /// field for reasoning, which is dropped.
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
@@ -247,12 +230,20 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             ..
         } = result
         {
-            out.push(openai_result(id, content, *is_error)?);
-            let media: Vec<Content> = content.iter().filter(|c| is_media(c)).cloned().collect();
+            let (media, mut text): (Vec<_>, Vec<_>) = content.iter().cloned().partition(|c| {
+                matches!(
+                    c,
+                    Content::Image(_) | Content::Audio(_) | Content::Document(_)
+                )
+            });
             if !media.is_empty() {
-                shown.push(Content::from(format!("Media returned by tool call {id}:")));
+                if text.is_empty() {
+                    text.push("The result is in the next message.".into());
+                }
+                shown.push(format!("Media returned by tool call {id}:").into());
                 shown.extend(media);
             }
+            out.push(openai_result(id, &text, *is_error)?);
         }
     }
     let rest: Vec<Content> = shown.into_iter().chain(rest.into_iter().cloned()).collect();

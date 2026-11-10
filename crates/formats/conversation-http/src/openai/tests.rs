@@ -953,56 +953,32 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
             { "role": "user", "content": "and then?" },
         ]))
     );
-    // OpenAI's tool messages hold text alone: a result's media follows it.
+    // OpenAI's tool messages hold text alone: the results' media follows
+    // them, in call order, and a result of media alone points to it.
     let image = Content::Image(Media::new(
         "image/png",
         MediaSource::Url("https://x.test/a.png".into()),
     ));
     let mut shown = Message::new(Role::User, "");
-    shown.content = vec![Content::tool_result(
-        "c1",
-        vec!["read".into(), image.clone()],
-        false,
-    )];
-    let sent = OpenAiChat
-        .encode_request(&Input::new([shown]))
-        .map(Value::from);
-    let sent = sent.expect("written");
-    assert_eq!(
-        sent["messages"][0],
-        json!({ "role": "tool", "tool_call_id": "c1", "content": "read" })
-    );
-    let url = json!({ "url": "https://x.test/a.png" });
-    let media = |id: &str| {
-        json!([{ "type": "text", "text": format!("Media returned by tool call {id}:") },
-            { "type": "image_url", "image_url": url }])
-    };
-    assert_eq!(
-        sent["messages"][1],
-        json!({ "role": "user", "content": media("c1") })
-    );
-    // Results' tool messages come first, then their media in call order;
-    // a result of media alone points to it.
-    let mut both = Message::new(Role::User, "");
-    both.content = vec![
-        Content::tool_result("c1", vec![image.clone()], false),
+    shown.content = vec![
+        Content::tool_result("c1", vec!["read".into(), image.clone()], false),
         Content::tool_result("c2", vec![image], false),
     ];
     let sent = OpenAiChat
-        .encode_request(&Input::new([both]))
+        .encode_request(&Input::new([shown]))
         .map(Value::from);
-    let pointer = "The result is in the next message.";
-    let mut parts = media("c1");
-    parts
-        .as_array_mut()
-        .expect("parts")
-        .extend(media("c2").as_array().expect("parts").clone());
+    let image = json!({ "type": "image_url", "image_url": { "url": "https://x.test/a.png" } });
     assert_eq!(
         sent.expect("written")["messages"],
         json!([
-            { "role": "tool", "tool_call_id": "c1", "content": pointer },
-            { "role": "tool", "tool_call_id": "c2", "content": pointer },
-            { "role": "user", "content": parts },
+            { "role": "tool", "tool_call_id": "c1", "content": "read" },
+            { "role": "tool", "tool_call_id": "c2", "content": "The result is in the next message." },
+            { "role": "user", "content": [
+                { "type": "text", "text": "Media returned by tool call c1:" },
+                image,
+                { "type": "text", "text": "Media returned by tool call c2:" },
+                image,
+            ] },
         ])
     );
     // OpenAI cannot flag a call that failed: its text says so.
