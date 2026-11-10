@@ -91,23 +91,19 @@ fn successful_images(body: Bytes) -> Result<Bytes, Fault> {
         return Ok(body);
     }
     let mut failures = Vec::new();
-    let mut successes = Vec::new();
-    for (index, mut item) in data.drain(..).enumerate() {
+    for (index, item) in data.iter_mut().enumerate() {
         if let Some(error) = item.get("error") {
             failures.push(json!({"image_index": index, "error": error}));
-        } else {
-            if let Some(fields) = item.as_object_mut() {
-                fields.insert("image_index".into(), index.into());
-            }
-            successes.push(item);
+        } else if let Some(fields) = item.as_object_mut() {
+            fields.insert("image_index".into(), index.into());
         }
     }
-    if successes.is_empty() {
+    data.retain(|item| item.get("error").is_none());
+    if data.is_empty() {
         return Err(Fault::upstream(
             "MiniMax image response contains no successful images",
         ));
     }
-    *data = successes;
     response["failed_images"] = failures.into();
     serde_json::to_vec(&response)
         .map(Bytes::from)
@@ -117,7 +113,6 @@ fn successful_images(body: Bytes) -> Result<Bytes, Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::{FutureExt, StreamExt};
     use respan_gateway_conversation::Media;
     use respan_gateway_core::{
         ClientContext, Gateway, NativeFields, Plugin, Provider, Response, Result, async_trait,
@@ -125,6 +120,7 @@ mod tests {
     use respan_gateway_http::{
         Body,
         http::{self, Method, Request},
+        http_body_util::BodyExt,
     };
     use std::sync::{Arc, Mutex};
 
@@ -168,13 +164,21 @@ mod tests {
                 let capture = capture.clone();
                 let response = response.clone();
                 async move {
-                let path = request.uri().path().to_owned();
-                let chunks: Vec<_> = request.into_body().collect().await;
-                let bytes: Vec<_> = chunks.into_iter().flat_map(|b| b.expect("body").to_vec()).collect();
-                *capture.lock().expect("capture") = json!({"path":path,"body":serde_json::from_slice::<Value>(&bytes).expect("JSON request")});
-                Ok((http::Response::builder().status(status).header("content-type","application/json")
-                    .body(Body::full(response.to_string())).expect("response"), None))
-            }.boxed()
+                    let path = request.uri().path().to_owned();
+                    let bytes = BodyExt::collect(request.into_body())
+                        .await
+                        .expect("body")
+                        .to_bytes();
+                    *capture.lock().expect("capture") = json!({"path":path,"body":serde_json::from_slice::<Value>(&bytes).expect("JSON request")});
+                    Ok((
+                        http::Response::builder()
+                            .status(status)
+                            .header("content-type", "application/json")
+                            .body(Body::full(response.to_string()))
+                            .expect("response"),
+                        None,
+                    ))
+                }
             },
             1 << 20,
         );
@@ -190,14 +194,14 @@ mod tests {
             .plugin(Select);
         let (response, _) = respan_gateway_http::handle(&gateway, request, 1 << 20).await;
         let status = response.status().as_u16();
-        let chunks: Vec<_> = response.into_body().collect().await;
-        let bytes: Vec<_> = chunks
-            .into_iter()
-            .flat_map(|b| b.expect("body").to_vec())
-            .collect();
+        let bytes = BodyExt::collect(response.into_body())
+            .await
+            .expect("body")
+            .to_bytes();
         gateway.idle().await;
         let sent = observed.lock().expect("capture").clone();
-        (status, String::from_utf8(bytes).expect("text"), sent)
+        let returned = String::from_utf8(bytes.to_vec()).expect("text");
+        (status, returned, sent)
     }
 
     #[tokio::test]
