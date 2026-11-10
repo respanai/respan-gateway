@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use respan_gateway_conversation::{Content, MediaSource, Message};
-use respan_gateway_core::NativeFields;
+use respan_gateway_core::{NativeFields, async_trait};
 use serde_json::Value;
 
 /// What is kept under a key: a response's turn of a conversation (the
@@ -13,6 +13,7 @@ use serde_json::Value;
 /// response it followed; or the reasoning an assistant's tool calls came
 /// of, under each call's id.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Turn {
     /// The response it followed.
     pub parent: Option<String>,
@@ -20,14 +21,15 @@ pub struct Turn {
     pub messages: Vec<Message>,
 }
 
-/// Where turns are kept. A store answers at once, as it is read and written
-/// while a request's events pass; one shared by several gateways answers
-/// from what it holds near.
+/// Where turns are kept. A turn is read before the call it is sent on, so a
+/// store shared by several gateways may answer in its own time; it is kept as
+/// its response ends, so `put` returns at once, such a store writing it after.
+#[async_trait]
 pub trait Store: Send + Sync + 'static {
     /// Keep `turn` under `key`, in place of any there.
     fn put(&self, key: String, turn: Turn);
     /// The turn under `key`, if it is kept; kept afresh, as it was read.
-    fn get(&self, key: &str) -> Option<Turn>;
+    async fn get(&self, key: &str) -> Option<Turn>;
 }
 
 /// Turns kept in this gateway's memory, each for `keep` after it was last
@@ -63,12 +65,13 @@ impl Memory {
     }
 }
 
+#[async_trait]
 impl Store for Memory {
     fn put(&self, key: String, turn: Turn) {
         self.turns.insert(key, turn);
     }
 
-    fn get(&self, key: &str) -> Option<Turn> {
+    async fn get(&self, key: &str) -> Option<Turn> {
         self.turns.get(key)
     }
 }
@@ -151,7 +154,7 @@ mod tests {
             },
         );
         memory.turns.run_pending_tasks();
-        memory.get("response").is_some()
+        memory.turns.get("response").is_some()
     }
 
     #[test]
