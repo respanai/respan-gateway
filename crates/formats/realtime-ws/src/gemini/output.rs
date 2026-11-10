@@ -666,7 +666,7 @@ impl Client {
                 return match cause {
                     Cause::NothingToCancel => Ok(Vec::new()),
                     Cause::Invalid => {
-                        Err(Fault::bad_request(message.clone()).with(CloseCode(1007)))
+                        Err(Fault::bad_request(message.clone()).with(CloseCode::INVALID))
                     }
                     _ => Err(Fault::upstream(message.clone())),
                 };

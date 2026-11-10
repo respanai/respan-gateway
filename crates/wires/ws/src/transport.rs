@@ -70,9 +70,10 @@ fn is_handshake(name: &HeaderName) -> bool {
 /// - The provider sends Close with no code or 1000: the answer ends clean.
 ///   With another code: the fault of that
 ///   [`ProviderClose`](crate::ProviderClose), its code and reason in the
-///   message, the client's for 1003, 1007 or 1009, and, on a call with
-///   [`Relayed`] (as `respan_gateway_plugin_relay::Relay` marks a call to a
-///   provider of its client's own format), that `CloseCode` too.
+///   message. On a call with [`Relayed`] (as
+///   `respan_gateway_plugin_relay::Relay` marks a call to a provider of its
+///   client's own format), it has that `CloseCode` too, and a refusal of
+///   the data it was sent (1003, 1007 or 1009) is the client's.
 /// - The provider's connection breaks with no Close, or it is silent
 ///   through a ping: `Err(truncated)`.
 /// - A provider's binary frame, unless [`Self::with_binary_text`] enables

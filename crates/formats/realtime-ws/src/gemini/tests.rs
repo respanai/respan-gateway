@@ -169,7 +169,7 @@ fn a_client_must_set_up_first_and_once_one_thing_a_message() {
         assert!(fault.is(FaultKind::Client), "{fault}");
         assert_eq!(
             fault.get::<CloseCode>(),
-            Some(&CloseCode(1007)),
+            Some(&CloseCode::INVALID),
             "{refused}"
         );
     }
@@ -346,7 +346,7 @@ fn a_refusal_closes_a_live_client() {
         native: None,
     };
     let fault = heard(&[error]).expect_err("refused");
-    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1007)));
+    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode::INVALID));
     let foreign = Output::native("openai-realtime", json!({"type": "rate_limits.updated"}));
     assert_eq!(heard(&[foreign]).expect("dropped"), Vec::<Value>::new());
 }

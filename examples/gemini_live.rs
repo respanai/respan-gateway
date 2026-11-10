@@ -127,7 +127,7 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
         Input::Audio { .. } | Input::Commit { .. } if !active => {
             return Err(Fault::new("send activityStart before realtime input")
                 .with(ErrorCode("audio_policy".into()))
-                .with(CloseCode(1008)));
+                .with(CloseCode::POLICY));
         }
         _ => {}
     }
@@ -250,13 +250,13 @@ impl Budget {
         if lanes.contains(lane) {
             return Err(Fault::new("this lane already has a turn")
                 .with(ErrorCode("turn_busy".into()))
-                .with(CloseCode(1008)));
+                .with(CloseCode::POLICY));
         }
         let mut account = self.account.lock();
         if account.limit - account.spent - account.held < self.quote {
             return Err(Fault::new("the account cannot cover this turn")
                 .with(ErrorCode("insufficient_funds".into()))
-                .with(CloseCode(1008)));
+                .with(CloseCode::POLICY));
         }
         account.held += self.quote;
         lanes.insert(lane.to_owned());
