@@ -43,7 +43,7 @@ const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
 const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
-const KNOWN_TYPES: [&str; 4] = ["noul", "choice", "score", "number"];
+const KNOWN_TYPES: [&str; 5] = ["noul", "choice", "score", "number", "box"];
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -208,12 +208,12 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             Value::Array(levels) => Ask::Score { levels },
             _ => return Err(invalid(&param, "has criteria other than a list of levels")),
         },
-        // The kind takes no criteria for a number; any sent ride as the format's own.
-        Some("number") => {
+        // The kind takes no criteria for a number or a box; any sent ride as the format's own.
+        Some(kind @ ("number" | "box")) => {
             if !criteria.is_null() {
                 q.insert("criteria".into(), criteria);
             }
-            Ask::Number
+            if kind == "box" { Ask::Box } else { Ask::Number }
         }
         _ => return Err(invalid(&param, "has no type")),
     };
@@ -257,6 +257,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             }
             Ask::Score { levels } => ("score", Some(Value::from(levels.clone()))),
             Ask::Number => ("number", None),
+            Ask::Box => ("box", None),
             _ => {
                 return Err(Fault::bad_request(format!(
                     "{NAME} cannot ask question '{}'",
@@ -348,6 +349,18 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
             },
             &["number", "text"],
         ),
+        "box" => {
+            let edge = |key: &str| a["box"][key].as_f64();
+            (
+                Verdict::Box {
+                    top: edge("top")?,
+                    bottom: edge("bottom")?,
+                    left: edge("left")?,
+                    right: edge("right")?,
+                },
+                &["box"],
+            )
+        }
         _ => return None,
     };
     let mut answer = Answer::new(id, verdict);
@@ -436,6 +449,16 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
             v.insert("type".into(), "number".into());
             v.insert("number".into(), (*number).into());
             set(&mut v, "text", text.clone().map(Value::from));
+        }
+        Verdict::Box {
+            top,
+            bottom,
+            left,
+            right,
+        } => {
+            v.insert("type".into(), "box".into());
+            let edges = json!({"top": top, "bottom": bottom, "left": left, "right": right});
+            v.insert("box".into(), edges);
         }
         _ => {
             return Err(Fault::new(format!(
@@ -535,6 +558,30 @@ mod tests {
         assert!(matches!(input.questions[0].ask, Ask::Number));
         assert!(matches!(input.questions[1].ask, Ask::Number));
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
+    }
+
+    #[test]
+    fn a_box_question_and_its_answer_are_read_and_written_back() {
+        let raw = json!({
+            "model": "jev-preview",
+            "state": "<image>",
+            "questions": {"cat": {"type": "box", "instructions": "The cat"}},
+        });
+        let input = decode_request(raw.to_string().as_bytes()).expect("input");
+        assert!(matches!(input.questions[0].ask, Ask::Box));
+        assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
+        let raw = json!({
+            "model": "jev-preview",
+            "answers": {"cat": {"type": "box", "box": {"top": 0.1, "bottom": 0.6, "left": 0.2, "right": 0.7}, "confidence": 0.9}},
+        });
+        let mut events = Vec::new();
+        decode_response(Bytes::from(raw.to_string()), &mut events).expect("events");
+        assert!(events.iter().any(|e| matches!(e,
+            Output::Answer(Answer { verdict: Verdict::Box { top, right, .. }, .. })
+                if *top == 0.1 && *right == 0.7)));
+        let written: Value =
+            serde_json::from_slice(&encode_response(&events).expect("body")).unwrap_or_default();
+        assert_eq!(written, raw);
     }
 
     #[test]
