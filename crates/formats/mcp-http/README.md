@@ -39,7 +39,7 @@ as an HTTP transport.
   first message is forgotten at once; a request the client cancels is no
   longer waited for.
 
-Used by: [mcp_proxy](../../../examples/mcp_proxy.rs) and the
+Used by: [mcp_proxy](../../../examples/recipes/mcp_proxy.rs) and the
 binary's `[tools.<name>]` servers.
 
 Messages are validated as JSON-RPC envelopes before they can settle a
