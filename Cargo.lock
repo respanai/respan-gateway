@@ -2134,6 +2134,7 @@ name = "respan-gateway-vendors-yellow"
 version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
+ "futures",
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
@@ -2146,6 +2147,7 @@ dependencies = [
  "respan-gateway-sse",
  "respan-gateway-vendor-kit",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
