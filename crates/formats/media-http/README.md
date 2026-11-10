@@ -29,6 +29,8 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   is refused.
 - An answer's image is of its `output_format`, else of the type its bytes
   say, else PNG.
+- An image stream stops when the provider completes the requested `n` images
+  (one by default). If the body ends before that count, the stream is truncated.
 - A file's type is its part's, unless that says none or
   `application/octet-stream`, which OpenAI refuses for images; then its
   name's, then its first bytes'.
