@@ -1,11 +1,14 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
-use crate::schema::{Gate, Schema, UNWRITABLE, check_usage, fits, merge_fields, own_fields};
+use crate::schema::UNWRITABLE;
+use crate::schema::{Gate, Schema, check_usage, fits, merge_fields, own_fields};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
-use respan_gateway_http_faults::{Unsupported, Why};
+use respan_gateway_http::http::StatusCode;
+use respan_gateway_http_faults::Status;
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
@@ -73,7 +76,11 @@ impl EventStream {
 
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))
+        found.ok_or_else(|| {
+            Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY))
+        })
     }
 
     /// Opens a block on the wire, with what it held while it waited.
@@ -88,7 +95,11 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
-            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+            _ => {
+                return Err(Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY)));
+            }
         };
         let held = wb.held.take();
         let mut content = content;
@@ -144,7 +155,9 @@ impl EventStream {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+                false => Err(Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY))),
             };
         }
         self.begin(out);
@@ -162,7 +175,9 @@ impl EventStream {
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let wb = self.find(block)?;
         if wb.ended || !fits(part, &wb.kind) {
-            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
+            return Err(Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY)));
         }
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
@@ -304,7 +319,11 @@ impl EventStream {
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+            _ => {
+                return Err(Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY)));
+            }
         }
         Ok(())
     }

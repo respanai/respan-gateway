@@ -169,7 +169,7 @@ fn a_client_must_set_up_first_and_once_one_thing_a_message() {
         assert!(fault.is(FaultKind::Client), "{fault}");
         assert_eq!(
             fault.get::<CloseCode>(),
-            Some(&CloseCode::INVALID),
+            Some(&CloseCode(1007)),
             "{refused}"
         );
     }
@@ -217,11 +217,11 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
     let fault = provider
         .write(&Input::Session(changed), &mut frames)
         .expect_err("refused");
-    assert_eq!(fault.code(), "unsupported");
+    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1008)));
     assert!(
         fault
             .message()
-            .contains("changing `instructions` after its setup")
+            .ends_with("this update changes `instructions`")
     );
 }
 
@@ -346,7 +346,7 @@ fn a_refusal_closes_a_live_client() {
         native: None,
     };
     let fault = heard(&[error]).expect_err("refused");
-    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode::INVALID));
+    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1007)));
     let foreign = Output::native("openai-realtime", json!({"type": "rate_limits.updated"}));
     assert_eq!(heard(&[foreign]).expect("dropped"), Vec::<Value>::new());
 }

@@ -1,14 +1,16 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
+use crate::schema::UNWRITABLE;
 use crate::schema::{
-    Gate, Schema, UNWRITABLE, arguments_object, block_fields, check_usage, merge_fields,
-    merge_into, own_fields,
+    Gate, Schema, arguments_object, block_fields, check_usage, merge_fields, merge_into, own_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
-use respan_gateway_http_faults::{Unsupported, Why};
+use respan_gateway_http::http::StatusCode;
+use respan_gateway_http_faults::Status;
 use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 
@@ -81,15 +83,22 @@ pub(super) fn part_of(kind: &Block, text: &str) -> Result<Value, Fault> {
         Block::Text => json!({ "text": text }),
         Block::Reasoning => json!({ "text": text, "thought": true }),
         Block::ToolCall { id, name } => {
-            let args = arguments_object(text)
-                .map_err(|_| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))?;
+            let args = arguments_object(text).map_err(|_| {
+                Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY))
+            })?;
             let mut call = json!({ "name": name, "args": args });
             if !is_synthetic(id) {
                 call["id"] = id.as_str().into();
             }
             json!({ "functionCall": call })
         }
-        _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+        _ => {
+            return Err(Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY)));
+        }
     })
 }
 
@@ -207,7 +216,11 @@ pub(super) struct EventStream {
 impl EventStream {
     fn find(&mut self, block: u32) -> Result<&mut Slot, Fault> {
         let found = self.blocks.iter_mut().find(|b| b.block == block);
-        found.ok_or_else(|| Fault::from(Unsupported::new(Why::Output, UNWRITABLE)))
+        found.ok_or_else(|| {
+            Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY))
+        })
     }
 
     /// A response of these `parts`, with the finish and usage if `last`.
@@ -266,14 +279,18 @@ impl EventStream {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
                 true => Ok(()),
-                false => Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+                false => Err(Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY))),
             };
         }
         if !matches!(
             kind,
             Block::Text | Block::Reasoning | Block::ToolCall { .. }
         ) {
-            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
+            return Err(Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY)));
         }
         let at = self.pending.iter().position(|(b, _)| *b == block);
         let fields = at.map(|i| self.pending.remove(i).1);
@@ -290,7 +307,9 @@ impl EventStream {
     fn say(&mut self, block: u32, delta: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.find(block)?;
         if slot.ended || !crate::schema::fits(delta, &slot.kind) {
-            return Err(Unsupported::new(Why::Output, UNWRITABLE).into());
+            return Err(Fault::new(UNWRITABLE)
+                .with(ErrorCode("untranslatable".into()))
+                .with(Status(StatusCode::BAD_GATEWAY)));
         }
         if delta.as_str().is_empty() {
             return Ok(());
@@ -394,12 +413,20 @@ impl EventStream {
                     }
                     (None, Some("part")) => self.emit(vec![raw["part"].clone()], out)?,
                     _ if self.fields.add(raw) => {}
-                    _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+                    _ => {
+                        return Err(Fault::new(UNWRITABLE)
+                            .with(ErrorCode("untranslatable".into()))
+                            .with(Status(StatusCode::BAD_GATEWAY)));
+                    }
                 }
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
-            _ => return Err(Unsupported::new(Why::Output, UNWRITABLE).into()),
+            _ => {
+                return Err(Fault::new(UNWRITABLE)
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(Status(StatusCode::BAD_GATEWAY)));
+            }
         }
         Ok(())
     }

@@ -256,18 +256,6 @@ impl AudioFormat {
     };
 }
 
-/// As people name it, such as "16-bit PCM at 24000 Hz".
-impl std::fmt::Display for AudioFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let encoding = match self.encoding {
-            Encoding::Pcm16 => "16-bit PCM",
-            Encoding::Mulaw => "G.711 μ-law",
-            Encoding::Alaw => "G.711 A-law",
-        };
-        write!(f, "{encoding} at {} Hz", self.rate)
-    }
-}
-
 /// A sample encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]

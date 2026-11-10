@@ -57,15 +57,16 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{
-    Asked, Framing, Names, NativeFieldsExt, Schema, UNWRITABLE, native_fields, rest_of,
-};
+use crate::schema::UNWRITABLE;
+use crate::schema::{Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
-use respan_gateway_http_faults::{Unsupported, Why};
+use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value, json};
 
 use decode::ConverseDecoder;
@@ -189,7 +190,9 @@ impl Schema for BedrockConverse {
     }
 
     fn encode_part(_: &Content) -> Result<Value, Fault> {
-        Err(Unsupported::new(Why::Output, UNWRITABLE).into())
+        Err(Fault::new(UNWRITABLE)
+            .with(ErrorCode("untranslatable".into()))
+            .with(Status(StatusCode::BAD_GATEWAY)))
     }
 
     fn is_response(v: &Value) -> bool {

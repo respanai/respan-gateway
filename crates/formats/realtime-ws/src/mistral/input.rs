@@ -1,14 +1,14 @@
 //! What the client says: Mistral's client events as the kind's [`Input`],
 //! read at the client's edge, and the kind's written to Mistral's session.
 
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, Turns};
 use serde_json::{Value, json};
 
-use super::{NAME, ONLY_TRANSCRIBES, session};
+use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
 use crate::json::{self, merge, own, string, take, text};
@@ -140,15 +140,15 @@ impl Provider {
     }
 
     fn frames(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
+        let refuse = |what: &str| {
+            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("unsupported".into()))
+        };
         let frames = match event {
             Input::Session(s) => return self.session(s).map(|v| v.into_iter().collect()),
             Input::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.input);
-                let data = data.ok_or_else(|| {
-                    Fault::from(
-                        Unsupported::new(Why::Input, format!("audio in {}", audio.format)).to(NAME),
-                    )
-                })?;
+                let data = data.ok_or_else(|| refuse("audio of this format"))?;
                 let mut native = own(native).cloned();
                 let mut frames = Vec::new();
                 for chunk in data.chunks(APPEND) {
@@ -166,20 +166,17 @@ impl Provider {
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 vec![Value::clone(value)]
             }
-            Input::Message { .. }
-            | Input::ToolResult(_)
-            | Input::Respond { .. }
-            | Input::Cancel { .. } => {
-                let refused = Unsupported::new(Why::Lasting, "a conversation's events").to(NAME);
-                return Err(refused.fix(ONLY_TRANSCRIBES).into());
-            }
-            _ => return Err(Unsupported::new(Why::Input, "this event").to(NAME).into()),
+            _ => return Err(refuse("this event")),
         };
         Ok(frames)
     }
 
     /// A session as its update, if it says anything to update.
     fn session(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
+        let refuse = |what: &str| {
+            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("unsupported".into()))
+        };
         // Mistral takes its model at connect: the first session's is the
         // one at its URL, and a later one that names it again changes
         // nothing.
@@ -189,15 +186,13 @@ impl Provider {
             s.model = None;
         }
         if s.model.is_some() {
-            let refused = Unsupported::new(Why::Lasting, "a change of model mid-session");
-            let fix = "name the model with `?model=` when connecting";
-            return Err(refused.to(NAME).fix(fix).into());
+            return Err(refuse("a change of model"));
         }
         // Its voice detection does not change what it transcribes.
         s.turns = None;
         s.output_transcription = None;
         s.input_transcription = s.input_transcription.filter(|on| !on);
-        let session = session::encode(&s)?;
+        let session = session::encode(&s, refuse)?;
         let mut v = json!({"type": "session.update", "session": session});
         merge(&mut v, own(&s.native));
         if let Some(format) = s.input_audio {

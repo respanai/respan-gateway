@@ -9,7 +9,7 @@ use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeFields};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -18,7 +18,6 @@ use respan_gateway_http::http::{
 use respan_gateway_http::path::forwarded_path;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
-use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
 
@@ -195,9 +194,10 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
         }
         Input::Content { id, variant, url } => {
             if *variant != Variant::Video {
-                return Err(Unsupported::new(Why::Lasting, "thumbnails or spritesheets")
-                    .to("Veo")
-                    .into());
+                return Err(
+                    Fault::bad_request("Veo cannot make a thumbnail or a spritesheet")
+                        .with(ErrorCode("unsupported".into())),
+                );
             }
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
@@ -206,24 +206,21 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             (Method::GET, content_path(url)?, None, Call::Content)
         }
         Input::Remix { .. } => {
-            return Err(Unsupported::new(Why::Lasting, "remixing a video")
-                .to("Veo")
-                .into());
+            return Err(Fault::bad_request("Veo cannot remix a video")
+                .with(ErrorCode("unsupported".into())));
         }
         Input::Delete { .. } => {
-            return Err(Unsupported::new(Why::Lasting, "deleting a video")
-                .to("Veo")
-                .into());
+            return Err(Fault::bad_request("Veo cannot delete a video")
+                .with(ErrorCode("unsupported".into())));
         }
         Input::List { .. } => {
-            return Err(Unsupported::new(Why::Lasting, "listing videos")
-                .to("Veo")
-                .into());
+            return Err(
+                Fault::bad_request("Veo cannot list videos").with(ErrorCode("unsupported".into()))
+            );
         }
         _ => {
-            return Err(Unsupported::new(Why::Lasting, "this request")
-                .to("Veo")
-                .into());
+            return Err(Fault::bad_request("Veo cannot answer this request")
+                .with(ErrorCode("unsupported".into())));
         }
     };
     head.method = method;

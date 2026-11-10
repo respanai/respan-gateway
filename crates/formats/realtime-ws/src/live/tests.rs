@@ -1,7 +1,6 @@
 use respan_gateway_core::{Fault, FaultKind};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Purpose, Session, Turns};
-
 use serde_json::{Value, json};
 
 use super::{input, output};

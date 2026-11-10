@@ -13,9 +13,9 @@ use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, ProviderTool, Reasoning, ResponseFormat, Tool,
     ToolChoice,
 };
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
-use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::output_schema::output_schema;
@@ -108,11 +108,10 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Required) => Some(json!({ "type": "any" })),
         Some(ToolChoice::Tool(name)) => Some(json!({ "type": "tool", "name": name })),
         None => one_at_a_time.then(|| json!({ "type": "auto" })),
-        Some(_) => {
-            return Err(
-                Unsupported::new(Why::Input, "a tool choice this format has no form for").into(),
-            );
-        }
+        Some(_) => return Err(Fault::bad_request(
+            "a tool choice this format has no form for cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     };
     if let Some(c) = choice
         .as_mut()
@@ -148,8 +147,14 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             Ok(v)
         }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
-        Content::Audio(_) => Err(Unsupported::new(Why::Input, "this media kind").into()),
-        _ => Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
+        Content::Audio(_) => Err(Fault::bad_request(
+            "this media kind cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
+        _ => Err(Fault::bad_request(
+            "an unsupported kind of part cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     }
 }
 
@@ -197,9 +202,10 @@ fn read_media(v: &Value) -> Option<Content> {
 /// An image or document block of `media`, refusing what Anthropic cannot say.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() && kind != "document" {
-        return Err(
-            Unsupported::new(Why::Input, "a display name on image or audio content").into(),
-        );
+        return Err(Fault::bad_request(
+            "a display name on image or audio content cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
@@ -298,7 +304,10 @@ fn tool_block(part: &Content) -> Result<Value, Fault> {
             }
             Ok(block)
         }
-        _ => Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
+        _ => Err(Fault::bad_request(
+            "an unsupported kind of part cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     }
 }
 
@@ -378,11 +387,7 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
         Effort::XHigh => Some("xhigh"),
         Effort::Max => Some("max"),
         _ => {
-            return Err(Unsupported::new(
-                Why::Input,
-                "a reasoning effort Anthropic has no level for",
-            )
-            .into());
+            return Err(Fault::bad_request("a reasoning effort Anthropic has no level for cannot be translated to another format yet").with(ErrorCode("unsupported".into())));
         }
     })
 }
@@ -398,7 +403,10 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(Unsupported::new(Why::Input, "non-object output_config").into());
+            return Err(Fault::bad_request(
+                "non-object output_config cannot be translated to another format yet",
+            )
+            .with(ErrorCode("unsupported".into())));
         }
         config["effort"] = effort.into();
     }
@@ -412,7 +420,10 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
     if let Some(schema) = schema {
         let config = config.get_or_insert_with(|| json!({}));
         if !config.is_object() {
-            return Err(Unsupported::new(Why::Input, "non-object output_config").into());
+            return Err(Fault::bad_request(
+                "non-object output_config cannot be translated to another format yet",
+            )
+            .with(ErrorCode("unsupported".into())));
         }
         config["format"] = json!({"type":"json_schema","schema":schema});
     }
@@ -568,9 +579,10 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own());
     };
     if r.summary == Some(false) {
-        return Err(Unsupported::new(Why::Input, "withholding the thinking")
-            .to("Anthropic")
-            .into());
+        return Err(Fault::bad_request(
+            "withholding the thinking in Anthropic cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     Ok(match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
@@ -586,21 +598,19 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
 /// 1024, a temperature but 1, `top_k`.
 fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
     if budget < 1024 {
-        return Err(Unsupported::new(Why::Input, "a thinking budget under 1024")
-            .to("Anthropic")
-            .into());
+        return Err(Fault::bad_request(
+            "a thinking budget under 1024 in Anthropic cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     if input.options.temperature.is_some_and(|t| t != 1.0) {
-        return Err(
-            Unsupported::new(Why::Input, "a temperature other than 1 beside thinking")
-                .to("Anthropic")
-                .into(),
-        );
+        return Err(Fault::bad_request("a temperature other than 1 beside thinking in Anthropic cannot be translated to another format yet").with(ErrorCode("unsupported".into())));
     }
     if input.options.top_k.is_some() {
-        return Err(Unsupported::new(Why::Input, "top_k beside thinking")
-            .to("Anthropic")
-            .into());
+        return Err(Fault::bad_request(
+            "top_k beside thinking in Anthropic cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     Ok(())
 }

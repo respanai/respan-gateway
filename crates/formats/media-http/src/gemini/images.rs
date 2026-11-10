@@ -17,7 +17,6 @@ use respan_gateway_http::http::{
 };
 use respan_gateway_http::{All, ClientIo, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
-use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
@@ -116,8 +115,10 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         ));
     }
     if input.mask.is_some() {
-        let refused = Unsupported::new(Why::Lasting, "an edit's mask").to("Gemini");
-        return Err(refused.fix("describe the edit in the prompt").into());
+        return Err(
+            Fault::bad_request("Gemini edits by prompt, and takes no mask")
+                .with(ErrorCode("unsupported".into())),
+        );
     }
     head.uri = format!("/models/{model}:generateContent")
         .parse()

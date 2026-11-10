@@ -8,7 +8,6 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status,
 };
-
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, input, output};

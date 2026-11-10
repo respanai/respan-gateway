@@ -15,8 +15,8 @@ use respan_gateway_conversation::{
     Content, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
     ToolChoice,
 };
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Fault;
-use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use crate::openai::{OPENAI, OpenAiChat};
@@ -110,9 +110,10 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
             );
         }
         _ => {
-            return Err(Unsupported::new(Why::Input, "more than one search")
-                .to("OpenAI Chat")
-                .into());
+            return Err(Fault::bad_request(
+                "more than one search in OpenAI Chat cannot be translated to another format yet",
+            )
+            .with(ErrorCode("unsupported".into())));
         }
     }
     let choice = match &chat.options.tool_choice {
@@ -123,11 +124,10 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         Some(ToolChoice::Tool(name)) => {
             Some(json!({ "type": "function", "function": { "name": name } }))
         }
-        Some(_) => {
-            return Err(
-                Unsupported::new(Why::Input, "a tool choice this format has no form for").into(),
-            );
-        }
+        Some(_) => return Err(Fault::bad_request(
+            "a tool choice this format has no form for cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     };
     set(v, "tool_choice", choice);
     set(
@@ -212,7 +212,10 @@ fn openai_result(
 ) -> Result<Map<String, Value>, Fault> {
     // OpenAI's tool messages cannot say the call failed.
     if is_error {
-        return Err(Unsupported::new(Why::Input, "a tool result that is an error").into());
+        return Err(Fault::bad_request(
+            "a tool result that is an error cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     let media = |c: &Content| {
         matches!(
@@ -221,9 +224,10 @@ fn openai_result(
         )
     };
     if content.iter().any(media) {
-        return Err(Unsupported::new(Why::Input, "media in a tool message")
-            .to("OpenAI Chat")
-            .into());
+        return Err(Fault::bad_request(
+            "media in an OpenAI tool message cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
@@ -345,12 +349,18 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        _ => return Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
+        _ => {
+            return Err(Fault::bad_request(
+                "an unsupported kind of part cannot be translated to another format yet",
+            )
+            .with(ErrorCode("unsupported".into())));
+        }
     };
     if media.name.is_some() && kind != "document" {
-        return Err(
-            Unsupported::new(Why::Input, "a display name on image or audio content").into(),
-        );
+        return Err(Fault::bad_request(
+            "a display name on image or audio content cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     let native = media.native.fields_for(OPENAI);
     let url = || media_url(media);
@@ -358,9 +368,10 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {
             if matches!(media.source, MediaSource::Url(_)) {
-                return Err(Unsupported::new(Why::Input, "a document URL")
-                    .to("OpenAI Chat")
-                    .into());
+                return Err(Fault::bad_request(
+                    "a document URL in OpenAI Chat cannot be translated to another format yet",
+                )
+                .with(ErrorCode("unsupported".into())));
             }
             let mut v = json!({"type":"file","file":{"file_data":url()}});
             if let Some(name) = &media.name {
@@ -370,14 +381,20 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         }
         _ => {
             let MediaSource::Bytes(bytes) = &media.source else {
-                return Err(Unsupported::new(Why::Input, "an audio URL")
-                    .to("OpenAI Chat")
-                    .into());
+                return Err(Fault::bad_request(
+                    "an audio URL in OpenAI Chat cannot be translated to another format yet",
+                )
+                .with(ErrorCode("unsupported".into())));
             };
             let encoding = match media.mime_type.as_str() {
                 "audio/wav" | "audio/x-wav" => "wav",
                 "audio/mpeg" => "mp3",
-                _ => return Err(Unsupported::new(Why::Input, "this audio MIME type").into()),
+                _ => {
+                    return Err(Fault::bad_request(
+                        "this audio MIME type cannot be translated to another format yet",
+                    )
+                    .with(ErrorCode("unsupported".into())));
+                }
             };
             json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
         }

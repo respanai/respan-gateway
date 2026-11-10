@@ -7,11 +7,12 @@
 //! would be written as several, such as a turn of two parts, reaches its
 //! client as several, each saying its part.
 
+use respan_gateway_core::ErrorCode;
+use respan_gateway_http::http::StatusCode;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Purpose, Status, Usage};
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
@@ -545,6 +546,11 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Vec<Value>, Fault> {
+        let refuse = |what: &str| {
+            Fault::new(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("untranslatable".into()))
+                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY))
+        };
         let interrupted = json!({"serverContent": {"interrupted": true}});
         let content = |field: &str, value: Value| json!({"serverContent": {field: value}});
         let (v, native) = match event {
@@ -584,12 +590,7 @@ impl Client {
                 // The Live API's audio is always 24 kHz PCM.
                 let pcm = AudioFormat::pcm16(24_000);
                 let converted = self.convert.to(audio, pcm);
-                let converted = converted.ok_or_else(|| {
-                    Fault::from(
-                        Unsupported::new(Why::Output, format!("audio in {}", audio.format))
-                            .to(NAME),
-                    )
-                })?;
+                let converted = converted.ok_or_else(|| refuse("audio of this format"))?;
                 let mime = format!("audio/pcm;rate={}", pcm.rate);
                 let data = json!({"mimeType": mime, "data": json::base64(&converted)});
                 (
@@ -667,7 +668,7 @@ impl Client {
                 return match cause {
                     Cause::NothingToCancel => Ok(Vec::new()),
                     Cause::Invalid => {
-                        Err(Fault::bad_request(message.clone()).with(CloseCode::INVALID))
+                        Err(Fault::bad_request(message.clone()).with(CloseCode(1007)))
                     }
                     _ => Err(Fault::upstream(message.clone())),
                 };
@@ -675,11 +676,7 @@ impl Client {
             Output::Native(NativeValue { format, value }) if **format == *NAME => {
                 (Value::clone(value), &None)
             }
-            _ => {
-                return Err(Unsupported::new(Why::Output, "another format's event")
-                    .to(NAME)
-                    .into());
-            }
+            _ => return Err(refuse("another format's event")),
         };
         let mut v = v;
         merge(&mut v, own(native));

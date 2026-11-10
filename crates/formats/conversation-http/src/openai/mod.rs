@@ -67,11 +67,11 @@ use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
     Role, Usage,
 };
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
-use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
@@ -315,9 +315,10 @@ impl Schema for OpenAiChat {
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
         if chat.options.top_k.is_some() {
-            return Err(Unsupported::new(Why::Input, "top_k")
-                .to("OpenAI Chat")
-                .into());
+            return Err(Fault::bad_request(
+                "top_k in OpenAI Chat cannot be translated to another format yet",
+            )
+            .with(ErrorCode("unsupported".into())));
         }
         Ok(v)
     }

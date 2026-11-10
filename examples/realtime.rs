@@ -167,7 +167,7 @@ impl Plugin for Wallets {
         let key = key.ok_or_else(|| {
             Fault::new("no key")
                 .with(ErrorCode("no_key".into()))
-                .with(CloseCode::POLICY)
+                .with(CloseCode(1008))
         })?;
         let tab = Arc::new(Mutex::new(Tab {
             books: self.books.clone(),
@@ -409,7 +409,7 @@ fn until(
             () = &mut timer => {
                 let over = Fault::new("the session reached its maximum length")
                     .with(ErrorCode("max_length".into()))
-                    .with(CloseCode::NORMAL);
+                    .with(CloseCode(1000));
                 Some((Err(over), None))
             }
             next = events.next() => Some((next?, Some((events, timer)))),
@@ -443,7 +443,7 @@ impl Books {
         let account = account.ok_or_else(|| {
             Fault::new(format!("wallet '{key}' cannot cover this turn"))
                 .with(ErrorCode("insufficient_funds".into()))
-                .with(CloseCode::POLICY)
+                .with(CloseCode(1008))
         })?;
         account.held += amount;
         Ok(())

@@ -1,9 +1,10 @@
 //! What the model says: the Live API's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http_faults::{Unsupported, Why};
+use respan_gateway_http::http::StatusCode;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output};
 use serde_json::{Value, json};
 
@@ -124,6 +125,11 @@ impl Client {
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {
+        let refuse = |what: &str| {
+            Err(Fault::new(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("untranslatable".into()))
+                .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY)))
+        };
         let (mut v, native) = match event {
             Output::Opened(s) | Output::Updated(s) => {
                 let format = s.output_audio.or(s.input_audio);
@@ -139,12 +145,7 @@ impl Client {
             }
             Output::Audio { audio, native } => {
                 let Some(data) = self.convert.to(audio, self.output) else {
-                    return Err(Unsupported::new(
-                        Why::Output,
-                        format!("audio in {}", audio.format),
-                    )
-                    .to(NAME)
-                    .into());
+                    return refuse("audio of this format");
                 };
                 let delta = json::base64(&data);
                 (
@@ -187,14 +188,8 @@ impl Client {
                 }
                 (v, native)
             }
-            Output::Text { .. } => {
-                return Err(Unsupported::new(Why::Output, "text").to(NAME).into());
-            }
-            Output::ToolCall { .. } => {
-                return Err(Unsupported::new(Why::Output, "a tool's call")
-                    .to(NAME)
-                    .into());
-            }
+            Output::Text { .. } => return refuse("text"),
+            Output::ToolCall { .. } => return refuse("a tool's call"),
             Output::Native(NativeValue { format, value }) if **format == *NAME => {
                 return Ok(Some(Value::clone(value)));
             }

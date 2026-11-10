@@ -18,8 +18,8 @@
 //! format keeps what each event says, not its exact bytes. Each writes the
 //! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
-//! cannot change the answer, or refused as `Unsupported`: an input the
-//! client's, closing it 1008; an output the gateway's. [`ResponsesWs`] decodes every
+//! cannot change the answer, or refused: an input `bad_request`, closing
+//! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
 //! frame to the kind's native event of its name, and writes no other
 //! format's. A frame that is not JSON fails: the client's, `bad_request`;
 //! the provider's, `upstream`. A handshake one refuses is answered

@@ -11,8 +11,9 @@ use super::{
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
@@ -20,7 +21,6 @@ use respan_gateway_http::http::{
 use respan_gateway_http::path::{escape, forwarded_path};
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
-use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Jobs, Output, Status, Variant};
 use serde_json::{Map, Value, json};
 
@@ -451,9 +451,11 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         Status::Failed => "failed",
         Status::Native { format, status, .. } if &**format == NAME => status,
         _ => {
-            return Err(Unsupported::new(Why::Output, "a video's status")
-                .to(NAME)
-                .into());
+            return Err(
+                Fault::new(format!("a video status cannot be written in {NAME}"))
+                    .with(ErrorCode("untranslatable".into()))
+                    .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY)),
+            );
         }
     };
     let error = job

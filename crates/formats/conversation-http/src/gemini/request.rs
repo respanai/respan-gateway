@@ -9,8 +9,8 @@ use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
     Role, Tool, ToolChoice,
 };
+use respan_gateway_core::ErrorCode;
 use respan_gateway_core::{Fault, NativeFields};
-use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};
@@ -251,12 +251,9 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES.name(role).ok_or_else(|| {
-                Fault::from(Unsupported::new(
-                    Why::Input,
-                    "a role this format has no place for",
-                ))
-            })?,
+            role => ROLES
+                .name(role)
+                .ok_or_else(|| Fault::bad_request("a role this format has no place for cannot be translated to another format yet").with(ErrorCode("unsupported".into())))?,
         };
         let parts: Vec<Value> = m
             .content
@@ -371,7 +368,10 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        _ => Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
+        _ => Err(Fault::bad_request(
+            "an unsupported kind of part cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     }
 }
 
@@ -385,7 +385,12 @@ fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
             Content::Text {
                 text: t, native, ..
             } if native.is_empty() => text.push_str(t),
-            _ => return Err(Unsupported::new(Why::Input, "a tool result that is not text").into()),
+            _ => {
+                return Err(Fault::bad_request(
+                    "a tool result that is not text cannot be translated to another format yet",
+                )
+                .with(ErrorCode("unsupported".into())));
+            }
         }
     }
     if let Ok(object @ Value::Object(_)) = serde_json::from_str::<Value>(&text) {
@@ -413,7 +418,10 @@ pub fn media_part(media: &Media) -> Value {
 /// An `inlineData` or `fileData` part of `media`, with its native fields.
 fn write_media(media: &Media) -> Result<Value, Fault> {
     if media.name.is_some() {
-        return Err(Unsupported::new(Why::Input, "a display name on media content").into());
+        return Err(Fault::bad_request(
+            "a display name on media content cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     let native = media.native.fields_for(GEMINI);
     let mut part = media_part(media);
@@ -608,11 +616,10 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Tool(name)) => {
             Some(json!({ "mode": "ANY", "allowedFunctionNames": [name] }))
         }
-        Some(_) => {
-            return Err(
-                Unsupported::new(Why::Input, "a tool choice this format has no form for").into(),
-            );
-        }
+        Some(_) => return Err(Fault::bad_request(
+            "a tool choice this format has no form for cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into()))),
     };
     let mut config = native("toolConfig").unwrap_or_else(|| json!({}));
     if let Some(mode) = mode {
@@ -724,19 +731,17 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             // Gemini always constrains the answer to a schema, and the
             // wrapper's description has no field to instruct the model with.
             if description.is_some() || *strict == Some(false) {
-                return Err(Unsupported::new(
-                    Why::Input,
-                    "a schema wrapper description or non-strict schema output",
-                )
-                .to("Gemini")
-                .into());
+                return Err(Fault::bad_request("a schema wrapper description or non-strict schema output in Gemini cannot be translated to another format yet").with(ErrorCode("unsupported".into())));
             }
             set_field("responseMimeType", Some("application/json".into()));
             set_field("responseJsonSchema", Some(schema.clone()));
         }
     }
     if chat.user.is_some() {
-        return Err(Unsupported::new(Why::Input, "an end user's id").into());
+        return Err(Fault::bad_request(
+            "an end user's id cannot be translated to another format yet",
+        )
+        .with(ErrorCode("unsupported".into())));
     }
     if let Some(r) = reasoning_of(chat)? {
         write_thinking(r, &mut config)?;

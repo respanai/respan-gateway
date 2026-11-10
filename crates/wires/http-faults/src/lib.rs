@@ -1,8 +1,7 @@
 #![warn(missing_docs)]
 //! Faults in HTTP's terms, with no I/O: the status and error code a
-//! [`Fault`] asks for, whether a failed attempt is worth another, a
-//! provider's error answer read into a fault, and what a format does not
-//! take ([`Unsupported`]), a fault whose status follows from why. A plugin that sets or reads a
+//! [`Fault`] asks for, whether a failed attempt is worth another, and a
+//! provider's error answer read into a fault. A plugin that sets or reads a
 //! status depends on this crate alone, not on the HTTP wire.
 
 use respan_gateway_core::FaultKind;
@@ -13,10 +12,6 @@ use http::StatusCode;
 use http::header::RETRY_AFTER;
 use respan_gateway_core::{Fault, RetryAfter};
 
-mod unsupported;
-
-pub use unsupported::{Unsupported, Why};
-
 /// The HTTP status a fault asks for, as an extension ([`Fault::with`]): a plugin's
 /// `Fault::new(msg).with(Status(StatusCode::TOO_MANY_REQUESTS))`, a
 /// provider's answer's. The kernel names no numbers; this is where they get
@@ -24,13 +19,12 @@ pub use unsupported::{Unsupported, Why};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Status(pub StatusCode);
 
-/// The status of `fault` as HTTP's: its [`Status`] extension, else a 502
-/// for a provider's answer the client's format cannot hold ([`Why::Output`]),
-/// else its kind's: a 400 for the client's (a 404 coded `not_found`), a 502
-/// for a provider's, a 499 for an abandoned one, else a 500.
+/// The status of `fault` as HTTP's: its [`Status`] extension, else its
+/// kind's: a 400 for the client's (a 404 coded `not_found`), a 502 for a
+/// provider's, a 499 for an abandoned one, else a 500.
 pub fn status(fault: &Fault) -> StatusCode {
-    if let Some(status) = asked(fault) {
-        return status;
+    if let Some(Status(status)) = fault.get() {
+        return *status;
     }
     match fault.kind() {
         FaultKind::Client if fault.code() == "not_found" => StatusCode::NOT_FOUND,
@@ -38,16 +32,6 @@ pub fn status(fault: &Fault) -> StatusCode {
         FaultKind::Provider => StatusCode::BAD_GATEWAY,
         FaultKind::Abandoned => CLIENT_CLOSED,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-/// The status `fault` asks for beyond its kind's: its [`Status`], or a 502
-/// for an [`Unsupported`] answer.
-fn asked(fault: &Fault) -> Option<StatusCode> {
-    match (fault.get(), fault.get::<Unsupported>()) {
-        (Some(Status(status)), _) => Some(*status),
-        (None, Some(u)) if u.why() == Why::Output => Some(StatusCode::BAD_GATEWAY),
-        _ => None,
     }
 }
 
@@ -71,17 +55,16 @@ const TRANSIENT: [StatusCode; 7] = [
 
 /// HTTP retry eligibility for a failed `first_success` attempt. Before a
 /// response opened, only a provider's fault is retryable: the provider
-/// could not be reached. After opening, a fault whose [`Status`] (or an
-/// [`Unsupported`] answer's 502) is transient is, or a provider's without
-/// one. An abandoned fault never is:
+/// could not be reached. After opening, a fault whose [`Status`] is
+/// transient is, or a provider's without one. An abandoned fault never is:
 /// a client that left is gone on a second attempt.
 /// `response_opened` means the call returned `Ok(Response)` before the
 /// caller's response-selection criterion ran, not that bytes arrived.
 pub fn retryable(fault: &Fault, response_opened: bool) -> bool {
-    match (fault.kind(), asked(fault)) {
+    match (fault.kind(), fault.get::<Status>()) {
         (kind, _) if !response_opened => kind == FaultKind::Provider,
         (FaultKind::Abandoned, _) => false,
-        (_, Some(status)) => TRANSIENT.contains(&status),
+        (_, Some(Status(status))) => TRANSIENT.contains(status),
         (kind, None) => kind == FaultKind::Provider,
     }
 }

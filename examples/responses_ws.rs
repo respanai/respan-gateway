@@ -195,13 +195,13 @@ impl Budget {
         if lanes.contains(lane) {
             return Err(Fault::new("this lane already has a turn")
                 .with(ErrorCode("turn_busy".into()))
-                .with(CloseCode::POLICY));
+                .with(CloseCode(1008)));
         }
         let mut account = self.account.lock();
         if account.limit - account.spent - account.held < self.quote {
             return Err(Fault::new("the account cannot cover this turn")
                 .with(ErrorCode("insufficient_funds".into()))
-                .with(CloseCode::POLICY));
+                .with(CloseCode(1008)));
         }
         account.held += self.quote;
         lanes.insert(lane.to_owned());

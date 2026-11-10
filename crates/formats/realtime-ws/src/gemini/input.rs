@@ -1,12 +1,12 @@
 //! What the client says: the Live API's client messages as the kind's
 //! [`Input`], read at the client's edge and written at the provider's.
 
+use respan_gateway_core::ErrorCode;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation::{Content, Message, Role};
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{
     Audio, AudioFormat, Encoding, Input, Output, Session, Status, ToolResult, Turns,
 };
@@ -68,7 +68,7 @@ impl Client {
 
 /// A message the Live API refuses, as it closes the session.
 fn invalid(message: &str) -> Fault {
-    Fault::bad_request(message).with(CloseCode::INVALID)
+    Fault::bad_request(message).with(CloseCode(1007))
 }
 
 /// The events of a message after the setup, its client `answering` or not;
@@ -188,29 +188,18 @@ fn message(turn: &Value) -> Option<Message> {
     Some(message)
 }
 
-fn message_json(m: &Message) -> Result<Value, Fault> {
+fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let role = match m.role {
         Role::User => "user",
         Role::Assistant => "model",
-        Role::System | Role::Developer => {
-            let refused = Unsupported::new(Why::Lasting, "a system or developer message");
-            let fix = "put its text in the session's instructions";
-            return Err(refused.to(NAME).fix(fix).into());
-        }
-        _ => {
-            return Err(Unsupported::new(Why::Input, "a message of this role")
-                .to(NAME)
-                .into());
-        }
+        _ => return Err(refuse("a message of this role")),
     };
     let part = |c: &Content| match c {
         Content::Text { text, native, .. } if native.is_none() => Ok(json!({"text": text})),
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
             Ok(Value::clone(value))
         }
-        _ => Err(Fault::from(
-            Unsupported::new(Why::Input, "a message part of this kind").to(NAME),
-        )),
+        _ => Err(refuse("a message part of this kind")),
     };
     let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"role": role, "parts": parts});
@@ -317,11 +306,15 @@ impl Provider {
     }
 
     fn encode(&mut self, event: &Input, out: &mut Vec<Value>) -> Result<(), Fault> {
+        let refuse = |what: &str| {
+            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("unsupported".into()))
+        };
         let answered = std::mem::take(&mut self.answered);
         let (mut v, native) = match event {
             Input::Session(s) if !self.opened => {
                 self.opened = true;
-                out.push(setup::encode(s)?);
+                out.push(setup::encode(s, refuse)?);
                 self.shared.lock().applied = Some(s.clone());
                 return Ok(());
             }
@@ -342,7 +335,7 @@ impl Provider {
                 if shaped(native)
                     && let Some(Held::Messages(messages)) = self.held.take()
                 {
-                    out.push(messages_json(&messages)?);
+                    out.push(messages_json(&messages, refuse)?);
                 }
                 return Ok(());
             }
@@ -374,12 +367,7 @@ impl Provider {
                             Encoding::Pcm16 => Some(audio.data.clone()),
                             _ => self.convert.to(audio, pcm),
                         };
-                        let data = data.ok_or_else(|| {
-                            Fault::from(
-                                Unsupported::new(Why::Input, format!("audio in {}", audio.format))
-                                    .to(NAME),
-                            )
-                        })?;
+                        let data = data.ok_or_else(|| refuse("audio of this format"))?;
                         if manual && !std::mem::replace(&mut self.activity, true) {
                             out.push(json!({"realtimeInput": {"activityStart": {}}}));
                         }
@@ -388,9 +376,7 @@ impl Provider {
                         (json!({"realtimeInput": {"audio": blob}}), native)
                     }
                     Input::Commit { .. } if !manual => {
-                        let what = "ending a turn under its automatic activity detection";
-                        let refused = Unsupported::new(Why::Lasting, what).to(NAME);
-                        return Err(refused.fix("set turn detection to manual").into());
+                        return Err(refuse("a commit under the provider's voice detection"));
                     }
                     Input::Commit { native } => {
                         (self.activity, self.answered) = (false, true);
@@ -408,11 +394,7 @@ impl Provider {
                         out.push(Value::clone(value));
                         return Ok(());
                     }
-                    _ => {
-                        return Err(Unsupported::new(Why::Input, "another format's event")
-                            .to(NAME)
-                            .into());
-                    }
+                    _ => return Err(refuse("another format's event")),
                 }
             }
         };
@@ -434,9 +416,10 @@ impl Provider {
         let mut state = self.shared.lock();
         let applied = state.applied.get_or_insert_default();
         if let Some(field) = session::changes(applied, s) {
-            let what = format!("changing `{field}` after its setup");
-            let refused = Unsupported::new(Why::Lasting, what).to(NAME);
-            return Err(refused.fix("open a new session").into());
+            let fixed = format!(
+                "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
+            );
+            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
         }
         // Audio formats are each chunk's own.
         applied.input_audio = s.input_audio.or(applied.input_audio);
@@ -469,17 +452,17 @@ impl Provider {
     /// alone; tools' answers; or a complete turn of nothing more, as it
     /// came.
     fn respond(&mut self, native: &Option<NativeFields>) -> Result<Value, Fault> {
+        let refuse = |what: &str| {
+            Fault::bad_request(format!("{what} cannot be translated to {NAME}"))
+                .with(ErrorCode("unsupported".into()))
+        };
         let content = shaped(native);
         match self.held.take() {
             None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
-            None => Err(
-                Unsupported::new(Why::Input, "a response to nothing the client said")
-                    .to(NAME)
-                    .into(),
-            ),
+            None => Err(refuse("a response to nothing the client said")),
             Some(Held::Results(results)) => Ok(self.results(&results)),
             Some(Held::Messages(messages)) if content => {
-                let mut v = messages_json(&messages)?;
+                let mut v = messages_json(&messages, refuse)?;
                 v["clientContent"]["turnComplete"] = true.into();
                 Ok(v)
             }
@@ -487,7 +470,7 @@ impl Provider {
                 [Input::Message { message, native }] if native.is_none() && said(message) => {
                     Ok(json!({"realtimeInput": {"text": message.text()}}))
                 }
-                _ => Err(Unsupported::new(Why::Input, UNANSWERED).to(NAME).into()),
+                _ => Err(refuse(UNANSWERED)),
             },
         }
     }
@@ -505,7 +488,10 @@ impl Provider {
         match self.held.take() {
             None => {}
             Some(Held::Messages(_)) => {
-                return Err(Unsupported::new(Why::Input, UNANSWERED).to(NAME).into());
+                return Err(Fault::bad_request(format!(
+                    "{UNANSWERED} cannot be translated to {NAME}"
+                ))
+                .with(ErrorCode("unsupported".into())));
             }
             Some(Held::Results(results)) => out.push(self.results(&results)),
         }
@@ -515,7 +501,7 @@ impl Provider {
 
 /// The messages the Live API takes only as they came, in `clientContent`:
 /// it answers any other message at once, as the user's text.
-const UNANSWERED: &str = "a message other than the user's text answered at once";
+const UNANSWERED: &str = "a message but the user's text, answered at once,";
 
 /// Whether `message` is the user's text alone.
 fn said(message: &Message) -> bool {
@@ -540,12 +526,12 @@ fn shaped(native: &Option<NativeFields>) -> bool {
 }
 
 /// Messages as one `clientContent`, with what each event kept.
-fn messages_json(messages: &[Input]) -> Result<Value, Fault> {
+fn messages_json(messages: &[Input], refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let mut turns = Vec::new();
     let mut kept = Map::new();
     for event in messages {
         if let Input::Message { message, native } = event {
-            turns.push(message_json(message)?);
+            turns.push(message_json(message, refuse)?);
             if let Some(fields) = own(native) {
                 kept.extend(fields.clone());
             }

@@ -184,10 +184,8 @@ transcript's deltas and its end, with the usage reported since the last in
 transcription has none of, is not written. So a Mistral client transcribes
 with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
-A refusal is an `Unsupported` fault: `unsupported` for what a provider
-never takes (with what to send instead), `untranslatable` for what no
-format here writes yet, an input's the client's (closing it 1008), an
-output's the gateway's. Another format's natives, fields and events alike, are
+A refused input is `bad_request`, closing the client 1008; a refused
+output `upstream`. Another format's natives, fields and events alike, are
 dropped by a writer, with a warning at the provider's: what has meaning
 beyond its format belongs in the kind. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
