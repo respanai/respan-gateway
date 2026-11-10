@@ -43,13 +43,13 @@ We know that every turn resends the whole session. Here is what that does to the
 
 In a human conversation, input is about 7 times output. In a coding agent, it can be up to 100 times.
 
-![Share of tokens, input vs output: human chat 7 to 1, agents about 100 to 1](img/input-output-ratio.png)
+<p align="center"><img src="img/input-output-ratio.png" width="640" alt="Share of tokens, input vs output: human chat 7 to 1, agents about 100 to 1"></p>
 
 At the same time, input grows with the square of the turns in one session, because every turn resends everything before it. Each turn's prompt is a bit longer than the last, so the total keeps compounding. A 30-turn session reads about 2 million tokens, and a 60-turn one gets up to about 6.7 million. Twice the turns, 3.4 times the input.
 
 Also, inference cost is about GPU compute time. Within one read, time grows faster than the length of the prompt. Measured on an H100:
 
-![Time to read a prompt on an H100: 7.55 s at 100K tokens, against 2.6 s if time grew in step with length](img/read-time-vs-length.png)
+<p align="center"><img src="img/read-time-vs-length.png" width="640" alt="Time to read a prompt on an H100: 7.55 s at 100K tokens, against 2.6 s if time grew in step with length"></p>
 
 It's not even exponential; it's almost quadratic. Some providers now price that in: Haiku 5.5 costs five times as much per token above 100K, and GPT-6.1 Sol twice as much above 272K.
 
@@ -65,13 +65,13 @@ Three facts about the cache explain most of what happens in the rest of this art
 
 **Only the beginning can be reused.** Every token's key and value depend on everything before it, so changing one token invalidates everything after it. I changed a single token in a cached 32K prompt, at different positions:
 
-![Change one token, and everything after it is re-read](img/edit-one-token.png)
+<p align="center"><img src="img/edit-one-token.png" width="640" alt="Change one token, and everything after it is re-read"></p>
 
 **The cache belongs to one model.** Keys and values come out of that model's weights, so another model can't use them. Switch models mid-session and the new one reads everything from scratch. [Anthropic](https://platform.claude.com/docs/en/build-with-claude/cache-diagnostics), [OpenAI](https://developers.openai.com/api/docs/guides/prompt-caching) and [Google](https://aistudio.google.com/api-reference/caching) all say so in their docs.
 
 **The cache is really big.** It grows with every token in the session, and for a long session it can take up most of a GPU:
 
-![One long session's cache can fill a whole GPU](img/kv-size.png)
+<p align="center"><img src="img/kv-size.png" width="640" alt="One long session&#x27;s cache can fill a whole GPU"></p>
 
 ### 4 - A cache is born in GPU memory, but it can't stay there long
 
@@ -81,7 +81,7 @@ The memory is shared. The model's weights take a big share of it, and the rest h
 
 So old caches get deleted from GPU memory, least recently used first. I watched it happen by shrinking the cache pool on my H100 to about 71,000 tokens and opening eight 16K-token sessions, one after another:
 
-![When the GPU fills up, the oldest cache goes first](img/eviction.png)
+<p align="center"><img src="img/eviction.png" width="640" alt="When the GPU fills up, the oldest cache goes first"></p>
 
 The four newest sessions were still fully cached, and the three oldest were gone. The one in between had lost its end but kept its beginning, because a session is evicted from its tail first.
 
@@ -89,13 +89,13 @@ Evicted doesn't have to mean deleted. Inference servers can copy the cache down 
 
 When another request comes in, the cache can be moved back to the GPU. It's slower than having it stay on the GPU, but much faster than reading the prompt again:
 
-![An evicted cache can move down instead of dying](img/offload.png)
+<p align="center"><img src="img/offload.png" width="640" alt="An evicted cache can move down instead of dying"></p>
 
 There's one more catch. A cache lives on a particular machine, and a provider runs thousands of them. If your next turn lands on a different one, it's a miss, even though your cache exists. OpenAI's docs say it plainly: cached states live on individual machines. Providers will try to route each conversation back to the machine that has its cache, unless that machine is too busy.
 
 So a cache hit is not guaranteed. I ran two copies of the model side by side and sent the same 15 conversations through them three ways:
 
-![Your next turn has to land where your cache is](img/routing.png)
+<p align="center"><img src="img/routing.png" width="640" alt="Your next turn has to land where your cache is"></p>
 
 With a shared pool, any machine can fetch your cache, but it still has to pull it over first, so landing on the right machine is still faster.
 
@@ -105,7 +105,7 @@ Anthropic sells two cache lifetimes, five minutes and an hour, and nothing in be
 
 The longer a cache sits on a device, the more it costs to keep, and at some point keeping it costs more than reading the prompt again. Every kind of memory has its own line of cost against time, and we can estimate its break-even point:
 
-![Keeping a cache only pays for so long](img/hold-vs-recompute.png)
+<p align="center"><img src="img/hold-vs-recompute.png" width="640" alt="Keeping a cache only pays for so long"></p>
 
 Now look at Anthropic's two options again. Five minutes is about as long as a cache is worth keeping on the GPU. An hour is far too long for the GPU, but fits comfortably in CPU memory. So when you pick an option, you're also telling Anthropic where your cache should live.
 
@@ -115,13 +115,13 @@ On open models, a host's cache discount usually sits around what the model's mak
 
 But OpenAI doesn't sell gpt-oss-120b itself, so there's no maker's price to follow. Most of its hosts give no cache discount at all, even though caching works on it the same way it does on any other open model.
 
-![Hosts copy the model maker's cache price](img/host-cache-prices.png)
+<p align="center"><img src="img/host-cache-prices.png" width="640" alt="Hosts copy the model maker&#x27;s cache price"></p>
 
 ### 7 - Know what hit rate to expect
 
 Every request is part old, part new. The old part, the history or instructions the provider has already seen, can come from the cache. The new part never can. So the best hit rate you can get depends on how much of each request is old, and that depends on what you're building.
 
-![The hit rate you can expect depends on the workload](img/hit-rate-by-workload.png)
+<p align="center"><img src="img/hit-rate-by-workload.png" width="640" alt="The hit rate you can expect depends on the workload"></p>
 
 If you're well below what your kind of workload should get, something is breaking the cache. Anthropic and OpenAI now tell you what it was through their cache diagnostics.
 
@@ -129,7 +129,7 @@ If you're well below what your kind of workload should get, something is breakin
 
 Once reads cost 5% of input, writes become the expensive part. In a long coding session on Opus 5.5, writes are 60% of the bill.
 
-![With reads this cheap, the bill is in the writes](img/bill-breakdown.png)
+<p align="center"><img src="img/bill-breakdown.png" width="640" alt="With reads this cheap, the bill is in the writes"></p>
 
 So the biggest lever is not letting the cache go cold. Come back after it has expired and the next message pays to write the whole history again. Pay for a longer cache lifetime if you need one.
 
@@ -137,19 +137,19 @@ So the biggest lever is not letting the cache go cold. Come back after it has ex
 
 Most cache misses I found weren't the user's fault. They were bugs in the harness, the tool that builds each request for you, like Claude Code, Codex or Cline. And they show up nowhere except the bill.
 
-![Every layer of the prompt has broken someone's cache](img/harness-layers.png)
+<p align="center"><img src="img/harness-layers.png" width="640" alt="Every layer of the prompt has broken someone&#x27;s cache"></p>
 
 ### 10 - Think twice before switching models
 
 Switching models mid-session throws the cache away, because the cache belongs to one model. The new model has to read the whole history from scratch and pay to write it. That's how a cheaper model can make the next turn more expensive, and why it has to earn the switch back.
 
-![A cheaper model has to earn back the switch](img/switch-payback.png)
+<p align="center"><img src="img/switch-payback.png" width="640" alt="A cheaper model has to earn back the switch"></p>
 
 ### 11 - Does your router count the cache?
 
 A model router used to be pretty simple: pick the cheapest model that can finish the task. Caching makes it more complicated. The cheapest model for this request isn't always the cheapest for the session, because switching throws the cache away. A router has to understand the economics of caching, everything we've covered above, and pick the model on top of that. Most routers still don't:
 
-![Does your router count the cache?](img/router-kinds.png)
+<p align="center"><img src="img/router-kinds.png" width="640" alt="Does your router count the cache?"></p>
 
 A cache-aware router needs to know three things. First, which conversation a request belongs to, so it can keep that conversation on one model instead of judging every request alone. Second, what a switch really costs: staying means reading the history at the cache price, moving means writing all of it again on the new model, and the saving only counts over the turns that are likely left. Third, each provider's cache rules: how long a cache lives and how reliably it hits, because a cache that has already expired costs nothing to leave.
 
