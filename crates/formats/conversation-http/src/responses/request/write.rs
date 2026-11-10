@@ -158,7 +158,7 @@ fn write_input_part(c: &Content) -> Result<Value, Fault> {
         }
         Content::Image(media) | Content::Document(media) => write_media(c, media),
         Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Audio(_) => Err(Unsupported::new(Why::Input, "audio in Responses").into()),
+        Content::Audio(_) => Err(Unsupported::new(Why::Input, "audio").to("Responses").into()),
         _ => Err(Unsupported::new(Why::Input, "an unsupported kind of part").into()),
     }
 }

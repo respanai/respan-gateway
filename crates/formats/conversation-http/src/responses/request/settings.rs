@@ -231,7 +231,7 @@ pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(Unsupported::new(Why::Input, "audio in Responses").into()),
+        Content::Audio(_) => Err(Unsupported::new(Why::Input, "audio").to("Responses").into()),
         Content::Reasoning { .. } => {
             Err(Unsupported::new(Why::Input, "reasoning outside an assistant").into())
         }
@@ -282,9 +282,9 @@ pub(in crate::responses) fn write_reasoning(
     let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
     if let Some(r) = reasoning_of(input)? {
         if r.budget_tokens.is_some() {
-            return Err(
-                Unsupported::new(Why::Input, "a reasoning token budget in Responses").into(),
-            );
+            return Err(Unsupported::new(Why::Input, "a reasoning token budget")
+                .to("Responses")
+                .into());
         }
         if let Some(config) = config.as_object_mut() {
             if let Some(effort) = r.effort {

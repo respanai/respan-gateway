@@ -8,6 +8,12 @@ use super::{ErrorCode, Fault, FaultKind};
 /// refused gives the fault's kind and code. The fault keeps it as an
 /// extension, so an edge can tell a provider's lasting limit from a gap of
 /// the gateway's.
+///
+/// The message is written from its parts, so each is one kind of phrase:
+/// what is refused a noun phrase that names no format and gives no fix
+/// ("top_k", "a developer message"), where it goes [`to`](Self::to), and
+/// what to send instead [`fix`](Self::fix), an imperative ("give it the
+/// system role"). None ends in punctuation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unsupported {
     why: Why,
@@ -32,11 +38,13 @@ pub enum Why {
 }
 
 impl Unsupported {
-    /// `what`, such as "a developer message", refused for `why`.
+    /// `what`, a noun phrase such as "a developer message", refused for
+    /// `why`.
     pub fn new(why: Why, what: impl Into<Cow<'static, str>>) -> Self {
+        let what = phrase(what.into());
         Self {
             why,
-            what: what.into(),
+            what,
             to: None,
             fix: None,
         }
@@ -44,13 +52,13 @@ impl Unsupported {
 
     /// The provider or format that does not take it, by its own name.
     pub fn to(mut self, name: impl Into<Cow<'static, str>>) -> Self {
-        self.to = Some(name.into());
+        self.to = Some(phrase(name.into()));
         self
     }
 
-    /// What the client can send instead.
+    /// What the client can send instead, an imperative.
     pub fn fix(mut self, fix: impl Into<Cow<'static, str>>) -> Self {
-        self.fix = Some(fix.into());
+        self.fix = Some(phrase(fix.into()));
         self
     }
 
@@ -58,6 +66,16 @@ impl Unsupported {
     pub fn why(&self) -> Why {
         self.why
     }
+}
+
+/// `p`, which a debug build checks is a phrase the message can be written
+/// from: not empty, and not ending in punctuation that would split it.
+fn phrase(p: Cow<'static, str>) -> Cow<'static, str> {
+    debug_assert!(
+        !p.is_empty() && !p.ends_with([',', '.', ':', ';']),
+        "not a phrase for an Unsupported: {p:?}"
+    );
+    p
 }
 
 impl fmt::Display for Unsupported {

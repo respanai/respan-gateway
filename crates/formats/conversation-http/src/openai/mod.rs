@@ -314,7 +314,9 @@ impl Schema for OpenAiChat {
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
         if chat.options.top_k.is_some() {
-            return Err(Unsupported::new(Why::Input, "top_k in OpenAI Chat").into());
+            return Err(Unsupported::new(Why::Input, "top_k")
+                .to("OpenAI Chat")
+                .into());
         }
         Ok(v)
     }

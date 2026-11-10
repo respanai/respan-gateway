@@ -218,7 +218,7 @@ fn detection_json(turns: &Turns) -> Result<Value, Fault> {
         }
     };
     if vad.respond == Some(false) {
-        let what = "turns its voice detection ends without an answer";
+        let what = "turns that its voice detection ends without an answer";
         let refused = Unsupported::new(Why::Lasting, what).to(NAME);
         return Err(refused.fix("set turn detection to manual").into());
     }

@@ -725,8 +725,9 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             if description.is_some() || *strict == Some(false) {
                 return Err(Unsupported::new(
                     Why::Input,
-                    "a schema wrapper description or non-strict schema output in Gemini",
+                    "a schema wrapper description or non-strict schema output",
                 )
+                .to("Gemini")
                 .into());
             }
             set_field("responseMimeType", Some("application/json".into()));

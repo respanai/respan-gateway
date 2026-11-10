@@ -567,7 +567,9 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
         return Ok(own());
     };
     if r.summary == Some(false) {
-        return Err(Unsupported::new(Why::Input, "withholding the thinking in Anthropic").into());
+        return Err(Unsupported::new(Why::Input, "withholding the thinking")
+            .to("Anthropic")
+            .into());
     }
     Ok(match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
@@ -583,19 +585,21 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
 /// 1024, a temperature but 1, `top_k`.
 fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
     if budget < 1024 {
-        return Err(
-            Unsupported::new(Why::Input, "a thinking budget under 1024 in Anthropic").into(),
-        );
+        return Err(Unsupported::new(Why::Input, "a thinking budget under 1024")
+            .to("Anthropic")
+            .into());
     }
     if input.options.temperature.is_some_and(|t| t != 1.0) {
-        return Err(Unsupported::new(
-            Why::Input,
-            "a temperature other than 1 beside thinking in Anthropic",
-        )
-        .into());
+        return Err(
+            Unsupported::new(Why::Input, "a temperature other than 1 beside thinking")
+                .to("Anthropic")
+                .into(),
+        );
     }
     if input.options.top_k.is_some() {
-        return Err(Unsupported::new(Why::Input, "top_k beside thinking in Anthropic").into());
+        return Err(Unsupported::new(Why::Input, "top_k beside thinking")
+            .to("Anthropic")
+            .into());
     }
     Ok(())
 }

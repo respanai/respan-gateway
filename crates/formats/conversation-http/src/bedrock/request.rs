@@ -321,7 +321,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
 pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
     let o = &chat.options;
     if o.top_k.is_some() {
-        return Err(Unsupported::new(Why::Input, "top_k, which Bedrock takes per model").into());
+        return Err(Unsupported::new(Why::Input, "top_k").to("Bedrock").into());
     }
     if chat.user.is_some() {
         return Err(Unsupported::new(Why::Input, "an end user's id").into());
@@ -363,11 +363,10 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         let thinking = match (r.effort, r.budget_tokens) {
             (Some(Effort::Off), _) => json!({ "type": "disabled" }),
             (Some(_), _) => {
-                return Err(Unsupported::new(
-                    Why::Input,
-                    "a reasoning effort, which Bedrock names per model: give a token budget",
-                )
-                .into());
+                return Err(Unsupported::new(Why::Input, "a reasoning effort")
+                    .to("Bedrock")
+                    .fix("give a token budget")
+                    .into());
             }
             (None, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget }),
             (None, None) => return Ok(()),

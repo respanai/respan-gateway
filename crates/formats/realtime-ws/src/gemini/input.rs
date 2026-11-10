@@ -67,7 +67,7 @@ impl Client {
 
 /// A message the Live API refuses, as it closes the session.
 fn invalid(message: &str) -> Fault {
-    Fault::bad_request(message).with(CloseCode(1007))
+    Fault::bad_request(message).with(CloseCode::INVALID)
 }
 
 /// The events of a message after the setup, its client `answering` or not;
@@ -514,7 +514,7 @@ impl Provider {
 
 /// The messages the Live API takes only as they came, in `clientContent`:
 /// it answers any other message at once, as the user's text.
-const UNANSWERED: &str = "a message but the user's text, answered at once,";
+const UNANSWERED: &str = "a message other than the user's text answered at once";
 
 /// Whether `message` is the user's text alone.
 fn said(message: &Message) -> bool {

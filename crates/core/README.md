@@ -37,6 +37,8 @@ protocols and adapters all depend on it directly.
   yet write the client's ask in the provider's terms (the client's,
   `untranslatable`); `Output`, nor the provider's answer in the client's
   (the gateway's, `untranslatable`). The fault keeps it as an extension.
+  Its message is written from its parts: what, a noun phrase naming no
+  format; `to`, where; `fix`, an imperative.
 - `NativeFields { format, fields }` preserves unsupported fields on a typed
   value; `NativeValue { format, value }` an entire unsupported value. The
   format ID names the wire schema, not a provider deployment, so formats can

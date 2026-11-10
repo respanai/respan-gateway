@@ -109,7 +109,9 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
             );
         }
         _ => {
-            return Err(Unsupported::new(Why::Input, "more than one search in OpenAI Chat").into());
+            return Err(Unsupported::new(Why::Input, "more than one search")
+                .to("OpenAI Chat")
+                .into());
         }
     }
     let choice = match &chat.options.tool_choice {
@@ -218,7 +220,9 @@ fn openai_result(
         )
     };
     if content.iter().any(media) {
-        return Err(Unsupported::new(Why::Input, "media in an OpenAI tool message").into());
+        return Err(Unsupported::new(Why::Input, "media in a tool message")
+            .to("OpenAI Chat")
+            .into());
     }
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
@@ -353,7 +357,9 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {
             if matches!(media.source, MediaSource::Url(_)) {
-                return Err(Unsupported::new(Why::Input, "a document URL in OpenAI Chat").into());
+                return Err(Unsupported::new(Why::Input, "a document URL")
+                    .to("OpenAI Chat")
+                    .into());
             }
             let mut v = json!({"type":"file","file":{"file_data":url()}});
             if let Some(name) = &media.name {
@@ -363,7 +369,9 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         }
         _ => {
             let MediaSource::Bytes(bytes) = &media.source else {
-                return Err(Unsupported::new(Why::Input, "an audio URL in OpenAI Chat").into());
+                return Err(Unsupported::new(Why::Input, "an audio URL")
+                    .to("OpenAI Chat")
+                    .into());
             };
             let encoding = match media.mime_type.as_str() {
                 "audio/wav" | "audio/x-wav" => "wav",

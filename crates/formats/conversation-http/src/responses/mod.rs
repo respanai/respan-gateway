@@ -231,7 +231,9 @@ impl Schema for OpenAiResponses {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         if !chat.options.stop.is_empty() {
-            return Err(Unsupported::new(Why::Input, "stop sequences in Responses").into());
+            return Err(Unsupported::new(Why::Input, "stop sequences")
+                .to("Responses")
+                .into());
         }
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
@@ -256,7 +258,7 @@ impl Schema for OpenAiResponses {
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
         if chat.options.top_k.is_some() {
-            return Err(Unsupported::new(Why::Input, "top_k in Responses").into());
+            return Err(Unsupported::new(Why::Input, "top_k").to("Responses").into());
         }
         Ok(v)
     }
