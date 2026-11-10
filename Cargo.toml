@@ -65,7 +65,6 @@ respan-gateway-tool-vendors-green = { path = "crates/tool-vendors/green", versio
 respan-gateway-tool-vendors-yellow = { path = "crates/tool-vendors/yellow", version = "0.1.1" }
 respan-gateway-tool-vendors = { path = "crates/tool-vendors", version = "0.1.1" }
 respan-gateway-plugin-mcp-router = { path = "crates/plugins/mcp-router", version = "0.1.0" }
-respan-gateway-plugin-avif = { path = "crates/plugins/avif", version = "0.1.0" }
 async-trait = "0.1"
 axum = "0.8"
 bytes = "1"

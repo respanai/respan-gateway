@@ -1,18 +1,9 @@
 [advisories]
 version = 2
-ignore = [
-    # paste is archived, not vulnerable: a compile-time macro of rav1d, the AVIF plugin's AV1 decoder.
-    { id = "RUSTSEC-2024-0436", reason = "unmaintained proc-macro used only at build time by rav1d" },
-]
 
 [licenses]
 version = 2
 allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib", "CDLA-Permissive-2.0"]
-
-# rav1d (the AVIF plugin's AV1 decoder) uses to_method, dedicated to the public domain.
-[[licenses.exceptions]]
-crate = "to_method"
-allow = ["CC0-1.0"]
 
 [bans]
 multiple-versions = "warn"
