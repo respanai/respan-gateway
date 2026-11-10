@@ -5,7 +5,8 @@ use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
 use crate::schema::{NativeFieldsExt, merge_missing, warn_reasoning};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
-use respan_gateway_core::{Fault, NativeFields, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 /// The key in a request's native that says its leading system message was

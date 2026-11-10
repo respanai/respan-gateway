@@ -9,7 +9,8 @@ use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
     Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use super::{GEMINI, ROLES, SYNTHETIC};

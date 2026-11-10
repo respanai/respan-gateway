@@ -45,10 +45,11 @@ use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
     block_fields,
 };
+use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
-use respan_gateway_core::{Provider, Unsupported, Why};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo, http};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use decode::AnthropicDecoder;

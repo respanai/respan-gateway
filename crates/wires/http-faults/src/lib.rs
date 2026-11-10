@@ -1,7 +1,8 @@
 #![warn(missing_docs)]
 //! Faults in HTTP's terms, with no I/O: the status and error code a
-//! [`Fault`] asks for, whether a failed attempt is worth another, and a
-//! provider's error answer read into a fault. A plugin that sets or reads a
+//! [`Fault`] asks for, whether a failed attempt is worth another, a
+//! provider's error answer read into a fault, and what a format does not
+//! take ([`Unsupported`]), a fault whose status follows from why. A plugin that sets or reads a
 //! status depends on this crate alone, not on the HTTP wire.
 
 use respan_gateway_core::FaultKind;
@@ -10,7 +11,11 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use http::StatusCode;
 use http::header::RETRY_AFTER;
-use respan_gateway_core::{Fault, RetryAfter, Unsupported, Why};
+use respan_gateway_core::{Fault, RetryAfter};
+
+mod unsupported;
+
+pub use unsupported::{Unsupported, Why};
 
 /// The HTTP status a fault asks for, as an extension ([`Fault::with`]): a plugin's
 /// `Fault::new(msg).with(Status(StatusCode::TOO_MANY_REQUESTS))`, a

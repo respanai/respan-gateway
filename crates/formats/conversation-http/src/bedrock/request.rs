@@ -7,7 +7,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};

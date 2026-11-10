@@ -3,8 +3,9 @@
 
 use std::collections::HashMap;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Status, Usage};
 use serde_json::{Value, json};
 

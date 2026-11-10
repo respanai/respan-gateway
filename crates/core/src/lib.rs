@@ -28,7 +28,7 @@ pub use call::Call;
 pub use context::ClientContext;
 pub use events::{EventSink, EventStream};
 pub use extensions::Extensions;
-pub use fault::{Details, ErrorCode, Fault, FaultKind, RetryAfter, Unsupported, Why, guarded};
+pub use fault::{Details, ErrorCode, Fault, FaultKind, RetryAfter, guarded};
 pub use format::{Connection, Format};
 pub use gateway::Gateway;
 pub use native::{FormatId, NativeFields, NativeValue};

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fmt;
 
-use super::{ErrorCode, Fault, FaultKind};
+use respan_gateway_core::{ErrorCode, Fault, FaultKind};
 
 /// What a provider or the gateway does not take, which a fault is made of
 /// (`?` or `Fault::from`): its message names what and where, and why it is

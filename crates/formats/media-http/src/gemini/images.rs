@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{invalid, kept, native_of};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider, Unsupported, Why};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -17,6 +17,7 @@ use respan_gateway_http::http::{
 };
 use respan_gateway_http::{All, ClientIo, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 

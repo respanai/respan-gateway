@@ -1,6 +1,7 @@
 //! A session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::{Fault, Unsupported, Why};
+use respan_gateway_core::Fault;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
 

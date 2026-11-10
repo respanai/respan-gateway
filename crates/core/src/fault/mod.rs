@@ -1,8 +1,6 @@
 mod extensions;
-mod unsupported;
 
 pub use extensions::{Details, ErrorCode, RetryAfter};
-pub use unsupported::{Unsupported, Why};
 
 use std::error::Error;
 use std::fmt;

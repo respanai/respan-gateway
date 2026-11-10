@@ -2,8 +2,9 @@
 //! [`Input`], read at the client's edge and written at the provider's.
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
 use serde_json::{Value, json};
 

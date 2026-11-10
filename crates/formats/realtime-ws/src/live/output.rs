@@ -1,8 +1,9 @@
 //! What the model says: the Live API's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
-use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output};
 use serde_json::{Value, json};
 

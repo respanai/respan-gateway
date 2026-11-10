@@ -15,7 +15,8 @@ use respan_gateway_conversation::{
     Content, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
     ToolChoice,
 };
-use respan_gateway_core::{Fault, Unsupported, Why};
+use respan_gateway_core::Fault;
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use crate::openai::{OPENAI, OpenAiChat};

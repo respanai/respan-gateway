@@ -13,8 +13,9 @@ use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, ProviderTool, Reasoning, ResponseFormat, Tool,
     ToolChoice,
 };
+use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
-use respan_gateway_core::{Fault, Unsupported, Why};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::output_schema::output_schema;

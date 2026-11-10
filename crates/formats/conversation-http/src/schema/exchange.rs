@@ -8,7 +8,8 @@
 //! parameters ([`Schema::CARRIED`]).
 
 use crate::schema::UNWRITABLE;
-use respan_gateway_core::{FaultKind, Unsupported, Why};
+use respan_gateway_core::FaultKind;
+use respan_gateway_http_faults::{Unsupported, Why};
 use std::sync::Arc;
 
 use respan_gateway_conversation::Usage;

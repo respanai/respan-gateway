@@ -1,9 +1,10 @@
 //! What the client says: Mistral's client events as the kind's [`Input`],
 //! read at the client's edge, and the kind's written to Mistral's session.
 
-use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, Turns};
 use serde_json::{Value, json};
 

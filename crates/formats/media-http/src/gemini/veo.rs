@@ -9,7 +9,7 @@ use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeFields, Unsupported, Why};
+use respan_gateway_core::{Connection, Fault, Format, NativeFields};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -18,6 +18,7 @@ use respan_gateway_http::http::{
 use respan_gateway_http::path::forwarded_path;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
 

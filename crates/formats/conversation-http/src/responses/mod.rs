@@ -81,10 +81,11 @@ use crate::schema::{
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
+use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
-use respan_gateway_core::{Provider, Unsupported, Why};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 pub use decode::ResponsesDecoder;

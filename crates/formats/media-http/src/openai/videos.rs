@@ -11,7 +11,7 @@ use super::{
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, Unsupported, Why};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -20,6 +20,7 @@ use respan_gateway_http::http::{
 use respan_gateway_http::path::{escape, forwarded_path};
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Jobs, Output, Status, Variant};
 use serde_json::{Map, Value, json};
 

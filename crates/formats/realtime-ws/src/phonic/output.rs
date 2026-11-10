@@ -3,9 +3,10 @@
 
 use std::time::Instant;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{Audio, Cause, Output, Status};
 use serde_json::{Value, json};
 

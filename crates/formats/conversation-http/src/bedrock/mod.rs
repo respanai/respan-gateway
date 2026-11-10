@@ -61,10 +61,11 @@ use crate::schema::{
     Asked, Framing, Names, NativeFieldsExt, Schema, UNWRITABLE, native_fields, rest_of,
 };
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
-use respan_gateway_core::{Connection, Fault, Format, Provider, Unsupported, Why};
+use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 use decode::ConverseDecoder;

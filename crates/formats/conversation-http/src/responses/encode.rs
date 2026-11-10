@@ -9,9 +9,10 @@ use crate::schema::{
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
 };
-use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Encoder, raw::RawReply};
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 

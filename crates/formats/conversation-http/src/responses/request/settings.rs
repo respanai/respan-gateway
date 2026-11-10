@@ -10,7 +10,8 @@ use crate::schema::{
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, Unsupported, Why};
+use respan_gateway_core::Fault;
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value, json};
 
 // -------------------------------------------------------------------- tools

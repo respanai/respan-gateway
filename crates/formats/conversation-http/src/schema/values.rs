@@ -8,7 +8,8 @@ use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
-use respan_gateway_core::{Fault, NativeFields, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_http_faults::{Unsupported, Why};
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 

@@ -5,9 +5,10 @@ use crate::schema::{
     merge_into, own_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::{Fault, NativeValue, Unsupported, Why};
+use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 

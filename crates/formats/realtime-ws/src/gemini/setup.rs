@@ -1,6 +1,7 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
-use respan_gateway_core::{Fault, Unsupported, Why};
+use respan_gateway_core::Fault;
+use respan_gateway_http_faults::{Unsupported, Why};
 use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, ToolChoice, Turns, Vad};
 use serde_json::{Map, Value, json};
 
