@@ -961,7 +961,7 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
     let mut shown = Message::new(Role::User, "");
     shown.content = vec![Content::tool_result(
         "c1",
-        vec!["read".into(), image],
+        vec!["read".into(), image.clone()],
         false,
     )];
     let sent = OpenAiChat
@@ -972,8 +972,39 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
         sent["messages"][0],
         json!({ "role": "tool", "tool_call_id": "c1", "content": "read" })
     );
-    assert_eq!(sent["messages"][1]["role"], "user");
-    assert_eq!(sent["messages"][1]["content"][0]["type"], "image_url");
+    let url = json!({ "url": "https://x.test/a.png" });
+    let media = |id: &str| {
+        json!([{ "type": "text", "text": format!("Media returned by tool call {id}:") },
+            { "type": "image_url", "image_url": url }])
+    };
+    assert_eq!(
+        sent["messages"][1],
+        json!({ "role": "user", "content": media("c1") })
+    );
+    // Results' tool messages come first, then their media in call order;
+    // a result of media alone points to it.
+    let mut both = Message::new(Role::User, "");
+    both.content = vec![
+        Content::tool_result("c1", vec![image.clone()], false),
+        Content::tool_result("c2", vec![image], false),
+    ];
+    let sent = OpenAiChat
+        .encode_request(&Input::new([both]))
+        .map(Value::from);
+    let pointer = "The result is in the next message.";
+    let mut parts = media("c1");
+    parts
+        .as_array_mut()
+        .expect("parts")
+        .extend(media("c2").as_array().expect("parts").clone());
+    assert_eq!(
+        sent.expect("written")["messages"],
+        json!([
+            { "role": "tool", "tool_call_id": "c1", "content": pointer },
+            { "role": "tool", "tool_call_id": "c2", "content": pointer },
+            { "role": "user", "content": parts },
+        ])
+    );
     // OpenAI cannot flag a call that failed: its text says so.
     let mut failed = Message::new(Role::User, "");
     failed.content = vec![Content::tool_result("c1", vec!["no".into()], true)];
