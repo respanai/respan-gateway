@@ -51,8 +51,8 @@ type Clock = Box<dyn FnMut() -> Instant + Send>;
 /// `wss://api.phonic.ai/v1`, with no query.
 ///
 /// Its `config`, audio, the user's turns and transcript, the model's turns
-/// and transcript, interruptions and errors are the kind's; the rest, such
-/// as tools and its own `say`, stays native. It bills a conversation by its
+/// and transcript, its tools' calls and answers, interruptions and errors
+/// are the kind's; the rest, such as its own `say`, stays native. It bills a conversation by its
 /// minutes and says no usage, so the seconds since its conversation was
 /// created are [`Output::Seconds`] at each frame but its audio, and at its
 /// end. Its client

@@ -4,7 +4,8 @@
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
+    Audio, AudioFormat, Encoding, Input, Modality, Output, Purpose, Session, ToolChoice,
+    ToolResult, Turns,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
@@ -18,8 +19,12 @@ use crate::session::{Say, changes};
 /// The longest audio chunk Phonic takes, in milliseconds.
 const CHUNK_MS: usize = 40;
 
-/// A client's frames as events: its `config` and its audio; any other is
-/// native.
+/// The silence written after a `mute`, in milliseconds: Phonic ends a
+/// muted turn only once more audio reaches it.
+const HUSH_MS: usize = 1_000;
+
+/// A client's frames as events: its `config`, its audio and its tools'
+/// answers; any other is native.
 #[derive(Debug)]
 pub(super) struct Client {
     /// The format of the client's audio, as its `config` says.
@@ -56,6 +61,15 @@ impl Client {
                     native: json::native(NAME, rest),
                 })
             }
+            Some("tool_call_output") => {
+                let id = take(&mut rest, &["tool_call_id"], string, text);
+                let output = take(&mut rest, &["output"], answered, |s| Some(answer(s)));
+                id.zip(output).map(|(id, output)| {
+                    let mut result = ToolResult::new(id, output);
+                    result.native = json::native(NAME, rest);
+                    Input::ToolResult(result)
+                })
+            }
             _ => None,
         };
         out.push(event.unwrap_or_else(|| Input::native(NAME, v)));
@@ -64,7 +78,13 @@ impl Client {
 }
 
 /// The client's events written to the provider: its first session as
-/// `config`, which fixes the session, and its audio, in chunks Phonic takes.
+/// `config`, which fixes the session, its audio, in chunks Phonic takes,
+/// and its tools' answers.
+///
+/// With turns the client ends, the user's first audio of a turn unmutes
+/// it and its commit mutes it, which makes Phonic answer. A response asked
+/// for after a commit or a tool's answer, which Phonic answers itself, is
+/// dropped.
 #[derive(Debug)]
 pub(super) struct Provider {
     /// The model routing chose, else the one at the client's `?model=`.
@@ -79,6 +99,12 @@ pub(super) struct Provider {
     /// The format of the audio it takes, as its `config` said.
     input: AudioFormat,
     convert: Convert,
+    /// Whether the client ends the user's turns, as its `config` said.
+    manual: bool,
+    /// Whether the user's turn is open, with turns the client ends.
+    listening: bool,
+    /// Whether what the client last said makes Phonic answer.
+    answered: bool,
 }
 
 impl Provider {
@@ -91,6 +117,9 @@ impl Provider {
             say,
             input: DEFAULT_FORMAT,
             convert: Convert::default(),
+            manual: false,
+            listening: false,
+            answered: false,
         }
     }
 
@@ -115,17 +144,35 @@ impl Provider {
                 let Some(data) = self.convert.to(audio, self.input) else {
                     return refuse("audio of this format");
                 };
-                let chunks = data.chunks(chunk_bytes(self.input)).map(|chunk| {
-                    let mut v = json!({"type": "audio_chunk", "audio": json::base64(chunk)});
+                let mut frames = Vec::new();
+                if self.manual && !std::mem::replace(&mut self.listening, true) {
+                    frames.push(json!({"type": "unmute"}));
+                }
+                frames.extend(chunks(&data, self.input).map(|mut v| {
                     merge(&mut v, own(native));
                     v
-                });
-                Ok(chunks.collect())
+                }));
+                Ok(frames)
             }
+            Input::Commit { .. } if self.manual => {
+                (self.listening, self.answered) = (false, true);
+                let hush = silence(self.input);
+                let mute = std::iter::once(json!({"type": "mute"}));
+                Ok(mute.chain(chunks(&hush, self.input)).collect())
+            }
+            Input::Commit { .. } => refuse("a commit under the provider's voice detection"),
+            Input::ToolResult(result) => {
+                self.answered = true;
+                let mut v = json!({"type": "tool_call_output", "tool_call_id": result.id,
+                    "output": answer(&result.output)});
+                merge(&mut v, own(&result.native));
+                Ok(vec![v])
+            }
+            Input::Respond { .. } if std::mem::take(&mut self.answered) => Ok(Vec::new()),
             Input::Native(NativeValue { format, value }) if **format == *NAME => {
                 Ok(vec![Value::clone(value)])
             }
-            // Commits, messages, tools' answers, responses and cancels: it
+            // Messages, cancels and a response to nothing it answers: it
             // has none of them as the kind has them.
             _ => refuse("this event"),
         }
@@ -135,8 +182,9 @@ impl Provider {
     /// handshake's, which routing judged, else its own; each audio format
     /// the client's if Phonic takes it, else its own, which the audio is
     /// converted to; a voice only from a Phonic client, as another
-    /// format's names another vendor's. The provider's voice detection and
-    /// transcription, which it always does, are dropped.
+    /// format's names another vendor's. Turns the client ends are its push
+    /// to talk; the provider's voice detection and transcription, which it
+    /// always does, are dropped.
     fn start(&mut self, s: &Session) -> Result<Value, Fault> {
         self.asked = Some(s.clone());
         let mut s = s.clone();
@@ -145,13 +193,18 @@ impl Provider {
         let unsupported = [
             (s.purpose == Some(Purpose::Transcription), "a transcription"),
             (s.output == Some(Modality::Text), "text output"),
-            (s.turns == Some(Turns::Manual), "turns the client ends"),
-            (s.tools.as_ref().is_some_and(|t| !t.is_empty()), "tools"),
+            (
+                s.tool_choice
+                    .as_ref()
+                    .is_some_and(|c| *c != ToolChoice::Auto),
+                "a tool choice but `auto`",
+            ),
             (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
             return Err(untranslatable_input(NAME, what));
         }
+        self.manual = s.turns == Some(Turns::Manual);
         s.input_audio = s.input_audio.filter(|f| session::takes(*f));
         s.output_audio = s.output_audio.filter(|f| session::takes(*f));
         self.input = s.input_audio.unwrap_or(DEFAULT_FORMAT);
@@ -182,4 +235,35 @@ impl Provider {
 /// The bytes of [`CHUNK_MS`] of audio in `format`.
 fn chunk_bytes(format: AudioFormat) -> usize {
     format.rate as usize * CHUNK_MS / 1000 * format.sample_bytes()
+}
+
+/// `data`, audio in `format`, as chunks Phonic takes.
+fn chunks(data: &[u8], format: AudioFormat) -> impl Iterator<Item = Value> {
+    data.chunks(chunk_bytes(format))
+        .map(|chunk| json!({"type": "audio_chunk", "audio": json::base64(chunk)}))
+}
+
+/// [`HUSH_MS`] of silence in `format`.
+fn silence(format: AudioFormat) -> Vec<u8> {
+    let sample = match format.encoding {
+        Encoding::Mulaw => 0xFF,
+        Encoding::Alaw => 0xD5,
+        _ => 0,
+    };
+    vec![sample; format.rate as usize * HUSH_MS / 1000 * format.sample_bytes()]
+}
+
+/// What a tool answered, as the kind has it: text as it is, any other
+/// value as JSON text.
+fn answered(output: &Value) -> Option<String> {
+    Some(match output {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    })
+}
+
+/// What a tool answered, as Phonic takes it: the value its JSON text
+/// says, else the text.
+fn answer(output: &str) -> Value {
+    serde_json::from_str(output).unwrap_or_else(|_| output.into())
 }
