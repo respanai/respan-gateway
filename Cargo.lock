@@ -2146,6 +2146,7 @@ dependencies = [
  "respan-gateway-sse",
  "respan-gateway-vendor-kit",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

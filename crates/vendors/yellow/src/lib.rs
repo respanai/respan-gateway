@@ -11,6 +11,7 @@ pub mod deepseek;
 pub mod empiriolabs;
 pub mod fireworks;
 pub mod groq;
+pub mod minimax;
 pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
@@ -32,6 +33,7 @@ pub const ALL: &[&Vendor] = &[
     &openrouter::VENDOR,
     &xai::VENDOR,
     &mistral::VENDOR,
+    &minimax::VENDOR,
     &together::VENDOR,
     &fireworks::VENDOR,
     &azure::VENDOR,
