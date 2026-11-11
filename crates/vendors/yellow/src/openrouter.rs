@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, images and embeddings.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -11,7 +11,7 @@ use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiImages};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -36,6 +36,7 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(OpenAiImages, OpenRouterImages),
             Some(BASE_URL),
         ),
+        (&OpenAiEmbeddings, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
