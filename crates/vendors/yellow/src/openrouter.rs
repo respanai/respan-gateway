@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, images and videos.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -7,11 +7,14 @@ use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_core::{ErrorCode, Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media::{image, video};
+use respan_gateway_media_http::openai::{OpenAiImages, OpenAiVideos};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -34,6 +37,10 @@ pub const VENDOR: Vendor = Vendor {
         (&AnthropicMessages, Some(MESSAGES_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiVideos, OpenRouterVideos),
             Some(BASE_URL),
         ),
     ],
@@ -162,6 +169,96 @@ impl Filter<image::Output> for Counted {
     }
 }
 
+/// What OpenAI's video ids start with.
+const VIDEO_ID: &str = "video_";
+
+/// OpenRouter's videos, as they depart from OpenAI's: a creation's
+/// `seconds` is its `duration`, a number, and its reference image the
+/// first of its `frame_images`, a URL or a data URL of its bytes, in JSON.
+/// Its job says `pending` for OpenAI's `queued` and why it failed as a
+/// string. Its ids start `gen-vid-`: they are given OpenAI's `video_`
+/// before them, as a follow-up finds its job's provider by its id's
+/// spelling, and are called without it. It serves a job and its video
+/// alone: a remix, a deletion, a list or another variant fails
+/// `unsupported` before sending.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterVideos;
+
+impl Dialect for OpenRouterVideos {
+    type Input = video::Input;
+    type Output = video::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<video::Input>>> {
+        Some(Box::new(taken_video))
+    }
+
+    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        let essence = content_type(head)?.split(';').next()?.trim();
+        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
+            return None;
+        }
+        Some(Box::new(openai_job))
+    }
+}
+
+/// `input` as OpenRouter takes it: a creation's `duration` and
+/// `frame_images`, and a job's id as OpenRouter gave it.
+fn taken_video(input: &mut video::Input) -> Result<(), Fault> {
+    match input {
+        video::Input::Create(create) => {
+            let mut fields = kept(OpenAiVideos::NAME, &create.native);
+            if let Some(seconds) = create.seconds.take() {
+                fields.entry("duration").or_insert_with(|| seconds.into());
+            }
+            if let Some(reference) = create.reference.take() {
+                let frame = json!({ "type": "image_url", "frame_type": "first_frame",
+                    "image_url": { "url": media_url(&reference) } });
+                fields
+                    .entry("frame_images")
+                    .or_insert_with(|| vec![frame].into());
+            }
+            create.native = native_of(OpenAiVideos::NAME, fields);
+        }
+        video::Input::Retrieve { id }
+        | video::Input::Content {
+            id,
+            variant: video::Variant::Video,
+            ..
+        } => {
+            if let Some(its) = id.strip_prefix(VIDEO_ID) {
+                *id = its.to_owned();
+            }
+        }
+        _ => {
+            return Err(
+                Fault::bad_request("OpenRouter serves a video job and its video alone")
+                    .with(ErrorCode("unsupported".into())),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Its job as OpenAI's; an answer that is no JSON object is left as it is.
+fn openai_job(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut job) = serde_json::from_slice::<Map<String, Value>>(&raw) else {
+        return Ok(raw);
+    };
+    if let Some(id) = job.get("id").and_then(Value::as_str) {
+        job.insert("id".into(), format!("{VIDEO_ID}{id}").into());
+    }
+    if job.get("status").and_then(Value::as_str) == Some("pending") {
+        job.insert("status".into(), "queued".into());
+    }
+    if let Some(message) = job.get("error").and_then(Value::as_str) {
+        let error = Map::from_iter([("message".to_owned(), message.into())]);
+        job.insert("error".into(), error.into());
+    }
+    serde_json::to_vec(&job)
+        .map(Bytes::from)
+        .map_err(|e| Fault::internal("a video job is no JSON").with_source(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +375,37 @@ mod tests {
         let mut head = call.into_parts().0;
         OpenRouterImages.request(&mut head).expect("a path");
         assert_eq!(head.uri.path(), "/images");
+    }
+
+    #[test]
+    fn a_video_job_goes_and_comes_as_openais() {
+        let mut create = video::Create::new("a wave");
+        create.seconds = Some(4);
+        let mut input = video::Input::Create(create);
+        taken_video(&mut input).expect("taken");
+        let video::Input::Create(create) = &input else {
+            panic!("a creation");
+        };
+        assert_eq!(create.seconds, None);
+        assert_eq!(kept(OpenAiVideos::NAME, &create.native)["duration"], 4);
+
+        let job = json!({ "id": "gen-vid-1-a", "status": "pending", "error": "no credits" });
+        let job = openai_job(Bytes::from(job.to_string())).expect("read");
+        let job: Value = serde_json::from_slice(&job).expect("JSON");
+        assert_eq!(
+            job,
+            json!({ "id": "video_gen-vid-1-a", "status": "queued",
+                "error": { "message": "no credits" } })
+        );
+
+        let mut poll = video::Input::Retrieve {
+            id: "video_gen-vid-1-a".into(),
+        };
+        taken_video(&mut poll).expect("taken");
+        assert!(matches!(&poll, video::Input::Retrieve { id } if id == "gen-vid-1-a"));
+        let mut delete = video::Input::Delete {
+            id: "video_gen-vid-1-a".into(),
+        };
+        assert!(taken_video(&mut delete).is_err());
     }
 }
