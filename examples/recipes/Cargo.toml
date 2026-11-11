@@ -26,19 +26,19 @@ respan-gateway-plugin-fallback.workspace = true
 respan-gateway-core.workspace = true
 respan-gateway-http.workspace = true
 serde_json.workspace = true
-rusqlite = { version = "0.32.1", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]
-respan-gateway-plugin-relay = { path = "../crates/plugins/relay" }
-respan-gateway-plugin-routing = { path = "../crates/plugins/routing" }
+respan-gateway-plugin-relay = { path = "../../crates/plugins/relay" }
+respan-gateway-plugin-routing = { path = "../../crates/plugins/routing" }
 sha2 = "0.10"
 respan-gateway-http.workspace = true
-respan-gateway-http-transport = { path = "../crates/wires/http-transport" }
-respan-gateway-mcp = { path = "../crates/kinds/mcp" }
-respan-gateway-mcp-http = { path = "../crates/formats/mcp-http" }
-respan-gateway-ws = { path = "../crates/wires/ws" }
-respan-gateway-serve = { path = "../crates/serve" }
+respan-gateway-http-transport = { path = "../../crates/wires/http-transport" }
+respan-gateway-mcp = { path = "../../crates/kinds/mcp" }
+respan-gateway-mcp-http = { path = "../../crates/formats/mcp-http" }
+respan-gateway-ws = { path = "../../crates/wires/ws" }
+respan-gateway-serve = { path = "../../crates/serve" }
 mockllm = { git = "https://github.com/lihe07/mockllm", rev = "26cf441" }
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 async-trait.workspace = true

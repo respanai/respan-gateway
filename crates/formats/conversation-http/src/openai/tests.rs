@@ -953,15 +953,46 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
             { "role": "user", "content": "and then?" },
         ]))
     );
-    // OpenAI's tool messages hold text alone.
-    let image = Content::Image(Media::new("image/png", MediaSource::Url("u".into())));
+    // OpenAI's tool messages hold text alone: the results' media follows
+    // them, in call order, and a result of media alone points to it.
+    let image = Content::Image(Media::new(
+        "image/png",
+        MediaSource::Url("https://x.test/a.png".into()),
+    ));
     let mut shown = Message::new(Role::User, "");
-    shown.content = vec![Content::tool_result("c1", vec![image], false)];
-    assert!(OpenAiChat.encode_request(&Input::new([shown])).is_err());
-    // OpenAI cannot say a call failed.
+    shown.content = vec![
+        Content::tool_result("c1", vec!["read".into(), image.clone()], false),
+        Content::tool_result("c2", vec![image], false),
+    ];
+    let sent = OpenAiChat
+        .encode_request(&Input::new([shown]))
+        .map(Value::from);
+    let image = json!({ "type": "image_url", "image_url": { "url": "https://x.test/a.png" } });
+    assert_eq!(
+        sent.expect("written")["messages"],
+        json!([
+            { "role": "tool", "tool_call_id": "c1", "content": "read" },
+            { "role": "tool", "tool_call_id": "c2", "content": "The result is in the next message." },
+            { "role": "user", "content": [
+                { "type": "text", "text": "Media returned by tool call c1:" },
+                image,
+                { "type": "text", "text": "Media returned by tool call c2:" },
+                image,
+            ] },
+        ])
+    );
+    // OpenAI cannot flag a call that failed: its text says so.
     let mut failed = Message::new(Role::User, "");
     failed.content = vec![Content::tool_result("c1", vec!["no".into()], true)];
-    assert!(OpenAiChat.encode_request(&Input::new([failed])).is_err());
+    let sent = OpenAiChat
+        .encode_request(&Input::new([failed]))
+        .map(Value::from);
+    let sent = sent.expect("written");
+    let parts = json!([{ "type": "text", "text": "Error: " }, { "type": "text", "text": "no" }]);
+    assert_eq!(
+        sent["messages"][0],
+        json!({ "role": "tool", "tool_call_id": "c1", "content": parts })
+    );
 }
 
 #[test]

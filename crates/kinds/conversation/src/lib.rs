@@ -205,6 +205,7 @@ pub fn set_model(
 
 /// One message of a conversation: its author and what it says.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct Message {
     /// Its author.
@@ -251,6 +252,7 @@ impl Message {
 
 /// Who wrote a message.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Role {
     /// Instructions for the model.
@@ -286,6 +288,7 @@ impl Role {
 /// A part of a message; a plugin that must see all of it refuses variants
 /// it does not know.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Content {
     /// Text.
@@ -905,6 +908,42 @@ mod tests {
         let mut all = Assembled::default();
         events.iter().try_for_each(|e| all.push(e))?;
         Ok(all)
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_message_is_read_back_as_it_was_kept() {
+        let native = NativeFields::new(
+            "f",
+            json!({"signature": "s"})
+                .as_object()
+                .cloned()
+                .expect("an object"),
+        );
+        let mut message = Message::new(Role::native("f", "tool"), "hi");
+        message.native = Some(native.clone());
+        message.content.extend([
+            Content::Reasoning {
+                text: "why".into(),
+                native: Some(native),
+            },
+            Content::tool_call("c1", "lookup", "{}"),
+            Content::tool_result("c1", vec![Content::from("42")], false),
+            Content::Image(Media::new(
+                "image/png",
+                MediaSource::Bytes(bytes::Bytes::from_static(b"png")),
+            )),
+            Content::Document(Media::new(
+                "application/pdf",
+                MediaSource::Url("https://x.test/a.pdf".into()),
+            )),
+            Content::native("f", json!({"type": "web_search_call"})),
+        ]);
+        let kept = serde_json::to_vec(&message).expect("kept");
+        assert_eq!(
+            serde_json::from_slice::<Message>(&kept).expect("read back"),
+            message
+        );
     }
 
     #[test]
