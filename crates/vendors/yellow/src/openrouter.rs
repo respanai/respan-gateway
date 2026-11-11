@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, images and speech.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -10,8 +10,8 @@ use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media::{image, speech};
+use respan_gateway_media_http::openai::{OpenAiImages, OpenAiSpeech};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -34,6 +34,10 @@ pub const VENDOR: Vendor = Vendor {
         (&AnthropicMessages, Some(MESSAGES_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiSpeech, OpenRouterSpeech),
             Some(BASE_URL),
         ),
     ],
@@ -162,6 +166,37 @@ impl Filter<image::Output> for Counted {
     }
 }
 
+/// OpenRouter's speech, as it departs from OpenAI's: asked for no
+/// `response_format` it answers `pcm`, so it is asked for `mp3`, which
+/// OpenAI answers then. It answers `mp3` and `pcm` alone: any other fails
+/// `bad_request` before sending.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterSpeech;
+
+impl Dialect for OpenRouterSpeech {
+    type Input = speech::Input;
+    type Output = speech::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
+        Some(Box::new(in_mp3))
+    }
+}
+
+/// `input` asking for `mp3`, unless it asks for a format, which is `mp3`
+/// or `pcm`.
+fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
+    match input
+        .audio_format
+        .get_or_insert_with(|| "mp3".into())
+        .as_str()
+    {
+        "mp3" | "pcm" => Ok(()),
+        _ => Err(Fault::bad_request(
+            "OpenRouter speaks in 'mp3' or 'pcm' alone",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +313,17 @@ mod tests {
         let mut head = call.into_parts().0;
         OpenRouterImages.request(&mut head).expect("a path");
         assert_eq!(head.uri.path(), "/images");
+    }
+
+    #[test]
+    fn speech_of_no_format_is_asked_in_mp3() {
+        let mut input = speech::Input::new("hi");
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("mp3"));
+        input.audio_format = Some("pcm".into());
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("pcm"));
+        input.audio_format = Some("wav".into());
+        assert!(in_mp3(&mut input).is_err());
     }
 }
