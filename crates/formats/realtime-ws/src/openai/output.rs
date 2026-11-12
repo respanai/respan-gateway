@@ -203,10 +203,10 @@ fn status(v: &mut Value) -> Option<Status> {
         (_, None) => Status::Native {
             format: NAME.into(),
             reason: said.clone(),
-            // Such as an incomplete response at its token limit.
-            fallback: Box::new(match said.as_str() {
-                "cancelled" => Status::Cancelled,
-                "incomplete" => Status::Completed,
+            // A response cut at its token limit is whole as far as it went.
+            fallback: Box::new(match (said.as_str(), reason) {
+                ("cancelled", _) => Status::Cancelled,
+                ("incomplete", Some("max_output_tokens")) => Status::Completed,
                 _ => Status::Failed,
             }),
         },
