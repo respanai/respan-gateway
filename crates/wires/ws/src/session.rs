@@ -41,7 +41,7 @@ use respan_gateway_http_faults::Status;
 /// handshake, read whole within `limits.close_wait` up to
 /// `limits.max_message`, as clients (tungstenite) do not decode a chunked
 /// one: 404, 401, 502... A body that fails, is late or does not fit is
-/// written as text under the fault's status, with its error code. With a
+/// written as text under the fault's status, with its message. With a
 /// `101` the client is upgraded with the `101`'s headers, and its
 /// subprotocol if the client offered it, unless that is a key
 /// ([`Credential`]): a key is never sent back. A request that is no
@@ -75,9 +75,9 @@ use respan_gateway_http_faults::Status;
 /// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent Close 1011, or the fault's [`CloseCode`] | Close 1011, or the fault's [`CloseCode`] |
 /// | A fault ends the response | provider is sent Close 1001 | Close 1011, or the fault's [`CloseCode`] (1001 if `abandoned`) |
 ///
-/// A provider's close reason text is not relayed (the fault's message
-/// keeps it), nor is a client's close code or reason. A session that has
-/// ended ignores `stop`.
+/// A provider's close reason text reaches the client in the fault's
+/// message, the client's Close reason (cut to 123 bytes); a client's close
+/// code and reason are not relayed. A session that has ended ignores `stop`.
 pub async fn serve<S>(
     gateway: &Gateway,
     head: http::request::Parts,
@@ -180,9 +180,9 @@ async fn refusal(
     }
 }
 
-/// `fault` as text/plain under its status: its error code, never its message.
+/// `fault` as text/plain under its status: its message.
 fn text(fault: &Fault) -> http::Response<Body> {
-    plain_response(fault, fault.code())
+    plain_response(fault, fault.message())
 }
 
 /// Which edge a connection is, for what its peer's end means.
@@ -295,7 +295,7 @@ where
                     true => 1001,
                     false => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
                 };
-                close(&mut sink, code, fault.code(), limits.close_send).await;
+                close(&mut sink, code, reason_of(edge, &fault), limits.close_send).await;
                 return Err(fault);
             }
             Sent::Stopped => {
@@ -311,7 +311,7 @@ where
         Heard::Ended(refused) => {
             end.finish();
             if let Some((code, fault)) = refused {
-                close(&mut sink, code, fault.code(), limits.close_send).await;
+                close(&mut sink, code, reason_of(edge, &fault), limits.close_send).await;
             }
             // The response's end says how the request ended: it is read on, unsent.
             if let Edge::Client = edge {
@@ -519,6 +519,15 @@ fn provider_closed(code: u16, reason: &str) -> Fault {
     match REFUSED_INPUT.contains(&code) {
         true => fault.with(Status(StatusCode::BAD_REQUEST)),
         false => fault,
+    }
+}
+
+/// What a Close says of `fault`: to the client its message, which tells it
+/// why, to a provider the error code.
+fn reason_of(edge: Edge, fault: &Fault) -> &str {
+    match edge {
+        Edge::Client => fault.message(),
+        Edge::Provider { .. } => fault.code(),
     }
 }
 

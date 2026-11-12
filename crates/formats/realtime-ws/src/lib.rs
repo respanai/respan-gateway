@@ -19,8 +19,12 @@
 //! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
 //! frame to the kind's native event of its name, and writes no other
 //! format's. A frame that is not JSON fails: the client's, `bad_request`;
-//! the provider's, `upstream`. A handshake one refuses is answered
-//! text/plain with the fault's error code, never its message.
+//! the provider's, `upstream`. A fault that ends a session is told to its
+//! client as the format's error event where it has one, and always as the
+//! Close's reason, its message; a provider's Close after its own error
+//! event, or its `goAway`, is that error, or the session limit it announced.
+//! A handshake one refuses is answered
+//! text/plain with the fault's message.
 
 mod audio;
 mod foreign;

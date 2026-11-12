@@ -4,14 +4,15 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, NativeValue};
+use respan_gateway_core::{Connection, ErrorCode, EventStream, Fault, FaultKind, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
-use respan_gateway_realtime::{Input, Output};
-use respan_gateway_ws::WsTransport;
+use respan_gateway_http_faults::Status;
+use respan_gateway_realtime::{Cause, Input, Output};
+use respan_gateway_ws::{CloseCode, ProviderClose, WsTransport};
 
 use serde_json::Value;
 
@@ -88,6 +89,7 @@ impl Spec {
         read: Read<Input>,
         write: Box<dyn Encoder<Output>>,
     ) -> Connection<Input, Output> {
+        let write = Box::new(Told { write, said: None });
         let protocol = self.protocol.map(HeaderValue::from_static);
         io.with_error(refusal).bind(
             move |_| read,
@@ -125,6 +127,7 @@ impl Spec {
         read: Read<Output>,
         said: Option<Said>,
     ) -> Connection<Output, Input> {
+        let read = Box::new(Explained { read, error: None });
         let path = self.path;
         let protocol = self.protocol;
         let wire = io.extensions().get::<h::raw::Original>().cloned();
@@ -190,6 +193,133 @@ pub(crate) fn model_query(model: &str) -> String {
         .finish()
 }
 
+/// A client's writer that tells the client why its session fails: the
+/// fault as an [`Output::Error`], which the format writes as its error
+/// event, before the Close. A format with no error event writes none, and
+/// the Close's reason says it. An error the provider just sent is not told
+/// twice.
+struct Told {
+    write: Box<dyn Encoder<Output>>,
+    said: Option<String>,
+}
+
+impl Encoder<Output> for Told {
+    fn start(&mut self, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.write.start(out)
+    }
+
+    fn encode(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.said = match event {
+            Output::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        };
+        self.write.encode(event, out)
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        let Err(fault) = &end else {
+            return self.write.end(end, out);
+        };
+        if fault.is(FaultKind::Abandoned) || self.said.as_deref() == Some(fault.message()) {
+            return end;
+        }
+        let cause = match fault.kind() {
+            FaultKind::Client => Cause::Invalid,
+            _ => Cause::Provider,
+        };
+        let error = Output::Error {
+            cause,
+            code: None,
+            message: fault.message().to_owned(),
+            native: None,
+        };
+        let mut frames = Vec::new();
+        match self.write.encode(&error, &mut frames) {
+            Ok(()) if !frames.is_empty() => {
+                out.extend(frames);
+                Ok(())
+            }
+            _ => end,
+        }
+    }
+}
+
+/// A provider's reader that explains a close by the error the provider
+/// sent just before it: the last event it read, if an [`Output::Error`], is
+/// what its abnormal Close is for, as one that refused what it was sent
+/// (`bad_request`), an idle timeout (`timeout`, not an outage) or its
+/// failure (`upstream`), saying the provider's words.
+struct Explained {
+    read: Read<Output>,
+    error: Option<(Cause, Option<String>, String)>,
+}
+
+impl Decoder<Output> for Explained {
+    fn start(&mut self, out: &mut Vec<Output>) -> Result<(), Fault> {
+        self.read.start(out)
+    }
+
+    fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+        let before = out.len();
+        let read = self.read.decode(raw, out);
+        if out.len() > before {
+            self.error = match out.last() {
+                Some(Output::Error {
+                    cause,
+                    code,
+                    message,
+                    ..
+                }) if *cause != Cause::NothingToCancel => {
+                    Some((*cause, code.clone(), message.clone()))
+                }
+                _ => None,
+            };
+        }
+        read
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<Output>) -> Result<(), Fault> {
+        let end = self.read.end(end, out);
+        match (end, self.error.take()) {
+            (Err(closed), Some((cause, code, message)))
+                if closed.get::<ProviderClose>().is_some() =>
+            {
+                let fault = match (cause, code.as_deref()) {
+                    (Cause::Invalid, _) => Fault::bad_request(message),
+                    (_, Some("timeout")) => Fault::bad_request(message)
+                        .with(ErrorCode("timeout".into()))
+                        .with(Status(StatusCode::REQUEST_TIMEOUT))
+                        .with(CloseCode(1000)),
+                    _ => Fault::upstream(message),
+                };
+                Err(carry(fault, &closed))
+            }
+            (end, _) => end,
+        }
+    }
+
+    fn limit(&mut self, bytes: Option<usize>) {
+        self.read.limit(bytes);
+    }
+
+    fn done(&self) -> bool {
+        self.read.done()
+    }
+}
+
+/// `fault`, explaining the provider's Close `closed`: with its code, and
+/// the code the client is closed with if the call relayed it.
+pub(crate) fn carry(fault: Fault, closed: &Fault) -> Fault {
+    let fault = match closed.get::<ProviderClose>() {
+        Some(code) => fault.with(*code),
+        None => fault,
+    };
+    match closed.get::<CloseCode>() {
+        Some(code) => fault.with(*code),
+        None => fault,
+    }
+}
+
 /// The events of `frames`, with what was `said` first whenever there is
 /// some, until the frames end.
 fn among(said: Said, frames: EventStream<Output>) -> EventStream<Output> {
@@ -202,10 +332,9 @@ fn among(said: Said, frames: EventStream<Output>) -> EventStream<Output> {
     EventStream::stream(events)
 }
 
-/// A refused handshake's answer: text/plain, with the fault's error code
-/// ([`Fault::code`](respan_gateway_core::Fault::code)), never its message.
+/// A refused handshake's answer: text/plain, with the fault's message.
 fn refusal(fault: &Fault, _request: &Request<Bytes>, head: &mut ResponseHead) -> Bytes {
-    respan_gateway_http::rules::plain_text(head, fault.code())
+    respan_gateway_http::rules::plain_text(head, fault.message())
 }
 
 /// Offer `protocol` in `headers` beside the subprotocols the client
