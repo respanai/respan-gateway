@@ -356,6 +356,15 @@ fn reasoning_content_opens_a_reasoning_block_before_the_text() {
     let body = json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
         "message": { "role": "assistant", "content": "ok", "reasoning_content": "hm" } }] });
     assert_eq!(decode_body(&body)[1..], out[1..]);
+    // `reasoning` is its alias, in a chunk and in a whole body.
+    let alias = chunks.map(|c| c.replace("reasoning_content", "reasoning"));
+    assert_eq!(
+        decode_all(&alias.each_ref().map(String::as_str)).0[1..],
+        out[1..]
+    );
+    let alias = body.to_string().replace("reasoning_content", "reasoning");
+    let alias = serde_json::from_str(&alias).expect("a body");
+    assert_eq!(decode_body(&alias)[1..], out[1..]);
 }
 
 #[test]
