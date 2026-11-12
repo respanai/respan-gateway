@@ -474,6 +474,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     let chunk = json!({ "candidates": [{ "content": { "role": "model", "parts": [
         { "text": "ok" },
         { "functionCall": { "name": "f", "args": { "a": 1 } }, "thoughtSignature": "s" },
+        { "text": "", "thoughtSignature": "t" },
     ] }, "finishReason": "STOP" }], "responseId": "r" });
     let events = decode(std::slice::from_ref(&chunk)).expect("events");
     let call = events.iter().find_map(|e| match e {
@@ -495,8 +496,40 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         fields,
         Some(json!({ "type": "block_fields", "block": 1, "fields": { "thoughtSignature": "s" } }))
     );
-
     assert_eq!(decode_body(&chunk), events);
+
+    // A Chat client has them in `extra_content`: the call's on its entry, the
+    // text's on the message, whole and streamed.
+    let google = |s: &str| json!({ "google": { "thought_signature": s } });
+    let chat = crate::openai::OpenAiChat;
+    let mut whole = Assembled::default();
+    events
+        .iter()
+        .try_for_each(|e| whole.push(e))
+        .expect("events");
+    let message = chat.encode_whole(&whole).expect("a body")["choices"][0]["message"].take();
+    assert_eq!(message["extra_content"], google("t"));
+    assert_eq!(message["tool_calls"][0]["extra_content"], google("s"));
+    let (mut stream, mut frames) = (chat.stream_encoder(Asked::default()), Vec::new());
+    events
+        .iter()
+        .try_for_each(|e| stream.encode(e, &mut frames))
+        .expect("a stream");
+    let text: String = frames.iter().map(|f| String::from_utf8_lossy(f)).collect();
+    let deltas: Vec<Value> = text
+        .split("\n\n")
+        .filter_map(|e| serde_json::from_str(e.strip_prefix("data: ")?).ok())
+        .map(|c: Value| c["choices"][0]["delta"].clone())
+        .collect();
+    assert!(
+        deltas.contains(&json!({ "extra_content": google("t") })),
+        "{text}"
+    );
+    let call = deltas.iter().find(|d| d["tool_calls"][0]["id"].is_string());
+    assert_eq!(
+        call.map(|d| &d["tool_calls"][0]["extra_content"]),
+        Some(&google("s"))
+    );
 }
 
 #[test]

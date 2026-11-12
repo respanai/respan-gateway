@@ -254,11 +254,18 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 .name(role)
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
         };
-        let parts: Vec<Value> = m
+        let mut parts: Vec<Value> = m
             .content
             .iter()
             .map(|c| write_part(c, &mut names))
             .collect::<Result<_, _>>()?;
+        let text = parts
+            .iter_mut()
+            .rev()
+            .find(|p| p["text"].is_string() && p["thought"] != true);
+        if let (Some(s), Some(text)) = (chat_signature(&m.native), text) {
+            text["thoughtSignature"] = s;
+        }
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
@@ -308,6 +315,15 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
     }
 }
 
+/// The signature a Chat Completions message or call carries, as Google's
+/// does, in `extra_content`.
+fn chat_signature(native: &Option<NativeFields>) -> Option<Value> {
+    let chat = native.fields_for(crate::openai::OPENAI);
+    chat.get("extra_content")?["google"]
+        .get("thought_signature")
+        .cloned()
+}
+
 /// A part of the kind's as Gemini writes it; `names` has the calls made so
 /// far, by id, for the results that answer them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
@@ -341,6 +357,9 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             }
             let mut part = json!({ "functionCall": call });
             merge_missing(&mut part, fields(native));
+            if let Some(s) = chat_signature(native) {
+                part["thoughtSignature"] = s;
+            }
             Ok(part)
         }
         Content::ToolResult {

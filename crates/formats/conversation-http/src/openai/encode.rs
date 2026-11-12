@@ -1,5 +1,6 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
+use crate::gemini::GEMINI;
 use crate::schema::{
     Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
 };
@@ -22,6 +23,20 @@ pub(super) fn call_fields_of(raw: &Value) -> Option<(u32, Fields, Fields)> {
         _ => Fields::new(),
     };
     Some((block, entry, function))
+}
+
+/// Gemini's block fields `raw` as a tool call's: its `thoughtSignature` in
+/// `extra_content`, as Google's own Chat Completions has it (a text's goes
+/// on the message).
+pub(super) fn signature_of(raw: &Value) -> Option<(u32, Fields, Fields)> {
+    let (block, fields) = block_fields(raw)?;
+    let signature = fields.get("thoughtSignature")?;
+    let google = json!({ "google": { "thought_signature": signature } });
+    Some((
+        block,
+        Fields::from_iter([("extra_content".into(), google)]),
+        Fields::new(),
+    ))
 }
 
 /// Put a tool call's block fields ([`call_fields_of`]) into the call `call`.
@@ -165,7 +180,7 @@ pub(super) struct Chunks {
     gate: Gate,
     /// The vendor fields of usage, written in the usage chunk.
     usage_extra: Map<String, Value>,
-    /// The fields of tool calls that have not started, by block.
+    /// The fields of tool calls (or a text's signature) not yet started, by block.
     call_fields: Vec<(u32, Fields, Fields)>,
     /// The response's fields a later chunk changed, for the next chunk.
     response: Fields,
@@ -245,17 +260,23 @@ impl Chunks {
             };
         }
         self.begin(out);
-        let call = match kind {
-            Block::ToolCall { id, name } => {
+        let at = self.call_fields.iter().position(|(b, ..)| *b == block);
+        let fields = at.map(|at| self.call_fields.remove(at));
+        let call = match (kind, fields) {
+            (Block::ToolCall { id, name }, fields) => {
                 let index = self.calls;
                 self.calls += 1;
                 let mut call = call_json(Some(index), Some(id), Some(name), "");
-                if let Some(at) = self.call_fields.iter().position(|(b, ..)| *b == block) {
-                    let (_, entry, function) = self.call_fields.remove(at);
+                if let Some((_, entry, function)) = fields {
                     merge_call(&mut call, &entry, &function);
                 }
                 self.delta(out, json!({ "tool_calls": [call] }));
                 Some(index)
+            }
+            // A text's signature, Gemini's, is the message's.
+            (Block::Text, Some((_, entry, _))) => {
+                self.delta(out, entry.into());
+                None
             }
             _ => None,
         };
@@ -353,6 +374,9 @@ impl Chunks {
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
                 self.write_native(raw, out);
+            }
+            Output::Native(NativeValue { format, value: raw }) if **format == *GEMINI => {
+                self.call_fields.extend(signature_of(raw));
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
