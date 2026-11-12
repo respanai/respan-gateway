@@ -464,6 +464,10 @@ fn a_bad_provider_is_an_error() {
             "p = { vendor = \"cloudflare\", key = \"k\" }",
             "provider 'p': environment variable CLOUDFLARE_ACCOUNT_ID is not set; the base URL of openai-chat needs it, or give it one",
         ),
+        (
+            "p = { vendor = \"neon\", key = \"k\" }",
+            "provider 'p': environment variable NEON_AI_GATEWAY_BASE_URL is not set; the base URL of openai-chat needs it, or give it one",
+        ),
     ];
     for (provider, expected) in cases {
         let text = format!("providers = {{ {provider} }}");

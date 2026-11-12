@@ -21,7 +21,7 @@ pub use respan_gateway_vendor_kit::{
     chat, format, http, json, located, models, time,
 };
 
-pub use respan_gateway_vendors_green::{anthropic, gemini, ollama, openai, respan, typesafe};
+pub use respan_gateway_vendors_green::{anthropic, gemini, neon, ollama, openai, respan, typesafe};
 pub use respan_gateway_vendors_yellow::{
     azure, bedrock, cerebras, cloudflare, deepinfra, deepseek, empiriolabs, fireworks, groq,
     minimax, mistral, openrouter, perplexity, phonic, together, vllm, xai,
@@ -58,6 +58,7 @@ pub const ALL: &[&Vendor] = &[
     &bedrock::VENDOR,
     &phonic::VENDOR,
     &respan::VENDOR,
+    &neon::VENDOR,
 ];
 
 /// The vendor `id`.

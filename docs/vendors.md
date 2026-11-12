@@ -30,6 +30,7 @@ Each vendor is in one of two tiers:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/respan-dark.svg"><img src="assets/vendors/respan.svg" width="20" height="20" alt=""></picture> | Respan | `respan` | `RESPAN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `decisions` |
 | <img src="assets/vendors/typesafe.png" width="20" height="20" alt=""> | TypeSafe | `typesafe` | `TYPESAFE_API_KEY` | `decisions` |
+| | Neon | `neon` | `NEON_AI_GATEWAY_TOKEN`; `NEON_AI_GATEWAY_BASE_URL` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-embeddings`, `decisions` (at `/systemone`) |
 
 ## 🟡 Yellow
 
@@ -113,6 +114,11 @@ Respan's formats sit under one API, `https://api.respan.ai/api`:
 sent no key; a provider at another base URL lists at
 `{base}/gateway-models/list`.
 
+Neon's formats sit under a branch's host, `NEON_AI_GATEWAY_BASE_URL`:
+`openai-chat` and `openai-embeddings` at `/v1`, `openai-responses` at
+`/openai/v1`, `anthropic-messages` at `/anthropic`, `decisions` at
+`/typesafe/v1` (called at `/systemone`).
+
 `decisions` is called at `{base}/decisions`, as Respan serves it. TypeSafe
 serves it at `/systemone` instead, which `vendor = "typesafe"` knows; a
 provider of no vendor at TypeSafe's URL calls `/decisions` and is not found.
@@ -120,7 +126,7 @@ provider of no vendor at TypeSafe's URL calls `/decisions` and is not found.
 Without a config file, `RESPAN_<VENDOR>_BASE_URL` moves a vendor's base URL
 (`OLLAMA_HOST` for `ollama`); with one, only the file's `base_url` counts
 (`respan-gateway init` writes the moved URL into it). `azure` and `vllm`
-need a `base_url`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, and `bedrock`
+need a `base_url`; `neon` needs `NEON_AI_GATEWAY_BASE_URL`; `cloudflare` needs `CLOUDFLARE_ACCOUNT_ID`, and `bedrock`
 `AWS_REGION`, or one.
 
 How each vendor's quirks are handled, and how to add one, is in
