@@ -51,6 +51,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
 | <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `decisions` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
+| <img src="assets/vendors/runcrate.png" width="20" height="20" alt=""> | Runcrate | `runcrate` | `RUNCRATE_API_KEY` | `openai-chat` |
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 
 These tables are kept by hand: a vendor added to `ALL` in
@@ -70,7 +71,7 @@ This integration has not been verified against the live API.
 A provider's `base_url` is the one its own SDK takes. OpenAI-compatible ones
 include the version: `https://api.openai.com/v1`,
 `https://api.groq.com/openai/v1`, `https://openrouter.ai/api/v1`,
-`https://api.cerebras.ai/v1`,
+`https://api.cerebras.ai/v1`, `https://api.runcrate.ai/v1`,
 `https://api.empiriolabs.ai/v1`, `https://api.deepinfra.com/v1/openai`, and
 Gemini's OpenAI-compatible endpoint
 `https://generativelanguage.googleapis.com/v1beta/openai` (all
