@@ -17,9 +17,9 @@
 //!
 //! A call whose client speaks another format, which can name no response,
 //! asks to store nothing (`store: false`) and for its reasoning encrypted
-//! (`include: ["reasoning.encrypted_content"]`), as that reasoning, kept
-//! native to its block, is the only way it reaches a later call (the
-//! gateway's `plugins.responses` puts it back).
+//! (`include: ["reasoning.encrypted_content"]`), as that reasoning's
+//! signature, which its client sends back, is the only way it reaches a
+//! later call.
 //!
 //! What the kind has no form for stays native to this format and is dropped
 //! in translation: `previous_response_id` and `conversation` (another
@@ -181,7 +181,7 @@ impl Schema for OpenAiResponses {
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
-    /// and its reasoning comes encrypted, to be carried to a later call.
+    /// and its reasoning comes signed, for its client to send back.
     fn translated(_: &Input, v: &mut Map<String, Value>) {
         v.entry("store").or_insert(false.into());
         let include = v.entry("include").or_insert_with(|| json!([]));

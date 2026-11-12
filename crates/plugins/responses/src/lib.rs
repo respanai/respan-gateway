@@ -18,7 +18,7 @@ use parking_lot::{Mutex, MutexGuard};
 use std::sync::Arc;
 use std::time::Duration;
 
-use respan_gateway_conversation::{Assembled, Input, Message, Output, Role};
+use respan_gateway_conversation::{Assembled, Content, Input, Message, Output, Role};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{
@@ -142,7 +142,7 @@ impl Plugin for Responses {
         let Some(pending) = px.extensions().get::<Pending>().cloned() else {
             return Ok(());
         };
-        let keep = self.keep;
+        let (keep, target) = (self.keep, px.format().to_owned());
         // Read before the call, as a shared store answers in its own time.
         let parent = px.input::<Input>().ok().and_then(previous_response_id);
         let before = match &parent {
@@ -162,6 +162,7 @@ impl Plugin for Responses {
                     f.shift_remove("previous_response_id");
                 });
                 let at = instructions(&pending, input);
+                let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(at..at, before);
                 Ok(())
             });
@@ -184,6 +185,7 @@ impl Plugin for Responses {
                         keep.as_secs()
                     ))
                 })?;
+                let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(instructions..instructions, before);
             }
             // A tool loop's later calls add its own steps: the client's
@@ -219,6 +221,29 @@ fn previous_response_id(input: &Input) -> Option<String> {
     let fields = OpenAiResponses::fields(&input.native);
     let parent = fields.get("previous_response_id")?.as_str()?;
     Some(parent.to_owned())
+}
+
+/// `message` without what `format` cannot write: reasoning sealed by a
+/// signature, which only its own provider reads back, and the signatures
+/// that seal it, unless `format` is Responses, whose writer keeps signed
+/// reasoning as its own. Plain reasoning is the kind's, which any writes.
+fn writable(mut message: Message, format: &str) -> Message {
+    let mut is_dropped = false;
+    let mut parts = std::mem::take(&mut message.content).into_iter().peekable();
+    while let Some(part) = parts.next() {
+        is_dropped = match part {
+            // WARN: signed reasoning is dropped for another format than Responses.
+            Content::Reasoning { .. } => {
+                format != RESPONSES && matches!(parts.peek(), Some(Content::Signature(_)))
+            }
+            Content::Signature(_) => is_dropped,
+            _ => false,
+        };
+        if !is_dropped {
+            message.content.push(part);
+        }
+    }
+    message
 }
 
 /// The response its client is given, named anew and kept once it ended well.
@@ -352,6 +377,31 @@ mod tests {
             .collect();
         gateway.idle().await;
         serde_json::from_slice(&bytes).unwrap_or_default()
+    }
+
+    /// Signed reasoning goes with its signature for another format; plain
+    /// reasoning and a call's signature stay.
+    #[test]
+    fn signed_reasoning_is_written_only_to_responses() {
+        let plain = Content::Reasoning {
+            text: "p".into(),
+            native: Native::default(),
+        };
+        let mut signed = Message::new(Role::Assistant, "");
+        signed.content = vec![
+            Content::Reasoning {
+                text: "r".into(),
+                native: Native::default(),
+            },
+            Content::Signature("theirs".into()),
+            plain.clone(),
+            Content::tool_call("c1", "f", "{}"),
+            Content::Signature("call".into()),
+        ];
+        assert_eq!(writable(signed.clone(), RESPONSES), signed);
+        let kept = writable(signed, OpenAiChat::NAME).content;
+        assert_eq!(kept[0], plain);
+        assert_eq!(kept[2..], [Content::Signature("call".into())]);
     }
 
     /// A follow-up reaching another gateway than its response is sent the
