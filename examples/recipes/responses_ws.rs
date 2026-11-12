@@ -31,7 +31,7 @@ use respan_gateway_core::{
     ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
 use respan_gateway_realtime::{Input, Output};
-use respan_gateway_realtime_ws::ResponsesWs;
+use respan_gateway_realtime_ws::{Natives, ResponsesWs};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 

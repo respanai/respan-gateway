@@ -17,7 +17,10 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::{image, speech};
-use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech};
+use respan_gateway_media_http::{
+    Natives,
+    openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
+};
 use respan_gateway_sse as sse;
 use serde_json::Value;
 
@@ -87,17 +90,17 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    let images = std::mem::take(&mut input.images);
     input.native = OpenAiImages::with_fields(&input.native, |fields| {
         // WARN: EmpirioLabs AI edits take no mask; it is dropped.
         fields.shift_remove("mask");
         fields.entry("sync").or_insert(true.into());
         fields.entry("response_format").or_insert("b64_json".into());
-        if !images.is_empty() {
-            let images = images.iter().map(|m| Value::from(media_url(m)));
+        if !input.images.is_empty() {
+            let images = input.images.iter().map(|m| Value::from(media_url(m)));
             fields.insert("image".into(), images.collect::<Vec<_>>().into());
         }
     });
+    input.images.clear();
     Ok(())
 }
 

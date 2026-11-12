@@ -43,7 +43,7 @@ use respan_gateway_core::{
 };
 use respan_gateway_http::Credential;
 use respan_gateway_realtime::{Audio, Input, Output, Status, Usage};
-use respan_gateway_realtime_ws::OpenAiRealtime;
+use respan_gateway_realtime_ws::{Natives, OpenAiRealtime};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;

@@ -30,7 +30,7 @@ use respan_gateway_core::{
     ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
 use respan_gateway_realtime::{Input, Output, Session, Status, Turns};
-use respan_gateway_realtime_ws::GeminiLive;
+use respan_gateway_realtime_ws::{GeminiLive, Natives};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 

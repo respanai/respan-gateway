@@ -7,7 +7,7 @@ use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media_http::{Natives, openai::OpenAiImages};
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 use serde_json::{Value, json};
 

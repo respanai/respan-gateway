@@ -22,7 +22,7 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "gemini-images";
 
-enum Key {}
+type Key = crate::Own<GeminiImages>;
 
 /// Gemini's image models, such as Nano Banana, as the Gemini API serves
 /// them: a `POST` to `.../models/{model}:generateContent`, its answer's
@@ -55,11 +55,6 @@ pub struct GeminiImages;
 impl GeminiImages {
     /// The format's name, `gemini-images`.
     pub const NAME: &'static str = NAME;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
 
     /// The model a client's call at `uri` names, if it is one of this
     /// format's.

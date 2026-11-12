@@ -7,20 +7,19 @@ mod session;
 mod tests;
 
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, Native};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::Uri;
-use respan_gateway_http::{ClientIo, ProviderIo, native::Json, raw::Original};
+use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output, Purpose};
 use respan_gateway_ws::WsTransport;
-use serde_json::{Map, Value};
 
 use crate::session::{Spec, model_at, model_query, transcribes_at};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-pub(crate) enum Key {}
+pub(crate) type Key = crate::Own<OpenAiRealtime>;
 
 /// The model OpenAI transcribes a session's input with, unless the session
 /// names one: it transcribes only with a named model, so a session that
@@ -76,21 +75,6 @@ impl OpenAiRealtime {
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped,
-    /// and its own still if no field is left, as its writer tells events.
-    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        let edited = native.with_fields::<Key>(edit);
-        if edited.is_empty() {
-            Native::own::<Key>()
-        } else {
-            edited
-        }
-    }
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {

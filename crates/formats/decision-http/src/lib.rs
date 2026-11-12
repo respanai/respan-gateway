@@ -34,6 +34,23 @@ mod openai;
 
 pub use openai::OpenAiDecisions;
 
+/// What only format `F` of this crate reads of a value: no other crate can name it.
+struct Own<F>(std::marker::PhantomData<fn() -> F>);
+
+/// A format's own natives, which code that names the format reaches.
+pub trait Natives: Sized + 'static {
+    /// Its own fields in `native`: none if it holds another format's.
+    fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Own<Self>>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Own<Self>>(edit)
+    }
+}
+impl Natives for Decisions {}
+impl Natives for OpenAiDecisions {}
+
 const NAME: &str = "decisions";
 const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
@@ -41,7 +58,7 @@ const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
 const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
-enum Key {}
+type Key = crate::Own<Decisions>;
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -52,15 +69,6 @@ pub struct Decisions;
 impl Decisions {
     /// The format's name, `decisions`.
     pub const NAME: &'static str = NAME;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped.
-    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        native.with_fields::<Key>(edit)
-    }
 }
 
 impl Format<ClientIo, Input, Output> for Decisions {

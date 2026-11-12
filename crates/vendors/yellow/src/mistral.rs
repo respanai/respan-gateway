@@ -10,6 +10,7 @@ use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::speech;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTranscriptions};
 use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;

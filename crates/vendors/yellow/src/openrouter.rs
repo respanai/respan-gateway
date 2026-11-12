@@ -16,7 +16,7 @@ use respan_gateway_media::{image, speech, transcription};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
-use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::{Natives, openrouter::OpenRouterVideos};
 use serde_json::{Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};

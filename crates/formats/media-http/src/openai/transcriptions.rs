@@ -25,7 +25,7 @@ use serde_json::{Map, Value};
 
 const NAME: &str = "openai-transcriptions";
 
-enum Key {}
+type Key = crate::Own<OpenAiTranscriptions>;
 const TRANSCRIPTIONS: &str = "/audio/transcriptions";
 const TRANSLATIONS: &str = "/audio/translations";
 
@@ -51,15 +51,6 @@ pub struct OpenAiTranscriptions;
 impl OpenAiTranscriptions {
     /// The format's name, `openai-transcriptions`.
     pub const NAME: &'static str = NAME;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped.
-    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        native.with_fields::<Key>(edit)
-    }
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiTranscriptions {

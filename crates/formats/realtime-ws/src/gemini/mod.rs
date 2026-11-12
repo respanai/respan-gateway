@@ -8,22 +8,21 @@ mod tests;
 
 use parking_lot::Mutex;
 use respan_gateway_core::Provider;
-use respan_gateway_http::{Connect, KeyIn, Reach, Upstream, native::Json};
+use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use respan_gateway_core::{Connection, Fault, Format, Native};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::{ClientIo, ProviderIo};
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Session};
 use respan_gateway_ws::WsTransport;
-use serde_json::{Map, Value};
 
 use crate::session::{self, Spec};
 
 const NAME: &str = SPEC.name;
-pub(crate) enum Key {}
+pub(crate) type Key = crate::Own<GeminiLive>;
 
 /// What a session's writer to its provider and reader of it share.
 #[derive(Debug, Default)]
@@ -78,21 +77,6 @@ impl GeminiLive {
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped,
-    /// and its own still if no field is left, as its writer tells events.
-    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        let edited = native.with_fields::<Key>(edit);
-        if edited.is_empty() {
-            Native::own::<Key>()
-        } else {
-            edited
-        }
-    }
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]),
     /// taking binary frames as text ([`WsTransport::with_binary_text`]).

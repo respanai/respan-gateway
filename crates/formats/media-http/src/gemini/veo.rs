@@ -24,7 +24,7 @@ use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
 
-enum Key {}
+type Key = crate::Own<GeminiVeo>;
 /// What starts the id of a job of Veo's.
 const PREFIX: &str = "veo_";
 
@@ -79,15 +79,6 @@ pub struct GeminiVeo;
 impl GeminiVeo {
     /// The format's name, `gemini-veo`.
     pub const NAME: &'static str = NAME;
-
-    /// Its own fields in `native`: none if it holds another format's.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped.
-    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        native.with_fields::<Key>(edit)
-    }
 
     /// The job id of the operation `name`.
     pub fn job_id(name: &str) -> String {
