@@ -48,19 +48,24 @@ const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
     GeneralPurpose::new(alphabet, config)
 }
 
-/// The base64 alphabets a `data:` URL is read in, the standard one first.
+/// The base64 alphabets embedded data is read in, the standard one first.
 const DATA_URL_BASE64: [GeneralPurpose; 2] =
     [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
 
-/// The bytes of a `data:` URL's base64 `data`, read with or without padding,
-/// in either alphabet, across the line breaks a client may have wrapped it at,
-/// and percent-decoded first, as a URL's data may be.
-fn data_url_bytes(data: &str) -> Option<Vec<u8>> {
-    let data = percent_decode_str(data).decode_utf8().ok()?;
+/// The bytes of base64 `data` a request embeds, read with or without
+/// padding, in either alphabet, across the line breaks a client may have
+/// wrapped it at: what any provider reads, and more.
+pub(crate) fn base64_bytes(data: &str) -> Option<Vec<u8>> {
     let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     DATA_URL_BASE64
         .iter()
         .find_map(|engine| engine.decode(&data).ok())
+}
+
+/// The bytes of a `data:` URL's base64 `data`, percent-decoded first, as a
+/// URL's data may be.
+fn data_url_bytes(data: &str) -> Option<Vec<u8>> {
+    base64_bytes(&percent_decode_str(data).decode_utf8().ok()?)
 }
 
 /// The media type and source of a URL: the data of a `data:` URL, else the
@@ -776,6 +781,40 @@ mod tests {
             if let Some((_, MediaSource::Bytes(bytes))) = source_url(url, "image/*") {
                 assert!(!bytes.is_empty(), "{url}");
             }
+        }
+        // The same base64, raw, in Anthropic's and Gemini's own fields.
+        use crate::anthropic::AnthropicMessages;
+        use crate::gemini::GeminiGenerate;
+        use respan_gateway_http::bytes::Bytes;
+        let anthropic = |data: &str| {
+            let block = serde_json::json!({"type": "image", "source": {
+                "type": "base64", "media_type": "image/png", "data": data}});
+            let body = serde_json::json!({"model": "m", "max_tokens": 1, "messages": [
+                {"role": "user", "content": [block]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t",
+                    "content": [block]}]},
+            ]});
+            AnthropicMessages.decode_request(Bytes::from(body.to_string()))
+        };
+        let gemini = |data: &str| {
+            let part = serde_json::json!({"inlineData": {"mimeType": "image/png", "data": data}});
+            let body = serde_json::json!({"contents": [{"role": "user", "parts": [part]}]});
+            GeminiGenerate.decode_request(Bytes::from(body.to_string()))
+        };
+        let image = |chat: Input| match &chat.messages[0].content[0] {
+            Content::Image(media) => match &media.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        };
+        assert!(anthropic("not*base64!").is_err(), "anthropic");
+        assert!(gemini("not*base64!").is_err(), "gemini");
+        for data in ["aGVsbG8=", "aGVsbG8", "aGVs\nbG8=", "aGVsbG9="] {
+            let read = anthropic(data).expect(data);
+            assert_eq!(image(read), b"hello", "{data}");
+            let read = gemini(data).expect(data);
+            assert_eq!(image(read), b"hello", "{data}");
         }
     }
 }

@@ -17,8 +17,8 @@ use serde_json::{Map, Value, json};
 
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    Own, arguments_object, edit_native, effort_name, merge_fields, merge_missing, parse_effort,
-    remainder, sealed, set, untranslatable, write_search,
+    Own, arguments_object, base64_bytes, edit_native, effort_name, merge_fields, merge_missing,
+    parse_effort, remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -190,13 +190,33 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
     }
 }
 
+/// Refuse a request with an `inlineData` part, in `systemInstruction` or
+/// `contents`, whose `data` does not decode: another format's provider would
+/// never receive it.
+pub(super) fn check_inline_data(v: &Value) -> Result<(), Fault> {
+    let contents = v["contents"].as_array().into_iter().flatten();
+    let parts = contents
+        .chain([&v["systemInstruction"]])
+        .filter_map(|c| c["parts"].as_array())
+        .flatten();
+    for part in parts {
+        let data = part["inlineData"]["data"].as_str();
+        if data.is_some_and(|d| base64_bytes(d).is_none()) {
+            return Err(Fault::bad_request(
+                "an `inlineData` part's `data` is not valid base64",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// An `inlineData` or `fileData` part, if the kind can say it.
 fn read_media(p: &Value, which: &str) -> Option<Content> {
     let data = &p[which];
     let mime = data["mimeType"].as_str()?;
     let (source, known): (MediaSource, &[&str]) = match which {
         "inlineData" => (
-            MediaSource::Bytes(STANDARD.decode(data["data"].as_str()?).ok()?.into()),
+            MediaSource::Bytes(base64_bytes(data["data"].as_str()?)?.into()),
             &["mimeType", "data"],
         ),
         _ => (

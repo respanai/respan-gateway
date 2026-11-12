@@ -101,8 +101,8 @@ use std::marker::PhantomData;
 use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
 use request::{
-    effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
-    write_config, write_messages, write_tools,
+    check_inline_data, effort_thinking, read_config, read_messages, read_tools, sign_calls,
+    split_system, write_config, write_messages, write_tools,
 };
 pub use request::{media_part, needs_signatures};
 
@@ -260,6 +260,7 @@ impl GeminiGenerate {
             Ok(v) if v.is_object() => v,
             _ => return Err(Fault::bad_request("request body is not a JSON object")),
         };
+        self.validate_request_json(&v)?;
         let mut chat = self.decode_json(&v);
         chat.model = call_of(&head.uri).map(|(model, _)| model);
         Ok(chat)
@@ -278,6 +279,10 @@ impl Schema for GeminiGenerate {
     const STREAM_FLAG: bool = false;
     const OWN: &'static [&'static str] = &["generationConfig", "tools", "toolConfig"];
     type Decoding = GeminiDecoder;
+
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        check_inline_data(v)
+    }
 
     fn decoder(&self) -> GeminiDecoder {
         GeminiDecoder::default()

@@ -44,8 +44,12 @@ provider base URL includes the version, such as `https://api.openai.com/v1`.
 A Chat Completions request with `n > 1` is refused before the provider
 is called, including when the selected provider speaks another format. So
 is a Chat Completions or Responses request with an image or file `data:`
-URL that says it is base64 and is not; base64 with or without padding, in
-the URL-safe alphabet, wrapped across lines or percent-encoded is read.
+URL that says it is base64 and is not, an Anthropic Messages request with
+an image or document block whose base64 `source.data` is not, and a Gemini
+request with an `inlineData` part whose `data` is not, since a provider of
+another format would never receive the part. Base64 with or without
+padding, in the URL-safe alphabet or wrapped across lines is read, and a
+`data:` URL's may also be percent-encoded.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it

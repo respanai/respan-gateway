@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
-    effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, arguments_object, base64_bytes, decode_content, decode_tools, each_tool,
+    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of,
+    set, take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -160,6 +160,35 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     }
 }
 
+/// Refuse a request with an image or document block, in `system`, a
+/// message or a tool result, whose base64 `source.data` does not decode:
+/// another format's provider would never receive it.
+pub(super) fn check_base64_sources(v: &Value) -> Result<(), Fault> {
+    let messages = v["messages"].as_array().into_iter().flatten();
+    let blocks = messages
+        .map(|m| &m["content"])
+        .chain([&v["system"]])
+        .filter_map(Value::as_array)
+        .flatten();
+    let is_unreadable = |block: &Value| {
+        let source = &block["source"];
+        let is_media = matches!(block["type"].as_str(), Some("image" | "document"));
+        let data = source["data"]
+            .as_str()
+            .filter(|_| source["type"] == "base64");
+        is_media && data.is_some_and(|d| base64_bytes(d).is_none())
+    };
+    for block in blocks {
+        let results = block["content"].as_array().into_iter().flatten();
+        if is_unreadable(block) || results.into_iter().any(is_unreadable) {
+            return Err(Fault::bad_request(
+                "an image or document block's `source.data` is not valid base64",
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// An image or document block, if the kind can say its source: its other
 /// fields are its media's `native`.
 fn read_media(v: &Value) -> Option<Content> {
@@ -170,7 +199,7 @@ fn read_media(v: &Value) -> Option<Content> {
     let (mut mime, src) = match source["type"].as_str()? {
         "base64" => (
             source["media_type"].as_str()?.to_owned(),
-            MediaSource::Bytes(STANDARD.decode(source["data"].as_str()?).ok()?.into()),
+            MediaSource::Bytes(base64_bytes(source["data"].as_str()?)?.into()),
         ),
         "url" => (
             "image/*".to_owned(),

@@ -55,10 +55,11 @@ use std::marker::PhantomData;
 
 use decode::AnthropicDecoder;
 use encode::EventStream;
-pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
 use request::{
-    read_effort, read_output, read_thinking, read_tools_of, signed, write_output, write_tools,
+    check_base64_sources, read_effort, read_output, read_thinking, read_tools_of, signed,
+    write_output, write_tools,
 };
+pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
 
 /// The `max_tokens` of a translated request without one, as it is required.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -244,6 +245,10 @@ impl Schema for AnthropicMessages {
     /// Claude is sent only the thinking its model takes (`fit_thinking`).
     fn prepare_call(v: &mut Map<String, Value>) {
         fit_thinking(v);
+    }
+
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        check_base64_sources(v)
     }
 
     fn decoder(&self) -> AnthropicDecoder {
