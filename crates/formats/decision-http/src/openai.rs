@@ -68,7 +68,9 @@ impl OpenAiDecisions {
                 probabilities,
             } => {
                 let choices = &question["choices"];
-                (v.entry("choice")).or_insert_with(|| typed(choice, None, choices));
+                // WARN: a choice is typed as the first option of its name, so
+                // of `true` and `"true"` both asked, `"true"` is `true`.
+                v.insert("choice".into(), typed(choice, None, choices));
                 let by_value = probabilities.iter().enumerate().map(
                     |(i, (c, p))| json!({ "value": typed(c, Some(i), choices), "probability": p }),
                 );
@@ -197,7 +199,6 @@ fn verdict_type(verdict: &Verdict) -> Result<&'static str, Fault> {
         Verdict::Noul(_) => "predicate",
         Verdict::Choice { .. } => "choice",
         Verdict::Score { .. } => "score",
-        Verdict::Refusal => "refusal",
         _ => return Err(Fault::new(format!("{OPENAI} cannot write this answer"))),
     })
 }
@@ -406,8 +407,9 @@ fn probability(v: &Value) -> Option<f64> {
 }
 
 /// The events of a provider's whole answer to the questions `asked`, each
-/// answer the question's at its position, of its type or a refusal, and
-/// naming it as it was sent; another is the provider's fault.
+/// answer the question's at its position, of its type or a refusal (this
+/// format's own), and naming it as it was sent; another is the provider's
+/// fault.
 fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result<(), Fault> {
     let bad = |what: &str| Fault::upstream(format!("the provider's {OPENAI} response {what}"));
     let v: Value = serde_json::from_slice(raw).map_err(|_| bad("is not JSON"))?;
@@ -433,7 +435,10 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
         let p = |v: &Value| probability(&v["probability"]).ok_or_else(unreadable);
         let entries = || a["probabilities"].as_array().ok_or_else(unreadable);
         let (verdict, taken): (_, &[&str]) = match ty {
-            "refusal" => (Verdict::Refusal, &[]),
+            "refusal" => {
+                out.push(Output::native(OPENAI, a.clone()));
+                continue;
+            }
             "predicate" => (Verdict::Noul(p(a)?), &["probability"]),
             "choice" => {
                 let values = q["choices"].as_array().into_iter().flatten();
@@ -449,12 +454,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
                     choice,
                     probabilities,
                 };
-                // A boolean choice's type stays as this format's own.
-                let taken: &[_] = match a["choice"] {
-                    Value::Bool(_) => &["probabilities"],
-                    _ => &["choice", "probabilities"],
-                };
-                (verdict, taken)
+                (verdict, &["choice", "probabilities"])
             }
             "score" => {
                 let levels = q["levels"].as_array().map_or(0, Vec::len);
@@ -500,7 +500,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
 fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
     let asked = asked.as_array().map(Vec::as_slice).unwrap_or_default();
     let (mut body, mut usage) = (Map::new(), None);
-    let mut answers: Vec<&Answer> = Vec::new();
+    let (mut answers, mut refusals): (Vec<&Answer>, Vec<&Value>) = (Vec::new(), Vec::new());
     for event in events {
         match event {
             Output::Start(start) => {
@@ -509,15 +509,27 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
             }
             Output::Answer(answer) => answers.push(answer),
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += *u,
+            Output::Native(n) if *n.format == *OPENAI => refusals.push(&n.value),
             _ => {}
         }
     }
     let mut written = Vec::with_capacity(asked.len());
     for (id, q) in ids(asked).iter().zip(asked) {
-        let answer = answers.iter().find(|a| &a.id == id);
-        let answer =
-            answer.ok_or_else(|| Fault::upstream(format!("the provider did not answer '{id}'")))?;
-        written.push(OpenAiDecisions::answer_value(answer, q)?);
+        if let Some(answer) = answers.iter().find(|a| &a.id == id) {
+            written.push(OpenAiDecisions::answer_value(answer, q)?);
+        } else if let Some(Value::Object(refusal)) = refusals.iter().find(|r| r["name"] == **id) {
+            // A refusal names the question as it was sent, by its id.
+            let mut v = refusal.clone();
+            v.shift_remove("name");
+            if let Some(name) = q.get("name") {
+                v.insert("name".into(), name.clone());
+            }
+            written.push(Value::Object(v));
+        } else {
+            return Err(Fault::upstream(format!(
+                "the provider did not answer '{id}'"
+            )));
+        }
     }
     body.insert("answers".into(), written.into());
     if let Some(u) = usage {

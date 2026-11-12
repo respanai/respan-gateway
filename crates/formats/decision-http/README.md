@@ -41,7 +41,7 @@ standalone gateway serves them at `/openai/v1/decisions`, beside `decisions`.
   and levels' labels are as it asked them.
 - The kind's choices are strings: a boolean is `"true"` or `"false"`, and
   keeps its type only between this format's client and provider, or where
-  the client asked it as one. A `decisions` client is not written a
-  refusal, which it has no form for; the rest of its answers are.
+  the client asked it as one. A `refusal` answer is this format's own, so
+  a `decisions` client gets the rest of its answers without it.
 - Azure (`vendor = "azure"`) serves it in its dialect: the key in `api-key`,
   called at `/decisions` under the configured v1 base.

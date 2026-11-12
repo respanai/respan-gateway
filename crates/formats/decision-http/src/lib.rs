@@ -206,6 +206,8 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         let (kind, criteria) = match &q.ask {
             Ask::Noul => ("noul", None),
             Ask::Choice { options } => {
+                // WARN: options of one name, such as openai-decisions' `true`
+                // and `"true"` both asked, are one key.
                 let options = options
                     .iter()
                     .map(|(name, about)| (name.clone(), about.clone().unwrap_or(Value::Null)));
@@ -316,11 +318,6 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
                 set(&mut body, "model", start.model.clone());
                 merge_missing(&mut body, &kept(NAME, &start.native));
             }
-            // WARN: decisions has no form for a refusal; the answer is left out.
-            Output::Answer(Answer {
-                verdict: Verdict::Refusal,
-                ..
-            }) => {}
             Output::Answer(answer) => {
                 answers.insert(answer.id.clone(), encode_answer(answer)?.into());
             }

@@ -182,8 +182,6 @@ pub enum Verdict {
         /// Each option's probability.
         probabilities: Vec<(String, f64)>,
     },
-    /// The provider declined to answer.
-    Refusal,
     /// The expected level, from 0 for the lowest, and each level's
     /// probability, lowest first.
     Score {
