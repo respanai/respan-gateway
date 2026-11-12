@@ -50,7 +50,7 @@ struct Opened {
 /// What a block of a response is made of, in OpenAI's terms.
 #[derive(Debug, PartialEq)]
 enum Key {
-    /// `reasoning_content`.
+    /// `reasoning_content`, else `reasoning`.
     Reasoning,
     Text,
     /// The tool call numbered so by `index`.
@@ -229,7 +229,8 @@ impl OpenAiDecoder {
                 json!({ "choices": [rest] }),
             )));
         }
-        let reasoning = body["reasoning_content"].as_str();
+        let reasoning = body["reasoning_content"].as_str().filter(|t| !t.is_empty());
+        let reasoning = reasoning.or_else(|| body["reasoning"].as_str());
         if let Some(text) = reasoning.filter(|t| !t.is_empty()) {
             let delta = Delta::Reasoning(text.into());
             self.say(Key::Reasoning, Block::Reasoning, delta, out);
@@ -369,11 +370,13 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
             continue;
         }
         let mut body = Map::new();
+        let alias = x["reasoning_content"].as_str().is_none_or(str::is_empty);
         for (field, y) in x.as_object().into_iter().flatten() {
             let text = y.is_string() || y.is_null();
             let ours = match field.as_str() {
                 "role" => true,
                 "content" | "reasoning_content" => text,
+                "reasoning" => text && alias,
                 "tool_calls" => typed,
                 _ => false,
             };

@@ -10,14 +10,15 @@
 //!   `native` holds the response's other fields (`created`, `system_fingerprint`,
 //!   `service_tier`, a vendor's own object, ...) as the chunk has them.
 //! - Blocks are numbered in the order they open. The first choice's
-//!   `reasoning_content`, `content` and each `tool_calls` entry (by its
+//!   `reasoning_content` (else `reasoning`), `content` and each `tool_calls` entry (by its
 //!   `index`, else by its `id`) open a [`Block::Reasoning`], a
 //!   [`Block::Text`] and a [`Block::ToolCall`] on their first non-empty
 //!   delta, or, for a call, on the entry that names its `id` and `name`.
 //!   Opening any block ends the reasoning or text block that is open; tool
 //!   calls stay open, as they interleave. `reasoning_content` is no field
 //!   of OpenAI's own: it is where every OpenAI-compatible vendor that
-//!   reasons says it (DeepSeek, vLLM, ...).
+//!   reasons says it (DeepSeek, vLLM, ...); `reasoning` is its alias
+//!   (vLLM, Groq, Cerebras, OpenRouter).
 //! - A `finish_reason`, or the end of the stream, ends every block still
 //!   open, in the order they opened, and a finish gives a [`Output::Finish`].
 //! - `usage` gives a [`Output::Usage`] of what it adds to the totals
