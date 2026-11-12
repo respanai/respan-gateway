@@ -175,22 +175,21 @@ pub struct Job {
     /// Where it is.
     pub status: Status,
     /// The model making it.
+    // WARN: openrouter-videos names none.
     pub model: Option<String>,
-    /// How far along, in percent.
-    pub progress: Option<u32>,
-    /// When it was made, in seconds since the Unix epoch.
-    pub created_at: Option<u64>,
-    /// When it finished.
-    pub completed_at: Option<u64>,
-    /// When its content will be gone.
+    /// When its content will be gone, in seconds since the Unix epoch.
+    // WARN: gemini-veo says none.
     pub expires_at: Option<u64>,
     /// The video's length, in seconds.
+    // WARN: openrouter-videos says none.
     pub seconds: Option<u32>,
     /// The video's size, width by height.
+    // WARN: openrouter-videos says none.
     pub size: Option<String>,
     /// Why it failed.
     pub error: Option<JobError>,
     /// Where the provider serves the videos it made, if it names them.
+    // WARN: openai-videos names none: it serves them at `/content`.
     pub videos: Vec<Media>,
     /// Its fields the kind has no place for.
     pub native: Option<NativeFields>,
@@ -203,9 +202,6 @@ impl Job {
             id: id.into(),
             status,
             model: None,
-            progress: None,
-            created_at: None,
-            completed_at: None,
             expires_at: None,
             seconds: None,
             size: None,
@@ -262,6 +258,7 @@ impl Status {
 #[non_exhaustive]
 pub struct JobError {
     /// What failed, as the provider names it.
+    // WARN: openrouter-videos names none.
     pub code: Option<String>,
     /// What the provider says of it.
     pub message: String,

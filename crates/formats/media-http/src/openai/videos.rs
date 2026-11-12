@@ -355,12 +355,8 @@ fn job_of(v: &Value) -> Result<Job, Fault> {
     };
     let mut job = Job::new(id_of(v)?, status);
     let string = |key: &str| v[key].as_str().map(str::to_owned);
-    let time = |key: &str| v[key].as_u64();
     job.model = string("model");
-    job.progress = time("progress").and_then(|p| u32::try_from(p).ok());
-    job.created_at = time("created_at");
-    job.completed_at = time("completed_at");
-    job.expires_at = time("expires_at");
+    job.expires_at = v["expires_at"].as_u64();
     job.seconds = match &v["seconds"] {
         Value::String(s) => s.parse().ok(),
         n => n.as_u64().and_then(|n| u32::try_from(n).ok()),
@@ -373,15 +369,12 @@ fn job_of(v: &Value) -> Result<Job, Fault> {
     });
     let typed = [
         ("model", job.model.is_some()),
-        ("progress", job.progress.is_some()),
-        ("created_at", job.created_at.is_some()),
-        ("completed_at", job.completed_at.is_some()),
         ("expires_at", job.expires_at.is_some()),
         ("seconds", job.seconds.is_some()),
         ("size", job.size.is_some()),
         ("error", job.error.is_some()),
     ];
-    // A field the kind could not read, such as a fractional progress, stays.
+    // A field the kind could not read, such as a fractional length, stays.
     let read = typed
         .iter()
         .filter(|(key, typed)| *typed || v[*key].is_null());
@@ -467,19 +460,23 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
     let v = json!({
         "id": job.id,
         "object": "video",
-        "created_at": job.created_at,
         "status": status,
         "model": job.model,
-        "progress": job.progress,
         "seconds": job.seconds.map(|s| s.to_string()),
         "size": job.size,
-        "completed_at": job.completed_at,
         "expires_at": job.expires_at,
         "error": error,
     });
     let mut v = v.as_object().cloned().unwrap_or_default();
     merge_missing(&mut v, &kept(NAME, &job.native));
-    v.entry("remixed_from_video_id").or_insert(Value::Null);
+    for key in [
+        "created_at",
+        "progress",
+        "completed_at",
+        "remixed_from_video_id",
+    ] {
+        v.entry(key).or_insert(Value::Null);
+    }
     Ok(v)
 }
 
@@ -562,5 +559,25 @@ mod tests {
         };
         assert!(call(&mut head, &input).is_ok());
         assert_eq!(head.uri, "/videos/..%2Fa%2Fb%3Fc");
+    }
+
+    #[test]
+    fn a_job_is_written_back_with_its_times_and_progress() {
+        let job = json!({"id": "video_1", "object": "video", "status": "in_progress",
+            "model": "sora-2", "seconds": "8", "size": "1280x720", "expires_at": null,
+            "error": null, "created_at": 1, "progress": 40.5, "completed_at": null,
+            "remixed_from_video_id": null});
+        let mut out = Vec::new();
+        decode_whole(Bytes::from(job.to_string()), &mut out).expect("read");
+        let written = encode_whole(&out).expect("written");
+        let written: Value = serde_json::from_slice(&written).expect("JSON");
+        assert_eq!(written, job);
+        // Another format's job has them all, as null.
+        let written = job_json(&Job::new("veo_1", Status::Queued)).expect("written");
+        assert!(
+            ["created_at", "progress", "completed_at"]
+                .iter()
+                .all(|k| written[*k].is_null())
+        );
     }
 }
