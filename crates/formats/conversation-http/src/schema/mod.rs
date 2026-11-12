@@ -54,6 +54,9 @@ use serde_json::{Map, Value};
 
 /// What only format `F` reads of a value: a key no other crate can name.
 pub(crate) struct Key<F>(std::marker::PhantomData<fn() -> F>);
+impl<F: Schema> respan_gateway_core::Key for Key<F> {
+    const NAME: &'static str = F::NAME;
+}
 
 /// Provider HTTP delivery preference, set in call extensions.
 /// Without an override the HTTP binding follows the original client request,

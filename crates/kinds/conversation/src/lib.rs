@@ -781,14 +781,13 @@ impl Assembled {
     /// reasoning and tool calls in order, each with the fields its format kept
     /// beside it and its signatures after it.
     pub fn replay(&self) -> Vec<Content> {
-        // A block's latest fields are what its format last said of it.
-        let mut kept: HashMap<u32, &Native> = HashMap::new();
+        let mut kept: HashMap<u32, Native> = HashMap::new();
         for item in self.items() {
             if let AssembledItem::BlockFields { block, native } = item {
-                kept.insert(*block, native);
+                kept.entry(*block).or_default().extend(native.clone());
             }
         }
-        let native_of = |block: u32| kept.get(&block).map(|n| (*n).clone()).unwrap_or_default();
+        let native_of = |block: u32| kept.get(&block).cloned().unwrap_or_default();
         let mut parts = Vec::new();
         for item in self.items() {
             match item {
@@ -949,12 +948,11 @@ mod tests {
         if let Content::Reasoning { native: n, .. } = &mut natives.content[1] {
             *n = native;
         }
-        // Only its format reads a native: it is not kept.
+        // A native is kept with its format's name, and read back as it was.
         let kept = serde_json::to_vec(&natives).expect("kept");
-        assert_eq!(
-            serde_json::from_slice::<Message>(&kept).expect("read back"),
-            message
-        );
+        let back = serde_json::from_slice::<Message>(&kept).expect("read back");
+        assert_eq!(back, natives);
+        assert_ne!(back, message);
     }
 
     #[test]
@@ -971,6 +969,10 @@ mod tests {
 
     #[test]
     fn parts_roles_and_finishes_carry_their_format_and_extra() {
+        enum Other {}
+        impl respan_gateway_core::Key for Other {
+            const NAME: &'static str = "other";
+        }
         let mut cached = Message::new(Role::User, "hi");
         if let Content::Text { native, .. } = &mut cached.content[0] {
             *native = Native::json::<()>(json!({"cache_control": 1}));
@@ -981,19 +983,19 @@ mod tests {
         let role = |native| Role::Native(native);
         let critic = || Native::json::<()>("critic");
         assert_eq!(role(critic()), role(critic()));
-        assert_ne!(role(critic()), role(Native::json::<u8>("critic")));
+        assert_ne!(role(critic()), role(Native::json::<Other>("critic")));
         assert_ne!(
             Finish::native(Native::json::<()>("x"), None),
-            Finish::native(Native::json::<u8>("x"), None)
+            Finish::native(Native::json::<Other>("x"), None)
         );
         // Only the format a native is of reads it; another's it replaces.
         let mut native = critic();
-        assert_eq!(native.value::<u8>(), None);
-        assert!(native.fields::<u8>().is_empty());
-        native.fields_mut::<u8>().insert("a".into(), 1.into());
+        assert_eq!(native.value::<Other>(), None);
+        assert!(native.fields::<Other>().is_empty());
+        native.fields_mut::<Other>().insert("a".into(), 1.into());
         assert_eq!(native.value::<()>(), None);
-        assert_eq!(native.value::<u8>(), Some(&json!({"a": 1})));
-        assert!(Native::json::<u8>(json!({})).is_empty());
+        assert_eq!(native.value::<Other>(), Some(&json!({"a": 1})));
+        assert!(Native::json::<Other>(json!({})).is_empty());
     }
 
     #[test]

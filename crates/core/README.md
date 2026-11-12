@@ -32,11 +32,14 @@ protocols and adapters all depend on it directly.
   and the like make one.
 - `Native`: what a value holds that the kind has no place for, opaque to
   every format but its own. A format keeps it as JSON under a key type
-  private to it (`Native::json::<K>`, `value::<K>`, `fields::<K>`,
+  private to it (`native_key!`, a `Key` with a stable `NAME`), read and
+  written with that key (`Native::json::<K>`, `value::<K>`, `fields::<K>`,
   `fields_mut::<K>`), which no other format can name, so another's reads as
-  none and is replaced when a format writes its own: that is the drop. A format may give its vendors' dialects a door
-  to its own (`Schema::fields_mut` and the like). With the `serde` feature a
-  `Native` is written as `null` and read back as none: only its format
+  none and is replaced when a format writes its own: that is the drop. A
+  format may give its vendors' dialects and hosts doors to its own
+  (`native_doors!`, `Schema::fields_mut` and the like). With the `serde`
+  feature a `Native` is kept as `{"format", "value"}` under its key's name
+  (`null` if empty) and read back as it was, so a store shared through serde
   keeps it.
 
 Core defines no request/event kinds or `Format` implementations. Each kind

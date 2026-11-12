@@ -312,21 +312,26 @@ fn put_back(input: &mut Input, earlier: impl Fn(&str) -> Option<Vec<Content>>) {
     }
 }
 
-/// `message` without what `format` cannot write: reasoning, which only its
-/// own provider reads back, and the signatures that seal it, unless
-/// `format` is Responses, whose writer drops another format's reasoning, as
-/// any writer drops another format's native parts.
+/// `message` without what `format` cannot write: reasoning sealed by a
+/// signature, which only its own provider reads back, and the signatures
+/// that seal it, unless `format` is Responses, whose writer drops another
+/// format's reasoning. Plain reasoning is the kind's, which any writes.
 fn writable(mut message: Message, format: &str) -> Message {
     let mut is_dropped = false;
-    message.content.retain(|part| {
+    let mut parts = std::mem::take(&mut message.content).into_iter().peekable();
+    while let Some(part) = parts.next() {
         is_dropped = match part {
-            // WARN: reasoning a provider of another format than Responses gave is dropped.
-            Content::Reasoning { .. } => format != RESPONSES,
+            // WARN: signed reasoning is dropped for another format than Responses.
+            Content::Reasoning { .. } => {
+                format != RESPONSES && matches!(parts.peek(), Some(Content::Signature(_)))
+            }
             Content::Signature(_) => is_dropped,
             _ => false,
         };
-        !is_dropped
-    });
+        if !is_dropped {
+            message.content.push(part);
+        }
+    }
     message
 }
 
@@ -536,7 +541,12 @@ mod tests {
         assert_eq!(input.messages[1].content[..2], kept);
         assert_eq!(input.messages[2].content[..2], kept);
         assert_eq!(input.messages[2].content.len(), 4);
-        // Another format's reasoning goes with its signature; a call's stays.
+        // Signed reasoning goes with its signature for another format; plain
+        // reasoning and a call's signature stay.
+        let plain = Content::Reasoning {
+            text: "p".into(),
+            native: Native::default(),
+        };
         let mut signed = Message::new(Role::Assistant, "");
         signed.content = vec![
             Content::Reasoning {
@@ -544,11 +554,13 @@ mod tests {
                 native: Native::default(),
             },
             Content::Signature("theirs".into()),
+            plain.clone(),
             Content::tool_call("c1", "f", "{}"),
             Content::Signature("call".into()),
         ];
         let kept = writable(signed, OpenAiChat::NAME).content;
-        assert_eq!(kept[1..], [Content::Signature("call".into())]);
+        assert_eq!(kept[0], plain);
+        assert_eq!(kept[2..], [Content::Signature("call".into())]);
     }
 
     /// A follow-up reaching another gateway than its response is sent the

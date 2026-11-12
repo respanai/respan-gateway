@@ -24,8 +24,7 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-images";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 const GENERATIONS: &str = "/images/generations";
 const EDITS: &str = "/images/edits";
 
@@ -59,29 +58,7 @@ impl OpenAiImages {
     /// The format's name, `openai-images`.
     pub const NAME: &'static str = NAME;
 
-    /// The fields of this format's own in `native`, if it holds them: the
-    /// door for this format's dialects.
-    pub fn fields(native: &Native) -> &Map<String, Value> {
-        native.fields::<Key>()
-    }
-
-    /// The fields of this format's own in `native`, to edit, in place of
-    /// another format's: the door for this format's dialects.
-    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
-        native.fields_mut::<Key>()
-    }
-
-    /// This format's own event or fields in `native`, if it holds them: the
-    /// door for this format's dialects.
-    pub fn value(native: &Native) -> Option<&Value> {
-        native.value::<Key>()
-    }
-
-    /// `value` as this format's own native: the door for this format's
-    /// dialects.
-    pub fn native(value: impl Into<Value>) -> Native {
-        Native::json::<Key>(value)
-    }
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiImages {

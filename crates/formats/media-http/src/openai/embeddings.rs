@@ -17,8 +17,7 @@ use serde_json::{Map, Value};
 
 const NAME: &str = "openai-embeddings";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 const EMBEDDINGS: &str = "/embeddings";
 
 /// OpenAI Embeddings, as OpenAI or a compatible vendor serves it: a `POST`

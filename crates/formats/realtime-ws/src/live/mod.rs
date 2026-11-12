@@ -18,8 +18,7 @@ use crate::session::{self as spec, Spec};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-/// What only this format reads of a value ([`respan_gateway_core::Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 
 pub(crate) const SPEC: Spec = Spec {
     name: "openai-live",

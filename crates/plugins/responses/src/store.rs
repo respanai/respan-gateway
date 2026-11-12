@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use respan_gateway_conversation::{Content, MediaSource, Message};
-use respan_gateway_core::{Native, async_trait};
+use respan_gateway_core::async_trait;
 
 /// What is kept under a key: a response's turn of a conversation (the
 /// messages its request added, and the reply) under its id, beside the
@@ -80,7 +80,7 @@ fn bytes_of(message: &Message) -> usize {
     fn part(content: &Content) -> usize {
         match content {
             Content::Text { text, native, .. } | Content::Reasoning { text, native } => {
-                text.len() + native_bytes(native)
+                text.len() + native.len()
             }
             Content::Image(media) | Content::Audio(media) | Content::Document(media) => {
                 let source = match &media.source {
@@ -90,7 +90,7 @@ fn bytes_of(message: &Message) -> usize {
                 source
                     + media.mime_type.len()
                     + media.name.as_ref().map_or(0, String::len)
-                    + native_bytes(&media.native)
+                    + media.native.len()
             }
             Content::ToolCall {
                 id,
@@ -98,27 +98,18 @@ fn bytes_of(message: &Message) -> usize {
                 name,
                 native,
                 ..
-            } => id.len() + arguments.len() + name.len() + native_bytes(native),
+            } => id.len() + arguments.len() + name.len() + native.len(),
             Content::ToolResult {
                 id,
                 content,
                 native,
                 ..
-            } => id.len() + content.iter().map(part).sum::<usize>() + native_bytes(native),
-            Content::Native(native) => native_bytes(native),
+            } => id.len() + content.iter().map(part).sum::<usize>() + native.len(),
+            Content::Native(native) => native.len(),
             _ => 256,
         }
     }
-    64 + message.content.iter().map(part).sum::<usize>() + native_bytes(&message.native)
-}
-
-/// Roughly the bytes of a native, which only its format reads: as long as
-/// it prints.
-fn native_bytes(native: &Native) -> usize {
-    match native.is_empty() {
-        true => 0,
-        false => format!("{native:?}").len(),
-    }
+    64 + message.content.iter().map(part).sum::<usize>() + message.native.len()
 }
 
 #[cfg(test)]

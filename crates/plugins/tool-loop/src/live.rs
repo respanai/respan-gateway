@@ -11,14 +11,12 @@
 //! and asks for the next itself), gets its calls answered but asks for
 //! none.
 //!
-//! What a format says only in its own natives, which the loop cannot read,
-//! may be of the runner's calls (OpenAI's items of a function call, its
-//! argument deltas, the call in `response.done`): the client is sent none of
-//! a format's own events, and the end of a response the runner called in
-//! without its format's fields.
+//! What a format says of a call only in its own fields (OpenAI's items of
+//! a function call, its argument deltas, the call in `response.done`) is
+//! left out with the call, by the format, as the loop cannot read them
+//! ([`Calls`]).
 
 use parking_lot::Mutex;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use respan_gateway_core::futures::channel::mpsc;
@@ -26,6 +24,7 @@ use respan_gateway_core::futures::future::ready;
 use respan_gateway_core::futures::stream::{self, StreamExt};
 use respan_gateway_core::{ClientContext, EventStream, Fault, Native};
 use respan_gateway_realtime::{Input, Output, Session, Status, Tool, ToolResult};
+use respan_gateway_realtime_ws::Calls;
 use tokio::time::Instant;
 
 use super::tools::{run_tools, spend};
@@ -48,7 +47,9 @@ struct State {
     /// The runner's tools, by the name the model has, but those the client
     /// names too.
     offered: Vec<Tool>,
-    names: HashSet<String>,
+    /// What a format says of their calls only in its own events is left
+    /// out of those.
+    calls: Calls,
     /// Calls being run.
     running: usize,
     /// A response is being made.
@@ -64,6 +65,10 @@ struct State {
     first: bool,
     /// The start of the response being made, held until it says something.
     start: Option<Output>,
+    /// A response was not seen, and the next has not started: what a format
+    /// says of its end only in its own events (Gemini's `turnComplete`
+    /// after a call) is not seen either.
+    unseen: bool,
 }
 
 /// Runs the loop over the live session of `cx`, offering `offered`.
@@ -76,7 +81,10 @@ pub(super) fn run(
     let names = offered.iter().map(|t| t.name.clone()).collect();
     let state = Arc::new(Mutex::new(State {
         offered,
-        names,
+        calls: Calls {
+            names,
+            ids: Default::default(),
+        },
         running: 0,
         active: false,
         called: false,
@@ -85,6 +93,7 @@ pub(super) fn run(
         budget: limits.max_results,
         first: true,
         start: None,
+        unseen: false,
     }));
     let (jobs, queued) = mpsc::unbounded::<Job>();
     let shared = state.clone();
@@ -132,9 +141,9 @@ fn offer(state: &mut State, session: &mut Session) {
     };
     // A tool the client names is the client's.
     for tool in tools.iter() {
-        state.names.remove(&tool.name);
+        state.calls.names.remove(&tool.name);
     }
-    let names = &state.names;
+    let names = &state.calls.names;
     tools.extend(
         state
             .offered
@@ -151,6 +160,11 @@ fn shown(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, output: Output) -
     let starts = matches!(output, Output::ResponseStart { .. });
     let ends = matches!(output, Output::ResponseDone { .. });
     let called = state.called;
+    match &output {
+        Output::ResponseStart { .. } => state.unseen = false,
+        Output::Native(_) if state.unseen => return Vec::new(),
+        _ => {}
+    }
     let Some(output) = see(state, jobs, output) else {
         return Vec::new();
     };
@@ -162,7 +176,10 @@ fn shown(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, output: Output) -
         return vec![output];
     }
     match state.start.take() {
-        Some(_) if ends && called => Vec::new(),
+        Some(_) if ends && called => {
+            state.unseen = true;
+            Vec::new()
+        }
         Some(start) => vec![start, output],
         None => vec![output],
     }
@@ -174,19 +191,21 @@ fn see(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, mut output: Output)
     match &mut output {
         Output::Opened(session) | Output::Updated(session) => {
             if let Some(tools) = &mut session.tools {
-                tools.retain(|t| !state.names.contains(&t.name));
+                tools.retain(|t| !state.calls.names.contains(&t.name));
             }
         }
-        Output::ResponseStart { .. } => {
+        Output::ResponseStart { native, .. } => {
             state.active = true;
             (state.called, state.client_called) = (false, false);
+            state.calls.fields(native);
         }
         Output::ToolCall {
             id,
             name,
             arguments,
             ..
-        } if state.names.contains(name.as_str()) => {
+        } if state.calls.names.contains(name.as_str()) => {
+            state.calls.ids.insert(id.clone());
             state.running += 1;
             state.called = true;
             let job = Job::Run {
@@ -202,16 +221,18 @@ fn see(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, mut output: Output)
             state.active = false;
             if std::mem::take(&mut state.called) {
                 state.respond = *status == Status::Completed && !state.client_called;
-                // WARN: the fields of a response the runner called in are dropped, as they may hold its calls.
-                *native = Native::default();
             }
             if state.respond && state.running == 0 {
                 state.respond = false;
                 let _ = jobs.unbounded_send(Job::Respond);
             }
+            state.calls.fields(native);
         }
-        // WARN: a format's own event is dropped, as it may be of the runner's calls.
-        Output::Native(_) => return None,
+        Output::Native(native) => {
+            if state.calls.event(native) {
+                return None;
+            }
+        }
         _ => {}
     }
     Some(output)

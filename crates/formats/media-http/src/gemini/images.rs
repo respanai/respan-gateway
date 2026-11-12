@@ -22,8 +22,7 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "gemini-images";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 
 /// Gemini's image models, such as Nano Banana, as the Gemini API serves
 /// them: a `POST` to `.../models/{model}:generateContent`, its answer's

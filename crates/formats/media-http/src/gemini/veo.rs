@@ -24,8 +24,7 @@ use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 /// What starts the id of a job of Veo's.
 const PREFIX: &str = "veo_";
 
@@ -80,6 +79,8 @@ pub struct GeminiVeo;
 impl GeminiVeo {
     /// The format's name, `gemini-veo`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 
     /// The job id of the operation `name`.
     pub fn job_id(name: &str) -> String {

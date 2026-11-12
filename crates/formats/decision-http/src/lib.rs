@@ -41,8 +41,7 @@ const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
 const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -53,6 +52,8 @@ pub struct Decisions;
 impl Decisions {
     /// The format's name, `decisions`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for Decisions {

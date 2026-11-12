@@ -13,18 +13,16 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use respan_gateway_core::{Connection, Fault, Format, Native};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::{ClientIo, ProviderIo};
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Session};
 use respan_gateway_ws::WsTransport;
-use serde_json::{Map, Value};
 
 use crate::session::{self, Spec};
 
 const NAME: &str = SPEC.name;
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(pub(crate) Key = NAME);
 
 /// What a session's writer to its provider and reader of it share.
 #[derive(Debug, Default)]
@@ -80,17 +78,7 @@ impl GeminiLive {
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
 
-    /// What `native` holds of this format's own, if anything: the door for
-    /// code that speaks this format alone, such as a plugin of its sessions.
-    pub fn value(native: &Native) -> Option<&Value> {
-        native.value::<Key>()
-    }
-
-    /// This format's own fields in `native`, to edit, in place of another
-    /// format's.
-    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
-        native.fields_mut::<Key>()
-    }
+    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]),
     /// taking binary frames as text ([`WsTransport::with_binary_text`]).

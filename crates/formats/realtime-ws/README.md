@@ -193,7 +193,9 @@ dropped by a writer, which cannot read them, with a warning at the
 provider's of its events and parts: what has meaning beyond its format
 belongs in the kind. `OpenAiRealtime`, `GeminiLive` and `ResponsesWs`
 open their own natives to code that speaks them alone (`value`,
-`fields_mut`), such as a plugin of their sessions. An error says its
+`fields_mut` and the like), such as a plugin of their sessions; `Calls`
+leaves some tools' calls out of what a format says of them only in its
+own events, for a plugin that runs those tools itself. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 

@@ -8,8 +8,7 @@ const OPENAI: &str = "openai-decisions";
 /// The most questions a request asks.
 const MAX_QUESTIONS: usize = 400;
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = OPENAI);
 
 /// OpenAI's decisions contract, as Azure OpenAI serves it: a client's
 /// `POST` to its path (`/v1/decisions` unless [`OpenAiDecisions::serving`]
@@ -40,6 +39,8 @@ impl Default for OpenAiDecisions {
 }
 
 impl OpenAiDecisions {
+    respan_gateway_core::native_doors!(Key);
+
     /// Its clients served at `/v1/decisions`.
     pub const DEFAULT: Self = Self {
         path: Cow::Borrowed("/v1/decisions"),

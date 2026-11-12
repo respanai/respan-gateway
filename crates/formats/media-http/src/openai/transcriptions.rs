@@ -25,8 +25,7 @@ use serde_json::{Map, Value};
 
 const NAME: &str = "openai-transcriptions";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 const TRANSCRIPTIONS: &str = "/audio/transcriptions";
 const TRANSLATIONS: &str = "/audio/translations";
 

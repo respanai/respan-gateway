@@ -40,7 +40,7 @@ use mockllm::{Answer, FakeOpenAi};
 use respan_gateway_conversation::{Block, Content, Input, Output, ResponseFormat, Usage};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{
-    ErrorCode, Fault, Gateway, Native, Plugin, Provider, ProviderContext, async_trait, futures,
+    ErrorCode, Fault, Gateway, Plugin, Provider, ProviderContext, async_trait, futures,
 };
 use respan_gateway_http::http::{self, HeaderMap, HeaderValue, StatusCode};
 use respan_gateway_http::http_body_util::BodyExt;
@@ -376,7 +376,7 @@ fn meter(call: &Call, reply: &Output) -> Result<(), Fault> {
             kind: Block::ToolCall { name, .. },
             ..
         } => name.len(),
-        Output::Native(native) => native_bytes(native),
+        Output::Native(native) => native.len(),
         _ => 0,
     };
     call.chars.fetch_add(chars, Ordering::Relaxed);
@@ -402,7 +402,7 @@ fn refuse(status: StatusCode, code: &'static str, message: String) -> Fault {
 /// and 8 a message for framing. Content with no byte bound, such as an
 /// image, is refused.
 fn input_bound(chat: &Input) -> Result<u64, Fault> {
-    let mut bytes = native_bytes(&chat.native);
+    let mut bytes = chat.native.len();
     if let Some(ResponseFormat::JsonSchema {
         name,
         description,
@@ -416,20 +416,12 @@ fn input_bound(chat: &Input) -> Result<u64, Fault> {
         bytes += tool.name.len()
             + tool.description.as_deref().map_or(0, str::len)
             + tool.parameters.to_string().len()
-            + native_bytes(&tool.native);
+            + tool.native.len();
     }
     for message in &chat.messages {
-        bytes += content_bytes(&message.content)? + native_bytes(&message.native) + 8;
+        bytes += content_bytes(&message.content)? + message.native.len() + 8;
     }
     Ok(bytes as u64)
-}
-
-/// At least the bytes of what only its format reads: as long as it prints.
-fn native_bytes(native: &Native) -> usize {
-    match native.is_empty() {
-        true => 0,
-        false => format!("{native:?}").len(),
-    }
 }
 
 fn content_bytes(parts: &[Content]) -> Result<usize, Fault> {

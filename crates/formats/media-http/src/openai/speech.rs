@@ -21,8 +21,7 @@ use serde_json::{Map, Value};
 
 const NAME: &str = "openai-speech";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 const SPEECH: &str = "/audio/speech";
 
 /// OpenAI Audio Speech, as OpenAI or a compatible vendor serves it: a
@@ -42,11 +41,7 @@ impl OpenAiSpeech {
     /// The format's name, `openai-speech`.
     pub const NAME: &'static str = NAME;
 
-    /// The fields of this format's own in `native`, to edit, in place of
-    /// another format's: the door for this format's dialects.
-    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
-        native.fields_mut::<Key>()
-    }
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiSpeech {

@@ -15,8 +15,7 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 /// What ends the path of a download, after its job's escaped id.
 const CONTENT: &str = "/content";
 

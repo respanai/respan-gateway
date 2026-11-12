@@ -4,7 +4,7 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, Native};
+use respan_gateway_core::{Connection, EventStream, Fault, Key, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -233,7 +233,7 @@ fn offer_beside_the_clients(
 /// A client's session of native events alone, of the format of key `K`:
 /// each frame one `Input::Native`, and only its own `Output::Native` written.
 /// A frame that is not JSON is the client's fault, `bad_request`.
-pub(crate) fn native_client<K: 'static>() -> (Read<Input>, Box<dyn Encoder<Output>>) {
+pub(crate) fn native_client<K: Key>() -> (Read<Input>, Box<dyn Encoder<Output>>) {
     let read = move |raw: Bytes, out: &mut Vec<Input>| {
         let json: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
@@ -253,7 +253,7 @@ pub(crate) fn native_client<K: 'static>() -> (Read<Input>, Box<dyn Encoder<Outpu
 /// A provider's session of native events alone, of the format of key `K`:
 /// only its own `Input::Native` written, and each frame one `Output::Native`.
 /// A frame that is not JSON is the provider's fault, `upstream`.
-pub(crate) fn native_provider<K: 'static>() -> (Box<dyn Encoder<Input>>, Read<Output>) {
+pub(crate) fn native_provider<K: Key>() -> (Box<dyn Encoder<Input>>, Read<Output>) {
     let write = move |event: &Input, out: &mut Vec<Bytes>| {
         out.push(match event {
             Input::Native(native) => written(native.value::<K>())?,
@@ -295,10 +295,8 @@ mod tests {
             written(event.value::<()>()).expect("same format"),
             Bytes::from_static(br#"{"text":"edited"}"#)
         );
-        for refused in [written(event.value::<u8>()), written(None)] {
-            let refused = refused.expect_err("foreign event");
-            assert!(refused.code() == "config");
-        }
+        let refused = written(None).expect_err("foreign event");
+        assert!(refused.code() == "config");
     }
 
     /// Regression: a model was put in the query as it was, so `a b` broke

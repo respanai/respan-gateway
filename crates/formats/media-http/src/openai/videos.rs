@@ -24,8 +24,7 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-videos";
 
-/// What only this format reads of a value ([`Native`]).
-enum Key {}
+respan_gateway_core::native_key!(Key = NAME);
 
 /// OpenAI Videos, as OpenAI or a compatible vendor serves it: a request to
 /// a path ending in `/videos`, `/videos/{id}`, `/videos/{id}/content` or
@@ -45,11 +44,7 @@ impl OpenAiVideos {
     /// The format's name, `openai-videos`.
     pub const NAME: &'static str = NAME;
 
-    /// The fields of this format's own in `native`, to edit, in place of
-    /// another format's: the door for this format's dialects.
-    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
-        native.fields_mut::<Key>()
-    }
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiVideos {
