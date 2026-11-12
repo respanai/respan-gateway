@@ -23,7 +23,7 @@ use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Dialect, Dialected, Modality, Model, Models, Price, Rewrite,
-    Vendor, VendorProvider, built_wrong, http, json, models, own, time,
+    Vendor, VendorProvider, built_wrong, http, json, models, own_mut, time,
 };
 
 /// Where its API is.
@@ -87,7 +87,7 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    let fields = own(&mut input.native, OpenAiImages::NAME);
+    let fields = own_mut(&mut input.native, OpenAiImages::NAME);
     // WARN: EmpirioLabs AI edits take no mask; it is dropped.
     fields.shift_remove("mask");
     fields.entry("sync").or_insert(true.into());

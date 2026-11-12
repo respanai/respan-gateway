@@ -1,11 +1,9 @@
 //! Events as Responses, whole or streamed: the encoders.
 
 use super::decode::SEALED;
-use super::{
-    ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
-};
+use super::{RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of};
 use crate::schema::{
-    Gate, block_fields, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    Gate, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
@@ -99,21 +97,21 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
     let mut annotations: Vec<(u32, Value)> = Vec::new();
     let (mut usage_more, mut changed) = (Map::new(), Map::new());
     for item in whole.items() {
-        let AssembledItem::Native(NativeValue { format, value: raw }) = item else {
-            continue;
-        };
-        if **format != *RESPONSES {
-            continue;
-        }
-        if let Some((block, more)) = block_fields(raw) {
-            fields.push((block, more.clone()));
-        } else if raw["type"] == ANNOTATION {
-            let block = raw["block"].as_u64().and_then(|b| u32::try_from(b).ok());
-            annotations.extend(block.map(|b| (b, raw["annotation"].clone())));
-        } else if let Some(more) = fields_only(raw, USAGE_FIELDS) {
-            merge_into(&mut usage_more, more);
-        } else if let Some(more) = fields_only(raw, RESPONSE_FIELDS) {
-            merge_into(&mut changed, more);
+        match item {
+            AssembledItem::BlockFields { block, native } if *native.format == *RESPONSES => {
+                fields.push((*block, native.fields.clone()));
+            }
+            AssembledItem::BlockNative { block, native } if *native.format == *RESPONSES => {
+                annotations.push((*block, Value::clone(&native.value)));
+            }
+            AssembledItem::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
+                if let Some(more) = fields_only(raw, USAGE_FIELDS) {
+                    merge_into(&mut usage_more, more);
+                } else if let Some(more) = fields_only(raw, RESPONSE_FIELDS) {
+                    merge_into(&mut changed, more);
+                }
+            }
+            _ => {}
         }
     }
     let id = whole
@@ -163,13 +161,12 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     Some("response.output_item.done") => output.push(raw["item"].clone()),
                     // The rest of an item is in its done event, or in a block.
                     Some(t) if t.starts_with("response.") => {}
-                    Some(ANNOTATION | USAGE_FIELDS | RESPONSE_FIELDS) => {}
-                    _ if block_fields(raw).is_some() => {}
+                    Some(USAGE_FIELDS | RESPONSE_FIELDS) => {}
                     _ => return Err(unwritable_content()),
                 }
             }
             // Another format's: only a client of that format could read it.
-            AssembledItem::Native(_) => {}
+            _ => {}
         }
     }
     let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
@@ -624,22 +621,19 @@ impl Events {
                     slot.fields.insert(SEALED.into(), data.as_str().into());
                 }
             }
+            Output::BlockFields { block, native } if *native.format == *RESPONSES => {
+                // Fields of a block that is open join its item: they are the
+                // done item's.
+                match self.blocks.iter_mut().find(|b| b.block == *block) {
+                    Some(slot) => merge_into(&mut slot.fields, &native.fields),
+                    None => self.fields.push((*block, native.fields.clone())),
+                }
+            }
+            Output::BlockNative { block, native } if *native.format == *RESPONSES => {
+                self.annotate(*block, &native.value, out)?;
+            }
             Output::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
-                if let Some((block, fields)) = block_fields(raw) {
-                    // Fields of a block that is open join its item: they are the
-                    // done item's.
-                    match self.blocks.iter_mut().find(|b| b.block == block) {
-                        Some(slot) => merge_into(&mut slot.fields, fields),
-                        None => self.fields.push((block, fields.clone())),
-                    }
-                } else if raw["type"] == ANNOTATION {
-                    let block = raw["block"].as_u64().and_then(|b| u32::try_from(b).ok());
-                    self.annotate(
-                        block.ok_or_else(unwritable_content)?,
-                        &raw["annotation"],
-                        out,
-                    )?;
-                } else if let Some(fields) = fields_only(raw, USAGE_FIELDS) {
+                if let Some(fields) = fields_only(raw, USAGE_FIELDS) {
                     merge_into(&mut self.usage_more, fields);
                 } else if let Some(fields) = fields_only(raw, RESPONSE_FIELDS) {
                     merge_into(&mut self.changed, fields);
@@ -651,7 +645,7 @@ impl Events {
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

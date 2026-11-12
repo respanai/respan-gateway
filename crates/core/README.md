@@ -32,8 +32,8 @@ protocols and adapters all depend on it directly.
   and the like make one.
 - `NativeFields { format, fields }` preserves unsupported fields on a typed
   value; `NativeValue { format, value }` an entire unsupported value. The
-  format ID names the wire schema, not a provider deployment, so formats can
-  reject unsafe cross-format forwarding. Neither carries transport state.
+  format ID names the wire schema, not a provider deployment: only that
+  format reads them, and another drops them. Neither carries transport state.
   With the `serde` feature both are `Serialize` and `Deserialize`, for a
   host that keeps them.
 

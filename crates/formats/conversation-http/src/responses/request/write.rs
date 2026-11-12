@@ -22,8 +22,7 @@ pub(in crate::responses) fn write_input(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let instructed =
-        chat.native.format() == Some(RESPONSES) && chat.native.fields().contains_key(INSTRUCTIONS);
+    let instructed = chat.native.own(RESPONSES).contains_key(INSTRUCTIONS);
     let mut rest = &chat.messages[..];
     if instructed
         && let Some((first, after)) = rest.split_first()
@@ -237,7 +236,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
         match c {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
-                if !run.is_empty() && native.fields().contains_key(MESSAGE) {
+                if !run.is_empty() && native.own(RESPONSES).contains_key(MESSAGE) {
                     flush_assistant(&mut run, items);
                 }
                 run.push(c);
@@ -265,7 +264,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
             }
             // Reasoning is only valid with the id of the item it was.
             // WARN: another format's reasoning is dropped here, silently.
-            Content::Reasoning { native, .. } if native.format() != Some(RESPONSES) => {}
+            Content::Reasoning { native, .. } if native.own(RESPONSES).is_empty() => {}
             Content::Reasoning { text, native } => {
                 flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {

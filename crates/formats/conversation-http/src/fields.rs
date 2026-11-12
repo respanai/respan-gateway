@@ -53,6 +53,19 @@ pub fn native_of(format: &str, fields: Map<String, Value>) -> Option<NativeField
     (!fields.is_empty()).then(|| NativeFields::new(format, fields))
 }
 
+/// The fields of `native` for `format` to edit, made of `format` if there
+/// are none: another format's are dropped for them, as its writer drops them.
+pub fn own_mut<'a>(
+    native: &'a mut Option<NativeFields>,
+    format: &str,
+) -> &'a mut Map<String, Value> {
+    // WARN: another format's native fields are dropped here, silently.
+    native.take_if(|n| &*n.format != format);
+    &mut native
+        .get_or_insert_with(|| NativeFields::new(format, Map::new()))
+        .fields
+}
+
 /// The fields of `native` to write in `format`: all of them if they are its.
 /// A native field means something only to its own format: another format's
 /// are dropped.

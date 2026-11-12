@@ -60,7 +60,7 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
-    merge_details, merge_fields, merge_into, native_fields, parse_effort, parts_within_totals, set,
+    merge_details, merge_fields, merge_into, native_of, parse_effort, parts_within_totals, set,
     stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, untranslatable,
     usage_extra,
 };
@@ -76,7 +76,7 @@ use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
 use decode::OpenAiDecoder;
-use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice};
+use encode::{Chunks, call_json, envelope, merge_call, merge_choice};
 use request::{
     read_openai_message, read_openai_tools, read_response_format, write_openai_message,
     write_openai_tools, write_reasoning, write_response_format,
@@ -280,9 +280,9 @@ impl Schema for OpenAiChat {
             _ => Vec::new(),
         };
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_fields(OPENAI, unsupported_fields(v, KNOWN, INERT));
+        chat.native = native_of(OPENAI, unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
-            chat.native.fields_mut(OPENAI).shift_remove("user");
+            chat.native.own_mut(OPENAI).shift_remove("user");
         }
         chat.options.service_tier = take_text(&mut chat, "service_tier");
         chat.options.verbosity = take_text(&mut chat, "verbosity");
@@ -293,7 +293,7 @@ impl Schema for OpenAiChat {
             chat.messages.push(message);
         }
         read_openai_tools(v, &mut chat);
-        chat.native = native_fields(OPENAI, std::mem::take(chat.native.fields_mut(OPENAI)));
+        chat.native = native_of(OPENAI, std::mem::take(chat.native.own_mut(OPENAI)));
         read_response_format(v, &mut chat);
         chat.options.reasoning =
             take_native(&mut chat, "reasoning_effort", |e| parse_effort(e.as_str()?))
@@ -302,9 +302,7 @@ impl Schema for OpenAiChat {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        if chat.native.format() == Some(OPENAI)
-            && let Some(n) = chat.native.fields().get("n")
-        {
+        if let Some(n) = chat.native.own(OPENAI).get("n") {
             check_choice_count(n)?;
         }
         let mut v = Map::new();
@@ -374,10 +372,9 @@ impl Schema for OpenAiChat {
             .items()
             .iter()
             .filter_map(|item| match item {
-                AssembledItem::Native(NativeValue {
-                    format: f,
-                    value: raw,
-                }) if **f == *OPENAI => call_fields_of(raw),
+                AssembledItem::BlockFields { block, native } if *native.format == *OPENAI => {
+                    Some((*block, &native.fields))
+                }
                 _ => None,
             })
             .collect();
@@ -387,8 +384,8 @@ impl Schema for OpenAiChat {
                 Block::ToolCall { id, name } => {
                     let arguments = if p.text.is_empty() { "{}" } else { &p.text };
                     let mut call = call_json(None, Some(id), Some(name), arguments);
-                    for (_, entry, function) in fields.iter().filter(|(b, ..)| *b == p.block) {
-                        merge_call(&mut call, entry, function);
+                    for (_, more) in fields.iter().filter(|(b, _)| *b == p.block) {
+                        merge_call(&mut call, more);
                     }
                     if let Some(s) = whole.signature(p.block) {
                         sign(&mut call, s);
@@ -429,9 +426,6 @@ impl Schema for OpenAiChat {
             let AssembledItem::Native(NativeValue { format, value: raw }) = item else {
                 continue;
             };
-            if &**format == OPENAI && call_fields_of(raw).is_some() {
-                continue;
-            }
             if let (true, Some(fields)) = (&**format == OPENAI, usage_fields(raw)) {
                 usage_more.extend(fields.clone());
                 continue;

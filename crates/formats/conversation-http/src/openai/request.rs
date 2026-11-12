@@ -7,8 +7,8 @@
 use crate::fields::media_url;
 use crate::schema::{
     FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_name,
-    encode_content, encode_message, merge_missing, native_fields, only, own_native, read_search,
-    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
+    encode_content, encode_message, merge_missing, native_of, only, read_search, reasoning_of,
+    remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -39,7 +39,7 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
         let search = read_search(OPENAI, options.clone());
         chat.provider_tools.push(search);
         chat.native
-            .fields_mut(OPENAI)
+            .own_mut(OPENAI)
             .shift_remove("web_search_options");
     }
 }
@@ -55,7 +55,7 @@ fn openai_tool(tool: &Value) -> Option<Tool> {
     };
     let mut kind = Tool::new(function["name"].as_str()?, function["parameters"].clone());
     kind.description = description;
-    kind.native = native_fields(
+    kind.native = native_of(
         OPENAI,
         rest_of(function, &["name", "description", "parameters"]),
     );
@@ -182,7 +182,7 @@ fn openai_call(call: &Value) -> Option<Vec<Content>> {
     let mut fields = rest_of(call, &["id", "type", "function"]);
     let signature = take_signature(&mut fields).map(Content::Signature);
     if let Content::ToolCall { native, .. } = &mut part {
-        *native = native_fields(OPENAI, fields);
+        *native = native_of(OPENAI, fields);
     }
     Some([part].into_iter().chain(signature).collect())
 }
@@ -340,7 +340,7 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
     };
     let mut media = Media::new(mime, source);
     media.name = name;
-    media.native = native_fields(OPENAI, std::mem::take(&mut fields));
+    media.native = native_of(OPENAI, std::mem::take(&mut fields));
     Some(match kind {
         0 => Content::Image(media),
         1 => Content::Audio(media),
@@ -434,10 +434,7 @@ pub(crate) fn read_response_format(v: &Value, input: &mut Input) {
 /// requirement, else the request's own.
 pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
     let Some(requirement) = &input.options.response_format else {
-        let own = input.native.format() == Some(OPENAI);
-        return own
-            .then(|| input.native.fields().get("response_format").cloned())
-            .flatten();
+        return input.native.own(OPENAI).get("response_format").cloned();
     };
     Some(match requirement {
         ResponseFormat::Text => json!({"type":"text"}),
@@ -472,6 +469,6 @@ pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
     // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
     Ok(match r.and_then(|r| r.effort) {
         Some(effort) => Some(effort_name(effort)?.into()),
-        None => own_native(input, OPENAI, "reasoning_effort"),
+        None => input.native.own(OPENAI).get("reasoning_effort").cloned(),
     })
 }

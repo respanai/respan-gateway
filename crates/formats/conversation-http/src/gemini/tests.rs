@@ -236,7 +236,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
         "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });
     let chat = GeminiGenerate.decode_json(&body);
-    let native = chat.native.fields();
+    let native = chat.native.own(GEMINI);
     for key in ["safetySettings", "tools", "toolConfig", "generationConfig"] {
         assert!(native.contains_key(key), "{key}");
     }
@@ -391,7 +391,7 @@ fn what_gemini_cannot_say_is_refused_or_dropped() {
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
         c.native
-            .fields_mut("openai-chat")
+            .own_mut("openai-chat")
             .insert("seed".into(), 1.into());
     }));
 }

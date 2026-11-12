@@ -26,17 +26,18 @@
 //! fields its format kept beside it, so a signed `thinking` block of
 //! Anthropic or a `thoughtSignature` of Gemini goes back in the assistant
 //! message the next step starts from, and the provider accepts the step. A
-//! block's fields are its [`block_fields`], and its signature follows it.
+//! block's fields are its [`BlockFields`], and its signature follows it.
 //! Blocks only natives carry (a provider-run tool's) are not replayed.
 //!
-//! Native events of a step reach the client as its blocks do. One that names
-//! a block (by `index` or `block`) is renumbered with it, and dropped with it
-//! if the runner holds the block; one that names a block no event opens (a
+//! Native events of a step reach the client as its blocks do. A block's
+//! ([`BlockFields`], [`BlockNative`]) is renumbered with it, and dropped with
+//! it if the runner holds the block; one of a block no event opens (a
 //! provider-run tool's) gets a number of its own. Events about the step as a
 //! whole (`ping`, a stop sequence, response fields) are those of the first
 //! step; the client has no use for those of the steps after.
 //!
-//! [`block_fields`]: respan_gateway_conversation::Output::block_fields
+//! [`BlockFields`]: respan_gateway_conversation::Output::BlockFields
+//! [`BlockNative`]: respan_gateway_conversation::Output::BlockNative
 //!
 //! A tool's failure is the model's to read, not the gateway's: a result with
 //! `is_error` set. Only the provider's failure, a limit, or a malformed reply
@@ -44,7 +45,6 @@
 
 mod filter;
 mod live;
-mod replay;
 mod steps;
 mod tools;
 

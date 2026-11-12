@@ -3,7 +3,7 @@
 use super::super::RESPONSES;
 use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, native_fields, only, remainder, says, source_url};
+use crate::schema::{NativeFieldsExt, native_of, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use serde_json::{Map, Value, json};
 
@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 fn text_part(text: &str, fields: Map<String, Value>) -> Content {
     let mut part = Content::from(text);
     if let Content::Text { native, .. } = &mut part {
-        *native = native_fields(RESPONSES, fields);
+        *native = native_of(RESPONSES, fields);
     }
     part
 }
@@ -74,7 +74,7 @@ pub(super) fn read_media(p: &Value) -> Option<Content> {
         media.name = p["filename"].as_str().map(str::to_owned);
         media
     };
-    media.native = native_fields(RESPONSES, fields);
+    media.native = native_of(RESPONSES, fields);
     Some(match p["type"] == "input_image" {
         true => Content::Image(media),
         false => Content::Document(media),
@@ -146,14 +146,14 @@ fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             if !extras.is_empty() {
                 fields.insert(MESSAGE.into(), extras.into());
             }
-            *first = native_fields(RESPONSES, fields);
+            *first = native_of(RESPONSES, fields);
             assistant(out).content.extend(content);
         }
         role => {
             let role = role.unwrap_or_else(|| Role::native(RESPONSES, name));
             let mut message = Message::new(role, "");
             message.content = content;
-            message.native = native_fields(RESPONSES, extras);
+            message.native = native_of(RESPONSES, extras);
             out.push(message);
         }
     }
@@ -165,7 +165,7 @@ fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];
-        *native = native_fields(RESPONSES, remainder(item, &taken));
+        *native = native_of(RESPONSES, remainder(item, &taken));
     }
     assistant(out).content.push(call);
     Some(())
@@ -180,7 +180,7 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut result = Content::tool_result(id, content, false);
     if let Content::ToolResult { native, .. } = &mut result {
         let taken = ["type", "call_id", "output"];
-        *native = native_fields(RESPONSES, remainder(item, &taken));
+        *native = native_of(RESPONSES, remainder(item, &taken));
     }
     let results = |m: &Message| {
         m.role == Role::User
@@ -208,7 +208,7 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             _ => return None,
         }
     }
-    let native = native_fields(RESPONSES, remainder(item, &["type", "summary", SEALED]));
+    let native = native_of(RESPONSES, remainder(item, &["type", "summary", SEALED]));
     let text = texts.join("\n\n");
     let content = &mut assistant(out).content;
     content.push(Content::Reasoning { text, native });
