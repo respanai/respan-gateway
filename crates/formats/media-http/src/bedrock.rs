@@ -6,7 +6,7 @@
 
 use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::Usage;
-use respan_gateway_conversation_http::fields::{invalid, warn_dropped};
+use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_core::{Connection, Fault, Format, NativeFields, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
@@ -174,9 +174,7 @@ fn input_type(native: &Option<NativeFields>) -> Result<Option<&str>, Fault> {
         return Ok(None);
     };
     let own = &*native.format == OpenAiEmbeddings::NAME;
-    let read = |k: &&str| !own || !["input_type", "encoding_format"].contains(k);
-    let other = native.fields.keys().map(String::as_str).filter(read);
-    warn_dropped(NAME, &native.format, other);
+    // WARN: any other native field, or any of another format, is dropped here, silently.
     match native.fields.get("input_type").filter(|_| own) {
         None => Ok(None),
         Some(Value::String(kind)) => Ok(Some(kind)),

@@ -31,7 +31,7 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 
 What a format has no form for stays native to it (`NativeFields`,
 `Content::Native`, `Output::Native`), is written only by that format, and is
-dropped by another, with a warning: what has meaning beyond its format belongs
+dropped by another, silently: what has meaning beyond its format belongs
 in the kind. A call to a
 provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and

@@ -2,7 +2,7 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields::{self, warn_dropped};
+use crate::fields;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
@@ -55,10 +55,8 @@ fn own_part(format: &str, part: &mut Content) -> bool {
         content.retain_mut(|c| own_part(format, c));
     }
     match part {
-        Content::Native(n) if *n.format != *format => {
-            warn_dropped(format, &n.format, ["part"]);
-            false
-        }
+        // WARN: a part in another format's shape is dropped here, silently.
+        Content::Native(n) if *n.format != *format => false,
         _ => true,
     }
 }
@@ -73,7 +71,7 @@ fn holds_foreign(format: &str, part: &Content) -> bool {
 }
 
 /// `chat` without the parts in another format's shape and the messages in
-/// another format's role, each dropped with a warning.
+/// another format's role, each dropped.
 pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
     let foreign_role =
         |m: &Message| matches!(&m.role, Role::Native { format: f, .. } if **f != *format);
@@ -83,12 +81,8 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
     }
     let mut chat = chat.clone();
     chat.messages.retain_mut(|m| {
-        if let Role::Native {
-            format: from, name, ..
-        } = &m.role
-            && foreign_role(m)
-        {
-            warn_dropped(format, from, [name.as_str()]);
+        // WARN: a message in another format's role is dropped here, silently.
+        if foreign_role(m) {
             return false;
         }
         let said = !m.content.is_empty();
@@ -96,15 +90,6 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
         !said || !m.content.is_empty()
     });
     Cow::Owned(chat)
-}
-
-/// Says that `format` goes without reasoning it cannot take back.
-pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
-    warn_dropped(
-        format,
-        native.format().unwrap_or("another format"),
-        ["reasoning"],
-    );
 }
 
 /// `fields` as the native of a value decoded by `format`: none if empty.
