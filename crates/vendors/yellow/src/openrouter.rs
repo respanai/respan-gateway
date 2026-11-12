@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, and images, embeddings, transcriptions and speech.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -8,10 +8,14 @@ use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media::{image, speech, transcription};
+use respan_gateway_media_http::openai::{
+    OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
+};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -34,6 +38,15 @@ pub const VENDOR: Vendor = Vendor {
         (&AnthropicMessages, Some(MESSAGES_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
+            Some(BASE_URL),
+        ),
+        (&OpenAiEmbeddings, Some(BASE_URL)),
+        (
+            &Dialected::new(OpenAiTranscriptions, OpenRouterTranscriptions),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiSpeech, OpenRouterSpeech),
             Some(BASE_URL),
         ),
     ],
@@ -162,6 +175,63 @@ impl Filter<image::Output> for Counted {
     }
 }
 
+/// OpenRouter's transcriptions, as they depart from OpenAI's: a model
+/// billed by the second answers its usage's `seconds` with no `type`,
+/// which is read as OpenAI's `duration`.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterTranscriptions;
+
+impl Dialect for OpenRouterTranscriptions {
+    type Input = transcription::Input;
+    type Output = transcription::Output;
+
+    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        crate::json_answer(head).then(|| Box::new(timed) as Rewrite)
+    }
+}
+
+/// An answer with its usage of `seconds` typed a `duration`; any other as
+/// it came.
+fn timed(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut answer) = serde_json::from_slice::<Value>(&raw) else {
+        return Ok(raw);
+    };
+    match answer["usage"].as_object_mut() {
+        Some(usage) if usage.contains_key("seconds") && !usage.contains_key("type") => {
+            usage.insert("type".into(), "duration".into());
+        }
+        _ => return Ok(raw),
+    }
+    let unwritten = |e| Fault::internal("an answer is no JSON").with_source(e);
+    serde_json::to_vec(&answer)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// OpenRouter's speech, as it departs from OpenAI's: asked for no
+/// `response_format` it answers `pcm`, so it is asked for `mp3`, which
+/// OpenAI answers then. A model that speaks `pcm` alone, as Gemini's and
+/// HeyGen's do, refuses that itself, and is to be asked for `pcm`. Its
+/// `pcm` is 16-bit as OpenAI's, at 24 kHz or, from some models, such as
+/// Fish Audio's and HeyGen's, 44.1 kHz.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterSpeech;
+
+impl Dialect for OpenRouterSpeech {
+    type Input = speech::Input;
+    type Output = speech::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
+        Some(Box::new(in_mp3))
+    }
+}
+
+/// `input` asking for `mp3`, unless it asks for a format.
+fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
+    input.audio_format.get_or_insert_with(|| "mp3".into());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +348,29 @@ mod tests {
         let mut head = call.into_parts().0;
         OpenRouterImages.request(&mut head).expect("a path");
         assert_eq!(head.uri.path(), "/images");
+    }
+
+    #[test]
+    fn its_seconds_of_audio_are_a_duration() {
+        let timed = |v: Value| -> Value {
+            let raw = Bytes::from(v.to_string());
+            serde_json::from_slice(&timed(raw).expect("read")).expect("JSON")
+        };
+        assert_eq!(
+            timed(json!({ "text": "hi", "usage": { "seconds": 2, "cost": 0.0002 } }))["usage"],
+            json!({ "seconds": 2, "cost": 0.0002, "type": "duration" })
+        );
+        let tokens = json!({ "text": "hi", "usage": { "input_tokens": 19, "output_tokens": 10 } });
+        assert_eq!(timed(tokens.clone()), tokens);
+    }
+
+    #[test]
+    fn speech_of_no_format_is_asked_in_mp3() {
+        let mut input = speech::Input::new("hi");
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("mp3"));
+        input.audio_format = Some("pcm".into());
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("pcm"));
     }
 }

@@ -5,7 +5,6 @@ use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
@@ -57,11 +56,7 @@ impl Dialect for DeepInfra {
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
-            return None;
-        }
-        Some(Box::new(openai_job))
+        crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
 }
 
