@@ -724,9 +724,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
             set_field("responseJsonSchema", Some(schema.clone()));
         }
     }
-    if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
-    }
+    // WARN: an end user's id has no field in Gemini; dropped silently.
     if let Some(r) = reasoning_of(chat)? {
         write_thinking(r, &mut config)?;
     }

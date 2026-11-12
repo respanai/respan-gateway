@@ -191,14 +191,14 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
 }
 
 #[test]
-fn what_converse_has_no_field_for_is_refused() {
+fn what_converse_has_no_field_for_is_refused_or_dropped() {
     let base = || chat([user("hi")]);
     let mut c = base();
     c.options.top_k = Some(5);
     assert!(refused(&c).contains("top_k"));
     let mut c = base();
     c.user = Some("u".into());
-    assert!(refused(&c).contains("end user"));
+    assert_eq!(written(&c), written(&base()));
     let mut c = base();
     c.options.reasoning = Some(Reasoning::effort(Effort::High));
     assert!(refused(&c).contains("budget"));

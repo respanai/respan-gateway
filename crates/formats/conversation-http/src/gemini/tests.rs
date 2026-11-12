@@ -346,10 +346,11 @@ fn structured_output_is_a_mime_type_and_a_schema() {
 }
 
 #[test]
-fn what_gemini_cannot_say_is_refused_not_dropped() {
+fn what_gemini_cannot_say_is_refused_or_dropped() {
     let one = json!({ "contents": [{ "parts": [{ "text": "x" }] }] });
     let refused = |edit: fn(&mut Input)| written(one.clone(), edit).is_err();
-    assert!(refused(|c| c.user = Some("u".into())));
+    let body = |edit: fn(&mut Input)| written(one.clone(), edit).expect("written");
+    assert_eq!(body(|c| c.user = Some("u".into())), body(|_| {}));
     assert!(refused(|c| c.options.parallel_tool_calls = Some(false)));
     assert!(refused(|c| c.messages.clear()));
     assert!(refused(|c| {

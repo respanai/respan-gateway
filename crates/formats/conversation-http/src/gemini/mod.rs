@@ -34,8 +34,8 @@
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
 //! the kind has no choice for, video parts, and a part's `thoughtSignature`.
-//! A request for several candidates, one tool call at a time, or an end
-//! user's id is refused when written.
+//! An end user's id is dropped when written; a request for several
+//! candidates or one tool call at a time is refused.
 //!
 //! A Gemini 3 model refuses a function call in the history that has no
 //! `thoughtSignature`, as a call made in another format has none: written
