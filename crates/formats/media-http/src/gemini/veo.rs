@@ -805,6 +805,7 @@ fn operation_of_job(job: &Job, base: &str, model: Option<&str>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Natives;
 
     /// Regression: this format's own copy of Google's names lacked 409 and
     /// 499, and read `UNIMPLEMENTED` back as 500.

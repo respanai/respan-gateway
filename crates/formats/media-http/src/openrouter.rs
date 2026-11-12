@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
 
-enum Key {}
+type Key = crate::Own<OpenRouterVideos>;
+
 /// What ends the path of a download, after its job's escaped id.
 const CONTENT: &str = "/content";
 
@@ -45,8 +46,6 @@ pub struct OpenRouterVideos;
 impl OpenRouterVideos {
     /// The format's name, `openrouter-videos`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 }
 
 /// A bearer key, over HTTP, beside its base URL.
@@ -170,6 +169,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Natives;
     use respan_gateway_http::http;
 
     fn head() -> RequestHead {
