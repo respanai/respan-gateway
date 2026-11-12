@@ -2,8 +2,9 @@
 //! [`video`](respan_gateway_media::video) kind, [`OpenRouterVideos`].
 
 use crate::edge::{bind_provider, content, sends};
+use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::{kept, media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{Method, request::Parts as RequestHead};
@@ -27,9 +28,11 @@ const CONTENT: &str = "/content";
 ///
 /// A job's id starts `gen-vid-`. It is `queued` while `pending`, `in_progress`,
 /// `completed` once its video is made, `failed` with the error OpenRouter
-/// words; a state it adds, such as `cancelled`, is the format's own. What
-/// else it answers, such as its `usage` or the signed `urls` of its video, is
-/// dropped: it reports no progress and names no model, size or length of a job.
+/// words; a state it adds, such as `cancelled`, is the format's own. Its
+/// videos are where it serves them ([`Job::videos`]) and its `usage`, what
+/// it charged, a native field of this format. What else it answers, such as
+/// the signed `urls` of its video, is dropped: it reports no progress and
+/// names no model, size or length of a job.
 ///
 /// It cannot remix, delete or list videos, nor make a thumbnail or a
 /// spritesheet: those are refused, 400, before any call.
@@ -144,6 +147,14 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let mut job = Job::new(id, status);
     job.expires_at = v["expires_at"].as_u64();
     job.error = v["error"].as_str().map(|m| JobError::new(None, m));
+    job.videos = (v["unsigned_urls"].as_array().into_iter().flatten())
+        .filter_map(Value::as_str)
+        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
+        .collect();
+    if let Some(usage) = v.get("usage").filter(|usage| !usage.is_null()) {
+        let fields = Map::from_iter([("usage".to_owned(), usage.clone())]);
+        job.native = Some(NativeFields::new(NAME, fields));
+    }
     out.push(Output::Job(job));
     Ok(())
 }
@@ -151,7 +162,6 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::{Media, MediaSource};
     use respan_gateway_http::http;
 
     fn head() -> RequestHead {
@@ -252,6 +262,10 @@ mod tests {
             (job.status.clone(), job.expires_at),
             (Status::Completed, Some(1794541809))
         );
+        let at = "https://o.example/videos/gen-vid-1/content?index=0";
+        assert_eq!(job.video_url(), Some(at));
+        let usage = job.native.as_ref().and_then(|n| n.fields.get("usage"));
+        assert_eq!(usage, Some(&json!({ "cost": 0.02, "is_byok": false })));
 
         let failed = json!({ "id": "gen-vid-1", "status": "failed", "error": "content policy" });
         let [Output::Job(job)] = &jobs(failed)[..] else {

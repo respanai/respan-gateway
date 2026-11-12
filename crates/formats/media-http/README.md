@@ -151,10 +151,14 @@ generation, as a provider only, its key a bearer token. Its job ids start
   the first of the `frame_images`, and its `openrouter-videos` native fields
   (`resolution`, `aspect_ratio`, `generate_audio`, `seed`) as they are.
 - `GET /videos/{id}` polls it: `pending` is `queued`, `in_progress`,
-  `completed` and `failed` are the kind's, its error a string; its `usage`
-  and the signed `urls` of its video are dropped. It reports no progress,
-  model, size or length. `GET /videos/{id}/content` is the video's
-  bytes, relayed as they come.
+  `completed` and `failed` are the kind's, its error a string; its
+  `unsigned_urls` are the job's videos and its `usage`, what it charged, a
+  native field of the format; the signed `urls` of its video are dropped.
+  It reports no progress, model, size or length. `GET /videos/{id}/content`
+  is the video's bytes, relayed as they come. It answers a 404 for the
+  content of a job not finished, as for a job it never made, so
+  `video::LocateContent` retrieves the job first and refuses one not
+  finished, 400 `video_not_ready`.
 - It cannot remix, delete or list videos, nor make a thumbnail or a
   spritesheet: those are refused, 400 `unsupported`, before any call.
 
