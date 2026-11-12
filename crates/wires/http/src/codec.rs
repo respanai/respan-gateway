@@ -66,7 +66,8 @@ pub trait Decoder<T>: Send + 'static {
     fn decode(&mut self, raw: Bytes, out: &mut Vec<T>) -> Result<(), Fault>;
 
     /// The frames ended as `end` says, a broken body's fault or `Ok`: the
-    /// values of what was held, if it ended well. `Err` fails it.
+    /// values of what was held, if it ended well. `Err` fails it; one that
+    /// ends a broken body replaces the body's fault, as one that explains it.
     fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<T>) -> Result<(), Fault> {
         let _ = out;
         end
@@ -369,7 +370,10 @@ impl<T: Send + 'static> Stream for Decoding<T> {
                 tail => {
                     let wire = tail.transpose().map(|_| ());
                     let ended = this.decoder.end(wire.clone(), &mut values);
-                    Some(wire.and(ended))
+                    Some(match ended {
+                        Err(fault) if wire.is_err() => Err(fault),
+                        ended => wire.and(ended),
+                    })
                 }
             };
             this.ready.extend(values.into_iter().map(Ok));

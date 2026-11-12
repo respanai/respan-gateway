@@ -25,6 +25,7 @@ use tokio_tungstenite::tungstenite::{Error, Message, Utf8Bytes};
 
 use crate::{CloseCode, Limits, ProviderClose};
 use respan_gateway_http::rules::header_tokens;
+use respan_gateway_http_faults::Status;
 
 /// Hand a client's WebSocket upgrade, `head`, to `gateway`, and pump its
 /// frames both ways once `upgraded` gives the connection: the HTTP
@@ -40,7 +41,7 @@ use respan_gateway_http::rules::header_tokens;
 /// handshake, read whole within `limits.close_wait` up to
 /// `limits.max_message`, as clients (tungstenite) do not decode a chunked
 /// one: 404, 401, 502... A body that fails, is late or does not fit is
-/// written as text under the fault's status, with its error code. With a
+/// written as text under the fault's status, with its message. With a
 /// `101` the client is upgraded with the `101`'s headers, and its
 /// subprotocol if the client offered it, unless that is a key
 /// ([`Credential`]): a key is never sent back. A request that is no
@@ -66,7 +67,7 @@ use respan_gateway_http::rules::header_tokens;
 /// | Client's upgrade fails | as when it drops | nothing |
 /// | Client sends a binary frame, or a message over `max_message` | input ends `Err(bad_request)` with its [`CloseCode`]; provider is sent that Close | Close 1003 (binary) or 1009 (too large); the response is read to its end, unsent |
 /// | Provider sends Close 1000 (or no code) | dropped | Close 1000; ends clean |
-/// | Provider sends Close with another code | dropped | an `upstream` fault with that [`ProviderClose`]: Close 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
+/// | Provider sends Close with another code | dropped | an `upstream` fault with that [`ProviderClose`], its code and reason in the message, a 400 for 1003, 1007, 1008 or 1009: Close 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
 /// | Provider drops, no Close, or is silent through a ping | dropped | Close 1011 `truncated` |
 /// | Provider sends a binary frame or a message over `max_message` | it is sent Close 1003 or 1009 | Close 1011 `upstream` |
 /// | Provider is unreachable, or refuses the upgrade | (no session) | the client's format answers the handshake: 502, or under the provider's status |
@@ -74,8 +75,9 @@ use respan_gateway_http::rules::header_tokens;
 /// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent Close 1011, or the fault's [`CloseCode`] | Close 1011, or the fault's [`CloseCode`] |
 /// | A fault ends the response | provider is sent Close 1001 | Close 1011, or the fault's [`CloseCode`] (1001 if `abandoned`) |
 ///
-/// A provider's close reason text is not relayed, nor is a client's close
-/// code or reason. A session that has ended ignores `stop`.
+/// A provider's close reason text reaches the client in the fault's
+/// message, the client's Close reason (cut to 123 bytes); a client's close
+/// code and reason are not relayed. A session that has ended ignores `stop`.
 pub async fn serve<S>(
     gateway: &Gateway,
     head: http::request::Parts,
@@ -178,9 +180,9 @@ async fn refusal(
     }
 }
 
-/// `fault` as text/plain under its status: its error code, never its message.
+/// `fault` as text/plain under its status: its message.
 fn text(fault: &Fault) -> http::Response<Body> {
-    plain_response(fault, fault.code())
+    plain_response(fault, fault.message())
 }
 
 /// Which edge a connection is, for what its peer's end means.
@@ -293,7 +295,7 @@ where
                     true => 1001,
                     false => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
                 };
-                close(&mut sink, code, fault.code(), limits.close_send).await;
+                close(&mut sink, code, reason_of(edge, &fault), limits.close_send).await;
                 return Err(fault);
             }
             Sent::Stopped => {
@@ -309,7 +311,7 @@ where
         Heard::Ended(refused) => {
             end.finish();
             if let Some((code, fault)) = refused {
-                close(&mut sink, code, fault.code(), limits.close_send).await;
+                close(&mut sink, code, reason_of(edge, &fault), limits.close_send).await;
             }
             // The response's end says how the request ended: it is read on, unsent.
             if let Edge::Client = edge {
@@ -456,11 +458,11 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
                 break refused(1003, "a binary frame: only text frames are carried");
             }
             Some(Ok(Message::Close(frame))) => {
-                let code = frame.map(|f| u16::from(f.code));
+                let code = frame.as_ref().map(|f| u16::from(f.code));
                 let clean = closing.load(Ordering::SeqCst) || matches!(code, None | Some(1000));
                 if let (Edge::Provider { relayed, .. }, false, Some(code)) = (edge, clean, code) {
-                    let mut fault = Fault::upstream("the provider closed the session")
-                        .with(ProviderClose(code));
+                    let reason = frame.as_ref().map_or("", |f| f.reason.as_str());
+                    let mut fault = provider_closed(code, reason);
                     if relayed {
                         fault = fault.with(CloseCode(code));
                     }
@@ -498,6 +500,35 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
     };
     let _ = frames.send(Err(fault.clone())).await;
     Heard::Ended(code.map(|code| (code, fault)))
+}
+
+/// The Close codes a provider refuses what it was sent with (RFC 6455
+/// 7.4.1): data it cannot take, data inconsistent with its type, a policy
+/// it violates, and a message too large.
+const REFUSED_INPUT: [u16; 4] = [1003, 1007, 1008, 1009];
+
+/// The `upstream` fault of a provider's Close with `code`, other than 1000:
+/// its [`ProviderClose`], a message with its code and `reason`, and a 400
+/// ([`Status`]) for a code that refuses what it was sent.
+fn provider_closed(code: u16, reason: &str) -> Fault {
+    let message = match reason.is_empty() {
+        true => format!("the provider closed the session with {code}"),
+        false => format!("the provider closed the session with {code}: {reason}"),
+    };
+    let fault = Fault::upstream(message).with(ProviderClose(code));
+    match REFUSED_INPUT.contains(&code) {
+        true => fault.with(Status(StatusCode::BAD_REQUEST)),
+        false => fault,
+    }
+}
+
+/// What a Close says of `fault`: to the client its message, which tells it
+/// why, to a provider the error code.
+fn reason_of(edge: Edge, fault: &Fault) -> &str {
+    match edge {
+        Edge::Client => fault.message(),
+        Edge::Provider { .. } => fault.code(),
+    }
 }
 
 /// Send Close `code` with `reason` (cut to the 123 bytes a Close takes)

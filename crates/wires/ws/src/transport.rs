@@ -68,7 +68,9 @@ fn is_handshake(name: &HeaderName) -> bool {
 ///   fault. The answer's body dropped: Close 1001.
 /// - The provider sends Close with no code or 1000: the answer ends clean.
 ///   With another code: an `Upstream` fault with that
-///   [`ProviderClose`](crate::ProviderClose), and, on a call with
+///   [`ProviderClose`](crate::ProviderClose), its code and reason in the
+///   message, a 400 for 1003, 1007, 1008 or 1009 (the provider refused what
+///   it was sent), and, on a call with
 ///   [`Relayed`] (as `respan_gateway_plugin_relay::Relay` marks a call to a
 ///   provider of its client's own format), that `CloseCode` too.
 /// - The provider's connection breaks with no Close, or it is silent

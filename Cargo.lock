@@ -2158,6 +2158,7 @@ dependencies = [
  "http",
  "respan-gateway-core",
  "respan-gateway-http",
+ "respan-gateway-http-faults",
  "respan-gateway-http-transport",
  "respan-gateway-plugin-relay",
  "respan-gateway-realtime-ws",

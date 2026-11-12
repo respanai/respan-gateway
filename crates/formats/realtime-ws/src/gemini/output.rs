@@ -9,10 +9,11 @@
 
 use std::sync::atomic::Ordering;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
+use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Purpose, Status, Usage};
-use respan_gateway_ws::CloseCode;
+use respan_gateway_ws::{CloseCode, ProviderClose};
 use serde_json::{Map, Value, json};
 
 use super::{Answering, NAME, Shared, State};
@@ -49,6 +50,8 @@ pub(super) struct Provider {
     /// Whether the model answers the user's turn, in a transcription,
     /// whose answer is dropped.
     answered: bool,
+    /// Whether the provider announced the end of the session (`goAway`).
+    going_away: bool,
 }
 
 impl Provider {
@@ -60,6 +63,7 @@ impl Provider {
             told: false,
             heard: String::new(),
             answered: false,
+            going_away: false,
         }
     }
 
@@ -70,6 +74,7 @@ impl Provider {
             out.push(Output::native(NAME, v));
             return Ok(());
         }
+        self.going_away |= v.get("goAway").is_some();
         // A model that only transcribes ends its generation, never a turn.
         let generated = v["serverContent"]["generationComplete"] == true;
         let used = usage(&mut v);
@@ -278,6 +283,28 @@ impl Provider {
             self.ended = false;
         }
         starts
+    }
+}
+
+/// The provider's messages, and its Close explained: one after its
+/// `goAway` is the end of the session it announced, not a failure.
+impl Decoder<Output> for Provider {
+    fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+        self.read(raw, out)
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, _: &mut Vec<Output>) -> Result<(), Fault> {
+        match end {
+            Err(closed) if self.going_away && closed.get::<ProviderClose>().is_some() => {
+                let ended = Fault::upstream(
+                    "the provider ended the session at the time limit it announced",
+                )
+                .with(ErrorCode("session_limit".into()))
+                .with(CloseCode(1001));
+                Err(crate::session::carry(ended, &closed))
+            }
+            end => end,
+        }
     }
 }
 

@@ -145,8 +145,7 @@ impl Format<ProviderIo, Output, Input> for GeminiLive {
         let _ = say.unbounded_send(Output::Opened(opened));
         let mut provider = input::Provider::new(shared.clone(), say);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
-        let mut provider = output::Provider::new(shared);
-        let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
-        Ok(SPEC.provider(io, None, write, Box::new(read), Some(said)))
+        let provider = output::Provider::new(shared);
+        Ok(SPEC.provider(io, None, write, Box::new(provider), Some(said)))
     }
 }
