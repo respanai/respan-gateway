@@ -11,7 +11,7 @@ use super::{
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -20,7 +20,7 @@ use respan_gateway_http::http::{
 use respan_gateway_http::path::{escape, forwarded_path};
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
 use respan_gateway_http::{Connect, Upstream};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Jobs, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-videos";
@@ -138,55 +138,34 @@ fn param(uri: &Uri, key: &str) -> Option<String> {
         .map(|(_, v)| v)
 }
 
-/// The variant a content request asks for.
-fn variant(uri: &Uri) -> Result<Variant, Fault> {
-    match param(uri, "variant").as_deref() {
-        None | Some("video") => Ok(Variant::Video),
-        Some("thumbnail") => Ok(Variant::Thumbnail),
-        Some("spritesheet") => Ok(Variant::Spritesheet),
-        Some(_) => Err(invalid(
-            "variant",
-            "must be video, thumbnail or spritesheet",
-        )),
-    }
-}
-
-/// A client's request.
+/// A client's request: a creation, a poll or a video's download typed, any
+/// other operation (a remix, a deletion, a page, a still) this format's own,
+/// as its method, the end of its path after the job's id (none for a page),
+/// its query but `after`, and its body.
 fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
     let route = route(&head.method, &head.uri)
         .ok_or_else(|| Fault::bad_request("the request is to no videos endpoint"))?;
+    let native = |id: Option<String>, rest: Option<&str>, body: Option<Map<String, Value>>| {
+        let query = query(&head.uri).into_iter().filter(|(k, _)| k != "after");
+        let query: Map<String, Value> = query.map(|(k, v)| (k, v.into())).collect();
+        let v = json!({"method": head.method.as_str(), "path": rest, "query": query, "body": body});
+        let native = NativeValue::new(NAME, v);
+        Input::Native { id, native }
+    };
+    let video = matches!(param(&head.uri, "variant").as_deref(), None | Some("video"));
     Ok(match route {
         Route::Create => Input::Create(decode_create(form)?),
+        Route::Retrieve(id) => Input::Retrieve { id },
+        Route::Content(id) if video => Input::Content { id, url: None },
+        Route::Content(id) => native(Some(id), Some("/content"), None),
+        Route::Delete(id) => native(Some(id), Some(""), None),
+        Route::List => native(param(&head.uri, "after"), None, None),
         Route::Remix(id) => {
-            let Fields { mut map, files } = form.fields()?;
+            let Fields { map, files } = form.fields()?;
             if let Some((name, _)) = files.first() {
                 return Err(invalid(name, "is not a file this endpoint takes"));
             }
-            let prompt = take_string(&mut map, "prompt")?.ok_or_else(|| missing("prompt"))?;
-            let native = native_of(NAME, map);
-            Input::Remix { id, prompt, native }
-        }
-        Route::Retrieve(id) => Input::Retrieve { id },
-        Route::Delete(id) => Input::Delete { id },
-        Route::Content(id) => Input::Content {
-            id,
-            variant: variant(&head.uri)?,
-            url: None,
-        },
-        Route::List => {
-            let limit = match param(&head.uri, "limit") {
-                None => None,
-                Some(limit) => Some(
-                    limit
-                        .parse()
-                        .map_err(|_| invalid("limit", "must be a whole number"))?,
-                ),
-            };
-            Input::List {
-                after: param(&head.uri, "after"),
-                limit,
-                order: param(&head.uri, "order"),
-            }
+            native(Some(id), Some("/remix"), Some(map))
         }
     })
 }
@@ -218,44 +197,39 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             "/videos".to_owned(),
             Some(create_body(create)?),
         ),
-        Input::Remix { id, prompt, native } => {
-            let mut v = Map::new();
-            v.insert("prompt".into(), prompt.clone().into());
-            merge_missing(&mut v, &kept(NAME, native));
-            let body = (json_bytes(&v)?, "application/json".to_owned());
-            (Method::POST, path(id, "/remix"), Some(body))
-        }
         Input::Retrieve { id } => (Method::GET, path(id, ""), None),
-        Input::Content { id, variant, .. } => {
-            let query = match variant {
-                Variant::Video => "",
-                Variant::Thumbnail => "?variant=thumbnail",
-                Variant::Spritesheet => "?variant=spritesheet",
-                _ => return Err(Fault::bad_request("a variant this format has no form for")),
-            };
-            (Method::GET, path(id, &format!("/content{query}")), None)
-        }
-        Input::Delete { id } => (Method::DELETE, path(id, ""), None),
-        Input::List {
-            after,
-            limit,
-            order,
-        } => {
-            let limit = limit.map(|l| l.to_string());
-            let pairs = [("after", after), ("limit", &limit), ("order", order)];
-            let query: Vec<String> = pairs
-                .iter()
-                .filter_map(|(k, v)| v.as_deref().map(|v| format!("{k}={}", escape(v))))
-                .collect();
+        Input::Content { id, .. } => (Method::GET, path(id, "/content"), None),
+        Input::Native { id, native } if &*native.format == NAME => {
+            let v = &*native.value;
+            let mut query = form_urlencoded::Serializer::new(String::new());
+            let rest = v["path"].as_str();
+            if let (None, Some(after)) = (rest, id) {
+                query.append_pair("after", after);
+            }
+            for (k, value) in v["query"].as_object().into_iter().flatten() {
+                query.append_pair(k, value.as_str().unwrap_or_default());
+            }
+            let query = query.finish();
+            let at = rest.map_or("/videos".to_owned(), |rest| {
+                path(id.as_deref().unwrap_or_default(), rest)
+            });
             let uri = match query.is_empty() {
-                true => "/videos".to_owned(),
-                false => format!("/videos?{}", query.join("&")),
+                true => at,
+                false => format!("{at}?{query}"),
             };
-            (Method::GET, uri, None)
+            let method = v["method"].as_str().unwrap_or_default().as_bytes();
+            let method = Method::from_bytes(method).unwrap_or(Method::GET);
+            let body = v["body"].as_object().map(json_bytes).transpose()?;
+            let body = body.map(|b| (b, "application/json".to_owned()));
+            (method, uri, body)
+        }
+        Input::Native { native, .. } => {
+            let what = format!("OpenAI has no video {} operation", native.format);
+            return Err(Fault::bad_request(what));
         }
         _ => {
             return Err(Fault::bad_request(
-                "a video request this format has no form for",
+                "OpenAI has no video operation of this kind",
             ));
         }
     };
@@ -308,38 +282,49 @@ fn read_response(sent: &http::Request<Bytes>) -> Box<dyn Decoder<Output>> {
     }
 }
 
-/// The events of a whole JSON answer: a job, a page of jobs, or a deletion.
+/// The events of a whole JSON answer: a job, else, such as a page of jobs
+/// or a deletion, this format's own, its jobs' ids typed.
 fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-    let v = whole_json(NAME, raw, |v| {
+    let mut v = whole_json(NAME, raw, |v| {
         matches!(
             v["object"].as_str(),
             Some("video" | "list" | "video.deleted")
         ) || v["id"].is_string()
             || v["data"].is_array()
     })?;
-    out.push(match v["object"].as_str() {
-        Some("list") => Output::Jobs(jobs_of(&v)?),
-        _ if v["data"].is_array() => Output::Jobs(jobs_of(&v)?),
-        Some("video.deleted") => Output::Deleted(id_of(&v)?),
-        _ if v["deleted"] == true => Output::Deleted(id_of(&v)?),
-        _ => Output::Job(job_of(&v)?),
+    let job = !matches!(v["object"].as_str(), Some("list" | "video.deleted"))
+        && !v["data"].is_array()
+        && v["deleted"] != true;
+    out.push(match job {
+        true => Output::Job(job_of(&v)?),
+        false => {
+            let mut ids = Vec::new();
+            each_id(&mut v, &mut |id| ids.push(id.clone()));
+            let native = NativeValue::new(NAME, v);
+            Output::Native { ids, native }
+        }
     });
     Ok(())
+}
+
+/// Each job id a page or a deletion names, in order: its own, then each
+/// job's, with the one it was remixed from.
+fn each_id(v: &mut Value, f: &mut impl FnMut(&mut String)) {
+    let mut visit = |v: &mut Value| {
+        for key in ["id", "first_id", "last_id", "remixed_from_video_id"] {
+            if let Some(Value::String(id)) = v.get_mut(key) {
+                f(id);
+            }
+        }
+    };
+    visit(v);
+    let data = v.get_mut("data").and_then(Value::as_array_mut);
+    data.into_iter().flatten().for_each(visit);
 }
 
 fn id_of(v: &Value) -> Result<String, Fault> {
     let id = v["id"].as_str().map(str::to_owned);
     id.ok_or_else(|| unreadable(NAME, "names no video id"))
-}
-
-/// A page of jobs.
-fn jobs_of(v: &Value) -> Result<Jobs, Fault> {
-    let data = v["data"].as_array().into_iter().flatten();
-    let jobs = data.map(job_of).collect::<Result<Vec<_>, _>>()?;
-    let mut page = Jobs::new(jobs, v["has_more"].as_bool().unwrap_or(false));
-    let taken = ["object", "data", "first_id", "last_id", "has_more"];
-    page.native = native_of(NAME, rest_of(v, &taken));
-    Ok(page)
 }
 
 /// A job object: its fields the kind has a form for typed, the rest, and
@@ -400,11 +385,10 @@ fn response_encoder(
     }
     super::content_type(
         head,
-        match variant(request.uri()).unwrap_or_default() {
-            Variant::Video => "video/mp4",
-            Variant::Thumbnail => "image/webp",
-            Variant::Spritesheet => "image/jpeg",
-            _ => "application/octet-stream",
+        match param(request.uri(), "variant").as_deref() {
+            Some("thumbnail") => "image/webp",
+            Some("spritesheet") => "image/jpeg",
+            _ => "video/mp4",
         },
     );
     Box::new(|event: &Output, out: &mut Vec<Bytes>| {
@@ -422,9 +406,13 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     for event in events {
         match event {
             Output::Job(job) => body = Some(job_json(job)?),
-            Output::Jobs(page) => body = Some(jobs_json(page)?),
-            Output::Deleted(id) => {
-                let v = json!({"id": id, "object": "video.deleted", "deleted": true});
+            Output::Native { ids, native } if &*native.format == NAME => {
+                let (mut v, mut ids) = ((*native.value).clone(), ids.iter());
+                each_id(&mut v, &mut |id| {
+                    if let Some(given) = ids.next() {
+                        id.clone_from(given);
+                    }
+                });
                 body = v.as_object().cloned();
             }
             // A body has no place for another event.
@@ -470,22 +458,6 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
     ] {
         v.entry(key).or_insert(Value::Null);
     }
-    Ok(v)
-}
-
-/// A page of jobs.
-fn jobs_json(page: &Jobs) -> Result<Map<String, Value>, Fault> {
-    let data = page.jobs.iter().map(|j| job_json(j).map(Value::Object));
-    let data = data.collect::<Result<Vec<_>, _>>()?;
-    let v = json!({
-        "object": "list",
-        "data": data,
-        "first_id": page.jobs.first().map(|j| &j.id),
-        "last_id": page.jobs.last().map(|j| &j.id),
-        "has_more": page.has_more,
-    });
-    let mut v = v.as_object().cloned().unwrap_or_default();
-    merge_missing(&mut v, &kept(NAME, &page.native));
     Ok(v)
 }
 
@@ -545,13 +517,55 @@ mod tests {
     }
 
     #[test]
-    fn an_id_is_escaped_in_a_calls_path() {
+    fn an_operation_is_called_as_it_was_asked_its_id_escaped() {
         let mut head = http::Request::new(()).into_parts().0;
         let input = Input::Retrieve {
             id: "../a/b?c".into(),
         };
         assert!(call(&mut head, &input).is_ok());
         assert_eq!(head.uri, "/videos/..%2Fa%2Fb%3Fc");
+        // The format's own operations go as they came.
+        for (method, asked, called) in [
+            (
+                Method::GET,
+                "/v1/videos?after=video_1&limit=2",
+                "/videos?after=video_1&limit=2",
+            ),
+            (Method::DELETE, "/v1/videos/a%2Fb", "/videos/a%2Fb"),
+            (
+                Method::POST,
+                "/v1/videos/video_1/remix",
+                "/videos/video_1/remix",
+            ),
+            (
+                Method::GET,
+                "/v1/videos/video_1/content?variant=thumbnail",
+                "/videos/video_1/content?variant=thumbnail",
+            ),
+        ] {
+            let client = http::Request::builder().method(method.clone()).uri(asked);
+            let client = client.body(()).unwrap_or_default().into_parts().0;
+            let raw = Bytes::from_static(br#"{"prompt": "slower"}"#);
+            let form = Form {
+                headers: &client.headers,
+                raw: &raw,
+                original: None,
+            };
+            let input = decode_request(&client, &form).expect("read");
+            let mut head = http::Request::new(()).into_parts().0;
+            call(&mut head, &input).expect("a call");
+            assert_eq!(
+                (&head.method, head.uri.to_string()),
+                (&method, called.to_owned())
+            );
+        }
+        let page = json!({"object": "list", "data": [{"id": "video_1"}], "has_more": false});
+        let mut out = Vec::new();
+        decode_whole(Bytes::from(page.to_string()), &mut out).expect("read");
+        assert!(matches!(&out[..], [Output::Native { ids, .. }] if ids == &["video_1"]));
+        let written: Value =
+            serde_json::from_slice(&encode_whole(&out).expect("written")).expect("JSON");
+        assert_eq!(written, page);
     }
 
     #[test]

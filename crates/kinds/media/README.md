@@ -11,7 +11,7 @@ formats over HTTP are
 | `transcription` | Speech to text, or to English (`Task`) | `audio`, `task`, `language`, `prompt`, `temperature` | `Delta`, `Transcript`, `Rendered`, `Usage`, `Seconds` |
 | `speech` | Text to speech | `text`, `voice`, `instructions`, `speed`, `audio_format` | `Audio` chunks, `Usage` |
 | `embedding` | Embeddings of texts, images and videos | `items` (`Text`, or a format's own item), `dimensions` | `Start`, `Embedding` vectors, `Usage` |
-| `video` | Video generation, a job | an operation: `Create` (`model`, `prompt`, `seconds`, `size`, a `reference` image), `Remix`, `Retrieve`, `Content` (a `Variant`), `Delete`, `List` | `Job`, `Jobs`, `Content` chunks, `Deleted` |
+| `video` | Video generation, a job | an operation: `Create` (`model`, `prompt`, `seconds`, `size`, a `reference` image), `Retrieve`, `Content`, or a format's own (`Native`, on a job `id`) | `Job`, `Content` chunks, a format's own answer (`Native`, the jobs' `ids` it names) |
 
 Every `Input` has an optional `model`, read by `model()` and rewritten by
 `set_model()`, as a router does; a video's is a `Create`'s alone. Media are the
@@ -37,15 +37,16 @@ The crate is the kinds' types alone, depending only on
 A video is a job: created, polled until done, then downloaded, each a
 request of its own, hours apart. A job's `id` is the provider's, opaque to
 the gateway: a client gives it back as a path segment, and a follow-up
-(`Retrieve`, `Content`, `Remix`, `Delete`, read by `Input::job_id()`) must
+(`Retrieve`, `Content`, a format's own, read by `Input::job_id()`) must
 reach the provider that made the job. Nothing in the request says which but
 the id's spelling: OpenAI Videos' ids start `video_` (OpenAI's own API was
 removed on 2026-09-24; a compatible provider's), Veo's `veo_`, OpenRouter's
 `gen-vid-`.
 `video::VideoJobs`, registered after the router, sends each follow-up (and
-a `List` after one) to its job's provider by that spelling. Providers that
+a page after one) to its job's provider by that spelling. Providers that
 spell ids alike, such as two deployments of one vendor, have their ids
-wrapped on the way out as `<provider>~<id>`, and unwrapped before the call.
+wrapped on the way out as `<provider>~<id>`, a `Job`'s and the `ids` of a
+format's own answer, and unwrapped before the call.
 
 Some providers serve a finished job's content only at the URLs the job
 names (`Job::videos`), as Veo does: `video::LocateContent`, given those

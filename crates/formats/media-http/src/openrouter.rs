@@ -10,7 +10,7 @@ use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{Method, request::Parts as RequestHead};
 use respan_gateway_http::path::{escape, set_path};
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
@@ -34,8 +34,8 @@ const CONTENT: &str = "/content";
 /// such as its `usage` and the signed `urls` of its video, is dropped: it
 /// reports no progress and names no model, size or length of a job.
 ///
-/// It cannot remix, delete or list videos, nor make a thumbnail or a
-/// spritesheet: those are refused, 400, before any call.
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenRouterVideos;
 
@@ -70,9 +70,14 @@ impl Format<ProviderIo, Output, Input> for OpenRouterVideos {
     }
 }
 
-/// An operation OpenRouter has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("OpenRouter cannot {what}")).with(ErrorCode("unsupported".into()))
+/// An operation OpenRouter has no form for, refused, named by its format.
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { native, .. } => format!("{} operation", native.format),
+        _ => "operation of this kind".to_owned(),
+    };
+    Fault::bad_request(format!("OpenRouter has no video {what}"))
+        .with(ErrorCode("unsupported".into()))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
@@ -85,16 +90,8 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             Some(create_body(create)?),
         ),
         Input::Retrieve { id } => (Method::GET, path(id, ""), None),
-        Input::Content {
-            id,
-            variant: Variant::Video,
-            ..
-        } => (Method::GET, path(id, CONTENT), None),
-        Input::Content { .. } => return Err(unsupported("make a thumbnail or a spritesheet")),
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
-        _ => return Err(unsupported("answer this request")),
+        Input::Content { id, .. } => (Method::GET, path(id, CONTENT), None),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     set_path(head, &path)?;
@@ -214,38 +211,17 @@ mod tests {
         assert_eq!(head.uri.path(), "/videos/gen-vid-1%2Fa");
         let content = Input::Content {
             id: "gen-vid-1".into(),
-            variant: Variant::Video,
             url: None,
         };
         call(&mut head, &content).expect("a call");
         assert_eq!(head.uri.path(), "/videos/gen-vid-1/content");
-    }
-
-    #[test]
-    fn an_operation_it_has_no_form_for_is_refused_before_a_call() {
-        let id = || "gen-vid-1".to_owned();
-        let inputs = [
-            Input::Delete { id: id() },
-            Input::Remix {
-                id: id(),
-                prompt: "more".into(),
-                native: None,
-            },
-            Input::List {
-                after: None,
-                limit: None,
-                order: None,
-            },
-            Input::Content {
-                id: id(),
-                variant: Variant::Thumbnail,
-                url: None,
-            },
-        ];
-        for input in inputs {
-            let refused = call(&mut head(), &input).err().expect("refused");
-            assert_eq!(refused.code(), "unsupported");
-        }
+        // Another format's operation, such as OpenAI's remix, is refused before a call.
+        let remix = Input::Native {
+            id: Some("gen-vid-1".into()),
+            native: respan_gateway_core::NativeValue::new("openai-videos", json!({})),
+        };
+        let refused = call(&mut head, &remix).err().expect("refused");
+        assert_eq!(refused.code(), "unsupported");
     }
 
     #[test]
