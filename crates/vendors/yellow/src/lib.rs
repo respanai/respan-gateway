@@ -72,17 +72,3 @@ fn json_answer(head: &ResponseHead) -> bool {
     head.status.is_success()
         && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
 }
-
-/// A vendor's video job as OpenAI's: each of `statuses` by OpenAI's name
-/// for it, and why it failed, a string, as an error's message.
-fn openai_job(job: &mut Map<String, Value>, statuses: &[(&str, &str)]) {
-    if let Some(status) = job.get_mut("status")
-        && let Some((_, openai)) = statuses.iter().find(|(its, _)| status == its)
-    {
-        *status = (*openai).into();
-    }
-    if let Some(message) = job.get("error").and_then(Value::as_str) {
-        let error = Map::from_iter([("message".to_owned(), message.into())]);
-        job.insert("error".into(), error.into());
-    }
-}

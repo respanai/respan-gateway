@@ -84,7 +84,15 @@ fn openai_job(raw: Bytes) -> Result<Bytes, Fault> {
         return Ok(raw);
     };
     job.shift_remove("data");
-    crate::openai_job(&mut job, STATUSES);
+    if let Some(status) = job.get_mut("status")
+        && let Some((_, openai)) = STATUSES.iter().find(|(its, _)| status == its)
+    {
+        *status = (*openai).into();
+    }
+    if let Some(message) = job.get("error").and_then(Value::as_str) {
+        let error = Map::from_iter([("message".to_owned(), message.into())]);
+        job.insert("error".into(), error.into());
+    }
     serde_json::to_vec(&job)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("a video job is no JSON").with_source(e))
