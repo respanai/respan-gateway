@@ -50,8 +50,8 @@ pub use usage::Usage;
 #[non_exhaustive]
 pub struct GenerationOptions {
     /// The processing tier asked for, as OpenAI names it.
-    // WARN: Anthropic, Gemini and Converse name their tiers otherwise, and
-    // drop it.
+    // WARN: Anthropic, Gemini and Converse have tiers under fields of their
+    // own (Anthropic's names differ too); they drop it.
     pub service_tier: Option<String>,
     /// Maximum generated tokens.
     pub max_output_tokens: Option<u64>,
@@ -62,10 +62,12 @@ pub struct GenerationOptions {
     /// How hard the model thinks before it answers.
     pub reasoning: Option<Reasoning>,
     /// Stop sequences.
+    // WARN: Responses has none.
     pub stop: Vec<String>,
     /// Tool selection policy.
     pub tool_choice: Option<ToolChoice>,
     /// Whether parallel tool calls are allowed.
+    // WARN: Gemini and Converse cannot turn them off.
     pub parallel_tool_calls: Option<bool>,
     /// Required shape of the generated answer.
     pub response_format: Option<ResponseFormat>,
@@ -83,8 +85,10 @@ pub struct GenerationOptions {
 #[non_exhaustive]
 pub struct Reasoning {
     /// A named effort.
+    // WARN: Converse has none.
     pub effort: Option<Effort>,
     /// A limit on the thinking, in tokens.
+    // WARN: Chat and Responses have none.
     pub budget_tokens: Option<u64>,
     /// Whether the thinking is returned, summarized where the provider only
     /// summarizes it. `Some(false)` asks that it is withheld.
@@ -116,6 +120,7 @@ pub enum Effort {
     /// No thinking.
     Off,
     /// The least thinking.
+    // WARN: Anthropic has none.
     Minimal,
     /// Little thinking.
     Low,
@@ -124,6 +129,7 @@ pub enum Effort {
     /// Much thinking.
     High,
     /// More thinking than [`Effort::High`].
+    // WARN: Gemini has none.
     XHigh,
 }
 
@@ -133,6 +139,7 @@ pub enum ResponseFormat {
     /// Ordinary text.
     Text,
     /// A JSON object, without a supplied schema.
+    // WARN: Anthropic and Converse have no such mode.
     JsonObject,
     /// JSON matching a named schema.
     JsonSchema {
