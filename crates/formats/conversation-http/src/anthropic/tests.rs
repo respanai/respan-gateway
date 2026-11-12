@@ -234,7 +234,12 @@ fn input_usage_counts_cache_reads_and_writes() {
 fn stream_usage_is_counted_once_and_thinking_is_reasoning() {
     let out = decode(&[
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"model\":\"c\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n",
-        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n",
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"x\"}}\n\n",
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"si\"}}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"g\"}}\n\n",
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
         "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":5,\"output_tokens\":7}}\n\n",
     ]);
     let mut total = Usage::default();
@@ -245,7 +250,9 @@ fn stream_usage_is_counted_once_and_thinking_is_reasoning() {
     }
     assert_eq!(total.input_tokens, 5);
     assert_eq!(total.output_tokens, 7);
-    assert!(out.contains(&Output::reasoning(0, "hm")));
+    assert!(out.contains(&Output::reasoning(1, "hm")));
+    // A signature in pieces is one.
+    assert!(out.contains(&Output::signature(Some(1), "sig")));
 }
 
 #[test]
@@ -398,6 +405,7 @@ fn a_whole_response_decodes_into_events_per_block() {
         "id": "m", "type": "message", "role": "assistant", "model": "c",
         "content": [
             { "type": "thinking", "thinking": "hm", "signature": "sig" },
+            { "type": "redacted_thinking", "data": "hidden" },
             { "type": "text", "text": "ok" },
             { "type": "tool_use", "id": "t", "name": "f", "input": { "a": 1 } },
             { "type": "text", "text": "cited", "citations": [{ "type": "char_location" }] },
@@ -407,7 +415,6 @@ fn a_whole_response_decodes_into_events_per_block() {
     });
     let events = decode_body(&v);
     let fields = |v: Value| v.as_object().cloned().unwrap_or_default();
-    let signature = fields(json!({ "signature": "sig" }));
     let cited = fields(json!({ "citations": [{ "type": "char_location" }] }));
     let mut totals = Output::usage(Usage {
         input_tokens: 2,
@@ -423,19 +430,21 @@ fn a_whole_response_decodes_into_events_per_block() {
             totals,
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(ANTHROPIC, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
-            Output::block_start(1, Block::Text),
-            Output::text(1, "ok"),
-            Output::block_end(1),
-            Output::block_start(2, call("t", "f")),
-            Output::arguments(2, "{\"a\":1}"),
+            // Thinking withheld is a signature alone.
+            Output::signature(None, "hidden"),
+            Output::block_start(2, Block::Text),
+            Output::text(2, "ok"),
             Output::block_end(2),
-            // What the kind has no place for comes before the block opens.
-            Output::block_fields(ANTHROPIC, 3, cited),
-            Output::block_start(3, Block::Text),
-            Output::text(3, "cited"),
+            Output::block_start(3, call("t", "f")),
+            Output::arguments(3, "{\"a\":1}"),
             Output::block_end(3),
+            // What the kind has no place for comes before the block opens.
+            Output::block_fields(ANTHROPIC, 4, cited),
+            Output::block_start(4, Block::Text),
+            Output::text(4, "cited"),
+            Output::block_end(4),
             Output::finished(Finish::ToolUse),
         ]
     );

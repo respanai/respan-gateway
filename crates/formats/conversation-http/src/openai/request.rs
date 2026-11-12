@@ -18,7 +18,7 @@ use respan_gateway_conversation::{
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use crate::openai::{OPENAI, OpenAiChat};
+use crate::openai::{OPENAI, OpenAiChat, take_signature};
 
 /// OpenAI's function tools, choice, `parallel_tool_calls` and
 /// `web_search_options`, as the kind's.
@@ -148,18 +148,30 @@ pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
         return;
     }
     let calls = m["tool_calls"].as_array().into_iter().flatten();
-    let calls: Option<Vec<Content>> = calls.map(openai_call).collect();
+    let calls: Option<Vec<Vec<Content>>> = calls.map(openai_call).collect();
     if let Some(calls) = calls.filter(|calls| !calls.is_empty()) {
-        message.content.extend(calls);
+        message.content.extend(calls.concat());
         if let Some(native) = &mut message.native {
             native.fields.shift_remove("tool_calls");
         }
     }
+    // A text's signature is the message's: its last text's, even an empty one.
+    let signature = (message.native.as_mut()).and_then(|n| take_signature(&mut n.fields));
+    message.native.take_if(|n| n.is_empty());
+    if let Some(s) = signature {
+        let text = |c: &Content| matches!(c, Content::Text { .. });
+        let content = &mut message.content;
+        if !content.iter().any(text) {
+            content.insert(0, Content::from(""));
+        }
+        let at = content.iter().rposition(text).map_or(0, |at| at + 1);
+        content.insert(at, Content::Signature(s));
+    }
 }
 
-/// A function call of `tool_calls`, its own fields beyond the spec's, such
-/// as a provider's signature of it, kept as its `native`.
-fn openai_call(call: &Value) -> Option<Content> {
+/// A function call of `tool_calls`, its own fields beyond the spec's kept
+/// as its `native`, and its signature after it.
+fn openai_call(call: &Value) -> Option<Vec<Content>> {
     let function = &call["function"];
     let function_call = call["type"].is_null() || call["type"] == "function";
     if !function_call || !only(function, &["name", "arguments"]) {
@@ -167,10 +179,12 @@ fn openai_call(call: &Value) -> Option<Content> {
     }
     let (id, name) = (call["id"].as_str()?, function["name"].as_str()?);
     let mut part = Content::tool_call(id, name, function["arguments"].as_str()?);
+    let mut fields = rest_of(call, &["id", "type", "function"]);
+    let signature = take_signature(&mut fields).map(Content::Signature);
     if let Content::ToolCall { native, .. } = &mut part {
-        *native = native_fields(OPENAI, rest_of(call, &["id", "type", "function"]));
+        *native = native_fields(OPENAI, fields);
     }
-    Some(part)
+    Some([part].into_iter().chain(signature).collect())
 }
 
 /// The kind's calls as OpenAI's `tool_calls`.
@@ -260,6 +274,8 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
         said.content.retain(|p| match p {
             // WARN: Chat has no field for a past turn's reasoning; it is dropped silently.
             Content::Reasoning { .. } => false,
+            // WARN: OpenAI's Chat has no field for a signature, and a provider may refuse one; it is dropped silently.
+            Content::Signature(_) | Content::Withheld(_) => false,
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;

@@ -10,8 +10,8 @@ use crate::schema::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Effort, Input, Media, MediaSource, ProviderTool, Reasoning, ResponseFormat, Tool,
-    ToolChoice,
+    Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
+    Tool, ToolChoice,
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::NativeFields;
@@ -119,6 +119,20 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
     Ok(())
 }
 
+/// `m`, read from `content`, with each signed thinking's signature after it.
+pub(crate) fn signed(m: &mut Message, content: &Value) {
+    let Some(blocks) = content.as_array() else {
+        return;
+    };
+    let parts = std::mem::take(&mut m.content);
+    for (part, b) in parts.into_iter().zip(blocks) {
+        m.content.push(part);
+        if let Some(s) = b["signature"].as_str().filter(|_| b["type"] == "thinking") {
+            m.content.push(Content::Signature(s.into()));
+        }
+    }
+}
+
 /// A part the kind has a form for: an image or a document, reasoning, or a
 /// tool block.
 pub(crate) fn decode_part(p: &Value) -> Option<Content> {
@@ -126,8 +140,9 @@ pub(crate) fn decode_part(p: &Value) -> Option<Content> {
         "image" | "document" => read_media(p),
         "thinking" => Some(Content::Reasoning {
             text: p["thinking"].as_str()?.into(),
-            native: native_fields(ANTHROPIC, remainder(p, &["type", "thinking"])),
+            native: native_fields(ANTHROPIC, remainder(p, &["type", "thinking", "signature"])),
         }),
+        "redacted_thinking" => Some(Content::Withheld(p["data"].as_str()?.into())),
         _ => tool_part(p),
     }
 }
@@ -137,12 +152,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
         Content::Image(media) => write_media("image", media),
         Content::Document(media) => write_media("document", media),
-        Content::Reasoning { text, native } => {
-            let mut v = json!({"type":"thinking", "thinking":text});
-            merge_missing(&mut v, native.fields_for(ANTHROPIC));
-            Ok(v)
-        }
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
+        Content::Withheld(data) => Ok(json!({ "type": "redacted_thinking", "data": data })),
         Content::Audio(_) => Err(untranslatable("this media kind")),
         _ => Err(untranslatable("an unsupported kind of part")),
     }

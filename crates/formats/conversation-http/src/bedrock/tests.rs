@@ -147,19 +147,13 @@ fn tools_a_call_and_its_result_are_blocks() {
 
 #[test]
 fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
-    let signed = NativeFields::new(
-        BEDROCK,
-        json!({ "signature": "sig" })
-            .as_object()
-            .cloned()
-            .unwrap_or_default(),
-    );
     let mut turn = assistant("done");
+    turn.content.insert(0, Content::Signature("sig".into()));
     turn.content.insert(
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: Some(signed),
+            native: None,
         },
     );
     turn.content.insert(
@@ -169,6 +163,7 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
             native: None,
         },
     );
+    turn.content.insert(0, Content::Withheld("hidden".into()));
     let mut chat = chat([user("think"), turn, user("more")]);
     chat.options.reasoning = Some(Reasoning::budget(2048));
     let v = written(&chat);
@@ -179,6 +174,7 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
     assert_eq!(
         v["messages"][1]["content"],
         json!([
+            { "reasoningContent": { "redactedContent": "hidden" } },
             { "reasoningContent": { "reasoningText": { "text": "hm", "signature": "sig" } } },
             { "text": "done" },
         ])
@@ -318,13 +314,11 @@ fn tool_use_and_reasoning_blocks_open_as_converse_sends_them() {
         event("contentBlockDelta", json!({ "contentBlockIndex": 1, "delta": { "toolUse": { "input": "{\"id\":" } } })),
         event("contentBlockDelta", json!({ "contentBlockIndex": 1, "delta": { "toolUse": { "input": "7}" } } })),
         event("contentBlockStop", json!({ "contentBlockIndex": 1 })),
+        event("contentBlockDelta", json!({ "contentBlockIndex": 2, "delta": { "reasoningContent": { "redactedContent": "aGlk" } } })),
+        event("contentBlockStop", json!({ "contentBlockIndex": 2 })),
         event("messageStop", json!({ "stopReason": "tool_use" })),
     ])
     .expect("events");
-    let signature = json!({ "signature": "sig" })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
     let call = Block::ToolCall {
         id: "t1".into(),
         name: "lookup".into(),
@@ -334,12 +328,14 @@ fn tool_use_and_reasoning_blocks_open_as_converse_sends_them() {
         [
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(BEDROCK, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
             Output::block_start(1, call),
             Output::arguments(1, "{\"id\":"),
             Output::arguments(1, "7}"),
             Output::block_end(1),
+            // Reasoning withheld opens no block.
+            Output::signature(None, "aGlk"),
             Output::finished(Finish::ToolUse),
         ]
     );
@@ -397,10 +393,6 @@ fn a_whole_body_is_the_same_events() {
     BedrockConverse
         .decode_body(&body, &mut events)
         .expect("events");
-    let signature = json!({ "signature": "sig" })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
     let call = Block::ToolCall {
         id: "t1".into(),
         name: "lookup".into(),
@@ -412,7 +404,7 @@ fn a_whole_body_is_the_same_events() {
             Output::Usage(Usage::new(10, 5)),
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(BEDROCK, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
             Output::block_start(1, Block::Text),
             Output::text(1, "Hello"),

@@ -12,10 +12,10 @@ use respan_gateway_conversation::{
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
-use super::{GEMINI, ROLES, SYNTHETIC};
+use super::{GEMINI, ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    parse_effort, reasoning_of, remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -82,10 +82,17 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
 
 fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Vec<Content> {
     let parts = parts.as_array().into_iter().flatten();
-    parts
-        .enumerate()
-        .map(|(at, p)| read_part(p, message, at, calls))
-        .collect()
+    let mut out = Vec::new();
+    for (at, p) in parts.enumerate() {
+        let part = read_part(p, message, at, calls);
+        let signed = !matches!(part, Content::Native(_));
+        out.push(part);
+        // A part's signature is a signature after it.
+        if let Some(s) = p[SIGNATURE].as_str().filter(|_| signed) {
+            out.push(Content::Signature(s.into()));
+        }
+    }
+    out
 }
 
 /// A part as the kind's, or, if the kind has no form for all of it, as
@@ -116,7 +123,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
                 Value::Bool(true) => true,
                 _ => return own(),
             };
-            let native = part_fields(&["text", "thought"]);
+            let native = part_fields(&["text", "thought", SIGNATURE]);
             match thought {
                 true => Content::Reasoning {
                     text: text.into(),
@@ -155,7 +162,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
             };
             let mut part = Content::tool_call(id, name, args);
             if let Content::ToolCall { native, .. } = &mut part {
-                *native = part_fields(&["functionCall"]);
+                *native = part_fields(&["functionCall", SIGNATURE]);
             }
             part
         }
@@ -254,17 +261,17 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 .name(role)
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
         };
-        let mut parts: Vec<Value> = m
-            .content
-            .iter()
-            .map(|c| write_part(c, &mut names))
-            .collect::<Result<_, _>>()?;
-        let text = parts
-            .iter_mut()
-            .rev()
-            .find(|p| p["text"].is_string() && p["thought"] != true);
-        if let (Some(s), Some(text)) = (chat_signature(&m.native), text) {
-            text["thoughtSignature"] = s;
+        let mut parts: Vec<Value> = Vec::new();
+        for (c, signature) in sealed(&m.content) {
+            // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+            if matches!(c, Content::Signature(_) | Content::Withheld(_)) {
+                continue;
+            }
+            let mut part = write_part(c, &mut names)?;
+            if let Some(s) = signature {
+                part[SIGNATURE] = s.into();
+            }
+            parts.push(part);
         }
         let mut content = Map::new();
         content.insert("role".into(), role.into());
@@ -315,15 +322,6 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
     }
 }
 
-/// The signature a Chat Completions message or call carries, as Google's
-/// does, in `extra_content`.
-fn chat_signature(native: &Option<NativeFields>) -> Option<Value> {
-    let chat = native.fields_for(crate::openai::OPENAI);
-    chat.get("extra_content")?["google"]
-        .get("thought_signature")
-        .cloned()
-}
-
 /// A part of the kind's as Gemini writes it; `names` has the calls made so
 /// far, by id, for the results that answer them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
@@ -357,9 +355,6 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             }
             let mut part = json!({ "functionCall": call });
             merge_missing(&mut part, fields(native));
-            if let Some(s) = chat_signature(native) {
-                part["thoughtSignature"] = s;
-            }
             Ok(part)
         }
         Content::ToolResult {

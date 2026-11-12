@@ -67,44 +67,54 @@ impl Dialect for Gemini {
     }
 }
 
-/// `input`, its calls signed if its model needs them signed.
+/// `input` as Google's Chat Completions takes it: each call's and text's
+/// signature in its `extra_content`, and, if its model needs them signed,
+/// the first call of each assistant message without one signed with the
+/// placeholder, as Gemini returns one only on the first of a turn's
+/// parallel calls.
 fn signed(input: &mut Input) -> Result<(), Fault> {
-    if needs_signatures(input.model.as_deref()) {
-        sign_calls(input);
-    }
-    Ok(())
-}
-
-/// Signs, with the placeholder in its `extra_content`, the first call of
-/// each assistant message that has no signature of its own, as Gemini
-/// returns one only on the first of a turn's parallel calls.
-fn sign_calls(input: &mut Input) {
-    // Another format's fields a translation drops anyway give way to the
-    // signature.
-    let format = OpenAiChat::NAME;
-    let signature = json!({ "google": { "thought_signature": SIGNATURE_PLACEHOLDER } });
-    let own = |native: &mut Option<NativeFields>| {
-        native.take_if(|n| &*n.format != format);
-    };
+    let needs = needs_signatures(input.model.as_deref());
     for message in input
         .messages
         .iter_mut()
         .filter(|m| m.role == Role::Assistant)
     {
-        let first = message.content.iter_mut().find_map(|part| match part {
-            Content::ToolCall { native, .. } => Some(native),
+        let mut first = needs;
+        for at in 0..message.content.len() {
+            let signature = match message.content.get(at + 1) {
+                Some(Content::Signature(s)) => Some(s.clone()),
+                _ => None,
+            };
+            let Content::ToolCall { native, .. } = &mut message.content[at] else {
+                continue;
+            };
+            let placeholder = std::mem::take(&mut first).then(|| SIGNATURE_PLACEHOLDER.into());
+            if let Some(signature) = signature.or(placeholder) {
+                sign(native, signature);
+            }
+        }
+        // A text's signature is the message's: its last text's.
+        let text = message.content.windows(2).rev().find_map(|w| match w {
+            [Content::Text { .. }, Content::Signature(s)] => Some(s.clone()),
             _ => None,
         });
-        let Some(native) = first else {
-            continue;
-        };
-        own(native);
-        let fields = native
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
-            .entry("extra_content");
-        fields.or_insert_with(|| signature.clone());
+        if let Some(signature) = text {
+            sign(&mut message.native, signature);
+        }
     }
+    Ok(())
+}
+
+/// `native` with `signature` in its `extra_content`, as Google's Chat takes it.
+fn sign(native: &mut Option<NativeFields>, signature: String) {
+    let format = OpenAiChat::NAME;
+    // Another format's fields a translation drops anyway give way to it.
+    native.take_if(|n| &*n.format != format);
+    let fields = &mut native
+        .get_or_insert_with(|| NativeFields::new(format, Map::new()))
+        .fields;
+    let extra = fields.entry("extra_content").or_insert_with(|| json!({}));
+    extra["google"]["thought_signature"] = signature.into();
 }
 
 /// Its models, as its own API lists them (`{"models": [{"name", ..}]}`),

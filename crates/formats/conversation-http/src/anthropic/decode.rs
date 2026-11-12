@@ -25,6 +25,11 @@ pub struct AnthropicDecoder {
     /// The indexes of blocks the kind has no form for: all their events are
     /// [`Output::Native`].
     others: Vec<u32>,
+    /// The indexes of `redacted_thinking` blocks: a signature alone, whose
+    /// other events say nothing.
+    withheld: Vec<u32>,
+    /// The signature of the block streaming, so far.
+    signature: String,
 }
 
 impl Default for AnthropicDecoder {
@@ -35,6 +40,8 @@ impl Default for AnthropicDecoder {
             done: false,
             usage_extra: Map::new(),
             others: Vec::new(),
+            withheld: Vec::new(),
+            signature: String::new(),
         }
     }
 }
@@ -122,9 +129,14 @@ impl AnthropicDecoder {
                 let thinking = b["thinking"].as_str().filter(|t| !t.is_empty());
                 out.extend(thinking.map(|t| Output::reasoning(block, t)));
                 // A stream's start has an empty one; its delta says it.
-                if b["signature"].as_str().is_some_and(|s| !s.is_empty()) {
-                    self.signature(block, &b["signature"], out);
+                if let Some(s) = b["signature"].as_str().filter(|s| !s.is_empty()) {
+                    out.push(Output::signature(Some(block), s));
                 }
+            }
+            Some("redacted_thinking") if b["data"].is_string() => {
+                let data = b["data"].as_str().unwrap_or_default();
+                out.push(Output::signature(None, data));
+                self.withheld.push(block);
             }
             _ => self.opaque(block, event, out),
         }
@@ -144,12 +156,6 @@ impl AnthropicDecoder {
         if !rest.is_empty() {
             out.push(Output::block_fields(self.name.clone(), block, rest));
         }
-    }
-
-    /// Reasoning's `signature`, which its block carries back, as its fields.
-    fn signature(&self, block: u32, signature: &Value, out: &mut Vec<Output>) {
-        let fields = Map::from_iter([("signature".to_owned(), signature.clone())]);
-        out.push(Output::block_fields(self.name.clone(), block, fields));
     }
 
     fn opaque(&mut self, block: u32, event: Value, out: &mut Vec<Output>) {
@@ -203,6 +209,9 @@ impl AnthropicDecoder {
             .and_then(|i| u32::try_from(i).ok())
             .unwrap_or(0);
         let opaque = self.others.contains(&block);
+        if self.withheld.contains(&block) && v["type"] == "content_block_stop" {
+            return Ok(());
+        }
         match v["type"].as_str() {
             Some("message_start") => self.message(&v["message"], out)?,
             Some("content_block_start") => self.open(block, &v["content_block"], v.clone(), out),
@@ -215,11 +224,18 @@ impl AnthropicDecoder {
                         out.push(Output::arguments(block, text("partial_json")))
                     }
                     Some("thinking_delta") => out.push(Output::reasoning(block, text("thinking"))),
-                    Some("signature_delta") => self.signature(block, &delta["signature"], out),
+                    // A signature may come in pieces; it is said whole at the end.
+                    Some("signature_delta") => self.signature.push_str(text("signature")),
                     _ => self.other(v, out),
                 }
             }
-            Some("content_block_stop") if !opaque => out.push(Output::block_end(block)),
+            Some("content_block_stop") if !opaque => {
+                let signature = std::mem::take(&mut self.signature);
+                if !signature.is_empty() {
+                    out.push(Output::signature(Some(block), signature));
+                }
+                out.push(Output::block_end(block));
+            }
             Some("message_delta") => {
                 let usage = self.totals.increment(&usage_of(&v["usage"])?);
                 if !usage.is_empty() {
@@ -248,6 +264,9 @@ impl AnthropicDecoder {
             let start = event_of("content_block_start", block, json!({ "content_block": b }));
             let before = out.len();
             self.open(block, b, start, out);
+            if self.withheld.contains(&block) {
+                continue;
+            }
             let opaque = self.others.contains(&block);
             let stop = match opaque {
                 true => event_of("content_block_stop", block, json!({})),

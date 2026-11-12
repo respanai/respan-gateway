@@ -1,6 +1,5 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
-use crate::gemini::GEMINI;
 use crate::schema::{
     Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
 };
@@ -11,7 +10,9 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, usage_body, usage_fields};
+use super::{
+    FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, sign, usage_body, usage_fields,
+};
 
 /// What a tool call's block fields say: the block, the entry's fields and
 /// the function's.
@@ -23,20 +24,6 @@ pub(super) fn call_fields_of(raw: &Value) -> Option<(u32, Fields, Fields)> {
         _ => Fields::new(),
     };
     Some((block, entry, function))
-}
-
-/// Gemini's block fields `raw` as a tool call's: its `thoughtSignature` in
-/// `extra_content`, as Google's own Chat Completions has it (a text's goes
-/// on the message).
-pub(super) fn signature_of(raw: &Value) -> Option<(u32, Fields, Fields)> {
-    let (block, fields) = block_fields(raw)?;
-    let signature = fields.get("thoughtSignature")?;
-    let google = json!({ "google": { "thought_signature": signature } });
-    Some((
-        block,
-        Fields::from_iter([("extra_content".into(), google)]),
-        Fields::new(),
-    ))
 }
 
 /// Put a tool call's block fields ([`call_fields_of`]) into the call `call`.
@@ -180,10 +167,13 @@ pub(super) struct Chunks {
     gate: Gate,
     /// The vendor fields of usage, written in the usage chunk.
     usage_extra: Map<String, Value>,
-    /// The fields of tool calls (or a text's signature) not yet started, by block.
+    /// The fields of tool calls not yet started, by block.
     call_fields: Vec<(u32, Fields, Fields)>,
     /// The response's fields a later chunk changed, for the next chunk.
     response: Fields,
+    /// A call's opening delta, held for its signature, which comes next if
+    /// at all.
+    opening: Option<(u32, Value)>,
 }
 
 #[derive(Debug)]
@@ -212,6 +202,7 @@ impl Chunks {
             usage_extra: Map::new(),
             call_fields: Vec::new(),
             response: Map::new(),
+            opening: None,
         }
     }
 
@@ -270,13 +261,8 @@ impl Chunks {
                 if let Some((_, entry, function)) = fields {
                     merge_call(&mut call, &entry, &function);
                 }
-                self.delta(out, json!({ "tool_calls": [call] }));
+                self.opening = Some((block, call));
                 Some(index)
-            }
-            // A text's signature, Gemini's, is the message's.
-            (Block::Text, Some((_, entry, _))) => {
-                self.delta(out, entry.into());
-                None
             }
             _ => None,
         };
@@ -358,6 +344,22 @@ impl Encoder<Output> for Chunks {
 
 impl Chunks {
     fn write(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some((block, mut call)) = self.opening.take() {
+            let signature = match reply {
+                Output::Signature {
+                    block: Some(b),
+                    data,
+                } if *b == block => Some(data),
+                _ => None,
+            };
+            if let Some(s) = signature {
+                sign(&mut call, s);
+            }
+            self.delta(out, json!({ "tool_calls": [call] }));
+            if signature.is_some() {
+                return Ok(());
+            }
+        }
         match reply {
             Output::Start(start) => _ = self.start.get_or_insert_with(|| start.clone()),
             Output::BlockStart { block, kind } => self.open(*block, kind, out)?,
@@ -375,8 +377,14 @@ impl Chunks {
             Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
                 self.write_native(raw, out);
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *GEMINI => {
-                self.call_fields.extend(signature_of(raw));
+            // WARN: Chat has no place for a signature over reasoning, or alone, or one that comes after its call opened; it is dropped here, silently.
+            Output::Signature { block, data } => {
+                let over = block.and_then(|b| self.blocks.iter().find(|s| s.block == b));
+                if over.is_some_and(|s| s.kind == Block::Text) {
+                    let mut delta = json!({});
+                    sign(&mut delta, data);
+                    self.delta(out, delta);
+                }
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
@@ -411,6 +419,9 @@ impl Chunks {
     }
 
     fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some((_, call)) = self.opening.take() {
+            self.delta(out, json!({ "tool_calls": [call] }));
+        }
         if let Err(f) = end {
             // What the provider finished before it broke off is kept.
             if let Some(finish) = self.finish.take() {

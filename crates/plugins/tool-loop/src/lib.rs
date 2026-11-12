@@ -26,9 +26,8 @@
 //! fields its format kept beside it, so a signed `thinking` block of
 //! Anthropic or a `thoughtSignature` of Gemini goes back in the assistant
 //! message the next step starts from, and the provider accepts the step. A
-//! block's fields are its [`block_fields`]; a `redacted_thinking`
-//! block, which only natives carry, is replayed whole. Other blocks only natives carry (a provider-run tool's)
-//! are not replayed.
+//! block's fields are its [`block_fields`], and its signature follows it.
+//! Blocks only natives carry (a provider-run tool's) are not replayed.
 //!
 //! Native events of a step reach the client as its blocks do. One that names
 //! a block (by `index` or `block`) is renumbered with it, and dropped with it

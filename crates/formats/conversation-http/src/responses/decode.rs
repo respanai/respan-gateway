@@ -206,12 +206,13 @@ impl ResponsesDecoder {
             },
             Some("reasoning") if summary_texts(item).is_some() => {
                 let block = self.next_block();
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.push(Output::block_start(block, Block::Reasoning));
                 let text = summary_texts(item).unwrap_or_default().join("\n\n");
                 if !text.is_empty() {
                     out.push(Output::reasoning(block, text));
                 }
+                out.extend(sealed(block, item));
                 out.push(Output::block_end(block));
                 self.items.push(Item {
                     index,
@@ -359,7 +360,7 @@ impl ResponsesDecoder {
             }
             Some("reasoning") => {
                 let block = self.next_block();
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.push(Output::block_start(block, Block::Reasoning));
                 self.items.push(Item {
                     index,
@@ -533,8 +534,9 @@ impl ResponsesDecoder {
                 }
             }
             Closing::Reasoning(block, open, late) => {
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.extend(late.map(|t| Output::reasoning(block, t)));
+                out.extend(sealed(block, item));
                 if open {
                     out.push(Output::block_end(block));
                 }
@@ -671,6 +673,15 @@ fn call(id: &str, name: &str) -> Block {
         id: id.into(),
         name: name.into(),
     }
+}
+
+/// The field of a reasoning item that holds it encrypted.
+pub(super) const SEALED: &str = "encrypted_content";
+
+/// A reasoning item's encrypted content, as the signature of its `block`.
+fn sealed(block: u32, item: &Value) -> Option<Output> {
+    let data = item[SEALED].as_str().filter(|d| !d.is_empty())?;
+    Some(Output::signature(Some(block), data))
 }
 
 /// The texts of a reasoning item's summary, if each part is a summary text.
