@@ -139,8 +139,8 @@ const FINISH: Names<Finish> = Names(
 /// The finish reason of a prompt Gemini blocked, which has no candidate.
 const BLOCKED: &str = "PROMPT_BLOCKED";
 
-/// A reason as a [`Finish`]: those that filter the answer, as the kind has
-/// it, stay Gemini's own for a client of this format.
+/// A reason as a [`Finish`]: Gemini's others stay its own for a client of
+/// this format, and another writes the kind's nearest.
 fn finish_of(reason: &str) -> Finish {
     match reason {
         "RECITATION"
@@ -150,8 +150,17 @@ fn finish_of(reason: &str) -> Finish {
         | "IMAGE_SAFETY"
         | "IMAGE_PROHIBITED_CONTENT"
         | "IMAGE_RECITATION"
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "ESCALATION"
+        | "PUP_LIMITED_DISABLED"
         | "LANGUAGE" => Finish::native_or(GEMINI, reason, Finish::Filtered),
-        _ => FINISH.finish(reason),
+        "CONTINUATION" => Finish::native_or(GEMINI, reason, Finish::Length),
+        "STOP" | "MAX_TOKENS" | "SAFETY" => FINISH.finish(reason),
+        // OTHER, FINISH_REASON_UNSPECIFIED, MALFORMED_FUNCTION_CALL,
+        // UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MALFORMED_RESPONSE,
+        // MISSING_THOUGHT_SIGNATURE, and any Google adds.
+        _ => Finish::native_or(GEMINI, reason, Finish::Stop),
     }
 }
 

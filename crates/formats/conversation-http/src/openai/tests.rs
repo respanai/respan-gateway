@@ -188,7 +188,8 @@ fn a_native_finish_is_written_as_its_fallback() {
     let body = body_of(&[Output::start("x", "m"), Output::finished(full)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "length");
     let paused = Finish::native("other", "pause_turn");
-    assert!(body_of(&[Output::start("x", "m"), Output::finished(paused)]).is_err());
+    let body = body_of(&[Output::start("x", "m"), Output::finished(paused)]).expect("a body");
+    assert_eq!(body["choices"][0]["finish_reason"], "stop");
 }
 
 #[test]
