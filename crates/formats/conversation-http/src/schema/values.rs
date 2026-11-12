@@ -631,13 +631,6 @@ pub(crate) fn effort_for(tokens: u64) -> Effort {
     }
 }
 
-/// The thinking budget of an `effort` but `Off`; `minimal`'s is `low`'s.
-pub(crate) fn budget_for(effort: Effort) -> u64 {
-    let name = effort_name(effort).unwrap_or_default();
-    let near = EFFORT_BUDGETS.iter().find(|(e, _)| *e == name);
-    near.map_or(EFFORT_BUDGETS[0].1, |(_, b)| *b)
-}
-
 /// The output limit `max`, temperature and top_p of `o` as Claude takes
 /// them beside a thinking `budget`.
 // WARN: a limit at or under the budget is raised by it, a temperature above

@@ -5,15 +5,14 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Effort, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
+    Content, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
 };
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
 use super::{AUDIO, DOCUMENTS, IMAGES, ROLES, format_of};
-use crate::schema::{
-    arguments_object, budget_for, claude_sampling, sealed, set, stop_json, untranslatable,
-};
+use crate::anthropic::{effort_name, effort_thinking, fit_thinking, write_thinking};
+use crate::schema::{arguments_object, claude_sampling, sealed, set, stop_json, untranslatable};
 
 /// The leading system messages as `system` blocks, and the rest, where a
 /// later system message is a user's ([`write_messages`]).
@@ -229,35 +228,74 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         // WARN: JSON without a schema has no field; the prompt asks for it.
         Some(_) => {}
     }
-    // Converse's `thinking` is Claude's: another model refuses it.
+    // Converse's `thinking` and `output_config` are Claude's: another model refuses them.
     // WARN: another model's reasoning, which it names its own way, is dropped,
     // as is an ask to withhold the thinking.
-    let claude = chat.model.as_deref().is_some_and(|m| m.contains("claude"));
-    let reasoning = o.reasoning.as_ref().filter(|_| claude);
-    let enabled = |budget: u64| json!({ "type": "enabled", "budget_tokens": budget });
-    let thinking = reasoning.and_then(|r| match (r.effort, r.budget_tokens) {
-        (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
-        // WARN: a budget under Claude's least, 1024, is raised to it.
-        (_, Some(budget)) => Some(enabled(budget.max(1024))),
-        // The thinking budget nearest the effort.
-        (effort, None) => effort.map(budget_for).map(enabled),
-    });
-    let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
-    if let Some(thinking) = thinking {
-        v.insert(
-            "additionalModelRequestFields".into(),
-            json!({ "thinking": thinking }),
-        );
-    }
-    // Converse's temperature is at most 1, too.
-    let (max, temperature, top_p) = claude_sampling(o, o.max_output_tokens, budget);
+    let mut call = claude_call(chat, v);
     let mut config = Map::new();
-    set(&mut config, "maxTokens", max.map(Into::into));
-    set(&mut config, "temperature", temperature.map(Into::into));
-    set(&mut config, "topP", top_p.map(Into::into));
+    set(&mut config, "maxTokens", call.get("max_tokens").cloned());
+    set(&mut config, "temperature", call.get("temperature").cloned());
+    set(&mut config, "topP", call.get("top_p").cloned());
     set(&mut config, "stopSequences", stop_json(&o.stop));
     if !config.is_empty() {
         v.insert("inferenceConfig".into(), config.into());
     }
+    call.retain(|key, _| key == "thinking" || key == "output_config");
+    if !call.is_empty() {
+        v.insert("additionalModelRequestFields".into(), call.into());
+    }
     Ok(())
+}
+
+/// The Anthropic call of `chat` beside the Converse call `v`, but its
+/// messages, as the Anthropic writer writes it and fits it to a Claude
+/// ([`fit_thinking`]); a tool choice the Claude refuses to force leaves `v`.
+/// Converse's temperature is at most 1, too.
+fn claude_call(chat: &Input, v: &mut Map<String, Value>) -> Map<String, Value> {
+    let o = &chat.options;
+    let claude = chat.model.as_deref().is_some_and(|m| m.contains("claude"));
+    // WARN: an effort Anthropic has no level for is dropped.
+    let effort = o.reasoning.as_ref().and_then(|r| r.effort);
+    let effort = effort.and_then(|e| effort_name(e).ok().flatten());
+    let choice = v.get("toolConfig").and_then(|c| c.get("toolChoice"));
+    let choice = choice.and_then(|c| c.as_object()?.keys().next().cloned());
+    let call = [
+        ("model", chat.model.clone().map(Into::into)),
+        ("thinking", write_thinking(chat).filter(|_| claude)),
+        (
+            "output_config",
+            effort.filter(|_| claude).map(|e| json!({ "effort": e })),
+        ),
+        ("tool_choice", choice.map(|c| json!({ "type": c }))),
+        ("max_tokens", o.max_output_tokens.map(Into::into)),
+    ];
+    for (key, value) in call.clone() {
+        set(v, key, value);
+    }
+    // An effort thinks to its budget before a temperature beside it is dropped.
+    effort_thinking(v);
+    // Thinking adaptively is no budget, but takes no other sampling either.
+    let thinking = v.get("thinking").filter(|t| t["type"] != "disabled");
+    let budget = thinking.map(|t| t["budget_tokens"].as_u64().unwrap_or(0));
+    let max = v.get("max_tokens").and_then(Value::as_u64);
+    let (max, temperature, top_p) = claude_sampling(o, max, budget);
+    let sampling = [
+        ("max_tokens", max.map(Into::into)),
+        ("temperature", temperature.map(Into::into)),
+        ("top_p", top_p.map(Into::into)),
+    ];
+    for (key, value) in sampling.clone() {
+        set(v, key, value);
+    }
+    fit_thinking(v);
+    let call: Map<String, Value> = call
+        .iter()
+        .chain(&sampling)
+        .filter_map(|(key, _)| Some((key.to_string(), v.shift_remove(*key)?)))
+        .collect();
+    let unforced = call.get("tool_choice").is_some_and(|c| c["type"] == "auto");
+    if let Some(Value::Object(config)) = v.get_mut("toolConfig").filter(|_| unforced) {
+        config.remove("toolChoice");
+    }
+    call
 }

@@ -19,13 +19,13 @@
 //! only reasoning sent back. `inferenceConfig` has `maxTokens`,
 //! `temperature`, `topP` and `stopSequences`; `toolConfig` the tools and the
 //! choice (`auto`, `any`, or one `tool`); `outputConfig` a JSON schema the
-//! answer keeps to. A reasoning budget is
-//! `additionalModelRequestFields.thinking`, and `Off` its disabling.
+//! answer keeps to. A Claude's reasoning is its `thinking` and
+//! `output_config` in `additionalModelRequestFields`, as the Anthropic writer
+//! writes them for its model, a forced tool choice it refuses `auto`.
 //!
 //! What Converse has no field for is dropped (JSON without a schema, one
 //! tool call at a time, media by URL or of a type it lacks) or mapped to
-//! its nearest: an effort is a Claude's thinking budget, and a system
-//! message after the conversation starts a user's.
+//! its nearest: a system message after the conversation starts a user's.
 //! An end user's id and the fields of another format, Anthropic's
 //! `cache_control` among them, are dropped.
 //!
