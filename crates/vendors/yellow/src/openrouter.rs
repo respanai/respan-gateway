@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, and images, embeddings, transcriptions, speech and videos.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -7,11 +7,15 @@ use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_core::{ErrorCode, Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media::{image, speech, transcription, video};
+use respan_gateway_media_http::openai::{
+    OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
+};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -34,6 +38,19 @@ pub const VENDOR: Vendor = Vendor {
         (&AnthropicMessages, Some(MESSAGES_URL)),
         (
             &Dialected::new(OpenAiImages, OpenRouterImages),
+            Some(BASE_URL),
+        ),
+        (&OpenAiEmbeddings, Some(BASE_URL)),
+        (
+            &Dialected::new(OpenAiTranscriptions, OpenRouterTranscriptions),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiSpeech, OpenRouterSpeech),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiVideos, OpenRouterVideos),
             Some(BASE_URL),
         ),
     ],
@@ -162,6 +179,157 @@ impl Filter<image::Output> for Counted {
     }
 }
 
+/// OpenRouter's transcriptions, as they depart from OpenAI's: a model
+/// billed by the second answers its usage's `seconds` with no `type`,
+/// which is read as OpenAI's `duration`.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterTranscriptions;
+
+impl Dialect for OpenRouterTranscriptions {
+    type Input = transcription::Input;
+    type Output = transcription::Output;
+
+    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        crate::json_answer(head).then(|| Box::new(timed) as Rewrite)
+    }
+}
+
+/// An answer with its usage of `seconds` typed a `duration`; any other as
+/// it came.
+fn timed(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut answer) = serde_json::from_slice::<Value>(&raw) else {
+        return Ok(raw);
+    };
+    match answer["usage"].as_object_mut() {
+        Some(usage) if usage.contains_key("seconds") && !usage.contains_key("type") => {
+            usage.insert("type".into(), "duration".into());
+        }
+        _ => return Ok(raw),
+    }
+    let unwritten = |e| Fault::internal("an answer is no JSON").with_source(e);
+    serde_json::to_vec(&answer)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// OpenRouter's speech, as it departs from OpenAI's: asked for no
+/// `response_format` it answers `pcm`, so it is asked for `mp3`, which
+/// OpenAI answers then. It answers `mp3` and `pcm` alone: any other fails
+/// `bad_request` before sending.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterSpeech;
+
+impl Dialect for OpenRouterSpeech {
+    type Input = speech::Input;
+    type Output = speech::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
+        Some(Box::new(in_mp3))
+    }
+}
+
+/// `input` asking for `mp3`, unless it asks for a format, which is `mp3`
+/// or `pcm`.
+fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
+    match input
+        .audio_format
+        .get_or_insert_with(|| "mp3".into())
+        .as_str()
+    {
+        "mp3" | "pcm" => Ok(()),
+        _ => Err(Fault::bad_request(
+            "OpenRouter speaks in 'mp3' or 'pcm' alone",
+        )),
+    }
+}
+
+/// What OpenAI's video ids start with.
+const VIDEO_ID: &str = "video_";
+
+/// OpenRouter's videos, as they depart from OpenAI's: a creation's
+/// `seconds` is its `duration`, a number, and its reference image the
+/// first of its `frame_images`, a URL or a data URL of its bytes, in JSON.
+/// Its job says `pending` for OpenAI's `queued`, `cancelled` or `expired`
+/// where OpenAI's `failed`, and why it failed as a string. Its ids start `gen-vid-`: they are given OpenAI's `video_`
+/// before them, as a follow-up finds its job's provider by its id's
+/// spelling, and are called without it. It serves a job and its video
+/// alone: a remix, a deletion, a list or another variant fails
+/// `unsupported` before sending.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterVideos;
+
+impl Dialect for OpenRouterVideos {
+    type Input = video::Input;
+    type Output = video::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<video::Input>>> {
+        Some(Box::new(taken_video))
+    }
+
+    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
+    }
+}
+
+/// The states of its jobs OpenAI names otherwise, each with OpenAI's name.
+const STATUSES: &[(&str, &str)] = &[
+    ("pending", "queued"),
+    ("cancelled", "failed"),
+    ("expired", "failed"),
+];
+
+/// `input` as OpenRouter takes it: a creation's `duration` and
+/// `frame_images`, and a job's id as OpenRouter gave it.
+fn taken_video(input: &mut video::Input) -> Result<(), Fault> {
+    match input {
+        video::Input::Create(create) => {
+            let mut fields = kept(OpenAiVideos::NAME, &create.native);
+            if let Some(seconds) = create.seconds.take() {
+                fields.entry("duration").or_insert_with(|| seconds.into());
+            }
+            if let Some(reference) = create.reference.take() {
+                let frame = json!({ "type": "image_url", "frame_type": "first_frame",
+                    "image_url": { "url": media_url(&reference) } });
+                fields
+                    .entry("frame_images")
+                    .or_insert_with(|| vec![frame].into());
+            }
+            create.native = native_of(OpenAiVideos::NAME, fields);
+        }
+        video::Input::Retrieve { id }
+        | video::Input::Content {
+            id,
+            variant: video::Variant::Video,
+            ..
+        } => {
+            if let Some(its) = id.strip_prefix(VIDEO_ID) {
+                *id = its.to_owned();
+            }
+        }
+        _ => {
+            return Err(
+                Fault::bad_request("OpenRouter serves a video job and its video alone")
+                    .with(ErrorCode("unsupported".into())),
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Its job as OpenAI's; an answer that is no JSON object is left as it is.
+fn openai_job(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut job) = serde_json::from_slice::<Map<String, Value>>(&raw) else {
+        return Ok(raw);
+    };
+    if let Some(id) = job.get("id").and_then(Value::as_str) {
+        job.insert("id".into(), format!("{VIDEO_ID}{id}").into());
+    }
+    crate::openai_job(&mut job, STATUSES);
+    serde_json::to_vec(&job)
+        .map(Bytes::from)
+        .map_err(|e| Fault::internal("a video job is no JSON").with_source(e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +446,63 @@ mod tests {
         let mut head = call.into_parts().0;
         OpenRouterImages.request(&mut head).expect("a path");
         assert_eq!(head.uri.path(), "/images");
+    }
+
+    #[test]
+    fn its_seconds_of_audio_are_a_duration() {
+        let timed = |v: Value| -> Value {
+            let raw = Bytes::from(v.to_string());
+            serde_json::from_slice(&timed(raw).expect("read")).expect("JSON")
+        };
+        assert_eq!(
+            timed(json!({ "text": "hi", "usage": { "seconds": 2, "cost": 0.0002 } }))["usage"],
+            json!({ "seconds": 2, "cost": 0.0002, "type": "duration" })
+        );
+        let tokens = json!({ "text": "hi", "usage": { "input_tokens": 19, "output_tokens": 10 } });
+        assert_eq!(timed(tokens.clone()), tokens);
+    }
+
+    #[test]
+    fn speech_of_no_format_is_asked_in_mp3() {
+        let mut input = speech::Input::new("hi");
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("mp3"));
+        input.audio_format = Some("pcm".into());
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("pcm"));
+        input.audio_format = Some("wav".into());
+        assert!(in_mp3(&mut input).is_err());
+    }
+
+    #[test]
+    fn a_video_job_goes_and_comes_as_openais() {
+        let mut create = video::Create::new("a wave");
+        create.seconds = Some(4);
+        let mut input = video::Input::Create(create);
+        taken_video(&mut input).expect("taken");
+        let video::Input::Create(create) = &input else {
+            panic!("a creation");
+        };
+        assert_eq!(create.seconds, None);
+        assert_eq!(kept(OpenAiVideos::NAME, &create.native)["duration"], 4);
+
+        let job = json!({ "id": "gen-vid-1-a", "status": "pending", "error": "no credits" });
+        let job = openai_job(Bytes::from(job.to_string())).expect("read");
+        let job: Value = serde_json::from_slice(&job).expect("JSON");
+        assert_eq!(
+            job,
+            json!({ "id": "video_gen-vid-1-a", "status": "queued",
+                "error": { "message": "no credits" } })
+        );
+
+        let mut poll = video::Input::Retrieve {
+            id: "video_gen-vid-1-a".into(),
+        };
+        taken_video(&mut poll).expect("taken");
+        assert!(matches!(&poll, video::Input::Retrieve { id } if id == "gen-vid-1-a"));
+        let mut delete = video::Input::Delete {
+            id: "video_gen-vid-1-a".into(),
+        };
+        assert!(taken_video(&mut delete).is_err());
     }
 }

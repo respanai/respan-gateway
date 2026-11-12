@@ -7,7 +7,6 @@ use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -61,8 +60,7 @@ impl Dialect for Mistral {
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
+        if !crate::json_answer(head) {
             return None;
         }
         let audio = HeaderValue::from_static("application/octet-stream");

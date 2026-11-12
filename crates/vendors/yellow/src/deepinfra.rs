@@ -5,7 +5,6 @@ use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
@@ -57,11 +56,7 @@ impl Dialect for DeepInfra {
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
-            return None;
-        }
-        Some(Box::new(openai_job))
+        crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
 }
 
@@ -89,15 +84,7 @@ fn openai_job(raw: Bytes) -> Result<Bytes, Fault> {
         return Ok(raw);
     };
     job.shift_remove("data");
-    if let Some(status) = job.get_mut("status")
-        && let Some((_, openai)) = STATUSES.iter().find(|(its, _)| status == its)
-    {
-        *status = (*openai).into();
-    }
-    if let Some(message) = job.get("error").and_then(Value::as_str) {
-        let error = Map::from_iter([("message".to_owned(), message.into())]);
-        job.insert("error".into(), error.into());
-    }
+    crate::openai_job(&mut job, STATUSES);
     serde_json::to_vec(&job)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("a video job is no JSON").with_source(e))

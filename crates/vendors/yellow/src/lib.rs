@@ -22,6 +22,8 @@ pub mod xai;
 
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::content::content_type;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_vendor_kit::{BoxFuture, Models, Vendor, VendorProvider};
 use serde_json::{Map, Value};
 
@@ -62,4 +64,25 @@ fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
     serde_json::to_vec(&call)
         .map(Bytes::from)
         .map_err(unwritten)
+}
+
+/// Whether an answer is a success in JSON, which a dialect may read whole.
+fn json_answer(head: &ResponseHead) -> bool {
+    let essence = content_type(head).and_then(|t| t.split(';').next());
+    head.status.is_success()
+        && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
+}
+
+/// A vendor's video job as OpenAI's: each of `statuses` by OpenAI's name
+/// for it, and why it failed, a string, as an error's message.
+fn openai_job(job: &mut Map<String, Value>, statuses: &[(&str, &str)]) {
+    if let Some(status) = job.get_mut("status")
+        && let Some((_, openai)) = statuses.iter().find(|(its, _)| status == its)
+    {
+        *status = (*openai).into();
+    }
+    if let Some(message) = job.get("error").and_then(Value::as_str) {
+        let error = Map::from_iter([("message".to_owned(), message.into())]);
+        job.insert("error".into(), error.into());
+    }
 }
