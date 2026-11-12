@@ -1725,7 +1725,7 @@ fn stop_after_a_tool_call_finishes_as_tool_use() {
 
 /// Regression: a tool call's own fields were lost when the call was
 /// replayed, as a tool loop's next step does. Its signature is the kind's,
-/// which a call upstream does not send.
+/// written back where it was read from.
 #[test]
 fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
     let extra = json!({ "google": { "thought_signature": "s" }, "other": 1 });
@@ -1745,7 +1745,7 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
     });
     let native = native.expect("the call's fields");
     assert_eq!(native["extra_content"], json!({ "other": 1 }));
-    // Written again for this format, the call carries them.
+    // Written again for this format, the call carries them and its signature.
     let mut message = Message::new(respan_gateway_conversation::Role::Assistant, "");
     message.content = replayed;
     let request = Input::new([
@@ -1754,7 +1754,7 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
     ]);
     let body = OpenAiChat.encode_request(&request).expect("a request");
     let call = &body["messages"][1]["tool_calls"][0];
-    assert_eq!(call["extra_content"], json!({ "other": 1 }), "{body:?}");
+    assert_eq!(call["extra_content"], extra, "{body:?}");
 }
 
 #[test]
@@ -1906,6 +1906,8 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
             { "id": "v", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
     ]});
     let chat = OpenAiChat.decode_json(&body);
+    // Chat to Chat, each signature is written back where it was read.
+    assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
     let sent = GeminiGenerate.encode_request(&chat).map(Value::from);
     let contents = sent.map(|v| v["contents"].clone()).unwrap_or_default();
     assert_eq!(contents.as_array().map(Vec::len), Some(4), "{contents}");
