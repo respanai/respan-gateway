@@ -1,7 +1,7 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
 //! transcriptions, as OpenAI serves them, and videos in its dialect.
 
-use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Dialect, Dialected, Model, Models, Price, Rewrite, Vendor, VendorProvider,
-    built_wrong, http, json,
+    built_wrong, http, json, own,
 };
 
 /// Where its API is.
@@ -72,9 +72,8 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
         return Ok(());
     };
     let url = media_url(&reference);
-    let mut fields = kept(OpenAiVideos::NAME, &create.native);
+    let fields = own(&mut create.native, OpenAiVideos::NAME);
     fields.entry("image_url").or_insert_with(|| url.into());
-    create.native = native_of(OpenAiVideos::NAME, fields);
     Ok(())
 }
 

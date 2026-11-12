@@ -4,7 +4,7 @@
 
 use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -23,7 +23,7 @@ use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Dialect, Dialected, Modality, Model, Models, Price, Rewrite,
-    Vendor, VendorProvider, built_wrong, http, json, models, time,
+    Vendor, VendorProvider, built_wrong, http, json, models, own, time,
 };
 
 /// Where its API is.
@@ -87,7 +87,7 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    let mut fields = kept(OpenAiImages::NAME, &input.native);
+    let fields = own(&mut input.native, OpenAiImages::NAME);
     // WARN: EmpirioLabs AI edits take no mask; it is dropped.
     fields.shift_remove("mask");
     fields.entry("sync").or_insert(true.into());
@@ -97,7 +97,6 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
         fields.insert("image".into(), images.collect::<Vec<_>>().into());
     }
     input.images.clear();
-    input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
 }
 
@@ -269,6 +268,7 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_conversation_http::fields::{kept, native_of};
     use respan_gateway_core::NativeFields;
     use serde_json::json;
 
