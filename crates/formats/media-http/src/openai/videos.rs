@@ -11,7 +11,7 @@ use super::{
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -434,15 +434,6 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     json_bytes(&body.ok_or_else(|| Fault::upstream("the provider's answer said no video"))?)
 }
 
-/// A 502 for a status this format cannot write.
-fn unwritable_status() -> Fault {
-    Fault::new(format!("a video status cannot be written in {NAME}"))
-        .with(ErrorCode("untranslatable".into()))
-        .with(respan_gateway_http_faults::Status(
-            http::StatusCode::BAD_GATEWAY,
-        ))
-}
-
 /// A job object, its fields all present, `null` where the job says none.
 fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
     let status = match &job.status {
@@ -451,7 +442,9 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         Status::Completed => "completed",
         Status::Failed => "failed",
         Status::Native { format, status, .. } if &**format == NAME => status,
-        _ => return Err(unwritable_status()),
+        // WARN: another format's state has no form here: it is written as
+        // `in_progress`, so the client polls on.
+        _ => "in_progress",
     };
     let error = job
         .error

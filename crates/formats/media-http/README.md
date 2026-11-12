@@ -151,7 +151,8 @@ generation, as a provider only, its key a bearer token. Its job ids start
   the first of the `frame_images`, and its `openrouter-videos` native fields
   (`resolution`, `aspect_ratio`, `generate_audio`, `seed`) as they are.
 - `GET /videos/{id}` polls it: `pending` is `queued`, `in_progress`,
-  `completed` and `failed` are the kind's, its error a string; its
+  `completed` and `failed` are the kind's, its error a string; `cancelled`
+  and `expired` are `failed`, with that as the error unless one is said; its
   `unsigned_urls` are the job's videos; its `usage` and the signed `urls`
   of its video are dropped.
   It reports no progress, model, size or length. `GET /videos/{id}/content`

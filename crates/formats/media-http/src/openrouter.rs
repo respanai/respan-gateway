@@ -28,7 +28,8 @@ const CONTENT: &str = "/content";
 ///
 /// A job's id starts `gen-vid-`. It is `queued` while `pending`, `in_progress`,
 /// `completed` once its video is made, `failed` with the error OpenRouter
-/// words; a state it adds, such as `cancelled`, is the format's own. Its
+/// words, or `cancelled` or `expired` as that; a state it adds is the
+/// format's own. Its
 /// videos are where it serves them ([`Job::videos`]). What else it answers,
 /// such as its `usage` and the signed `urls` of its video, is dropped: it
 /// reports no progress and names no model, size or length of a job.
@@ -135,17 +136,24 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     let id = v["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
+    let mut error = v["error"].as_str();
     let status = match v["status"].as_str() {
         Some("pending") => Status::Queued,
         Some("in_progress") => Status::InProgress,
         Some("completed") => Status::Completed,
         Some("failed") => Status::Failed,
+        // A job `cancelled` or `expired` ended without a video: it failed,
+        // as that, unless OpenRouter says why.
+        Some(ended @ ("cancelled" | "expired")) => {
+            error = error.or(Some(ended));
+            Status::Failed
+        }
         Some(other) => Status::native(NAME, other),
         None => return Err(unreadable("has no status")),
     };
     let mut job = Job::new(id, status);
     job.expires_at = v["expires_at"].as_u64();
-    job.error = v["error"].as_str().map(|m| JobError::new(None, m));
+    job.error = error.map(|m| JobError::new(None, m));
     job.videos = (v["unsigned_urls"].as_array().into_iter().flatten())
         .filter_map(Value::as_str)
         .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
@@ -267,5 +275,13 @@ mod tests {
         };
         assert_eq!(job.status, Status::Failed);
         assert_eq!(job.error, Some(JobError::new(None, "content policy")));
+
+        // Regression: an OpenAI client polling a cancelled job was answered 502.
+        let [Output::Job(job)] = &jobs(json!({ "id": "gen-vid-1", "status": "cancelled" }))[..]
+        else {
+            panic!("a job");
+        };
+        assert_eq!(job.status, Status::Failed);
+        assert_eq!(job.error, Some(JobError::new(None, "cancelled")));
     }
 }
