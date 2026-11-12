@@ -108,7 +108,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 
 /// A creation's JSON body.
 fn create_body(create: &Create) -> Result<Bytes, Fault> {
-    let model = create.model.as_deref().filter(|m| !m.is_empty());
+    let model = create.model.as_deref();
     let model =
         model.ok_or_else(|| Fault::bad_request("a video needs a model, such as tbc/mischief-1"))?;
     let mut v = Map::new();
@@ -134,7 +134,7 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
 /// The job of an answer `raw`.
 fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
-    let v = serde_json::from_slice::<Value>(&raw).map_err(|_| unreadable("is not JSON"))?;
+    let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     let id = v["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
     let status = match v["status"].as_str() {
         Some("pending") => Status::Queued,
@@ -151,7 +151,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         .filter_map(Value::as_str)
         .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
         .collect();
-    if let Some(usage) = v.get("usage").filter(|usage| !usage.is_null()) {
+    if let Some(usage) = v.get("usage") {
         let fields = Map::from_iter([("usage".to_owned(), usage.clone())]);
         job.native = Some(NativeFields::new(NAME, fields));
     }
