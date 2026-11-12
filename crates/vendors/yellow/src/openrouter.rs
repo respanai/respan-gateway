@@ -1,5 +1,5 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images, embeddings, transcriptions and speech.
+//! models, and images, embeddings, transcriptions, speech and videos.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -16,6 +16,7 @@ use respan_gateway_media::{image, speech, transcription};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
@@ -49,6 +50,7 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(OpenAiSpeech, OpenRouterSpeech),
             Some(BASE_URL),
         ),
+        (&OpenRouterVideos, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };

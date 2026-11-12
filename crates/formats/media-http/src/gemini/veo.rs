@@ -603,12 +603,15 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
     }
 }
 
-/// Whether `id` is spelled as a job id the gateway gives out, Veo's or
-/// OpenAI's, perhaps wrapped in its provider's name (`<provider>~<id>`):
-/// none of Google's own files or operations is, so those pass through.
+/// Whether `id` is spelled as a job id the gateway gives out, Veo's,
+/// OpenAI's or OpenRouter's, perhaps wrapped in its provider's name
+/// (`<provider>~<id>`): none of Google's own files or operations is, so
+/// those pass through.
 fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [PREFIX, "video_"].iter().any(|s| inner.starts_with(s))
+    [PREFIX, "video_", "gen-vid-"]
+        .iter()
+        .any(|s| inner.starts_with(s))
 }
 
 /// What a client asks: a creation's body read into the kind's, the rest by
@@ -885,6 +888,13 @@ mod tests {
             (
                 "/v1beta/files/video_1:download".into(),
                 Some(Route::Download("video_1".into())),
+            ),
+            (
+                "/v1beta/operations/gen-vid-1".into(),
+                Some(Route::Retrieve {
+                    id: "gen-vid-1".into(),
+                    model: None,
+                }),
             ),
             ("/v1beta/files/abc123:download".into(), None),
             ("/v1beta/operations/abc123".into(), None),

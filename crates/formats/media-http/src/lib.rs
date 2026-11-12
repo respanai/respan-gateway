@@ -6,6 +6,7 @@
 //! - [`gemini`]: Google's Veo and image models, as the Gemini API serves
 //!   them, of the video and image kinds.
 //! - [`bedrock`]: Amazon Bedrock's embedding models, on InvokeModel.
+//! - [`openrouter`]: OpenRouter's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -14,3 +15,4 @@ pub mod bedrock;
 mod edge;
 pub mod gemini;
 pub mod openai;
+pub mod openrouter;
