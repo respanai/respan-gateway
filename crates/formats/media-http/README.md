@@ -177,6 +177,6 @@ only, its key a Bedrock API key as a bearer token.
   several is refused, 400; v2 and Multimodal take `dimensions`.
 - Usage is the input tokens Bedrock counts: Titan's `inputTextTokenCount`,
   else the `x-amzn-bedrock-input-token-count` header.
-- Token ids, parts, an end user's id and a `dimensions` the model takes none
-  of are refused, 400, before the call; other fields of another format are
-  dropped.
+- Token ids, parts and a `dimensions` the model takes none of are refused,
+  400, before the call; other fields of another format, such as an end
+  user's id, are dropped.

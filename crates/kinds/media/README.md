@@ -10,7 +10,7 @@ formats over HTTP are
 | `image` | Image generation and edits | `prompt`, source `images` and `mask` (an edit has images), `count`, `size` | `Start`, `Image`, `Usage` |
 | `transcription` | Speech to text, or to English (`Task`) | `audio`, `task`, `language`, `prompt`, `temperature` | `Delta`, `Transcript`, `Rendered`, `Usage`, `Seconds` |
 | `speech` | Text to speech | `text`, `voice`, `instructions`, `speed`, `audio_format` | `Audio` chunks, `Usage` |
-| `embedding` | Embeddings of texts, images and videos | `items` (`Text`, `Tokens` or `Parts`), `dimensions`, `user` | `Start`, `Embedding` vectors, `Usage` |
+| `embedding` | Embeddings of texts, images and videos | `items` (`Text`, or a format's own item), `dimensions` | `Start`, `Embedding` vectors, `Usage` |
 | `video` | Video generation, a job | an operation: `Create` (`model`, `prompt`, `seconds`, `size`, a `reference` image), `Remix`, `Retrieve`, `Content` (a `Variant`), `Delete`, `List` | `Job`, `Jobs`, `Content` chunks, `Deleted` |
 
 Every `Input` has an optional `model`, read by `model()` and rewritten by
