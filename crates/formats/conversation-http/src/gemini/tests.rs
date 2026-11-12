@@ -311,6 +311,30 @@ fn results_of_one_turn_are_one_content_and_name_their_tools() {
         m
     });
     assert!(GeminiGenerate.encode_request(&chat).is_err());
+    // A Responses turn's text drops its fields, and images and documents are `parts`.
+    let annotated = json!([{ "type": "file_citation", "file_id": "f" }]);
+    let text = |t: &str| json!({ "type": "input_text", "text": t, "annotations": annotated });
+    let body = json!({ "model": "m", "input": [
+        { "role": "user", "content": "go" },
+        { "type": "function_call", "call_id": "a", "name": "run", "arguments": "{}" },
+        { "type": "function_call", "call_id": "b", "name": "run", "arguments": "{}" },
+        { "type": "function_call_output", "call_id": "a", "output": [text("a chart"),
+            { "type": "input_image", "image_url": "data:image/png;base64,iVBORw==" },
+            { "type": "input_file", "file_data": "data:application/pdf;base64,JVBERi0=", "filename": "r.pdf" }] },
+        { "type": "function_call_output", "call_id": "b", "output": [text(r#"{"ok":true}"#)] },
+    ] });
+    let chat = crate::responses::OpenAiResponses.decode_json(&body);
+    let written = GeminiGenerate.encode_request(&chat).expect("written");
+    assert_eq!(
+        written["contents"][2]["parts"],
+        json!([
+            { "functionResponse": { "name": "run", "id": "a", "response": { "output": "a chart" }, "parts": [
+                { "inlineData": { "mimeType": "image/png", "data": "iVBORw==" } },
+                { "inlineData": { "mimeType": "application/pdf", "data": "JVBERi0=", "displayName": "r.pdf" } },
+            ] } },
+            { "functionResponse": { "name": "run", "id": "b", "response": { "ok": true } } },
+        ])
+    );
 }
 
 #[test]

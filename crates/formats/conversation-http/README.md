@@ -129,13 +129,13 @@ tool call and its result. Gemini names a result by its tool, not by an id:
 a call without an `id` is given one of the format's own (`gemini_call_..`),
 which its result finds by name and which Gemini never sees; writing a
 request, a result finds its tool by the call's id. A result's `response`
-object is its text as JSON; an object written stays one, other text goes
-under `output` (`error` for a failure). The results of one turn are one
-content. Tool declarations take `parameters` (OpenAPI types in upper case)
-or `parametersJsonSchema`, and are written as the latter; `toolConfig` is the
-tool choice (`ANY` with one allowed name is a named tool); `generationConfig`
-gives the output limit, `temperature`, `topP`, stop sequences and structured
-output (`responseMimeType` with a schema).
+object is its text as JSON; an object written stays one, other text goes under
+`output` (`error` for a failure), and images and documents are its `parts`. The
+results of one turn are one content. Tool declarations take `parameters`
+(OpenAPI types in upper case) or `parametersJsonSchema`, and are written as the
+latter; `toolConfig` is the tool choice (`ANY` with one allowed name is a named
+tool); `generationConfig` gives the output limit, `temperature`, `topP`, stop
+sequences and structured output (`responseMimeType` with a schema).
 
 What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
