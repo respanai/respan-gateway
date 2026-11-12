@@ -20,9 +20,10 @@
 //! answer finds by name, and which is never sent back to Gemini. A
 //! `functionResponse`'s `response` object is the result's text, as JSON;
 //! writing it, an object stays as it is, other text goes under `output`
-//! (`error` for a failed call). `systemInstruction` is a leading system
-//! message; `tools` are the function declarations, their `parameters` (or
-//! `parametersJsonSchema`) JSON Schema; `toolConfig` gives the tool choice;
+//! (`error` for a failed call), and images and documents are its `parts`.
+//! `systemInstruction` is a leading system message; `tools` are the function
+//! declarations, their `parameters` (or `parametersJsonSchema`) JSON Schema;
+//! `toolConfig` gives the tool choice;
 //! `generationConfig` the output limit, `temperature`, `topP`, `topK`, stop
 //! sequences, structured output (`responseMimeType` with a schema) and
 //! `thinkingConfig`: `thinkingLevel` is an effort, `thinkingBudget` a token
