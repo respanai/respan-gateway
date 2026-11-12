@@ -37,9 +37,9 @@ const SEARCH_DOCUMENT: &str = "search_document";
 /// counts: Titan's `inputTextTokenCount`, else the
 /// `x-amzn-bedrock-input-token-count` header.
 ///
-/// Token ids, parts, an end user's id, a `dimensions` the model takes none
-/// of are refused, 400, before the call; other fields of another format are
-/// dropped.
+/// Token ids, parts and a `dimensions` the model takes none of are refused,
+/// 400, before the call; other fields of another format, such as an end
+/// user's id, are dropped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BedrockEmbeddings;
 
@@ -119,9 +119,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             _ => Err(invalid("input", "must be texts for Bedrock")),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if input.user.is_some() {
-        return Err(invalid("user", "has no field on Bedrock"));
-    }
     let no_dimensions = || invalid("dimensions", "is not taken by this model");
     let dimensions = input.dimensions;
     let body = match family {
@@ -275,7 +272,6 @@ mod tests {
     #[test]
     fn what_bedrock_has_no_field_for_is_refused() {
         assert!(call("amazon.nova-micro-v1:0", &["a"], |_| {}).is_err());
-        assert!(call("cohere.embed-v4:0", &["a"], |i| i.user = Some("u".into())).is_err());
         let parts =
             |i: &mut Input| i.items = vec![Item::Native(NativeValue::new("x", json!([{}])))];
         assert!(call("cohere.embed-v4:0", &["a"], parts).is_err());

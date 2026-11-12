@@ -83,19 +83,13 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     let mut input = Input::new(read_items(&items)?);
     input.model = take_string(&mut map, "model")?;
     input.dimensions = take_count(&mut map, "dimensions")?;
-    input.user = take_string(&mut map, "user")?;
     input.native = native_of(NAME, map);
     Ok(input)
 }
 
-/// The items of a request's `input`.
+/// The items of a request's `input`: its texts, else, as token ids or
+/// parts, the format's own, as it came; a list of token lists is one each.
 fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
-    let bad = || {
-        invalid(
-            "input",
-            "must be a string, or an array of strings, tokens or parts",
-        )
-    };
     let items = match v {
         Value::String(text) => vec![Item::Text(text.clone())],
         Value::Array(all) if all.iter().all(Value::is_string) => all
@@ -103,28 +97,17 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
             .filter_map(Value::as_str)
             .map(|text| Item::Text(text.to_owned()))
             .collect(),
-        Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object) => {
-            vec![Item::Native(NativeValue::new(NAME, v.clone()))]
-        }
         Value::Array(all) if all.iter().all(Value::is_array) => all
             .iter()
-            .map(|ids| token_ids(ids).map(Item::Tokens))
-            .collect::<Option<_>>()
-            .ok_or_else(bad)?,
-        Value::Array(_) => vec![Item::Tokens(token_ids(v).ok_or_else(bad)?)],
-        _ => return Err(bad()),
+            .map(|ids| Item::Native(NativeValue::new(NAME, ids.clone())))
+            .collect(),
+        Value::Array(_) => vec![Item::Native(NativeValue::new(NAME, v.clone()))],
+        _ => return Err(invalid("input", "must be a string or an array")),
     };
     match items.is_empty() {
         true => Err(invalid("input", "must not be empty")),
         false => Ok(items),
     }
-}
-
-/// The token ids of an array `v`.
-fn token_ids(v: &Value) -> Option<Vec<u32>> {
-    let ids = v.as_array()?.iter();
-    ids.map(|id| id.as_u64().and_then(|id| u32::try_from(id).ok()))
-        .collect()
 }
 
 /// The call of `input`, in JSON.
@@ -134,7 +117,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     set(&mut v, "model", input.model.clone());
     v.insert("input".into(), items_json(&input.items)?);
     set(&mut v, "dimensions", input.dimensions);
-    set(&mut v, "user", input.user.clone());
     merge_missing(&mut v, &kept(NAME, &input.native));
     Ok(sends(json_bytes(&v)?))
 }
@@ -143,7 +125,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 fn items_json(items: &[Item]) -> Result<Value, Fault> {
     let item = |item: &Item| match item {
         Item::Text(text) => Value::from(text.clone()),
-        Item::Tokens(ids) => Value::from(ids.clone()),
         Item::Native(n) if &*n.format == NAME => (*n.value).clone(),
         // WARN: another format's item has no form here; it is sent as null.
         _ => Value::Null,
@@ -155,7 +136,7 @@ fn items_json(items: &[Item]) -> Result<Value, Fault> {
     match items.windows(2).all(same) {
         true => Ok(items.iter().map(item).collect::<Vec<_>>().into()),
         false => Err(Fault::bad_request(
-            "an input cannot mix texts, tokens and parts",
+            "an input cannot mix texts with tokens or parts",
         )),
     }
 }
@@ -300,10 +281,10 @@ mod tests {
 
     #[test]
     fn every_form_of_input_is_read_and_written_back() {
-        let tokens = |ids: &[u32]| Item::Tokens(ids.to_vec());
         let text = |t: &str| Item::Text(t.to_owned());
+        let native = |v: &Value| vec![Item::Native(NativeValue::new(NAME, v.clone()))];
+        let (tokens, lists) = (json!([1, 2]), json!([[1], [2, 3]]));
         let parts = json!([{"type": "image", "url": "u"}]);
-        let native = Item::Native(NativeValue::new(NAME, parts.clone()));
         let cases = [
             (json!("a"), vec![text("a")], json!("a")),
             (json!(["a"]), vec![text("a")], json!("a")),
@@ -312,13 +293,16 @@ mod tests {
                 vec![text("a"), text("b")],
                 json!(["a", "b"]),
             ),
-            (json!([1, 2]), vec![tokens(&[1, 2])], json!([1, 2])),
+            (tokens.clone(), native(&tokens), tokens),
             (
-                json!([[1], [2, 3]]),
-                vec![tokens(&[1]), tokens(&[2, 3])],
-                json!([[1], [2, 3]]),
+                lists.clone(),
+                [json!([1]), json!([2, 3])]
+                    .iter()
+                    .flat_map(native)
+                    .collect(),
+                lists,
             ),
-            (parts.clone(), vec![native], parts),
+            (parts.clone(), native(&parts), parts),
         ];
         for (asked, read, written) in cases {
             let read_back = items(asked.clone()).expect("items");
@@ -329,17 +313,14 @@ mod tests {
 
     #[test]
     fn an_input_of_no_items_or_odd_ones_is_refused() {
-        for asked in [
-            json!([]),
-            json!(7),
-            json!([1, "a"]),
-            json!([-1]),
-            json!([[1], "a"]),
-        ] {
+        for asked in [json!([]), json!(7)] {
             let refused = items(asked.clone());
             assert!(refused.is_err_and(|f| f.is(FaultKind::Client)), "{asked}");
         }
-        let mixed = [Item::Text("a".into()), Item::Tokens(vec![1])];
+        let mixed = [
+            Item::Text("a".into()),
+            Item::Native(NativeValue::new(NAME, json!([1]))),
+        ];
         assert!(items_json(&mixed).is_err());
     }
 

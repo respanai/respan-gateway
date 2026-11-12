@@ -31,9 +31,10 @@ const EDITS: &str = "/images/edits";
 ///
 /// An edit's images and mask are files of a form (`image`, or `image[]`
 /// for several, and `mask`), or, in JSON, URLs (`images: [{"image_url"}]`);
-/// an image a client names by file id cannot be relayed and is refused. A
-/// call writes an edit, a request with images, as a form, or as JSON if one
-/// is a URL, which a form cannot hold.
+/// an image a client names by file id cannot be relayed and is refused. Its
+/// mask is a native field, `mask: {"image_url"}`, a data URL of a file's
+/// bytes. A call writes an edit, a request with images, as a form, or as
+/// JSON if an image or the mask is a URL, which a form cannot hold.
 ///
 /// A request's fields but its model, prompt, `n`, `size` and images, such as
 /// its `quality`, `output_format` or `user`, are its native fields.
@@ -114,7 +115,9 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
     for (name, media) in files {
         match name.as_str() {
             "image" if edit => input.images.push(media),
-            "mask" if edit && input.mask.is_none() => input.mask = Some(media),
+            "mask" if edit && !map.contains_key("mask") => {
+                map.insert("mask".into(), json!({ "image_url": media_url(&media) }));
+            }
             _ => return Err(invalid(&name, "is not a file this endpoint takes")),
         }
     }
@@ -126,9 +129,6 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
             for image in images {
                 input.images.push(linked(image, "images")?);
             }
-        }
-        if let Some(mask) = map.remove("mask") {
-            input.mask = Some(linked(&mask, "mask")?);
         }
         if input.images.is_empty() {
             return Err(missing("image"));
@@ -163,27 +163,32 @@ fn data_url(url: &str) -> Option<(String, Bytes)> {
 }
 
 /// The call of `input`: a generation in JSON; an edit as a form, or in
-/// JSON if an image is a URL.
+/// JSON if an image or the mask is not bytes.
 fn post(
     head: &mut RequestHead,
     input: &Input,
     stream: bool,
 ) -> Result<Box<dyn Encoder<Input>>, Fault> {
+    let mut v = fields(input, stream);
     if !input.is_edit() {
-        if input.mask.is_some() {
-            return Err(Fault::bad_request("a mask needs an image to edit"));
-        }
         post_to(head, GENERATIONS, "application/json")?;
-        return Ok(sends(json_bytes(&fields(input, stream))?));
+        return Ok(sends(json_bytes(&v)?));
     }
-    let mut files = input.images.iter().chain(&input.mask);
-    if !files.all(|media| bytes_of(media).is_some()) {
+    let mask = v
+        .get("mask")
+        .map(|m| linked(m, "mask").ok().filter(|m| bytes_of(m).is_some()));
+    if mask.as_ref().is_some_and(Option::is_none)
+        || !input.images.iter().all(|media| bytes_of(media).is_some())
+    {
+        let link = |media: &Media| json!({ "image_url": media_url(media) });
+        v.insert("images".into(), input.images.iter().map(link).collect());
         post_to(head, EDITS, "application/json")?;
-        return Ok(sends(json_bytes(&linked_edit(input, stream))?));
+        return Ok(sends(json_bytes(&v)?));
     }
+    v.shift_remove("mask");
     let mut form = Writer::with_boundary(multipart::random_boundary());
     post_to(head, EDITS, &form.content_type())?;
-    for (name, value) in &fields(input, stream) {
+    for (name, value) in &v {
         write_field(&mut form, name, value);
     }
     let name = match input.images.len() {
@@ -191,7 +196,7 @@ fn post(
         _ => "image[]",
     };
     let files = input.images.iter().map(|media| (name, media));
-    for (name, media) in files.chain(input.mask.iter().map(|mask| ("mask", mask))) {
+    for (name, media) in files.chain(mask.flatten().iter().map(|mask| ("mask", mask))) {
         let bytes = bytes_of(media).cloned().unwrap_or_default();
         form.file(name, &file_name(media, "image"), &media.mime_type, &bytes);
     }
@@ -210,18 +215,6 @@ fn fields(input: &Input, stream: bool) -> Map<String, Value> {
     if stream {
         v.insert("stream".into(), true.into());
     }
-    v
-}
-
-/// A JSON edit, its images named by URL.
-fn linked_edit(input: &Input, stream: bool) -> Map<String, Value> {
-    let link = |media: &Media| json!({ "image_url": media_url(media) });
-    let mut v = fields(input, stream);
-    v.insert(
-        "images".into(),
-        input.images.iter().map(link).collect::<Vec<_>>().into(),
-    );
-    set(&mut v, "mask", input.mask.as_ref().map(link));
     v
 }
 
@@ -544,23 +537,37 @@ mod tests {
             "mask": {"image_url": "data:image/png;base64,bWFzaw=="},
             "quality": "high",
         });
-        let input = edit(body.clone()).expect("an edit");
+        let mut input = edit(body.clone()).expect("an edit");
         let first = MediaSource::Bytes(Bytes::from_static(b"\x89PN"));
         assert_eq!(input.images[0].source, first);
         assert_eq!(input.images[1].mime_type, "image/webp");
         let native = input.native.clone().map(|n| Value::Object(n.fields));
-        assert_eq!(native, Some(json!({"quality": "high"})));
+        assert_eq!(
+            native,
+            Some(json!({"mask": body["mask"], "quality": "high"}))
+        );
         let mut head = http::Request::new(()).into_parts().0;
         let encoder = post(&mut head, &input, false).expect("a call");
         assert_eq!(head.uri.path(), EDITS);
         assert_eq!(head.headers[http::header::CONTENT_TYPE], "application/json");
         let written = {
             let mut encoder = encoder;
-            encoder.encode_all(&[input])
+            encoder.encode_all(std::slice::from_ref(&input))
         }
         .expect("a body");
         let written: Value = serde_json::from_slice(&written).unwrap_or_default();
         assert_eq!(written, body);
+        // Of bytes alone, it is a form, its mask a file.
+        input.images.pop();
+        let mut encoder = post(&mut head, &input, false).expect("a call");
+        let written = encoder.encode_all(&[input]).unwrap_or_default();
+        let written = String::from_utf8_lossy(&written);
+        assert!(
+            written.contains(
+                "name=\"mask\"; filename=\"image.png\"\r\nContent-Type: image/png\r\n\r\nmask"
+            ),
+            "{written}"
+        );
     }
 
     #[test]
