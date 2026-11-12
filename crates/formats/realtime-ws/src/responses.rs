@@ -17,6 +17,8 @@ pub(crate) const SPEC: Spec = Spec {
     transcribes: false,
 };
 
+respan_gateway_core::native_key!(Key = SPEC.name);
+
 /// OpenAI's Responses over WebSocket: a `GET` upgrade to a path ending in
 /// `/responses`, as for HTTP, and a call to it after the base URL its SDKs
 /// take (`wss://api.openai.com/v1`). Only an upgrade is this format's: a
@@ -29,10 +31,12 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct ResponsesWs;
 
 impl ResponsesWs {
-    /// The format's name, `responses-ws`, which tags its native events.
+    /// The format's name, `responses-ws`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
+
+    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {
@@ -50,7 +54,7 @@ impl Format<ClientIo, Input, Output> for ResponsesWs {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        let (read, write) = session::native_client(Self::NAME);
+        let (read, write) = session::native_client::<Key>();
         Ok(SPEC.client(io, read, write))
     }
 }
@@ -78,7 +82,7 @@ impl Format<ProviderIo, Output, Input> for ResponsesWs {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let (write, read) = session::native_provider(Self::NAME);
+        let (write, read) = session::native_provider::<Key>();
         Ok(SPEC.provider(io, None, write, read, None))
     }
 }

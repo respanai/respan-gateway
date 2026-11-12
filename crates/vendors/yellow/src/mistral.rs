@@ -14,7 +14,7 @@ use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTr
 use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own_mut};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.mistral.ai/v1";
@@ -80,7 +80,7 @@ fn taken(input: &mut speech::Input) -> Result<(), Fault> {
     let Some(voice) = input.voice.take() else {
         return Ok(());
     };
-    let fields = own_mut(&mut input.native, OpenAiSpeech::NAME);
+    let fields = OpenAiSpeech::fields_mut(&mut input.native);
     fields.entry("voice_id").or_insert_with(|| voice.into());
     Ok(())
 }
@@ -137,8 +137,7 @@ mod tests {
         input.voice = Some("v".into());
         taken(&mut input).expect("taken");
         assert_eq!(input.voice, None);
-        let native = input.native.expect("native");
-        assert_eq!(native.fields["voice_id"], "v");
+        assert_eq!(OpenAiSpeech::fields_mut(&mut input.native)["voice_id"], "v");
         let mut asked = speech::Input::new("hi");
         asked.speed = Some(1.5);
         assert!(taken(&mut asked).is_err());

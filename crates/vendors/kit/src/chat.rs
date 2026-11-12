@@ -42,6 +42,6 @@ fn write_message_reasoning(message: &mut Message) {
             text.insert_str(0, &said);
         }
     }
-    let fields = crate::own_mut(&mut message.native, OpenAiChat::NAME);
+    let fields = OpenAiChat::fields_mut(&mut message.native);
     fields.insert("reasoning_content".into(), text.into());
 }

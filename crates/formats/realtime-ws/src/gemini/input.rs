@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Encoding, Input, Output, Session, Status, ToolResult, Turns,
@@ -12,10 +12,10 @@ use respan_gateway_realtime::{
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
 
-use super::{Answering, NAME, Shared, setup};
+use super::{Answering, Key, NAME, Shared, setup};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, untranslatable_input};
+use crate::json::{self, merge, untranslatable_input};
 use crate::session::{self, Say};
 
 /// A client's messages as events: its `setup` first and once, and each
@@ -58,7 +58,10 @@ impl Client {
             (_, false) => return Err(invalid("a session's first message is its setup")),
             _ => {
                 let answering = self.answering.load(Ordering::Relaxed);
-                out.extend(decode(&v, answering).unwrap_or_else(|| vec![Input::native(NAME, v)]));
+                out.extend(
+                    decode(&v, answering)
+                        .unwrap_or_else(|| vec![Input::Native(Native::json::<Key>(v))]),
+                );
             }
         }
         Ok(())
@@ -79,13 +82,22 @@ fn decode(v: &Value, answering: bool) -> Option<Vec<Input>> {
             let (field, value) = single(body)?;
             match field {
                 "audio" => return audio(value).map(|a| vec![a]),
-                "text" => vec![user(value.as_str()?), Input::Respond { native: None }],
+                "text" => vec![
+                    user(value.as_str()?),
+                    Input::Respond {
+                        native: Native::default(),
+                    },
+                ],
                 "activityEnd" if *value == json!({}) => vec![
-                    Input::Commit { native: None },
-                    Input::Respond { native: None },
+                    Input::Commit {
+                        native: Native::default(),
+                    },
+                    Input::Respond {
+                        native: Native::default(),
+                    },
                 ],
                 "activityStart" if answering && *value == json!({}) => vec![Input::Cancel {
-                    native: json::native(NAME, v.clone()),
+                    native: Native::json::<Key>(v.clone()),
                 }],
                 _ => return None,
             }
@@ -99,11 +111,11 @@ fn decode(v: &Value, answering: bool) -> Option<Vec<Input>> {
             for turn in turns {
                 events.push(Input::Message {
                     message: message(turn)?,
-                    native: None,
+                    native: Native::default(),
                 });
             }
             // The last event of the message keeps its shape, and ends it.
-            let shape = json::native(NAME, json!({"clientContent": {}}));
+            let shape = Native::json::<Key>(json!({"clientContent": {}}));
             match (body["turnComplete"] == true, events.last_mut()) {
                 (true, _) => events.push(Input::Respond { native: shape }),
                 (false, Some(Input::Message { native, .. })) => *native = shape,
@@ -114,7 +126,9 @@ fn decode(v: &Value, answering: bool) -> Option<Vec<Input>> {
         (name, body) if name == "toolResponse" => {
             let answers = body["functionResponses"].as_array()?;
             let mut events = answers.iter().map(answer).collect::<Option<Vec<_>>>()?;
-            events.push(Input::Respond { native: None });
+            events.push(Input::Respond {
+                native: Native::default(),
+            });
             events
         }
         _ => return None,
@@ -147,8 +161,8 @@ fn audio(blob: &Value) -> Option<Input> {
     let data = json::take_audio(&mut rest, &["data"])?;
     rest.as_object_mut()?.shift_remove("mimeType");
     let native = match rest.as_object()?.is_empty() {
-        true => None,
-        false => json::native(NAME, json!({"realtimeInput": {"audio": rest}})),
+        true => Native::default(),
+        false => Native::json::<Key>(json!({"realtimeInput": {"audio": rest}})),
     };
     Some(Input::Audio {
         audio: Audio {
@@ -163,7 +177,7 @@ fn audio(blob: &Value) -> Option<Input> {
 fn user(text: &str) -> Input {
     Input::Message {
         message: Message::new(Role::User, text),
-        native: None,
+        native: Native::default(),
     }
 }
 
@@ -179,11 +193,11 @@ fn message(turn: &Value) -> Option<Message> {
     let parts = rest.shift_remove("parts")?;
     let part = |p: &Value| match p.as_object().map(|o| (o.len(), o.get("text"))) {
         Some((1, Some(Value::String(text)))) => Content::from(text.as_str()),
-        _ => Content::native(NAME, p.clone()),
+        _ => Content::Native(Native::json::<Key>(p.clone())),
     };
     let mut message = Message::new(role, "");
     message.content = parts.as_array()?.iter().map(part).collect();
-    message.native = json::native(NAME, Value::Object(rest));
+    message.native = Native::json::<Key>(Value::Object(rest));
     Some(message)
 }
 
@@ -200,10 +214,10 @@ fn message_json(m: &Message) -> Option<Value> {
     // WARN: a part but text, such as an image or a tool call, is dropped,
     // and a message of no other part with it.
     let part = |c: &Content| match c {
-        Content::Text { text, native, .. } if native.is_none() => Some(json!({"text": text})),
-        Content::Native(NativeValue { format, value }) if **format == *NAME => {
-            Some(Value::clone(value))
+        Content::Text { text, native, .. } if native.fields::<Key>().is_empty() => {
+            Some(json!({"text": text}))
         }
+        Content::Native(native) => native.value::<Key>().cloned(),
         _ => None,
     };
     let parts: Vec<Value> = m.content.iter().filter_map(part).collect();
@@ -211,7 +225,7 @@ fn message_json(m: &Message) -> Option<Value> {
         return None;
     }
     let mut v = json!({"role": role, "parts": parts});
-    merge(&mut v, own(&m.native));
+    merge(&mut v, m.native.fields::<Key>());
     Some(v)
 }
 
@@ -222,7 +236,7 @@ fn answer(v: &Value) -> Option<Input> {
     let id = rest.shift_remove("id")?.as_str()?.to_owned();
     let response = rest.shift_remove("response")?;
     let mut result = ToolResult::new(id, response.to_string());
-    result.native = json::native(NAME, Value::Object(rest));
+    result.native = Native::json::<Key>(Value::Object(rest));
     Some(Input::ToolResult(result))
 }
 
@@ -235,10 +249,10 @@ fn answer_json(result: &ToolResult, name: Option<&String>) -> Value {
         _ => json!({"output": result.output}),
     };
     let mut v = json!({"id": result.id, "response": response});
-    if let (None, Some(name)) = (&result.native, name) {
+    if let (true, Some(name)) = (result.native.fields::<Key>().is_empty(), name) {
         v["name"] = name.as_str().into();
     }
-    merge(&mut v, own(&result.native));
+    merge(&mut v, result.native.fields::<Key>());
     v
 }
 
@@ -301,7 +315,7 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::admit(NAME, event) else {
+        let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
         let mut messages = Vec::new();
@@ -400,12 +414,13 @@ impl Provider {
                         (self.activity, self.answered) = (false, true);
                         (json!({"realtimeInput": {"activityEnd": {}}}), native)
                     }
-                    Input::Cancel { native } if native.is_some() => {
+                    Input::Cancel { native } if native.value::<Key>().is_some() => {
                         self.activity = true;
                         (json!({}), native)
                     }
                     Input::Cancel { .. } => return self.cancel(manual, out),
-                    Input::Native(NativeValue { format, value }) if **format == *NAME => {
+                    Input::Native(native) if native.value::<Key>().is_some() => {
+                        let value = native.value::<Key>().expect("its own");
                         if at_start(value) {
                             self.activity = true;
                         }
@@ -416,7 +431,7 @@ impl Provider {
                 }
             }
         };
-        merge(&mut v, own(native));
+        merge(&mut v, native.fields::<Key>());
         out.push(v);
         Ok(())
     }
@@ -450,7 +465,7 @@ impl Provider {
             state.cancelled = true;
             let done = Output::ResponseDone {
                 status: Status::Cancelled,
-                native: None,
+                native: Native::default(),
             };
             let _ = self.say.unbounded_send(done);
         }
@@ -464,18 +479,14 @@ impl Provider {
     /// text alone unless `native` says it came as `clientContent`, else
     /// messages as a complete `clientContent` turn; tools' answers; or a
     /// complete turn of nothing more.
-    fn respond(&mut self, native: &Option<NativeFields>) -> Value {
+    fn respond(&mut self, native: &Native) -> Value {
         let messages = match self.held.take() {
             Some(Held::Results(results)) => return self.results(&results),
             Some(Held::Messages(messages)) => messages,
             None => Vec::new(),
         };
-        if let [
-            Input::Message {
-                message,
-                native: None,
-            },
-        ] = messages.as_slice()
+        if let [Input::Message { message, native: n }] = messages.as_slice()
+            && n.fields::<Key>().is_empty()
             && !shaped(native)
             && said(message)
         {
@@ -509,12 +520,11 @@ impl Provider {
 
 /// Whether `message` is the user's text alone.
 fn said(message: &Message) -> bool {
-    message.native.is_none()
+    let plain = |n: &Native| n.fields::<Key>().is_empty();
+    plain(&message.native)
         && message.role == Role::User
-        && message
-            .content
-            .iter()
-            .all(|c| matches!(c, Content::Text { native: None, .. }))
+        && (message.content.iter())
+            .all(|c| matches!(c, Content::Text { native, .. } if plain(native)))
 }
 
 /// Whether `event` begins the user's activity.
@@ -523,10 +533,8 @@ fn at_start(event: &Value) -> bool {
 }
 
 /// Whether an event's `native` says it came as `clientContent`.
-fn shaped(native: &Option<NativeFields>) -> bool {
-    native
-        .as_ref()
-        .is_some_and(|n| n.fields.contains_key("clientContent"))
+fn shaped(native: &Native) -> bool {
+    native.fields::<Key>().contains_key("clientContent")
 }
 
 /// Messages as one `clientContent`, with what each event kept.
@@ -536,12 +544,10 @@ fn messages_json(messages: &[Input]) -> Value {
     for event in messages {
         if let Input::Message { message, native } = event {
             turns.extend(message_json(message));
-            if let Some(fields) = own(native) {
-                kept.extend(fields.clone());
-            }
+            kept.extend(native.fields::<Key>().clone());
         }
     }
     let mut v = json!({"clientContent": {"turns": turns}});
-    merge(&mut v, Some(&kept));
+    merge(&mut v, &kept);
     v
 }

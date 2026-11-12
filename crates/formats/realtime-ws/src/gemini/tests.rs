@@ -1,6 +1,6 @@
 use respan_gateway_conversation::{Message, Role};
-use respan_gateway_core::Fault;
 use respan_gateway_core::FaultKind;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     AudioFormat, Cause, Input, Modality, Output, Purpose, Session, Status, Turns,
@@ -196,7 +196,9 @@ fn a_client_ends_its_turns_with_manual_detection() {
 #[test]
 fn a_session_is_set_up_first_and_then_only_acknowledged() {
     let shared = Shared::default();
-    let respond = Input::Respond { native: None };
+    let respond = Input::Respond {
+        native: Native::default(),
+    };
     assert!(sent(&shared, &[respond]).is_err());
     let events = inputs(&[json!({"setup": {"model": "models/m"}})]).expect("written");
     let (say, mut said) = session::say();
@@ -217,11 +219,15 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
     // detection are dropped, and a message but the user's text is a turn.
     let system = Input::Message {
         message: Message::new(Role::System, "Be brief."),
-        native: None,
+        native: Native::default(),
     };
-    let respond = Input::Respond { native: None };
+    let respond = Input::Respond {
+        native: Native::default(),
+    };
     for event in [
-        Input::Commit { native: None },
+        Input::Commit {
+            native: Native::default(),
+        },
         system,
         respond.clone(),
         respond,
@@ -339,7 +345,9 @@ fn every_server_message_is_written_back_as_it_came() {
     assert_eq!(written, messages);
     // Another format's calls, started as Phonic's are, end the turn too.
     let mut foreign = outputs(&applied, &messages[11..12]);
-    foreign[0] = Output::ResponseStart { native: None };
+    foreign[0] = Output::ResponseStart {
+        native: Native::default(),
+    };
     let ended = json!({"serverContent": {"turnComplete": true}});
     assert_eq!(
         heard(&foreign).expect("written"),
@@ -364,11 +372,11 @@ fn a_refusal_closes_a_live_client() {
     let error = Output::Error {
         cause: Cause::Invalid,
         message: "no".into(),
-        native: None,
+        native: Native::default(),
     };
     let fault = heard(&[error]).expect_err("refused");
     assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1007)));
-    let foreign = Output::native("openai-realtime", json!({"type": "rate_limits.updated"}));
+    let foreign = Output::Native(Native::json::<()>(json!({"type": "rate_limits.updated"})));
     assert_eq!(heard(&[foreign]).expect("dropped"), Vec::<Value>::new());
 }
 
@@ -377,7 +385,7 @@ fn a_cancel_that_found_no_response_closes_no_live_client() {
     let error = Output::Error {
         cause: Cause::NothingToCancel,
         message: "Cancellation failed: no active response found".into(),
-        native: None,
+        native: Native::default(),
     };
     assert_eq!(heard(&[error]).expect("dropped"), Vec::<Value>::new());
 }
@@ -397,7 +405,12 @@ fn a_cancelled_turn_says_nothing_more_and_a_withdrawn_call_takes_no_answer() {
         "{started:?}"
     );
     provider
-        .write(&Input::Cancel { native: None }, &mut frames)
+        .write(
+            &Input::Cancel {
+                native: Native::default(),
+            },
+            &mut frames,
+        )
         .expect("written");
     assert_eq!(frames.len(), 1, "the Live API has no cancel");
     let done = said.try_recv().expect("said");
@@ -424,7 +437,12 @@ fn a_cancelled_turn_says_nothing_more_and_a_withdrawn_call_takes_no_answer() {
     let answer = Input::ToolResult(respan_gateway_realtime::ToolResult::new("c1", "{}"));
     provider.write(&answer, &mut frames).expect("dropped");
     provider
-        .write(&Input::Respond { native: None }, &mut frames)
+        .write(
+            &Input::Respond {
+                native: Native::default(),
+            },
+            &mut frames,
+        )
         .expect("dropped");
     assert_eq!(
         frames.len(),

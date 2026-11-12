@@ -23,6 +23,7 @@ use crate::session::{self as spec, Spec};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
+respan_gateway_core::native_key!(Key = NAME);
 
 pub(crate) const SPEC: Spec = Spec {
     name: "phonic-sts",
@@ -62,7 +63,7 @@ type Clock = Box<dyn FnMut() -> Instant + Send>;
 pub struct PhonicSts;
 
 impl PhonicSts {
-    /// The format's name, `phonic-sts`, which tags its native events.
+    /// The format's name, `phonic-sts`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;

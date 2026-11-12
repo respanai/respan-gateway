@@ -8,6 +8,8 @@ const OPENAI: &str = "openai-decisions";
 /// The most questions a request asks.
 const MAX_QUESTIONS: usize = 400;
 
+respan_gateway_core::native_key!(Key = OPENAI);
+
 /// OpenAI's decisions contract, as Azure OpenAI serves it: a client's
 /// `POST` to its path (`/v1/decisions` unless [`OpenAiDecisions::serving`]
 /// says another), and a provider called at `/decisions`.
@@ -37,12 +39,14 @@ impl Default for OpenAiDecisions {
 }
 
 impl OpenAiDecisions {
+    respan_gateway_core::native_doors!(Key);
+
     /// Its clients served at `/v1/decisions`.
     pub const DEFAULT: Self = Self {
         path: Cow::Borrowed("/v1/decisions"),
     };
 
-    /// The format's name, `openai-decisions`, which tags its native fields.
+    /// The format's name, `openai-decisions`.
     pub const NAME: &'static str = OPENAI;
 
     /// Its clients served at a path ending in `path`, as when another format
@@ -56,7 +60,7 @@ impl OpenAiDecisions {
     /// An answer as this contract writes it, its name and its score's
     /// labels as `question`, as a client asked it, says them.
     pub fn answer_value(answer: &Answer, question: &Value) -> Result<Value, Fault> {
-        let mut v = kept(OPENAI, &answer.native);
+        let mut v = answer.native.fields::<Key>().clone();
         v.insert("type".into(), verdict_type(&answer.verdict)?.into());
         if let Some(name) = question.get("name") {
             v.insert("name".into(), name.clone());
@@ -266,7 +270,7 @@ fn decode_request(raw: &[u8]) -> Result<Input, Fault> {
         Some(Value::String(model)) => Some(model),
         _ => return Err(invalid("model", "must be a string")),
     };
-    input.native = native_of(OPENAI, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
@@ -331,7 +335,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
     };
     let mut question = Question::new(id, ask);
     question.instructions = Some(instructions);
-    question.native = native_of(OPENAI, q);
+    question.native = Native::json::<Key>(q);
     Ok(question)
 }
 
@@ -348,7 +352,10 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             Ask::Noul => _ = v.insert("type".into(), "predicate".into()),
             Ask::Choice { options } => {
                 v.insert("type".into(), "choice".into());
-                let typed_as = kept(OPENAI, &q.native)
+                let typed_as = q
+                    .native
+                    .fields::<Key>()
+                    .clone()
                     .remove("choices")
                     .unwrap_or_default();
                 let choices = options.iter().enumerate().map(|(i, (value, about))| {
@@ -381,7 +388,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             "instructions".into(),
             q.instructions.clone().unwrap_or_else(|| "".into()),
         );
-        merge_missing(&mut v, &kept(OPENAI, &q.native));
+        merge_missing(&mut v, q.native.fields::<Key>());
         questions.push(Value::Object(v));
     }
     if questions.is_empty() && !input.questions.is_empty() {
@@ -397,7 +404,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     set(&mut v, "model", input.model.clone());
     v.insert("input".into(), state);
     v.insert("questions".into(), questions.into());
-    merge_missing(&mut v, &kept(OPENAI, &input.native));
+    merge_missing(&mut v, input.native.fields::<Key>());
     Ok(v)
 }
 
@@ -420,7 +427,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
         return Err(bad("does not answer each question once"));
     }
     let mut start = Start::new(v["model"].as_str().map(Into::into));
-    start.native = native_of(OPENAI, rest_of(&v, &["model", "answers", "usage"]));
+    start.native = Native::json::<Key>(rest_of(&v, &["model", "answers", "usage"]));
     out.push(Output::Start(start));
     for (a, q) in answers.iter().zip(asked) {
         let id = q["name"].as_str().unwrap_or_default();
@@ -436,7 +443,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
         let entries = || a["probabilities"].as_array().ok_or_else(unreadable);
         let (verdict, taken): (_, &[&str]) = match ty {
             "refusal" => {
-                out.push(Output::native(OPENAI, a.clone()));
+                out.push(Output::Native(Native::json::<Key>(a.clone())));
                 continue;
             }
             "predicate" => (Verdict::Noul(p(a)?), &["probability"]),
@@ -477,7 +484,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
             _ => None,
         };
         let taken = [&["type", "name", "confidence"], taken].concat();
-        answer.native = native_of(OPENAI, rest_of(a, &taken));
+        answer.native = Native::json::<Key>(rest_of(a, &taken));
         out.push(Output::Answer(answer));
     }
     if let Some(u) = v.get("usage").filter(|u| !u.is_null()) {
@@ -505,11 +512,11 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
         match event {
             Output::Start(start) => {
                 set(&mut body, "model", start.model.clone());
-                merge_missing(&mut body, &kept(OPENAI, &start.native));
+                merge_missing(&mut body, start.native.fields::<Key>());
             }
             Output::Answer(answer) => answers.push(answer),
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += *u,
-            Output::Native(n) if *n.format == *OPENAI => refusals.push(&n.value),
+            Output::Native(n) => refusals.extend(n.value::<Key>()),
             _ => {}
         }
     }
@@ -552,7 +559,6 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
 mod tests {
     use super::*;
     use respan_gateway_core::FaultKind;
-    use respan_gateway_core::NativeFields;
 
     fn events_of(raw: &Value, asked: &[Value]) -> Result<Vec<Output>, Fault> {
         let mut events = Vec::new();
@@ -566,7 +572,7 @@ mod tests {
             json!({"type": "date", "instructions": "When?"}),
             json!({"type": "number"}),
         ] {
-            let ask = Ask::Native(NativeValue::new("decisions", own));
+            let ask = Ask::Native(Native::json::<super::super::Key>(own));
             let foreign = Question::new("q", ask);
             let input = Input::new(json!("s"), vec![foreign.clone()]);
             assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
@@ -795,10 +801,7 @@ mod tests {
     #[test]
     fn another_formats_fields_are_dropped() {
         let mut input = Input::new("x", vec![]);
-        input.native = Some(NativeFields::new(
-            "decisions",
-            Map::from_iter([("extra".into(), true.into())]),
-        ));
+        input.native = Native::json::<super::super::Key>(json!({"extra": true}));
         let written = encode_request(&input).expect("written");
         assert!(!written.contains_key("extra"), "{written:?}");
     }

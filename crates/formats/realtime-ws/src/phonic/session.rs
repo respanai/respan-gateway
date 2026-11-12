@@ -1,10 +1,11 @@
 //! A Phonic `config` as the kind's [`Session`], both ways.
 
+use respan_gateway_core::Native;
 use respan_gateway_realtime::{AudioFormat, Encoding, Session};
 use serde_json::{Value, json};
 
-use super::NAME;
-use crate::json::{self, set, string, take, text};
+use super::Key;
+use crate::json::{set, string, take, text};
 
 const MODEL: &[&str] = &["model"];
 const INSTRUCTIONS: &[&str] = &["system_prompt"];
@@ -24,7 +25,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.input_audio = take(v, INPUT_FORMAT, format, |f| format_json(*f));
     s.output_audio = take(v, OUTPUT_FORMAT, format, |f| format_json(*f));
     (s.input_transcription, s.output_transcription) = (Some(true), Some(true));
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 

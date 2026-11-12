@@ -26,6 +26,7 @@
 //! text/plain with the fault's error code, never its message.
 
 mod audio;
+mod calls;
 mod foreign;
 mod gemini;
 mod json;
@@ -36,6 +37,7 @@ mod phonic;
 mod responses;
 mod session;
 
+pub use calls::Calls;
 pub use gemini::GeminiLive;
 pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;

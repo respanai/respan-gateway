@@ -8,7 +8,6 @@
 //! parameters ([`Schema::CARRIED`]).
 
 use respan_gateway_core::FaultKind;
-use std::sync::Arc;
 
 use respan_gateway_conversation::Usage;
 use respan_gateway_conversation::{Assembled, Input, Output};
@@ -479,11 +478,11 @@ impl<D> Held<D> {
 }
 
 /// The events of a stream event that is not its format's JSON, as an
-/// [`Output::Native`] of `format` so filters read it; one with no data, such
-/// as a comment, says nothing.
-pub(crate) fn unreadable_event(format: &Arc<str>, raw: &Bytes, out: &mut Vec<Output>) {
+/// [`Output::Native`] of `C`; one with no data, such as a comment, says
+/// nothing.
+pub(crate) fn unreadable_event<C: Schema>(raw: &Bytes, out: &mut Vec<Output>) {
     if let Some(data) = event_data(raw) {
-        out.push(Output::native(format.clone(), data));
+        out.push(Output::Native(C::native(data)));
     }
 }
 

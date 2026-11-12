@@ -9,11 +9,11 @@
 //! among them.
 //!
 //! What the kind has no form for stays as the format that decoded it has it
-//! ([`NativeFields`], [`NativeValue`]), and only that format writes it. The
+//! ([`Native`]), and only that format reads or writes it. The
 //! crate is the kind's types alone, with no I/O; its formats over HTTP are
 //! `respan-gateway-decision-http`'s.
 
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
+use respan_gateway_core::Native;
 use serde_json::Value;
 
 pub use respan_gateway_conversation::Usage;
@@ -29,7 +29,7 @@ pub struct Input {
     /// The questions, in order, each answered by its id.
     pub questions: Vec<Question>,
     /// The request's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -64,7 +64,7 @@ pub struct Question {
     /// What it asks for.
     pub ask: Ask,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Question {
@@ -74,7 +74,7 @@ impl Question {
             id: id.into(),
             instructions: None,
             ask,
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -96,9 +96,9 @@ pub enum Ask {
         /// The levels.
         levels: Vec<Value>,
     },
-    /// A question of a type the kind has no form for, whole, as `format`
+    /// A question of a type the kind has no form for, whole, as its format
     /// has it. Asked only in that format.
-    Native(NativeValue),
+    Native(Native),
 }
 
 /// The kind's output: one event of a response.
@@ -111,16 +111,9 @@ pub enum Output {
     Answer(Answer),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
-    /// An event the kind has no form for, as `format` has it. Sent only in
-    /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    /// An event the kind has no form for, as its format has it. Sent only
+    /// in that format.
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -130,7 +123,7 @@ pub struct Start {
     /// The model that answered, as the provider names it.
     pub model: Option<String>,
     /// The response's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Start {
@@ -138,7 +131,7 @@ impl Start {
     pub fn new(model: Option<String>) -> Self {
         Self {
             model,
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -154,7 +147,7 @@ pub struct Answer {
     /// How sure the model is, from 0 to 1, if it says.
     pub confidence: Option<f64>,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Answer {
@@ -164,7 +157,7 @@ impl Answer {
             id: id.into(),
             verdict,
             confidence: None,
-            native: None,
+            native: Native::default(),
         }
     }
 }

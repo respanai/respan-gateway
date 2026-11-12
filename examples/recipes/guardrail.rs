@@ -26,8 +26,8 @@ use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::futures::stream;
 use respan_gateway_core::{
-    ClientContext, ErrorCode, Fault, Filter, Gateway, Plugin, Provider, ProviderContext, Response,
-    async_trait,
+    ClientContext, ErrorCode, Fault, Filter, Gateway, Native, Plugin, Provider, ProviderContext,
+    Response, async_trait,
 };
 use respan_gateway_http::Body;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
@@ -132,13 +132,20 @@ impl Plugin for GuardInput {
             return Err(unreadable("this kind of traffic"));
         }
         let terms = self.0.clone();
-        px.filter(move |chat: &mut Input| terms.check(&all_text(chat)?))
+        px.filter(move |chat: &mut Input| {
+            // WARN: what only its format reads the guard cannot check; dropped.
+            chat.native = Native::default();
+            chat.messages
+                .iter_mut()
+                .for_each(|m| m.native = Native::default());
+            terms.check(&all_text(chat)?)
+        })
     }
 }
 
 /// Every text of `chat`, one per line: messages and the system prompt, tool
-/// calls and results, the tools offered, and the fields the kind has no
-/// place for. `Err` for a part with no text form, such as an image.
+/// calls and results, and the tools offered. `Err` for a part with no text
+/// form, such as an image.
 fn all_text(chat: &Input) -> Result<String, Fault> {
     fn part(content: &Content, out: &mut Vec<String>) -> Result<(), Fault> {
         match content {
@@ -156,9 +163,6 @@ fn all_text(chat: &Input) -> Result<String, Fault> {
     let mut out = Vec::new();
     for message in &chat.messages {
         message.content.iter().try_for_each(|c| part(c, &mut out))?;
-        if let Some(native) = &message.native {
-            strings(&Value::Object(native.fields.clone()), &mut out);
-        }
     }
     for tool in &chat.tools {
         out.extend(tool.description.iter().cloned());
@@ -166,9 +170,6 @@ fn all_text(chat: &Input) -> Result<String, Fault> {
         strings(&tool.parameters, &mut out);
     }
     out.extend(chat.options.stop.iter().chain(&chat.user).cloned());
-    if let Some(native) = &chat.native {
-        strings(&Value::Object(native.fields.clone()), &mut out);
-    }
     Ok(out.join("\n"))
 }
 

@@ -19,6 +19,7 @@ use crate::session::{Spec, model_at, model_query, transcribes_at};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
+respan_gateway_core::native_key!(pub(crate) Key = NAME);
 
 /// The model OpenAI transcribes a session's input with, unless the session
 /// names one: it transcribes only with a named model, so a session that
@@ -70,10 +71,12 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct OpenAiRealtime;
 
 impl OpenAiRealtime {
-    /// The format's name, `openai-realtime`, which tags its native events.
+    /// The format's name, `openai-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
+
+    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {

@@ -29,7 +29,7 @@
 //!
 //! What a response says beyond the spec, or that the kind has no form for,
 //! is kept as this format's own (`openai-chat`), where it appeared, so a
-//! plugin can read it and a client of this format gets it back:
+//! vendor's dialect can read it and a client of this format gets it back:
 //!
 //! - The response's own fields: the first chunk's in the start's `native`;
 //!   those a later chunk changes, after its usage, as one
@@ -59,20 +59,21 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
-    merge_details, merge_fields, merge_into, native_of, parse_effort, parts_within_totals, set,
-    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
+    Asked, Names, Schema, UsageFields, check_usage, count, decode_message, merge_details,
+    merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json, take_native,
+    take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
     Role, Usage,
 };
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use decode::OpenAiDecoder;
 use encode::{Chunks, call_json, envelope, merge_call, merge_choice};
@@ -141,7 +142,7 @@ pub fn read_usage(u: &Value) -> Result<(Usage, Map<String, Value>), Fault> {
 /// JSON fields.
 type Fields = Map<String, Value>;
 
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, OpenAiChat> = Names(
     &[
         ("stop", Finish::Stop),
         ("length", Finish::Length),
@@ -151,7 +152,7 @@ const FINISH: Names<Finish> = Names(
         // Sent by OpenAI-shaped resellers of Anthropic models; read, never written.
         ("refusal", Finish::Filtered),
     ],
-    OPENAI,
+    PhantomData,
 );
 
 impl Format<ClientIo, Input, Output> for OpenAiChat {
@@ -223,7 +224,7 @@ const ROLES: Names<Role> = Names(
         ("user", Role::User),
         ("assistant", Role::Assistant),
     ],
-    OPENAI,
+    PhantomData,
 );
 
 /// OpenAI Chat counts no cache writes of its own; another provider's, part
@@ -279,28 +280,30 @@ impl Schema for OpenAiChat {
             _ => Vec::new(),
         };
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_of(OPENAI, unsupported_fields(v, KNOWN, INERT));
+        chat.native = OpenAiChat::native(unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
-            chat.native.own_mut(OPENAI).shift_remove("user");
+            OpenAiChat::fields_mut(&mut chat.native).shift_remove("user");
         }
-        chat.options.service_tier = take_text(&mut chat, "service_tier");
+        chat.options.service_tier = take_text::<OpenAiChat>(&mut chat, "service_tier");
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES);
             read_openai_message(m, &mut message);
-            tidy(&mut message);
+            tidy::<OpenAiChat>(&mut message);
             chat.messages.push(message);
         }
         read_openai_tools(v, &mut chat);
-        chat.native = native_of(OPENAI, std::mem::take(chat.native.own_mut(OPENAI)));
+        chat.native = OpenAiChat::native(std::mem::take(OpenAiChat::fields_mut(&mut chat.native)));
         read_response_format(v, &mut chat);
         chat.options.reasoning =
-            take_native(&mut chat, "reasoning_effort", |e| parse_effort(e.as_str()?))
-                .map(Reasoning::effort);
+            take_native::<OpenAiChat, _>(&mut chat.native, "reasoning_effort", |e| {
+                parse_effort(e.as_str()?)
+            })
+            .map(Reasoning::effort);
         chat
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        if let Some(n) = chat.native.own(OPENAI).get("n") {
+        if let Some(n) = OpenAiChat::fields(&chat.native).get("n") {
             check_choice_count(n)?;
         }
         let mut v = Map::new();
@@ -362,8 +365,8 @@ impl Schema for OpenAiChat {
             .items()
             .iter()
             .filter_map(|item| match item {
-                AssembledItem::BlockFields { block, native } if *native.format == *OPENAI => {
-                    Some((*block, &native.fields))
+                AssembledItem::BlockFields { block, native } => {
+                    Some((*block, OpenAiChat::fields(native)))
                 }
                 _ => None,
             })
@@ -413,19 +416,22 @@ impl Schema for OpenAiChat {
             "finish_reason": FINISH.reason(finish)?,
         })];
         for item in whole.items() {
-            let AssembledItem::Native(NativeValue { format, value: raw }) = item else {
+            // Another format's goes: only a client of that format could read it.
+            let AssembledItem::Native(n) = item else {
                 continue;
             };
-            if let (true, Some(fields)) = (&**format == OPENAI, usage_fields(raw)) {
+            let Some(raw) = OpenAiChat::value(n) else {
+                continue;
+            };
+            if let Some(fields) = usage_fields(raw) {
                 usage_more.extend(fields.clone());
                 continue;
             }
-            if let (true, Some(fields)) = (&**format == OPENAI, response_of(raw)) {
+            if let Some(fields) = response_of(raw) {
                 merge_into(&mut response, fields);
                 continue;
             }
-            // Another format's goes: only a client of that format could read it.
-            if let (true, Some(more)) = (&**format == OPENAI, raw["choices"].as_array()) {
+            if let Some(more) = raw["choices"].as_array() {
                 more.iter().for_each(|c| merge_choice(&mut choices, c));
             }
         }

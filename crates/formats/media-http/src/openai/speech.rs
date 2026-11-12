@@ -2,14 +2,14 @@
 //! audio's bytes or, if asked (`stream_format: "sse"`), a stream of events.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, event_json, invalid, json_bytes, kept,
-    merge_missing, missing, native_of, post_to, read_usage, sends, set, sse_event, streams,
-    take_number, take_string, unb64, unreadable, usage_extras, write_usage,
+    Fields, Form, as_usage_extras, b64, bind_client, event_json, invalid, json_bytes,
+    merge_missing, missing, post_to, read_usage, sends, set, sse_event, streams, take_number,
+    take_string, unb64, unreadable, usage_extras, write_usage,
 };
 use crate::edge::{bind_provider, ended_events};
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
@@ -20,6 +20,8 @@ use respan_gateway_media::speech::{Input, Output};
 use serde_json::{Map, Value};
 
 const NAME: &str = "openai-speech";
+
+respan_gateway_core::native_key!(Key = NAME);
 const SPEECH: &str = "/audio/speech";
 
 /// OpenAI Audio Speech, as OpenAI or a compatible vendor serves it: a
@@ -36,8 +38,10 @@ const SPEECH: &str = "/audio/speech";
 pub struct OpenAiSpeech;
 
 impl OpenAiSpeech {
-    /// The format's name, `openai-speech`, which tags its native fields.
+    /// The format's name, `openai-speech`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiSpeech {
@@ -103,7 +107,7 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     input.speed = take_number(&mut map, "speed")?;
     input.audio_format = take_string(&mut map, "response_format")?;
     map.remove("stream_format");
-    input.native = native_of(NAME, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
@@ -121,7 +125,7 @@ fn post(
     set(&mut v, "instructions", input.instructions.clone());
     set(&mut v, "response_format", input.audio_format.clone());
     set(&mut v, "speed", input.speed);
-    merge_missing(&mut v, &kept(NAME, &input.native));
+    merge_missing(&mut v, input.native.fields::<Key>());
     if stream {
         v.insert("stream_format".into(), "sse".into());
     }
@@ -156,10 +160,10 @@ fn stream_event(done: &mut bool, raw: &[u8], out: &mut Vec<Output>) -> Result<()
             if v["usage"].is_object() {
                 let (usage, extras) = read_usage(&v["usage"], &[])?;
                 out.push(Output::Usage(usage));
-                out.extend(usage_extras(NAME, extras).map(Output::Native));
+                out.extend(usage_extras::<Key>(extras).map(Output::Native));
             }
         }
-        _ => out.push(Output::Native(NativeValue::new(NAME, v))),
+        _ => out.push(Output::Native(Native::json::<Key>(v))),
     }
     Ok(())
 }
@@ -220,12 +224,15 @@ impl StreamEncoder {
                 *self.usage.get_or_insert_with(Usage::default) += u;
                 return Ok(());
             }
-            Output::Native(n) if &*n.format == NAME => match as_usage_extras(&n.value) {
-                Some(more) => {
-                    merge_missing(&mut self.extras, more);
-                    return Ok(());
-                }
-                None => (*n.value).clone(),
+            Output::Native(n) => match n.value::<Key>() {
+                Some(v) => match as_usage_extras(v) {
+                    Some(more) => {
+                        merge_missing(&mut self.extras, more);
+                        return Ok(());
+                    }
+                    None => v.clone(),
+                },
+                None => return Ok(()),
             },
             _ => return Ok(()),
         };

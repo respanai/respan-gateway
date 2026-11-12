@@ -114,10 +114,12 @@ impl Plugin for Sessions {
 /// Pin a `response.create` to `model`, cap its output and reserve its lane's
 /// turn. One with `generate: false` only warms the cache, and costs nothing.
 fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
-    let Input::Native(native) = event else {
+    let Some(json) = (match event {
+        Input::Native(native) => ResponsesWs::value_mut(native),
+        _ => None,
+    }) else {
         return Ok(());
     };
-    let json = Arc::make_mut(&mut native.value);
     if json["type"] != "response.create" {
         return Ok(());
     }
@@ -139,10 +141,12 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
 
 /// At a response's end, settle its lane's turn at the usage it reports.
 fn settle(budget: &Budget, event: &Output) {
-    let Output::Native(native) = event else {
+    let Some(json) = (match event {
+        Output::Native(native) => ResponsesWs::value(native),
+        _ => None,
+    }) else {
         return;
     };
-    let json = &native.value;
     let kind = json["type"].as_str().unwrap_or_default();
     if !matches!(
         kind,

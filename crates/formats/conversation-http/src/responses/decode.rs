@@ -1,21 +1,19 @@
 //! Responses, streamed or whole, as events: the decoder.
 
-use super::{RESPONSE_FIELDS, RESPONSES, USAGE_FIELDS, extra_usage, response_fields, usage_of};
-use crate::schema::{
-    Totals, ended, error_event, native_of, rest_of, says, says_error, unreadable_event,
-};
+use super::{RESPONSE_FIELDS, USAGE_FIELDS, extra_usage, response_fields, usage_of};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
+use crate::schema::{Totals, ended, error_event, rest_of, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
 /// Decodes events and whole bodies of Responses into events, as the module
 /// says.
 #[derive(Debug)]
 pub struct ResponsesDecoder {
-    name: Arc<str>,
     totals: Totals,
     /// The usage fields with no unit that were last said, to say them once.
     usage_extra: Map<String, Value>,
@@ -45,7 +43,6 @@ enum Closing {
 impl Default for ResponsesDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(RESPONSES),
             totals: Totals::default(),
             usage_extra: Map::new(),
             started: false,
@@ -105,7 +102,7 @@ fn index_of(v: &Value) -> u64 {
 
 impl ResponsesDecoder {
     fn native(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        out.push(Output::Native(OpenAiResponses::native(v)));
     }
 
     fn item(&mut self, index: u64) -> Option<&mut Item> {
@@ -125,7 +122,7 @@ impl ResponsesDecoder {
         let (id, model) = (r["id"].as_str(), r["model"].as_str());
         let mut start = Start::new(id.unwrap_or_default(), model.unwrap_or_default());
         self.said = response_fields(r);
-        start.native = native_of(RESPONSES, self.said.clone());
+        start.native = OpenAiResponses::native(self.said.clone());
         out.push(Output::Start(start));
     }
 
@@ -149,7 +146,7 @@ impl ResponsesDecoder {
             None => self.fields_said.push((block, fields.clone())),
         }
         if !fields.is_empty() {
-            out.push(Output::block_fields(RESPONSES, block, fields));
+            out.push(Output::block_fields(block, OpenAiResponses::native(fields)));
         }
     }
 
@@ -159,9 +156,8 @@ impl ResponsesDecoder {
         let mut count = seen;
         for annotation in all.skip(seen) {
             out.push(Output::block_native(
-                self.name.clone(),
                 block,
-                annotation.clone(),
+                OpenAiResponses::native(annotation.clone()),
             ));
             count += 1;
         }
@@ -315,8 +311,8 @@ impl ResponsesDecoder {
             Some("incomplete") => match r["incomplete_details"]["reason"].as_str() {
                 Some("max_output_tokens") => Finish::Length,
                 Some("content_filter") => Finish::Filtered,
-                Some(reason) => Finish::native(RESPONSES, reason),
-                None => Finish::native(RESPONSES, "incomplete"),
+                Some(reason) => Finish::native(OpenAiResponses::native(reason), None),
+                None => Finish::native(OpenAiResponses::native("incomplete"), None),
             },
             Some(other) => {
                 let message = format!("the response ended as '{other}', not completed");
@@ -604,9 +600,8 @@ impl ResponsesDecoder {
                 part.annotations += 1;
                 let block = part.block;
                 out.push(Output::block_native(
-                    RESPONSES,
                     block,
-                    v["annotation"].clone(),
+                    OpenAiResponses::native(v["annotation"].clone()),
                 ));
             }
             None => self.native(v.clone(), out),
@@ -724,7 +719,7 @@ impl ResponsesDecoder {
             return Ok(());
         }
         let Some(v) = event_json(&raw) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<OpenAiResponses>(&raw, out);
             return Ok(());
         };
         if says_error(&v) {

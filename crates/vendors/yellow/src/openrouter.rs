@@ -7,7 +7,7 @@ use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeValue};
+use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -19,7 +19,7 @@ use respan_gateway_media_http::openai::{
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use serde_json::{Value, json};
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own_mut};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 
 /// Where its API is.
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -84,7 +84,7 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
     if withheld {
         reasoning["exclude"] = true.into();
     }
-    own_mut(&mut input.native, OpenAiChat::NAME)
+    OpenAiChat::fields_mut(&mut input.native)
         .entry("reasoning")
         .or_insert(reasoning);
     Ok(())
@@ -118,7 +118,7 @@ impl Dialect for OpenRouterImages {
 
 /// `input` with its images in `input_references`, and no mask.
 fn referenced(input: &mut image::Input) -> Result<(), Fault> {
-    let fields = own_mut(&mut input.native, OpenAiImages::NAME);
+    let fields = OpenAiImages::fields_mut(&mut input.native);
     // WARN: OpenRouter takes no mask; it is dropped.
     fields.shift_remove("mask");
     if !input.images.is_empty() {
@@ -143,7 +143,10 @@ impl Filter<image::Output> for Counted {
             out.push(value);
             return Ok(());
         };
-        let mut v = (*native.value).clone();
+        let Some(mut v) = OpenAiImages::value(native).cloned() else {
+            out.push(value);
+            return Ok(());
+        };
         let Some(usage) = v["usage"].as_object_mut() else {
             out.push(value);
             return Ok(());
@@ -159,10 +162,7 @@ impl Filter<image::Output> for Counted {
             input.unwrap_or(0),
             output.unwrap_or(0),
         )));
-        out.push(image::Output::Native(NativeValue::new(
-            native.format.clone(),
-            v,
-        )));
+        out.push(image::Output::Native(OpenAiImages::native(v)));
         Ok(())
     }
 }
@@ -228,7 +228,6 @@ fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use respan_gateway_conversation_http::fields::{kept, native_of};
 
     #[test]
     fn an_edits_images_are_its_input_references() {
@@ -238,13 +237,10 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         )];
         let mask = json!({ "mask": { "image_url": "https://a.example/mask.png" } });
-        input.native = native_of(
-            OpenAiImages::NAME,
-            mask.as_object().cloned().unwrap_or_default(),
-        );
+        input.native = OpenAiImages::native(mask);
         referenced(&mut input).expect("taken");
         assert!(input.images.is_empty());
-        let fields = kept(OpenAiImages::NAME, &input.native);
+        let fields = OpenAiImages::fields(&input.native);
         assert_eq!(
             fields["input_references"],
             json!([{ "type": "image_url", "image_url": { "url": "https://a.example/cat.png" } }])
@@ -257,13 +253,13 @@ mod tests {
         let usage =
             json!({ "usage": { "prompt_tokens": 6, "completion_tokens": 1290, "cost": 0.04 } });
         let mut out = Vec::new();
-        let native = NativeValue::new(OpenAiImages::NAME, usage);
+        let native = OpenAiImages::native(usage);
         Counted
             .edit(image::Output::Native(native), &mut out)
             .expect("counted");
         assert!(matches!(&out[0], image::Output::Usage(u) if *u == Usage::new(6, 1290)));
         assert!(
-            matches!(&out[1], image::Output::Native(n) if *n.value == json!({ "usage": { "cost": 0.04 } }))
+            matches!(&out[1], image::Output::Native(n) if OpenAiImages::value(n) == Some(&json!({ "usage": { "cost": 0.04 } })))
         );
     }
 

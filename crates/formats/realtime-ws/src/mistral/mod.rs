@@ -19,6 +19,7 @@ use crate::session::{Spec, model_at, model_query};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
+respan_gateway_core::native_key!(Key = NAME);
 
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
@@ -54,7 +55,7 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct MistralRealtime;
 
 impl MistralRealtime {
-    /// The format's name, `mistral-realtime`, which tags its native events.
+    /// The format's name, `mistral-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is sent to.
     pub const PATH: &'static str = SPEC.path;

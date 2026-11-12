@@ -7,9 +7,9 @@ use crate::edge::{bind_provider, sends};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::{invalid, kept, native_of};
+use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -21,6 +21,8 @@ use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "gemini-images";
+
+respan_gateway_core::native_key!(Key = NAME);
 
 /// Gemini's image models, such as Nano Banana, as the Gemini API serves
 /// them: a `POST` to `.../models/{model}:generateContent`, its answer's
@@ -51,8 +53,10 @@ const NAME: &str = "gemini-images";
 pub struct GeminiImages;
 
 impl GeminiImages {
-    /// The format's name, `gemini-images`, which tags its native fields.
+    /// The format's name, `gemini-images`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 
     /// The model a client's call at `uri` names, if it is one of this
     /// format's.
@@ -126,7 +130,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 
 /// A call's body: its turn, its `generationConfig`, and its native fields.
 fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
-    let mut native = kept(NAME, &input.native);
+    let mut native = input.native.fields::<Key>().clone();
     let mut parts: Vec<Value> = input.images.iter().map(media_part).collect();
     parts.push(json!({ "text": input.prompt }));
     let mut config = match native.remove("generationConfig") {
@@ -306,7 +310,7 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
         None => {}
         Some(_) => return Err(invalid("generationConfig", "must be an object")),
     }
-    input.native = native_of(NAME, v);
+    input.native = Native::json::<Key>(v);
     Ok(input)
 }
 
@@ -465,9 +469,9 @@ mod tests {
         assert_eq!(input.prompt, "make it\nblue");
         assert_eq!(input.images, [png(b"a")]);
         assert_eq!(input.size.as_deref(), Some("2688x1536"));
-        let native = input.native.map(|n| Value::Object(n.fields));
+        let native = Value::Object(input.native.fields::<Key>().clone());
         let rest = json!({ "generationConfig": { "temperature": 1 }, "safetySettings": [] });
-        assert_eq!(native, Some(rest));
+        assert_eq!(native, rest);
     }
 
     #[test]
@@ -522,7 +526,7 @@ mod tests {
         input.images = vec![png(b"a")];
         input.size = Some("1536x1024".into());
         let generation = json!({ "generationConfig": { "temperature": 1 } });
-        input.native = native_of(NAME, generation.as_object().cloned().unwrap_or_default());
+        input.native = Native::json::<Key>(generation);
         let mut head = http::Request::new(()).into_parts().0;
         let encoder = call(&mut head, &input).expect("a call");
         assert_eq!(

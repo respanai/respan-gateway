@@ -6,8 +6,7 @@
 //! [`Output::Usage`] and [`Output::Native`] among them.
 
 use respan_gateway_conversation::Usage;
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_core::Native;
 
 /// The kind's input: items to embed.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -21,7 +20,7 @@ pub struct Input {
     pub dimensions: Option<u32>,
     /// The request's fields the kind has no place for, such as how the
     /// vectors are encoded or the end user's id.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -53,7 +52,7 @@ pub enum Item {
     /// An item the kind has no form for, such as token ids or parts (texts,
     /// images, videos) the model answers one vector for, or one each; only a
     /// call in its format can send it.
-    Native(NativeValue),
+    Native(Native),
 }
 
 /// The kind's output: one event of a response.
@@ -66,16 +65,9 @@ pub enum Output {
     Embedding(Embedding),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -85,7 +77,7 @@ pub struct Start {
     /// The model that made it, as the provider names it.
     pub model: Option<String>,
     /// The response's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Start {
@@ -93,7 +85,7 @@ impl Start {
     pub fn new(model: Option<String>) -> Self {
         Self {
             model,
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -107,7 +99,7 @@ pub struct Embedding {
     /// The vector.
     pub vector: Vec<f32>,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Embedding {
@@ -116,7 +108,7 @@ impl Embedding {
         Self {
             index,
             vector,
-            native: None,
+            native: Native::default(),
         }
     }
 }

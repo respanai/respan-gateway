@@ -23,7 +23,6 @@ mod provider;
 pub use formats::{FORMATS, format};
 pub use models::{BoxFuture, Capability, ListModels, Modality, Model, Models, Price, time};
 pub use provider::{Part, VendorProvider};
-pub use respan_gateway_conversation_http::fields::own_mut;
 pub use respan_gateway_http::dialect::{Dialect, Dialected};
 pub use respan_gateway_http::{Body, Connect, KeyIn, Reach, Rewrite, Upstream, http};
 pub use respan_gateway_http_faults::built_wrong;

@@ -4,11 +4,12 @@
 //! for, such as a tool the provider runs, stays in the `native` of the
 //! request, the message or the tool.
 
+use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
-    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_for, effort_name,
-    encode_content, encode_message, merge_fields, merge_missing, native_of, only, read_search,
-    remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
+    FAILED_RESULT_PREFIX, Names, decode_tools, each_tool, edit_native, effort_for, effort_name,
+    encode_content, encode_message, merge_fields, merge_missing, only, read_search, remainder,
+    rest_of, set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -18,7 +19,7 @@ use respan_gateway_conversation::{
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use crate::openai::{OPENAI, OpenAiChat, take_signature};
+use crate::openai::{OpenAiChat, take_signature};
 
 /// OpenAI's function tools, choice, `parallel_tool_calls` and
 /// `web_search_options`, as the kind's.
@@ -33,14 +34,12 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
         parallel => parallel.as_bool().map(Some),
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
-    decode_tools(chat, tools, choice, parallel, keys);
+    decode_tools::<OpenAiChat>(chat, tools, choice, parallel, keys);
     // Any object asks for a search, an empty one too.
     if let Some(Value::Object(options)) = v.get("web_search_options") {
-        let search = read_search(OPENAI, options.clone());
+        let search = read_search::<OpenAiChat>(options.clone());
         chat.provider_tools.push(search);
-        chat.native
-            .own_mut(OPENAI)
-            .shift_remove("web_search_options");
+        edit_native::<OpenAiChat, _>(&mut chat.native, |n| n.shift_remove("web_search_options"));
     }
 }
 
@@ -55,11 +54,8 @@ fn openai_tool(tool: &Value) -> Option<Tool> {
     };
     let mut kind = Tool::new(function["name"].as_str()?, function["parameters"].clone());
     kind.description = description;
-    kind.native = native_of(
-        OPENAI,
-        rest_of(function, &["name", "description", "parameters"]),
-    );
-    take_strict(&mut kind);
+    kind.native = OpenAiChat::native(rest_of(function, &["name", "description", "parameters"]));
+    take_strict::<OpenAiChat>(&mut kind);
     Some(kind)
 }
 
@@ -95,7 +91,7 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         if t.strict == Some(true) {
             function.insert("strict".into(), true.into());
         }
-        function.extend(t.native.fields_for(OPENAI));
+        function.extend(OpenAiChat::fields(&t.native).clone());
         json!({ "type": "function", "function": function })
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
@@ -104,7 +100,7 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
     if let Some(search @ ProviderTool::WebSearch { .. }) = chat.provider_tools.first() {
         v.insert(
             "web_search_options".into(),
-            write_search(OPENAI, search)?.into(),
+            write_search::<OpenAiChat>(search)?.into(),
         );
     }
     let choice = match &chat.options.tool_choice {
@@ -132,29 +128,24 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// assistant's `tool_calls` as calls after its content. What else the kind
 /// cannot say of them stays in the message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
-    if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
+    if matches!(&message.role, Role::Native(n) if OpenAiChat::value(n) == Some(&"tool".into())) {
         let Some(id) = m["tool_call_id"].as_str() else {
             return;
         };
         let content = std::mem::take(&mut message.content);
         message.content = vec![Content::tool_result(id, content, false)];
         message.role = Role::User;
-        if let Some(native) = &mut message.native {
-            native.fields.shift_remove("tool_call_id");
-        }
+        edit_native::<OpenAiChat, _>(&mut message.native, |n| n.shift_remove("tool_call_id"));
         return;
     }
     let calls = m["tool_calls"].as_array().into_iter().flatten();
     let calls: Option<Vec<Vec<Content>>> = calls.map(openai_call).collect();
     if let Some(calls) = calls.filter(|calls| !calls.is_empty()) {
         message.content.extend(calls.concat());
-        if let Some(native) = &mut message.native {
-            native.fields.shift_remove("tool_calls");
-        }
+        edit_native::<OpenAiChat, _>(&mut message.native, |n| n.shift_remove("tool_calls"));
     }
     // A text's signature is the message's: its last text's, even an empty one.
-    let signature = (message.native.as_mut()).and_then(|n| take_signature(&mut n.fields));
-    message.native.take_if(|n| n.is_empty());
+    let signature = edit_native::<OpenAiChat, _>(&mut message.native, take_signature);
     if let Some(s) = signature {
         let text = |c: &Content| matches!(c, Content::Text { .. });
         let content = &mut message.content;
@@ -179,7 +170,7 @@ fn openai_call(call: &Value) -> Option<Vec<Content>> {
     let mut fields = rest_of(call, &["id", "type", "function"]);
     let signature = take_signature(&mut fields).map(Content::Signature);
     if let Content::ToolCall { native, .. } = &mut part {
-        *native = native_of(OPENAI, fields);
+        *native = OpenAiChat::native(fields);
     }
     Some([part].into_iter().chain(signature).collect())
 }
@@ -196,7 +187,7 @@ fn openai_calls(calls: &[&Content]) -> Vec<Value> {
             ..
         } = c
         {
-            let own = native.fields_for(OPENAI);
+            let own = OpenAiChat::fields(native).clone();
             let function = json!({ "name": name, "arguments": arguments });
             let mut call = json!({ "id": id, "type": "function", "function": function });
             merge_missing(&mut call, own);
@@ -259,7 +250,7 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     let rest: Vec<Content> = shown.into_iter().chain(rest.into_iter().cloned()).collect();
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
-        only.extend(m.native.fields_for(OPENAI));
+        only.extend(OpenAiChat::fields(&m.native).clone());
         return Ok(out.into_iter().map(Value::Object).collect());
     }
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
@@ -341,7 +332,7 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
     };
     let mut media = Media::new(mime, source);
     media.name = name;
-    media.native = native_of(OPENAI, std::mem::take(&mut fields));
+    media.native = OpenAiChat::native(std::mem::take(&mut fields));
     Some(match kind {
         0 => Content::Image(media),
         1 => Content::Audio(media),
@@ -359,7 +350,7 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Document(m) => ("document", m),
         _ => return Ok(Value::Null),
     };
-    let native = media.native.fields_for(OPENAI);
+    let native = OpenAiChat::fields(&media.native).clone();
     let url = || media_url(media);
     let mut v = match kind {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
@@ -420,27 +411,27 @@ pub(crate) fn read_response_format(v: &Value, input: &mut Input) {
     };
     if let Some(parsed) = parsed {
         input.options.response_format = Some(parsed);
-        let native = input.native.own_mut(OPENAI);
         // Its `strict` is Chat's own, which only Chat writes back.
-        match raw["json_schema"].get("strict") {
-            Some(strict) => {
-                _ = native.insert(
-                    "response_format".into(),
-                    json!({"json_schema": {"strict": strict}}),
-                )
+        edit_native::<OpenAiChat, _>(&mut input.native, |native| {
+            match raw["json_schema"].get("strict") {
+                Some(strict) => {
+                    _ = native.insert(
+                        "response_format".into(),
+                        json!({"json_schema": {"strict": strict}}),
+                    )
+                }
+                None => _ = native.remove("response_format"),
             }
-            None => _ = native.remove("response_format"),
-        }
-        if input.native.is_empty() {
-            input.native = None;
-        }
+        });
     }
 }
 
 /// The request's `response_format`: the kind's structured output
 /// requirement, else the request's own.
 pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
-    let own = input.native.own(OPENAI).get("response_format").cloned();
+    let own = OpenAiChat::fields(&input.native)
+        .get("response_format")
+        .cloned();
     let Some(requirement) = &input.options.response_format else {
         // Not a `strict` alone, of a format no longer asked for.
         return own.filter(|own| own["type"].is_string());
@@ -474,7 +465,9 @@ pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
     Ok(
         match r.and_then(|r| r.effort.or(r.budget_tokens.map(effort_for))) {
             Some(effort) => Some(effort_name(effort)?.into()),
-            None => input.native.own(OPENAI).get("reasoning_effort").cloned(),
+            None => OpenAiChat::fields(&input.native)
+                .get("reasoning_effort")
+                .cloned(),
         },
     )
 }

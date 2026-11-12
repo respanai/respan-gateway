@@ -1,22 +1,22 @@
 //! Anthropic Messages, streamed or whole, as events: the decoder.
 
+use crate::Schema;
+use crate::anthropic::AnthropicMessages;
 use crate::schema::{
-    Totals, ended, error_event, native_of, says, says_error, unreadable_event, unsupported_fields,
+    Totals, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
-use super::{ANTHROPIC, extra_usage, finish_of, usage_of};
+use super::{extra_usage, finish_of, usage_of};
 
 /// Decodes events and whole bodies of Anthropic Messages into events, as
 /// the module says.
 #[derive(Debug)]
 pub struct AnthropicDecoder {
-    name: Arc<str>,
     totals: Totals,
     done: bool,
     /// The usage fields with no unit that were last said, to say them once.
@@ -34,7 +34,6 @@ pub struct AnthropicDecoder {
 impl Default for AnthropicDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(ANTHROPIC),
             totals: Totals::default(),
             done: false,
             usage_extra: Map::new(),
@@ -59,8 +58,8 @@ impl AnthropicDecoder {
     fn other(&self, v: Value, out: &mut Vec<Output>) {
         let block = v["index"].as_u64().and_then(|i| u32::try_from(i).ok());
         out.push(match block {
-            Some(block) => Output::block_native(self.name.clone(), block, v),
-            None => Output::native(self.name.clone(), v),
+            Some(block) => Output::block_native(block, AnthropicMessages::native(v)),
+            None => Output::Native(AnthropicMessages::native(v)),
         });
     }
 
@@ -80,7 +79,7 @@ impl AnthropicDecoder {
             m["id"].as_str().unwrap_or_default(),
             m["model"].as_str().unwrap_or_default(),
         );
-        start.native = native_of(ANTHROPIC, unsupported_fields(m, &known, &[]));
+        start.native = AnthropicMessages::native(unsupported_fields(m, &known, &[]));
         out.push(Output::Start(start));
         let usage = self.totals.increment(&usage_of(&m["usage"])?);
         if !usage.is_empty() {
@@ -158,7 +157,7 @@ impl AnthropicDecoder {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if !rest.is_empty() {
-            out.push(Output::block_fields(self.name.clone(), block, rest));
+            out.push(Output::block_fields(block, AnthropicMessages::native(rest)));
         }
     }
 
@@ -202,7 +201,7 @@ impl AnthropicDecoder {
             return Ok(());
         }
         let Some(v) = event_json(&raw) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<AnthropicMessages>(&raw, out);
             return Ok(());
         };
         if says_error(&v) || v["type"] == "error" {

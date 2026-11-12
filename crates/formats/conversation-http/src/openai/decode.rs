@@ -1,25 +1,23 @@
 //! OpenAI Chat, streamed or whole, as events: the decoder.
 
+use crate::Schema;
+use crate::openai::OpenAiChat;
 use crate::schema::{
-    Totals, ended, error_event, native_of, remainder, says, says_error, unreadable_event,
-    unsupported_fields,
+    Totals, ended, error_event, remainder, says, says_error, unreadable_event, unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_data;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
 use super::encode::rekey;
-use super::{FINISH, Fields, OPENAI, SIGNED, extra_usage, take_signature, usage_of};
+use super::{FINISH, Fields, SIGNED, extra_usage, take_signature, usage_of};
 
 /// Decodes chunks and whole bodies of OpenAI Chat into events, as the
 /// module says.
 #[derive(Debug)]
 pub struct OpenAiDecoder {
-    /// The format of what the kind has no form for: [`OPENAI`].
-    name: Arc<str>,
     totals: Totals,
     started: bool,
     /// The vendor fields of the usage last said, to say them once.
@@ -62,7 +60,6 @@ enum Key {
 impl OpenAiDecoder {
     pub(super) fn new() -> Self {
         Self {
-            name: Arc::from(OPENAI),
             totals: Totals::default(),
             started: false,
             usage_extra: Map::new(),
@@ -101,7 +98,7 @@ fn call_fields(block: u32, entry: &Fields, function: &Fields) -> Option<Output> 
     if !function.is_empty() {
         fields.insert("function".into(), Value::Object(function.clone()));
     }
-    Some(Output::block_fields(OPENAI, block, fields))
+    Some(Output::block_fields(block, OpenAiChat::native(fields)))
 }
 
 impl OpenAiDecoder {
@@ -193,7 +190,7 @@ impl OpenAiDecoder {
             let model = v["model"].as_str().unwrap_or_default();
             let mut start = Start::new(id, model);
             self.said = std::mem::take(&mut self.early);
-            start.native = native_of(OPENAI, self.said.clone());
+            start.native = OpenAiChat::native(self.said.clone());
             out.push(Output::Start(start));
         }
         let u = &v["usage"];
@@ -204,24 +201,22 @@ impl OpenAiDecoder {
         }
         let native = extra_usage(u);
         if !native.is_empty() && native != self.usage_extra {
-            out.push(Output::native(
-                self.name.clone(),
+            out.push(Output::Native(OpenAiChat::native(
                 json!({ "usage": native }),
-            ));
+            )));
             self.usage_extra = native;
         }
         if !changed.is_empty() {
             let response = json!({ "response": changed });
-            out.push(Output::native(self.name.clone(), response));
+            out.push(Output::Native(OpenAiChat::native(response)));
         }
         // What the kind has no form for goes first, so a chunk that cannot be
         // translated fails before any of it is written.
         for choice in v["choices"].as_array().into_iter().flatten() {
             if choice_index(choice) != 0 {
-                out.push(Output::native(
-                    self.name.clone(),
+                out.push(Output::Native(OpenAiChat::native(
                     json!({ "choices": [rekey(choice, "delta")] }),
-                ));
+                )));
             }
         }
         let Some(first) = first_choice(v) else {
@@ -230,10 +225,9 @@ impl OpenAiDecoder {
         let body = &first[key];
         let calls = tool_calls(body);
         if let Some(rest) = choice_leftovers(first, key, calls.is_some()) {
-            out.push(Output::native(
-                self.name.clone(),
+            out.push(Output::Native(OpenAiChat::native(
                 json!({ "choices": [rest] }),
-            ));
+            )));
         }
         let reasoning = body["reasoning_content"].as_str();
         if let Some(text) = reasoning.filter(|t| !t.is_empty()) {
@@ -304,7 +298,7 @@ impl OpenAiDecoder {
             .and_then(|d| serde_json::from_str::<Value>(d).ok());
         let chunk = |v: &Value| v["choices"].is_array() || !v["usage"].is_null() || says_error(v);
         let Some(v) = v.filter(chunk) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<OpenAiChat>(&raw, out);
             return Ok(());
         };
         if says_error(&v) {

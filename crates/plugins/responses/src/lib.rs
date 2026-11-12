@@ -31,7 +31,7 @@ use respan_gateway_conversation::{Assembled, Content, Input, Message, Output, Ro
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{
-    ClientContext, Fault, Filter, NativeFields, Plugin, ProviderContext, Result, async_trait,
+    ClientContext, Fault, Filter, Native, Plugin, ProviderContext, Result, async_trait,
     futures::future::join_all,
 };
 use respan_gateway_http::raw::Original;
@@ -173,12 +173,10 @@ impl Plugin for Responses {
         if px.format() == RESPONSES {
             pending.lock().openai = true;
             return px.filter(move |input: &mut Input| {
-                let ours = input.native.as_mut().filter(|n| &*n.format == RESPONSES);
-                let Some(native) = ours else { return Ok(()) };
                 let Some(before) = before.clone() else {
                     return Ok(());
                 };
-                native.fields.shift_remove("previous_response_id");
+                OpenAiResponses::fields_mut(&mut input.native).shift_remove("previous_response_id");
                 let at = instructions(&pending, input);
                 let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(at..at, before);
@@ -186,14 +184,12 @@ impl Plugin for Responses {
             });
         }
         px.filter(move |input: &mut Input| {
-            let ours = input.native.as_mut().filter(|n| &*n.format == RESPONSES);
-            let (parent, kept) = match ours {
-                Some(native) => {
-                    let parent = native.fields.shift_remove("previous_response_id");
-                    let parent = parent.and_then(|p| p.as_str().map(str::to_owned));
-                    (parent, keeps(native))
-                }
-                None => (None, true),
+            let kept = keeps(&input.native);
+            let parent = match OpenAiResponses::value(&input.native) {
+                Some(_) => OpenAiResponses::fields_mut(&mut input.native)
+                    .shift_remove("previous_response_id")
+                    .and_then(|p| p.as_str().map(str::to_owned)),
+                None => None,
             };
             let instructions = instructions(&pending, input);
             let added = input.messages[instructions..].to_vec();
@@ -222,8 +218,8 @@ impl Plugin for Responses {
 
 /// Whether a request's own fields let its response be kept: `store: false`
 /// does not.
-fn keeps(native: &NativeFields) -> bool {
-    native.fields.get("store") != Some(&Value::Bool(false))
+fn keeps(native: &Native) -> bool {
+    OpenAiResponses::fields(native).get("store") != Some(&Value::Bool(false))
 }
 
 /// How many of `input`'s messages are the request's instructions, not its
@@ -269,8 +265,8 @@ impl Responses {
 
 /// The `previous_response_id` a Responses request names.
 fn previous_response_id(input: &Input) -> Option<String> {
-    let native = input.native.as_ref().filter(|n| &*n.format == RESPONSES)?;
-    let parent = native.fields.get("previous_response_id")?.as_str()?;
+    let fields = OpenAiResponses::fields(&input.native);
+    let parent = fields.get("previous_response_id")?.as_str()?;
     Some(parent.to_owned())
 }
 
@@ -316,21 +312,26 @@ fn put_back(input: &mut Input, earlier: impl Fn(&str) -> Option<Vec<Content>>) {
     }
 }
 
-/// `message` without what `format` cannot write: reasoning of another
-/// format, which only its own provider reads back, and the signatures that
-/// seal it. Another format's native parts its writer drops.
+/// `message` without what `format` cannot write: reasoning sealed by a
+/// signature, which only its own provider reads back, and the signatures
+/// that seal it, unless `format` is Responses, whose writer drops another
+/// format's reasoning. Plain reasoning is the kind's, which any writes.
 fn writable(mut message: Message, format: &str) -> Message {
     let mut is_dropped = false;
-    message.content.retain(|part| {
+    let mut parts = std::mem::take(&mut message.content).into_iter().peekable();
+    while let Some(part) = parts.next() {
         is_dropped = match part {
-            Content::Reasoning { native, .. } => {
-                !native.as_ref().is_some_and(|n| &*n.format == format)
+            // WARN: signed reasoning is dropped for another format than Responses.
+            Content::Reasoning { .. } => {
+                format != RESPONSES && matches!(parts.peek(), Some(Content::Signature(_)))
             }
             Content::Signature(_) => is_dropped,
             _ => false,
         };
-        !is_dropped
-    });
+        if !is_dropped {
+            message.content.push(part);
+        }
+    }
     message
 }
 
@@ -404,11 +405,7 @@ impl Filter<Output> for KeepReasoning {
         let mut reasoning = Vec::new();
         for part in std::mem::take(&mut self.said).replay() {
             match part {
-                Content::Reasoning { ref native, .. }
-                    if native.as_ref().is_some_and(|n| &*n.format == RESPONSES) =>
-                {
-                    reasoning.push(part);
-                }
+                Content::Reasoning { .. } => reasoning.push(part),
                 Content::ToolCall { ref id, .. } if !reasoning.is_empty() => {
                     let mut message = Message::new(Role::Assistant, "");
                     message.content = reasoning.clone();
@@ -526,7 +523,7 @@ mod tests {
             0,
             Content::Reasoning {
                 text: "echoed".into(),
-                native: None,
+                native: Native::default(),
             },
         );
         let mut user = Message::new(Role::User, "hi");
@@ -536,7 +533,7 @@ mod tests {
         let kept = [
             Content::Reasoning {
                 text: "kept".into(),
-                native: None,
+                native: Native::default(),
             },
             Content::Signature("sealed".into()),
         ];
@@ -544,19 +541,26 @@ mod tests {
         assert_eq!(input.messages[1].content[..2], kept);
         assert_eq!(input.messages[2].content[..2], kept);
         assert_eq!(input.messages[2].content.len(), 4);
-        // Another format's reasoning goes with its signature; a call's stays.
+        // Signed reasoning goes with its signature for another format; plain
+        // reasoning and a call's signature stay.
+        let plain = Content::Reasoning {
+            text: "p".into(),
+            native: Native::default(),
+        };
         let mut signed = Message::new(Role::Assistant, "");
         signed.content = vec![
             Content::Reasoning {
                 text: "r".into(),
-                native: None,
+                native: Native::default(),
             },
             Content::Signature("theirs".into()),
+            plain.clone(),
             Content::tool_call("c1", "f", "{}"),
             Content::Signature("call".into()),
         ];
-        let kept = writable(signed, RESPONSES).content;
-        assert_eq!(kept[1..], [Content::Signature("call".into())]);
+        let kept = writable(signed, OpenAiChat::NAME).content;
+        assert_eq!(kept[0], plain);
+        assert_eq!(kept[2..], [Content::Signature("call".into())]);
     }
 
     /// A follow-up reaching another gateway than its response is sent the
@@ -585,7 +589,7 @@ mod tests {
             let input = OpenAiResponses
                 .decode_request(Bytes::from_static(body.as_bytes()))
                 .expect("a request");
-            input.native.as_ref().is_none_or(keeps)
+            keeps(&input.native)
         };
         assert!(!kept(r#"{"model": "m", "input": "hi", "store": false}"#));
         assert!(kept(r#"{"model": "m", "input": "hi", "store": true}"#));

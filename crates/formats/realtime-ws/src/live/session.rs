@@ -1,10 +1,11 @@
 //! A Live session object as the kind's [`Session`], both ways.
 
+use respan_gateway_core::Native;
 use respan_gateway_realtime::{AudioFormat, Encoding, Session};
 use serde_json::{Value, json};
 
-use super::NAME;
-use crate::json::{self, set, string, take, text};
+use super::Key;
+use crate::json::{set, string, take, text};
 
 const MODEL: &[&str] = &["session", "model"];
 const INSTRUCTIONS: &[&str] = &["session", "instructions"];
@@ -24,7 +25,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     let format = take(v, FORMAT, format, |f| format_json(*f));
     (s.input_audio, s.output_audio) = (format, format);
     (s.input_transcription, s.output_transcription) = (Some(true), Some(true));
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 

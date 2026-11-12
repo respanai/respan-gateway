@@ -1,10 +1,13 @@
 use super::*;
+use crate::Schema;
+use crate::anthropic::AnthropicMessages;
+use crate::bedrock::BedrockConverse;
+use respan_gateway_core::Native;
 
 use respan_gateway_conversation::{
     Block, Effort, Media, MediaSource, Message, Reasoning, ResponseFormat, Start, Tool, ToolChoice,
     Usage,
 };
-use respan_gateway_core::NativeFields;
 use respan_gateway_eventstream::{Header, Message as Frame};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
@@ -45,10 +48,7 @@ fn a_request_is_system_messages_and_inference_config() {
     let mut brief = Message::new(Role::System, "be brief");
     if let Content::Text { native, .. } = &mut brief.content[0] {
         let marker = json!({ "cache_control": { "type": "ephemeral" } });
-        *native = Some(NativeFields::new(
-            "anthropic-messages",
-            marker.as_object().cloned().unwrap_or_default(),
-        ));
+        *native = AnthropicMessages::native(marker.as_object().cloned().unwrap_or_default());
     }
     let mut chat = chat([
         brief,
@@ -160,14 +160,14 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: None,
+            native: Native::default(),
         },
     );
     turn.content.insert(
         0,
         Content::Reasoning {
             text: "unsigned".into(),
-            native: None,
+            native: Native::default(),
         },
     );
     turn.content.insert(0, Content::Withheld("hidden".into()));
@@ -283,7 +283,7 @@ fn decode_chunks(chunks: &[Bytes]) -> Result<Vec<Output>, Fault> {
 }
 
 fn native(v: Value) -> Output {
-    Output::native(BEDROCK, v)
+    Output::Native(BedrockConverse::native(v))
 }
 
 fn stream_of(frames: Vec<Bytes>) -> Vec<u8> {
@@ -443,9 +443,10 @@ fn a_whole_body_is_the_same_events() {
             Output::arguments(2, "{\"id\":7}"),
             Output::block_end(2),
             Output::block_native(
-                BEDROCK,
                 3,
-                json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } })
+                BedrockConverse::native(
+                    json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } })
+                )
             ),
             Output::finished(Finish::ToolUse),
             native(

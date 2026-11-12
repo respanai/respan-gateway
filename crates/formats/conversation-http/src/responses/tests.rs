@@ -1,10 +1,12 @@
 use super::*;
+use crate::Schema;
+use crate::responses::OpenAiResponses;
+use respan_gateway_core::Native;
 
 use crate::anthropic::AnthropicMessages;
 use crate::fields::rest_of;
 use crate::openai::OpenAiChat;
 use respan_gateway_conversation::{Block, Message, ResponseFormat, Role, Tool, ToolChoice};
-use respan_gateway_core::{NativeFields, NativeValue};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Decoder, Sse};
 use respan_gateway_sse::event_json;
@@ -158,7 +160,7 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     ));
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
-        chat.native.own(RESPONSES),
+        OpenAiResponses::fields(&chat.native),
         json!({ "text": { "format": { "strict": true } }, "instructions": true })
             .as_object()
             .expect("fields"),
@@ -225,7 +227,9 @@ fn an_item_the_kind_has_no_form_for_stays_whole() {
         ],
     });
     let chat = decode_request(&v);
-    assert!(matches!(&chat.messages[1].role, Role::Native { name, .. } if name == "item"));
+    assert!(
+        matches!(&chat.messages[1].role, Role::Native(n) if OpenAiResponses::value(n) == Some(&"item".into()))
+    );
     assert_eq!(round_trip(&v), v);
     let sent = AnthropicMessages.encode_request(&chat).expect("written");
     assert_eq!(
@@ -281,7 +285,7 @@ fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
         v[field] = value.clone();
         let chat = decode_request(&v);
         assert_eq!(
-            chat.native.own(RESPONSES).get(field),
+            OpenAiResponses::fields(&chat.native).get(field),
             Some(&value),
             "{field}"
         );
@@ -304,7 +308,7 @@ fn another_formats_reasoning_is_dropped() {
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: None,
+            native: Native::default(),
         },
     );
     let sent = OpenAiResponses.encode_request(&chat).expect("written");
@@ -336,7 +340,7 @@ fn the_defaults_an_sdk_sends_say_nothing() {
         "text": { "format": { "type": "text" } },
     });
     let chat = decode_request(&v);
-    assert!(chat.native.is_none(), "{:?}", chat.native);
+    assert!(chat.native.is_empty(), "{:?}", chat.native);
     let other = AnthropicMessages.encode_request(&chat);
     assert!(other.is_ok(), "{other:?}");
 }
@@ -353,7 +357,7 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
         Some(ResponseFormat::JsonObject)
     );
     assert_eq!(
-        chat.native.own(RESPONSES).get("text"),
+        OpenAiResponses::fields(&chat.native).get("text"),
         Some(&json!({ "verbosity": "low", "extra": 1 }))
     );
     assert_eq!(round_trip(&v), v);
@@ -379,7 +383,7 @@ fn another_formats_conversation_is_written_as_responses() {
         // under splits nothing.
         let mut more = Content::from(", one moment");
         if let Content::Text { native, .. } = &mut more {
-            *native = native_of("openai-chat", rest_of(&json!({ "message": {} }), &[]));
+            *native = OpenAiChat::native(rest_of(&json!({ "message": {} }), &[]));
         }
         calls.content.push(more);
         calls
@@ -463,11 +467,14 @@ fn a_stream_decodes_to_the_kinds_events() {
         ("resp_1", "gpt-x")
     );
     assert_eq!(
-        start.native.own(RESPONSES).get("created_at"),
+        OpenAiResponses::fields(&start.native).get("created_at"),
         Some(&json!(5))
     );
     let rest = [
-        Output::block_fields(RESPONSES, 0, rest_of(&json!({ "id": "msg_1" }), &[])),
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_1" }), &[])),
+        ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hello"),
         Output::text(0, " world"),
@@ -545,9 +552,8 @@ fn function_calls_and_reasoning_are_blocks() {
     );
     assert_eq!(all.finish, Some(Finish::ToolUse));
     assert!(out.contains(&Output::block_fields(
-        RESPONSES,
         0,
-        rest_of(&json!({ "id": "rs_1" }), &[])
+        OpenAiResponses::native(rest_of(&json!({ "id": "rs_1" }), &[]))
     )));
 }
 
@@ -571,7 +577,10 @@ fn incomplete_has_its_reason_as_the_finish() {
     for (reason, finish) in [
         ("max_output_tokens", Finish::Length),
         ("content_filter", Finish::Filtered),
-        ("other", Finish::native(RESPONSES, "other")),
+        (
+            "other",
+            Finish::native(OpenAiResponses::native("other"), None),
+        ),
     ] {
         let mut body = response("incomplete", json!([]));
         body["incomplete_details"] = json!({ "reason": reason });
@@ -797,7 +806,10 @@ fn blocks_that_interleave_are_written_one_at_a_time() {
 fn a_body_is_written_from_the_events() {
     let replies = [
         Output::start("resp_9", "gpt-x"),
-        Output::block_fields(RESPONSES, 0, rest_of(&json!({ "id": "msg_real" }), &[])),
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_real" }), &[])),
+        ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hi"),
         Output::block_end(0),
@@ -834,8 +846,7 @@ fn a_body_is_written_from_the_events() {
 #[test]
 fn a_provider_s_own_fields_come_back_in_this_format() {
     let mut start = Start::new("resp_1", "gpt-x");
-    start.native = native_of(
-        RESPONSES,
+    start.native = OpenAiResponses::native(
         json!({ "created_at": 77, "temperature": 0.2, "service_tier": "default" })
             .as_object()
             .cloned()
@@ -848,11 +859,11 @@ fn a_provider_s_own_fields_come_back_in_this_format() {
     assert_eq!(body["service_tier"], "default");
     // Another format's fields are not ours.
     let mut foreign = Start::new("r", "m");
-    foreign.native = Some(NativeFields::new("openai-chat", {
+    foreign.native = OpenAiChat::native({
         let mut m = Map::new();
         m.insert("system_fingerprint".into(), "fp".into());
         m
-    }));
+    });
     let body = body_of(&[Output::Start(foreign), Output::finished(Finish::Stop)]).expect("a body");
     assert!(body.get("system_fingerprint").is_none());
 }
@@ -890,8 +901,8 @@ fn a_text_that_no_one_wrote_is_still_an_item() {
 
 #[test]
 fn another_formats_events_are_dropped() {
-    let ping = Output::native("anthropic-messages", json!({ "type": "ping" }));
-    let stray = Output::native("openai-chat", json!({ "choices": [{ "index": 1 }] }));
+    let ping = Output::Native(AnthropicMessages::native(json!({ "type": "ping" })));
+    let stray = Output::Native(OpenAiChat::native(json!({ "choices": [{ "index": 1 }] })));
     let replies = [
         Output::start("r", "m"),
         ping,
@@ -998,7 +1009,7 @@ fn instructions_count_as_the_reader_reads_them() {
 
 #[test]
 fn a_foreign_value_is_dropped_beside_what_it_can_write() {
-    let foreign = NativeValue::new("openai-chat", json!({"logprobs": {}, "refusal": "no"}));
+    let foreign = OpenAiChat::native(json!({"logprobs": {}, "refusal": "no"}));
     let replies = [
         Output::start("r1", "m"),
         Output::block_start(0, Block::Text),

@@ -11,9 +11,9 @@
 //! provider of its own format keeps the headers and query parameters of
 //! the format's spec ([`Schema::CARRIED`]).
 //!
-//! What a format has no form for stays in its own terms (optional
-//! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; another drops it. A request that asks
+//! What a format has no form for stays in its own terms, a `Native` only
+//! it reads ([`Schema::fields`]), and is written only by that format;
+//! another drops it. A request that asks
 //! for several OpenAI Chat choices (`n > 1`) is refused on input, before
 //! translation can drop the choice count.
 
@@ -24,7 +24,7 @@ mod values;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use crate::fields::{native_of, rest_of, unix_now};
+pub(crate) use crate::fields::{rest_of, unix_now};
 pub use errors::{merge_details, read_provider_error};
 pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
@@ -36,21 +36,27 @@ pub(crate) use values::{
     EFFORT_BUDGETS, budget_for, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
-    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, Totals, UsageFields, arguments_object,
-    check_usage, count, decode_content, decode_message, decode_tools, each_tool, encode_content,
+    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, check_usage, count,
+    decode_content, decode_message, decode_tools, each_tool, edit_native, encode_content,
     encode_message, ended, fits, merge_fields, merge_into, merge_missing, only, own_fields,
     own_shapes, read_search, remainder, sealed, set, source_url, stop_json, take_strict, take_text,
     tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};
-use respan_gateway_core::{Connection, EventSink, Fault};
+use respan_gateway_core::{Connection, EventSink, Fault, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::http::{
     self, StatusCode, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, rules::bodiless};
 use serde_json::{Map, Value};
+
+/// What only format `F` reads of a value: a key no other crate can name.
+pub(crate) struct Key<F>(std::marker::PhantomData<fn() -> F>);
+impl<F: Schema> respan_gateway_core::Key for Key<F> {
+    const NAME: &'static str = F::NAME;
+}
 
 /// Provider HTTP delivery preference, set in call extensions.
 /// Without an override the HTTP binding follows the original client request,
@@ -80,9 +86,7 @@ pub enum Framing {
 /// finite values synchronously (JSON, a part, a whole body), and `read_*`
 /// and `write_*` bind lazy streams of events to an HTTP body.
 pub trait Schema: Copy + Send + Sync + 'static {
-    /// The wire format's name, which tags what its values hold that the
-    /// kind has no place for (`NativeFields`, `Content::Native`,
-    /// `Output::Native`, a native role or finish).
+    /// The wire format's name.
     const NAME: &'static str;
     /// The path a request is posted to, which a client's request ends with.
     const PATH: &'static str;
@@ -101,6 +105,26 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// The query parameters of this format's spec, carried as
     /// [`Schema::CARRIED`] is.
     const CARRIED_QUERY: &'static [&'static str] = &[];
+    /// The fields of this format's own in `native`, none if it holds
+    /// another's: with `fields_mut`, `native` and `value`, the door through
+    /// which only code that names this format, such as a vendor's dialect,
+    /// reaches its own.
+    fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key<Self>>()
+    }
+    /// The fields of this format's own in `native`, to edit, in place of
+    /// another's.
+    fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
+        native.fields_mut::<Key<Self>>()
+    }
+    /// `value` as this format's own: none if it says nothing.
+    fn native(value: impl Into<Value>) -> Native {
+        Native::json::<Key<Self>>(value)
+    }
+    /// The value of this format's own in `native`, if it holds one.
+    fn value(native: &Native) -> Option<&Value> {
+        native.value::<Key<Self>>()
+    }
     /// The keys of a conversation's `native` this format writes itself, from
     /// the conversation and the native together.
     const OWN: &'static [&'static str] = &[];
@@ -191,8 +215,8 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// A conversation as a request's JSON body: its fields the kind has no
     /// place for are written only if they are this format's.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let chat = &*own_shapes(chat, Self::NAME);
-        let mut native = chat.native.fields_for(Self::NAME);
+        let chat = &*own_shapes::<Self>(chat);
+        let mut native = Self::fields(&chat.native).clone();
         native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));

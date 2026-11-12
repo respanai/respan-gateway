@@ -1,13 +1,13 @@
 //! A GA session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_realtime::{
     AudioFormat, Encoding, Modality, Purpose, Session, Tool, Turns, Vad,
 };
 use serde_json::{Map, Value, json};
 
-use super::NAME;
-use crate::json::{self, at, merge, number, own, set, string, take, text};
+use super::Key;
+use crate::json::{at, merge, number, set, string, take, text};
 
 const TYPE: &[&str] = &["session", "type"];
 const MODEL: &[&str] = &["session", "model"];
@@ -44,7 +44,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     .or_else(|| at(v, TRANSCRIPTION)?.is_object().then_some(true));
     s.output_transcription = Some(true);
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 
@@ -182,7 +182,7 @@ fn turns(v: &Value) -> Option<Turns> {
     let millis_json = |n: &u32| Some(Value::from(*n));
     vad.silence_ms = take(rest, &["silence_duration_ms"], millis, millis_json);
     vad.prefix_ms = take(rest, &["prefix_padding_ms"], millis, millis_json);
-    vad.native = json::native(NAME, std::mem::take(rest));
+    vad.native = Native::json::<Key>(std::mem::take(rest));
     Some(Turns::Server(vad))
 }
 
@@ -203,7 +203,7 @@ fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     put("silence_duration_ms", vad.silence_ms.map(Value::from));
     put("prefix_padding_ms", vad.prefix_ms.map(Value::from));
     let mut v = Value::Object(v);
-    merge(&mut v, own(&vad.native));
+    merge(&mut v, vad.native.fields::<Key>());
     if v.get("type").is_none() {
         v["type"] = "server_vad".into();
     }
@@ -233,7 +233,7 @@ fn tool(v: &Value) -> Option<Tool> {
     );
     let mut tool = Tool::new(name, parameters.unwrap_or(Value::Null));
     tool.description = take(rest, &["description"], string, text);
-    tool.native = json::native(NAME, std::mem::take(rest));
+    tool.native = Native::json::<Key>(std::mem::take(rest));
     Some(tool)
 }
 
@@ -247,7 +247,7 @@ fn tools_json(tools: &[Tool]) -> Value {
             v["parameters"] = t.parameters.clone();
             lowercase_types(&mut v["parameters"]);
         }
-        merge(&mut v, own(&t.native));
+        merge(&mut v, t.native.fields::<Key>());
         v
     };
     tools.iter().map(tool).collect()

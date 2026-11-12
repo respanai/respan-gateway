@@ -3,10 +3,11 @@
 //! the kind has no form for, such as a tool the provider runs, stays in the
 //! `native` of the request, the tool or the part.
 
+use crate::Schema;
 use crate::schema::{
-    EFFORT_BUDGETS, NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool,
-    encode_content, merge_missing, native_of, only, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
+    encode_content, merge_missing, only, read_search, remainder, rest_of, set, take_native,
+    untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -14,11 +15,11 @@ use respan_gateway_conversation::{
     Tool, ToolChoice,
 };
 use respan_gateway_core::Fault;
-use respan_gateway_core::NativeFields;
+use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
 
+use crate::anthropic::AnthropicMessages;
 use crate::anthropic::output_schema::output_schema;
-use crate::anthropic::{ANTHROPIC, AnthropicMessages};
 
 /// Anthropic's custom tools and choice, with whether calls may be
 /// parallel, as the kind's.
@@ -29,7 +30,7 @@ pub(crate) fn read_tools_of(v: &Value, chat: &mut Input) {
         choice => anthropic_choice(choice),
     };
     let (choice, parallel) = choice.unzip();
-    decode_tools(chat, tools, choice, parallel, ["tools", "tool_choice", ""]);
+    decode_tools::<AnthropicMessages>(chat, tools, choice, parallel, ["tools", "tool_choice", ""]);
 }
 
 fn anthropic_tool(tool: &Value) -> Option<Tool> {
@@ -44,7 +45,7 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
     let mut kind = Tool::new(tool["name"].as_str()?, tool["input_schema"].clone());
     kind.description = description;
     let rest = rest_of(tool, &["type", "name", "description", "input_schema"]);
-    kind.native = native_of(ANTHROPIC, rest);
+    kind.native = AnthropicMessages::native(rest);
     Some(kind)
 }
 
@@ -52,7 +53,7 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
 fn web_search(tool: &Value) -> Option<ProviderTool> {
     let dated = tool["type"].as_str()?.starts_with("web_search_");
     let fields = rest_of(tool, &["name"]);
-    (dated && tool["name"] == "web_search").then(|| read_search(ANTHROPIC, fields))
+    (dated && tool["name"] == "web_search").then(|| read_search::<AnthropicMessages>(fields))
 }
 
 /// Anthropic's `tool_choice`, and whether calls may be parallel if it says.
@@ -88,7 +89,7 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         tool.insert("input_schema".into(), schema);
-        tool.extend(t.native.fields_for(ANTHROPIC));
+        tool.extend(AnthropicMessages::fields(&t.native).clone());
         Value::Object(tool)
     };
     let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
@@ -96,7 +97,7 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         let mut search = Map::new();
         search.insert("type".into(), "web_search_20250305".into());
         search.insert("name".into(), "web_search".into());
-        search.extend(write_search(ANTHROPIC, provided)?);
+        search.extend(write_search::<AnthropicMessages>(provided)?);
         tools.push(search.into());
     }
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
@@ -140,7 +141,7 @@ pub(crate) fn decode_part(p: &Value) -> Option<Content> {
         "image" | "document" => read_media(p),
         "thinking" => Some(Content::Reasoning {
             text: p["thinking"].as_str()?.into(),
-            native: native_of(ANTHROPIC, remainder(p, &["type", "thinking", "signature"])),
+            native: AnthropicMessages::native(remainder(p, &["type", "thinking", "signature"])),
         }),
         "redacted_thinking" => Some(Content::Withheld(p["data"].as_str()?.into())),
         _ => tool_part(p),
@@ -193,7 +194,7 @@ fn read_media(v: &Value) -> Option<Content> {
     }
     let mut media = Media::new(mime, src);
     media.name = v["title"].as_str().map(str::to_owned);
-    media.native = native_of(ANTHROPIC, fields);
+    media.native = AnthropicMessages::native(fields);
     Some(match image {
         true => Content::Image(media),
         false => Content::Document(media),
@@ -203,7 +204,7 @@ fn read_media(v: &Value) -> Option<Content> {
 /// An image or document block of `media`; an image's display name, which
 /// Anthropic has no field for, is dropped.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
-    let native = media.native.fields_for(ANTHROPIC);
+    let native = AnthropicMessages::fields(&media.native).clone();
     let source = match &media.source {
         MediaSource::Url(url) => json!({"type":"url","url":url}),
         MediaSource::Bytes(bytes) => {
@@ -231,7 +232,7 @@ fn tool_part(block: &Value) -> Option<Content> {
             let mut part = Content::tool_call(id, name, arguments);
             if let Content::ToolCall { native, .. } = &mut part {
                 let rest = rest_of(block, &["type", "id", "name", "input"]);
-                *native = native_of(ANTHROPIC, rest);
+                *native = AnthropicMessages::native(rest);
             }
             Some(part)
         }
@@ -251,7 +252,7 @@ fn tool_part(block: &Value) -> Option<Content> {
             let mut part = Content::tool_result(id, content, is_error);
             if let Content::ToolResult { native, .. } = &mut part {
                 let rest = rest_of(block, &["type", "tool_use_id", "content", "is_error"]);
-                *native = native_of(ANTHROPIC, rest);
+                *native = AnthropicMessages::native(rest);
             }
             Some(part)
         }
@@ -261,8 +262,8 @@ fn tool_part(block: &Value) -> Option<Content> {
 
 /// Write the fields of a tool part's `native` into its Anthropic `block`:
 /// another format's are dropped.
-fn block_fields(block: &mut Value, native: &Option<NativeFields>) {
-    let fields = native.fields_for(ANTHROPIC);
+fn block_fields(block: &mut Value, native: &Native) {
+    let fields = AnthropicMessages::fields(native).clone();
     if let Some(block) = block.as_object_mut() {
         block.extend(fields);
     }
@@ -320,17 +321,14 @@ pub(crate) fn read_output(v: &Value, input: &mut Input) {
         description: None,
         schema: spec["schema"].clone(),
     });
-    if let Some(native) = &mut input.native
-        && let Some(Value::Object(config)) = native.fields.get_mut("output_config")
-    {
-        config.remove("format");
-        if config.is_empty() {
-            native.fields.remove("output_config");
+    edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
+        if let Some(Value::Object(config)) = native.get_mut("output_config") {
+            config.remove("format");
+            if config.is_empty() {
+                native.remove("output_config");
+            }
         }
-    }
-    if input.native.is_empty() {
-        input.native = None;
-    }
+    });
 }
 
 /// The kind's effort of `output_config.effort`, if it is one the kind names:
@@ -343,22 +341,20 @@ pub(crate) fn read_effort(input: &mut Input) {
         "xhigh" => Some(Effort::XHigh),
         _ => None,
     };
-    let Some(native) = &mut input.native else {
+    let config = AnthropicMessages::fields(&input.native).get("output_config");
+    let Some(effort) = config.and_then(|c| c.get("effort")).and_then(named) else {
         return;
     };
-    let Some(Value::Object(config)) = native.fields.get_mut("output_config") else {
-        return;
-    };
-    let Some(effort) = config.get("effort").and_then(named) else {
-        return;
-    };
-    config.remove("effort");
-    if config.is_empty() {
-        native.fields.shift_remove("output_config");
-    }
-    if native.is_empty() {
-        input.native = None;
-    }
+    edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
+        let config = native
+            .get_mut("output_config")
+            .and_then(Value::as_object_mut);
+        config.map(|c| c.remove("effort"));
+        let config = native.get("output_config").and_then(Value::as_object);
+        if config.is_some_and(Map::is_empty) {
+            native.shift_remove("output_config");
+        }
+    });
     // Beside a thinking budget, as Claude Opus 4.5 takes both.
     let reasoning = input
         .options
@@ -388,7 +384,9 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
 /// output requirement says and the effort its reasoning names.
 pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Result<(), Fault> {
     // WARN: an `output_config` that is no object is dropped.
-    let config = input.native.own(ANTHROPIC).get("output_config").cloned();
+    let config = AnthropicMessages::fields(&input.native)
+        .get("output_config")
+        .cloned();
     let mut config = config.filter(Value::is_object);
     let effort = input.options.reasoning.as_ref().and_then(|r| r.effort);
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
@@ -412,19 +410,20 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
 /// The kind's reasoning of `thinking`, if it is exactly an enabled budget or
 /// disabled: then it leaves the request's `native`.
 pub(crate) fn read_thinking(input: &mut Input) {
-    input.options.reasoning = take_native(input, "thinking", |t| {
-        let only_keys = |keys: &[&str]| {
-            t.as_object()
-                .is_some_and(|m| m.keys().all(|k| keys.contains(&k.as_str())))
-        };
-        match t["type"].as_str()? {
-            "enabled" if only_keys(&["type", "budget_tokens"]) => {
-                Some(Reasoning::budget(t["budget_tokens"].as_u64()?))
+    input.options.reasoning =
+        take_native::<AnthropicMessages, _>(&mut input.native, "thinking", |t| {
+            let only_keys = |keys: &[&str]| {
+                t.as_object()
+                    .is_some_and(|m| m.keys().all(|k| keys.contains(&k.as_str())))
+            };
+            match t["type"].as_str()? {
+                "enabled" if only_keys(&["type", "budget_tokens"]) => {
+                    Some(Reasoning::budget(t["budget_tokens"].as_u64()?))
+                }
+                "disabled" if only_keys(&["type"]) => Some(Reasoning::effort(Effort::Off)),
+                _ => None,
             }
-            "disabled" if only_keys(&["type"]) => Some(Reasoning::effort(Effort::Off)),
-            _ => None,
-        }
-    });
+        });
 }
 
 /// How a Claude model thinks.
@@ -543,7 +542,11 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s
 /// ([`write_output`]), and it returns its thinking whenever it thinks.
 pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
-    let own = || input.native.own(ANTHROPIC).get("thinking").cloned();
+    let own = || {
+        AnthropicMessages::fields(&input.native)
+            .get("thinking")
+            .cloned()
+    };
     // WARN: an ask to withhold the thinking is dropped.
     let Some(r) = &input.options.reasoning else {
         return own();

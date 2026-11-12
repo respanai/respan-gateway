@@ -21,9 +21,9 @@ pub(super) use settings::{
 };
 pub(super) use write::{INSTRUCTIONS, write_input};
 
-use super::RESPONSES;
 use crate::schema::Names;
 use respan_gateway_conversation::Role;
+use std::marker::PhantomData;
 
 /// Roles an input message can have.
 const ROLES: Names<Role> = Names(
@@ -33,7 +33,7 @@ const ROLES: Names<Role> = Names(
         ("user", Role::User),
         ("assistant", Role::Assistant),
     ],
-    RESPONSES,
+    PhantomData,
 );
 
 /// The role of a message that holds an item the kind has no form for.

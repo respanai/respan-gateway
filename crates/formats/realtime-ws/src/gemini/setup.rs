@@ -1,11 +1,11 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, Turns, Vad};
 use serde_json::{Map, Value, json};
 
-use super::NAME;
-use crate::json::{self, at, merge, own, set, string, take, text};
+use super::Key;
+use crate::json::{at, merge, set, string, take, text};
 
 const MODEL: &[&str] = &["setup", "model"];
 const MODALITIES: &[&str] = &["setup", "generationConfig", "responseModalities"];
@@ -40,7 +40,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.input_transcription = transcription(v, INPUT_TRANSCRIPTION);
     s.output_transcription = transcription(v, OUTPUT_TRANSCRIPTION);
     s.output_audio = Some(AudioFormat::pcm16(24_000));
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 
@@ -78,7 +78,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     for (path, on) in transcriptions {
         put(path, on.filter(|on| *on).map(|_| json!({})));
     }
-    merge(&mut v, own(&s.native));
+    merge(&mut v, s.native.fields::<Key>());
     // A transcription turned off is no field, whatever its settings were.
     for (path, on) in transcriptions {
         if on == Some(false) {
@@ -148,7 +148,7 @@ fn tool(v: &Value) -> Option<Tool> {
     let parameters = schema("parametersJsonSchema", rest).or_else(|| schema("parameters", rest));
     let mut tool = Tool::new(name, parameters.unwrap_or(Value::Null));
     tool.description = take(rest, &["description"], string, text);
-    tool.native = json::native(NAME, std::mem::take(rest));
+    tool.native = Native::json::<Key>(std::mem::take(rest));
     Some(tool)
 }
 
@@ -173,7 +173,7 @@ fn tools_json(tools: &[Tool]) -> Value {
             };
             v[key] = t.parameters.clone();
         }
-        merge(&mut v, own(&t.native));
+        merge(&mut v, t.native.fields::<Key>());
         v
     };
     let declarations: Vec<Value> = tools.iter().map(declaration).collect();
@@ -195,7 +195,7 @@ fn turns(v: &Value) -> Option<Turns> {
     let mut vad = Vad::default();
     vad.silence_ms = take(rest, &["silenceDurationMs"], millis, millis_json);
     vad.prefix_ms = take(rest, &["prefixPaddingMs"], millis, millis_json);
-    vad.native = json::native(NAME, std::mem::take(rest));
+    vad.native = Native::json::<Key>(std::mem::take(rest));
     Some(Turns::Server(vad))
 }
 
@@ -213,6 +213,6 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
         v.insert("prefixPaddingMs".into(), ms.into());
     }
     let mut v = Value::Object(v);
-    merge(&mut v, own(&vad.native));
+    merge(&mut v, vad.native.fields::<Key>());
     Ok(v)
 }

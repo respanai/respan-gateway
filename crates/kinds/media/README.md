@@ -22,8 +22,8 @@ a `Transcript` (`text`, `language`, `duration`, `segments`, `words`), and
 `Native`, an event the kind has no form for.
 
 What a kind has no form for stays as the format that decoded it has it, in
-optional `NativeFields` on a value or an `Output::Native`; only that format
-writes it, and another drops it. Values are plain data: they keep nothing
+the `Native` of a value or an `Output::Native`, opaque to every other
+format: only that format reads or writes it, and another drops it. Values are plain data: they keep nothing
 of the bytes they were decoded from, and a response is always written again
 from its events. A stream and a whole body decode into the same events, so
 a client gets the framing it asked for whatever the provider's was.

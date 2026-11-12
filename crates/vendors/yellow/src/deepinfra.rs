@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Dialect, Dialected, Model, Models, Price, Rewrite, Vendor, VendorProvider,
-    built_wrong, http, json, own_mut,
+    built_wrong, http, json,
 };
 
 /// Where its API is.
@@ -72,7 +72,7 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
         return Ok(());
     };
     let url = media_url(&reference);
-    let fields = own_mut(&mut create.native, OpenAiVideos::NAME);
+    let fields = OpenAiVideos::fields_mut(&mut create.native);
     fields.entry("image_url").or_insert_with(|| url.into());
     Ok(())
 }
@@ -210,11 +210,15 @@ mod tests {
             create.reference = Some(Media::new("image/png", reference));
             let mut input = video::Input::Create(create);
             referenced(&mut input).expect("referenced");
-            let native = match input {
-                video::Input::Create(c) if c.reference.is_none() => c.native,
-                _ => None,
+            let video::Input::Create(mut c) = input else {
+                return None;
             };
-            native.and_then(|n| n.fields.get("image_url").cloned())
+            if c.reference.is_some() {
+                return None;
+            }
+            OpenAiVideos::fields_mut(&mut c.native)
+                .get("image_url")
+                .cloned()
         };
         let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
         assert_eq!(image_url(bytes), Some(json!("data:image/png;base64,cG5n")));

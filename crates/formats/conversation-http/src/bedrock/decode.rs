@@ -1,5 +1,7 @@
 //! Converse, streamed or whole, as events: the decoder.
 
+use crate::Schema;
+use crate::bedrock::BedrockConverse;
 use crate::schema::{count, ended, unsupported_fields};
 use respan_gateway_conversation::{Block, Output, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault};
@@ -8,15 +10,13 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
 use serde_json::{Value, json};
-use std::sync::Arc;
 
-use super::{BEDROCK, finish_of};
+use super::finish_of;
 
 /// Decodes the events of a ConverseStream, and the body of a Converse, into
 /// events, as the module says.
 #[derive(Debug)]
 pub struct ConverseDecoder {
-    name: Arc<str>,
     parser: Parser,
     started: bool,
     finished: bool,
@@ -31,7 +31,6 @@ pub struct ConverseDecoder {
 impl Default for ConverseDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(BEDROCK),
             parser: Parser::new(None),
             started: false,
             finished: false,
@@ -99,7 +98,7 @@ pub(super) fn usage_of(u: &Value) -> Result<Usage, Fault> {
 
 impl ConverseDecoder {
     fn other(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        out.push(Output::Native(BedrockConverse::native(v)));
     }
 
     /// The fields of a response beside its content, as an event that another
@@ -259,7 +258,7 @@ impl ConverseDecoder {
                 self.reasoning(block, &b["reasoningContent"], out);
             } else {
                 let v = json!({ "type": "content_block", "block": b });
-                out.push(Output::block_native(self.name.clone(), block, v));
+                out.push(Output::block_native(block, BedrockConverse::native(v)));
                 continue;
             }
             self.close(block, out);

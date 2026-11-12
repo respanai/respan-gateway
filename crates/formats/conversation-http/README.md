@@ -29,10 +29,10 @@ written) are private to this crate. How a provider's error body reads,
 leniently, as compatible servers send it, is public, `read_provider_error`,
 for the HTTP formats of other JSON kinds, such as the media kinds'.
 
-What a format has no form for stays native to it (`NativeFields`,
-`Content::Native`, `Output::Native`), is written only by that format, and is
-dropped by another, silently: what has meaning beyond its format belongs
-in the kind. A message whose every part a format drops is left out. A call
+What a format has no form for stays native to it (a `Native` only it, or
+code that names it through its `Schema::fields` door, reads), is written
+only by that format, and is dropped by another, silently: what has meaning
+beyond its format belongs in the kind. A message whose every part a format drops is left out. A call
 to a provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
@@ -46,8 +46,8 @@ is called, including when the selected provider speaks another format.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
-appeared, so a relay in this format sends it back and a plugin can read it
-(the module docs give each shape): the response's own fields in the start's
+appeared, so a relay in this format sends it back and a vendor's dialect
+can read it (the module docs give each shape): the response's own fields in the start's
 `native`, or, when a later chunk changes them, as a native
 `{"response": {..}}`; a choice's and its message's or delta's as a native
 `{"choices": [..]}`; usage's own as a native `{"usage": {..}}`. A vendor's

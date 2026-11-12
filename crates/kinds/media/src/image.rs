@@ -6,8 +6,7 @@
 //! [`Output::Usage`] and [`Output::Native`] among them.
 
 use respan_gateway_conversation::{Media, Usage};
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_core::Native;
 
 /// The kind's input: a request for images.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -24,7 +23,7 @@ pub struct Input {
     /// Their size, as the provider names it, such as `1024x1024`.
     pub size: Option<String>,
     /// The request's fields the kind has no place for, such as a quality.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -62,16 +61,9 @@ pub enum Output {
     Image(Image),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -80,7 +72,7 @@ impl Output {
 pub struct Start {
     /// The response's fields the kind has no place for, such as when it was
     /// made, or the size or background the provider chose.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 /// An image a provider made.
@@ -90,7 +82,7 @@ pub struct Image {
     /// The image: its bytes, or a URL the provider keeps it at.
     pub media: Media,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Image {
@@ -98,7 +90,7 @@ impl Image {
     pub fn new(media: Media) -> Self {
         Self {
             media,
-            native: None,
+            native: Native::default(),
         }
     }
 }

@@ -3,7 +3,7 @@
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::{self, OpenAiChat};
-use respan_gateway_core::{Filter, NativeValue, Result};
+use respan_gateway_core::{Filter, Native, Result};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_media_http::openai::{OpenAiSpeech, OpenAiTranscriptions};
@@ -62,7 +62,9 @@ impl XGroqUsage {
             out.push(Output::Usage(more));
         }
         if !extra.is_empty() {
-            out.push(Output::native(OpenAiChat::NAME, json!({ "usage": extra })));
+            out.push(Output::Native(OpenAiChat::native(
+                json!({ "usage": extra }),
+            )));
         }
         Ok(())
     }
@@ -78,21 +80,20 @@ impl Filter<Output> for XGroqUsage {
             }
             Output::Start(mut start) => {
                 self.report(out)?;
-                if let Some(native) = start
-                    .native
-                    .as_mut()
-                    .filter(|n| &*n.format == OpenAiChat::NAME)
-                {
-                    self.said = take_usage(&mut native.fields);
+                if OpenAiChat::value(&start.native).is_some() {
+                    let fields = OpenAiChat::fields_mut(&mut start.native);
+                    self.said = take_usage(fields);
+                    if fields.is_empty() {
+                        start.native = Native::default();
+                    }
                 }
-                start.native = start.native.filter(|n| !n.is_empty());
                 // The chunk's own usage comes after its start.
                 out.push(Output::Start(start));
                 return Ok(());
             }
-            Output::Native(NativeValue { format, value }) if &*format == OpenAiChat::NAME => {
+            Output::Native(native) if OpenAiChat::value(&native).is_some() => {
                 self.report(out)?;
-                let mut value = std::sync::Arc::unwrap_or_clone(value);
+                let mut value = OpenAiChat::value(&native).cloned().unwrap_or_default();
                 let response = value.get_mut("response").and_then(Value::as_object_mut);
                 if let Some(response) = response {
                     self.said = take_usage(response);
@@ -100,7 +101,7 @@ impl Filter<Output> for XGroqUsage {
                         return self.report(out);
                     }
                 }
-                Output::native(format, value)
+                Output::Native(OpenAiChat::native(value))
             }
             output => output,
         };

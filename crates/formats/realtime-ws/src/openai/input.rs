@@ -2,15 +2,15 @@
 //! [`Input`], read at the client's edge and written at the provider's.
 
 use respan_gateway_conversation::{Content, Message, Role};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
 use serde_json::{Value, json};
 
-use super::{NAME, session};
+use super::{Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, string, take, text, untranslatable_input};
 
 /// A client's frames as events, beginning with the session the handshake
 /// asked for, its model the one at `?model=`: the client's first
@@ -71,25 +71,25 @@ fn decode(v: Value, input: AudioFormat) -> Input {
         Some("session.update") => Some(Input::Session(session::decode(rest))),
         Some("input_audio_buffer.append") => audio(rest, input),
         Some("input_audio_buffer.commit") => Some(Input::Commit {
-            native: json::native(NAME, rest),
+            native: Native::json::<Key>(rest),
         }),
         Some("conversation.item.create") => item(rest),
         Some("response.create") => Some(Input::Respond {
-            native: json::native(NAME, rest),
+            native: Native::json::<Key>(rest),
         }),
         Some("response.cancel") => Some(Input::Cancel {
-            native: json::native(NAME, rest),
+            native: Native::json::<Key>(rest),
         }),
         _ => None,
     };
-    event.unwrap_or_else(|| Input::native(NAME, v))
+    event.unwrap_or_else(|| Input::Native(Native::json::<Key>(v)))
 }
 
 fn audio(mut rest: Value, format: AudioFormat) -> Option<Input> {
     let data = json::take_audio(&mut rest, &["audio"])?;
     Some(Input::Audio {
         audio: Audio { data, format },
-        native: json::native(NAME, rest),
+        native: Native::json::<Key>(rest),
     })
 }
 
@@ -102,7 +102,7 @@ fn item(mut rest: Value) -> Option<Input> {
             rest.as_object_mut()?.shift_remove("item");
             Some(Input::Message {
                 message,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             })
         }
         "function_call_output" => {
@@ -113,7 +113,7 @@ fn item(mut rest: Value) -> Option<Input> {
             let id = take(&mut rest, &["item", "call_id"], string, text)?;
             let output = take(&mut rest, &["item", "output"], string, text)?;
             let mut result = ToolResult::new(id, output);
-            result.native = json::native(NAME, rest);
+            result.native = Native::json::<Key>(rest);
             Some(Input::ToolResult(result))
         }
         _ => None,
@@ -144,7 +144,7 @@ fn message(item: &Value) -> Option<Message> {
     )?;
     let mut message = Message::new(role, "");
     message.content = parts.iter().map(part).collect();
-    message.native = json::native(NAME, std::mem::take(rest));
+    message.native = Native::json::<Key>(std::mem::take(rest));
     let written = message_json(&message, |_| Fault::internal("unwritable"));
     (written.ok().as_ref() == Some(item)).then_some(message)
 }
@@ -154,7 +154,7 @@ fn part(p: &Value) -> Content {
     let is_text = matches!(p["type"].as_str(), Some("input_text" | "output_text"));
     match (p.as_object().map(|o| o.len()), p["text"].as_str()) {
         (Some(2), Some(text)) if is_text => Content::from(text),
-        _ => Content::native(NAME, p.clone()),
+        _ => Content::Native(Native::json::<Key>(p.clone())),
     }
 }
 
@@ -169,15 +169,15 @@ fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     let part = |c: &Content| match c {
         Content::Text {
             text: t, native, ..
-        } if native.is_none() => Ok(json!({"type": text, "text": t})),
-        Content::Native(NativeValue { format, value }) if **format == *NAME => {
-            Ok(Value::clone(value))
+        } if native.fields::<Key>().is_empty() => Ok(json!({"type": text, "text": t})),
+        Content::Native(native) => {
+            (native.value::<Key>().cloned()).ok_or_else(|| refuse("a message part of this kind"))
         }
         _ => Err(refuse("a message part of this kind")),
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});
-    merge(&mut v, own(&m.native));
+    merge(&mut v, m.native.fields::<Key>());
     Ok(v)
 }
 
@@ -211,7 +211,7 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::admit(NAME, event) else {
+        let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
         if let Some(v) = self.encode(&event)? {
@@ -245,7 +245,7 @@ impl Provider {
                 }
                 let session = session::encode(&s, refuse)?;
                 let mut v = json!({"type": "session.update", "session": session});
-                merge(&mut v, own(&s.native));
+                merge(&mut v, s.native.fields::<Key>());
                 if v["session"].get("type").is_none() {
                     let kind = if self.transcribing {
                         "transcription"
@@ -295,12 +295,13 @@ impl Provider {
             }
             Input::Respond { native } => (json!({"type": "response.create"}), native),
             Input::Cancel { native } => (json!({"type": "response.cancel"}), native),
-            Input::Native(NativeValue { format, value }) if **format == *NAME => {
-                return Ok(Some(Value::clone(value)));
-            }
+            Input::Native(native) => match native.value::<Key>() {
+                Some(value) => return Ok(Some(value.clone())),
+                None => return Err(refuse("another format's event")),
+            },
             _ => return Err(refuse("another format's event")),
         };
-        merge(&mut v, own(native));
+        merge(&mut v, native.fields::<Key>());
         Ok(Some(v))
     }
 }

@@ -1,49 +1,36 @@
-//! What a format does with another format's natives: it drops them, as what
-//! has meaning beyond its format belongs in the kind. A writer to a provider
-//! says what it dropped; a writer to a client has nothing to say of it.
+//! What a format does with another format's natives: it cannot read them, so
+//! it drops them, as what has meaning beyond its format belongs in the kind.
+//! A format's own natives are those of its key `K`; another's native fields
+//! read as none, and its native events and parts are dropped here. A writer to
+//! a provider says what it dropped; a writer to a client has nothing to say of
+//! it.
 
 use respan_gateway_conversation::Content;
-use respan_gateway_core::NativeFields;
-use respan_gateway_realtime::{Input, Output, Turns};
+use respan_gateway_core::{Key, Native};
+use respan_gateway_realtime::{Input, Output};
+
+/// Whether `native` is another format's than the one of key `K`.
+fn foreign<K: Key>(native: &Native) -> bool {
+    native.value::<K>().is_none()
+}
 
 /// Says what of another format `writer` goes without.
-fn warn(writer: &str, from: &str, what: impl std::fmt::Debug) {
-    eprintln!("warning: a session in {writer} drops {from}'s {what:?}");
+fn warn(writer: &str, what: &str) {
+    eprintln!("warning: a session in {writer} drops another format's {what}");
 }
 
-/// `native`, unless it is another format's, which is dropped with a warning.
-fn mine(writer: &str, native: &mut Option<NativeFields>) {
-    if let Some(n) = native.take_if(|n| *n.format != *writer) {
-        warn(writer, &n.format, n.fields.keys().collect::<Vec<_>>());
-    }
-}
-
-/// `event` for `writer`'s provider, without other formats' natives; `None`
-/// if nothing of it is left.
-pub(crate) fn admit(writer: &str, event: &Input) -> Option<Input> {
+/// `event` for `writer`'s provider, without other formats' native events and
+/// parts; `None` if nothing of it is left.
+// WARN: other formats' native fields are dropped by the writer, silently.
+pub(crate) fn admit<K: Key>(writer: &str, event: &Input) -> Option<Input> {
     let mut event = event.clone();
     match &mut event {
-        Input::Session(s) => {
-            mine(writer, &mut s.native);
-            if let Some(Turns::Server(vad)) = &mut s.turns {
-                mine(writer, &mut vad.native);
-            }
-            for tool in s.tools.iter_mut().flatten() {
-                mine(writer, &mut tool.native);
-            }
-        }
-        Input::Message { message, native } => {
-            mine(writer, &mut message.native);
-            mine(writer, native);
+        Input::Message { message, .. } => {
             let had = !message.content.is_empty();
-            message.content.retain_mut(|part| match part {
-                Content::Native(n) if *n.format != *writer => {
-                    warn(writer, &n.format, "message part");
+            message.content.retain(|part| match part {
+                Content::Native(n) if foreign::<K>(n) => {
+                    warn(writer, "message part");
                     false
-                }
-                Content::Text { native, .. } => {
-                    mine(writer, native);
-                    true
                 }
                 _ => true,
             });
@@ -51,14 +38,8 @@ pub(crate) fn admit(writer: &str, event: &Input) -> Option<Input> {
                 return None;
             }
         }
-        Input::ToolResult(result) => mine(writer, &mut result.native),
-        // Many a second, so unsaid.
-        Input::Audio { native, .. } => _ = native.take_if(|n| *n.format != *writer),
-        Input::Commit { native } | Input::Respond { native } | Input::Cancel { native } => {
-            mine(writer, native);
-        }
-        Input::Native(n) if *n.format != *writer => {
-            warn(writer, &n.format, "event");
+        Input::Native(n) if foreign::<K>(n) => {
+            warn(writer, "event");
             return None;
         }
         _ => {}
@@ -66,35 +47,11 @@ pub(crate) fn admit(writer: &str, event: &Input) -> Option<Input> {
     Some(event)
 }
 
-/// `event` with every other format's native fields dropped, for `format`'s
-/// client; `None` for another format's native event.
-pub(crate) fn strip(format: &str, event: &Output) -> Option<Output> {
-    let mut event = event.clone();
-    let mine = |native: &mut Option<NativeFields>| {
-        native.take_if(|n| *n.format != *format);
-    };
-    match &mut event {
-        Output::Opened(s) | Output::Updated(s) => {
-            mine(&mut s.native);
-            if let Some(Turns::Server(vad)) = &mut s.turns {
-                mine(&mut vad.native);
-            }
-            for tool in s.tools.iter_mut().flatten() {
-                mine(&mut tool.native);
-            }
-        }
-        Output::SpeechStarted { native, .. }
-        | Output::SpeechStopped { native, .. }
-        | Output::InputTranscript { native, .. }
-        | Output::ResponseStart { native, .. }
-        | Output::Audio { native, .. }
-        | Output::Text { native, .. }
-        | Output::Transcript { native, .. }
-        | Output::ToolCall { native, .. }
-        | Output::ResponseDone { native, .. }
-        | Output::Error { native, .. } => mine(native),
-        Output::Native(native) if *native.format != *format => return None,
-        _ => {}
+/// `event` for the client of the format of key `K`: `None` for another
+/// format's native event. Another's native fields its writer drops.
+pub(crate) fn strip<K: Key>(event: &Output) -> Option<Output> {
+    match event {
+        Output::Native(native) if foreign::<K>(native) => None,
+        _ => Some(event.clone()),
     }
-    Some(event)
 }

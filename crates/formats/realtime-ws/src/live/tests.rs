@@ -1,4 +1,4 @@
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Purpose, Session, Turns};
 use respan_gateway_ws::CloseCode;
@@ -133,8 +133,18 @@ fn what_the_live_api_has_none_of_is_refused() {
         vec![session(|s| s.output = Some(Modality::Text))],
         vec![session(|s| s.turns = Some(Turns::Manual))],
         vec![session(|s| s.model = None)],
-        vec![start.clone(), Input::Commit { native: None }],
-        vec![start.clone(), Input::Respond { native: None }],
+        vec![
+            start.clone(),
+            Input::Commit {
+                native: Native::default(),
+            },
+        ],
+        vec![
+            start.clone(),
+            Input::Respond {
+                native: Native::default(),
+            },
+        ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
         assert_eq!(
@@ -159,25 +169,27 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
     let events = [
         Output::Opened(opened.clone()),
         Output::Updated(opened),
-        Output::ResponseStart { native: None },
+        Output::ResponseStart {
+            native: Native::default(),
+        },
         Output::InputTranscript {
             text: "Hi".into(),
             complete: false,
-            native: None,
+            native: Native::default(),
         },
         Output::InputTranscript {
             text: "Hi".into(),
             complete: true,
-            native: None,
+            native: Native::default(),
         },
         Output::Transcript {
             text: "Hello".into(),
-            native: None,
+            native: Native::default(),
         },
         Output::Error {
             cause: respan_gateway_realtime::Cause::Provider,
             message: "Oops.".into(),
-            native: None,
+            native: Native::default(),
         },
     ];
     let types: Vec<Value> = heard(&events)
@@ -197,7 +209,7 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
     );
     let text = Output::Text {
         text: "x".into(),
-        native: None,
+        native: Native::default(),
     };
     assert!(heard(&[text]).is_err());
 }

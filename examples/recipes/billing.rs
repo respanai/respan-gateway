@@ -40,14 +40,14 @@ use mockllm::{Answer, FakeOpenAi};
 use respan_gateway_conversation::{Block, Content, Input, Output, ResponseFormat, Usage};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{
-    ErrorCode, Fault, Gateway, NativeValue, Plugin, Provider, ProviderContext, async_trait, futures,
+    ErrorCode, Fault, Gateway, Plugin, Provider, ProviderContext, async_trait, futures,
 };
 use respan_gateway_http::http::{self, HeaderMap, HeaderValue, StatusCode};
 use respan_gateway_http::http_body_util::BodyExt;
 use respan_gateway_http::{Body, Credential};
 use respan_gateway_http_faults::Status;
 use respan_gateway_http_transport::HttpTransport;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 /// Micro-dollars, or any unit you charge in, in the smallest step you count.
 type Amount = i64;
@@ -293,7 +293,8 @@ impl Plugin for Billing {
             .max_output_tokens
             .map_or(self.cap, |n| n.min(self.cap));
         let input = input_bound(chat)?;
-        let output = limit.saturating_mul(answers(chat)?);
+        // One answer: a format that can ask for several refuses it.
+        let output = limit;
         let call = Arc::new(Call {
             account,
             model,
@@ -375,7 +376,7 @@ fn meter(call: &Call, reply: &Output) -> Result<(), Fault> {
             kind: Block::ToolCall { name, .. },
             ..
         } => name.len(),
-        Output::Native(NativeValue { value, .. }) => value.to_string().len(),
+        Output::Native(native) => native.len(),
         _ => 0,
     };
     call.chars.fetch_add(chars, Ordering::Relaxed);
@@ -397,12 +398,11 @@ fn refuse(status: StatusCode, code: &'static str, message: String) -> Fault {
 
 /// The most input tokens `chat` can be. A token is at least a byte, so
 /// bytes bound them: its text, tool calls and results, tools, the
-/// structured-output schema, the JSON of what the kind has no place for,
+/// structured-output schema, what only its format reads (as long as it prints),
 /// and 8 a message for framing. Content with no byte bound, such as an
 /// image, is refused.
 fn input_bound(chat: &Input) -> Result<u64, Fault> {
-    let json = |fields: &Map<String, Value>| serde_json::to_string(fields).map_or(0, |s| s.len());
-    let mut bytes = chat.native.as_ref().map_or(0, |n| json(&n.fields));
+    let mut bytes = chat.native.len();
     if let Some(ResponseFormat::JsonSchema {
         name,
         description,
@@ -416,12 +416,10 @@ fn input_bound(chat: &Input) -> Result<u64, Fault> {
         bytes += tool.name.len()
             + tool.description.as_deref().map_or(0, str::len)
             + tool.parameters.to_string().len()
-            + tool.native.as_ref().map_or(0, |n| json(&n.fields));
+            + tool.native.len();
     }
     for message in &chat.messages {
-        bytes += content_bytes(&message.content)?
-            + message.native.as_ref().map_or(0, |n| json(&n.fields))
-            + 8;
+        bytes += content_bytes(&message.content)? + message.native.len() + 8;
     }
     Ok(bytes as u64)
 }
@@ -442,14 +440,6 @@ fn content_bytes(parts: &[Content]) -> Result<usize, Fault> {
         };
     }
     Ok(bytes)
-}
-
-/// How many answers `chat` asks for: its `n`, 1 if unset.
-fn answers(chat: &Input) -> Result<u64, Fault> {
-    let n = chat.native.as_ref().and_then(|n| n.fields.get("n"));
-    let n = n.map_or(Some(1), Value::as_u64);
-    n.map(|n| n.max(1))
-        .ok_or_else(|| Fault::bad_request("n must be a whole number"))
 }
 
 // The gateway, a scripted provider and a client.

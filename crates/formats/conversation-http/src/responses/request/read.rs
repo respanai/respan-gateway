@@ -1,9 +1,10 @@
 //! Reading a Responses request's input items as messages.
 
-use super::super::RESPONSES;
 use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{NativeFieldsExt, native_of, only, remainder, says, source_url};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
+use crate::schema::{only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use serde_json::{Map, Value, json};
 
@@ -11,7 +12,7 @@ use serde_json::{Map, Value, json};
 fn text_part(text: &str, fields: Map<String, Value>) -> Content {
     let mut part = Content::from(text);
     if let Content::Text { native, .. } = &mut part {
-        *native = native_of(RESPONSES, fields);
+        *native = OpenAiResponses::native(fields);
     }
     part
 }
@@ -22,7 +23,7 @@ pub(in crate::responses) fn read_content(v: &Value) -> Vec<Content> {
         Value::String(text) => vec![Content::from(text.as_str())],
         Value::Array(parts) => parts.iter().map(read_part).collect(),
         Value::Null => Vec::new(),
-        other => vec![Content::native(RESPONSES, other.clone())],
+        other => vec![Content::Native(OpenAiResponses::native(other.clone()))],
     }
 }
 
@@ -31,7 +32,7 @@ fn read_part(p: &Value) -> Content {
         Some("input_text" | "output_text") => read_text(p),
         _ => read_media(p),
     };
-    part.unwrap_or_else(|| Content::native(RESPONSES, p.clone()))
+    part.unwrap_or_else(|| Content::Native(OpenAiResponses::native(p.clone())))
 }
 
 /// An `input_text` or `output_text` part; its fields that say something,
@@ -74,7 +75,7 @@ pub(super) fn read_media(p: &Value) -> Option<Content> {
         media.name = p["filename"].as_str().map(str::to_owned);
         media
     };
-    media.native = native_of(RESPONSES, fields);
+    media.native = OpenAiResponses::native(fields);
     Some(match p["type"] == "input_image" {
         true => Content::Image(media),
         false => Content::Document(media),
@@ -98,8 +99,8 @@ pub(in crate::responses) fn read_input(v: &Value, chat: &mut Input) {
 
 /// An item the kind has no form for.
 fn opaque(item: &Value) -> Message {
-    let mut message = Message::new(Role::native(RESPONSES, ITEM_ROLE), "");
-    message.content = vec![Content::native(RESPONSES, item.clone())];
+    let mut message = Message::new(Role::Native(OpenAiResponses::native(ITEM_ROLE)), "");
+    message.content = vec![Content::Native(OpenAiResponses::native(item.clone()))];
     message
 }
 
@@ -142,18 +143,18 @@ fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
                 Content::Text { native, .. } => Some(native),
                 _ => None,
             })?;
-            let mut fields = first.take().map(|n| n.fields).unwrap_or_default();
+            let mut fields = OpenAiResponses::fields(first).clone();
             if !extras.is_empty() {
                 fields.insert(MESSAGE.into(), extras.into());
             }
-            *first = native_of(RESPONSES, fields);
+            *first = OpenAiResponses::native(fields);
             assistant(out).content.extend(content);
         }
         role => {
-            let role = role.unwrap_or_else(|| Role::native(RESPONSES, name));
+            let role = role.unwrap_or_else(|| Role::Native(OpenAiResponses::native(name)));
             let mut message = Message::new(role, "");
             message.content = content;
-            message.native = native_of(RESPONSES, extras);
+            message.native = OpenAiResponses::native(extras);
             out.push(message);
         }
     }
@@ -165,7 +166,7 @@ fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];
-        *native = native_of(RESPONSES, remainder(item, &taken));
+        *native = OpenAiResponses::native(remainder(item, &taken));
     }
     assistant(out).content.push(call);
     Some(())
@@ -180,7 +181,7 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut result = Content::tool_result(id, content, false);
     if let Content::ToolResult { native, .. } = &mut result {
         let taken = ["type", "call_id", "output"];
-        *native = native_of(RESPONSES, remainder(item, &taken));
+        *native = OpenAiResponses::native(remainder(item, &taken));
     }
     let results = |m: &Message| {
         m.role == Role::User
@@ -208,7 +209,7 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             _ => return None,
         }
     }
-    let native = native_of(RESPONSES, remainder(item, &["type", "summary", SEALED]));
+    let native = OpenAiResponses::native(remainder(item, &["type", "summary", SEALED]));
     let text = texts.join("\n\n");
     let content = &mut assistant(out).content;
     content.push(Content::Reasoning { text, native });

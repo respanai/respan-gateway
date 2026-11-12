@@ -64,7 +64,10 @@ Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 
 A vendor's departures from one of these formats are its dialect of it,
 laid over the format (`respan_gateway_http::dialect::Dialected`), so a
-client of the spec is still relayed to it.
+client of the spec is still relayed to it. A dialect or a host reaches a
+format's native only through that format's own doors (`fields`,
+`fields_mut`, `value`, `value_mut`, `native`): every format here
+but OpenRouter's videos and Bedrock's embeddings has them.
 
 `gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
 such as Nano Banana, through `generateContent`, to clients and providers,

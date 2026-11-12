@@ -16,13 +16,11 @@
 //! was; a format that cannot ask it drops it, and refuses a request it can
 //! ask none of.
 
-use respan_gateway_conversation_http::fields::{
-    invalid, kept, merge_missing, native_of, rest_of, set,
-};
+use respan_gateway_conversation_http::fields::{invalid, merge_missing, rest_of, set};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_decision::{Answer, Ask, Input, Output, Question, Start, Usage, Verdict};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
@@ -43,6 +41,8 @@ const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
 const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
+respan_gateway_core::native_key!(Key = NAME);
+
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
 /// provider called at `/decisions`.
@@ -50,8 +50,10 @@ const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 pub struct Decisions;
 
 impl Decisions {
-    /// The format's name, `decisions`, which tags its native fields.
+    /// The format's name, `decisions`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for Decisions {
@@ -142,7 +144,7 @@ fn decode_request(raw: &[u8]) -> Result<Input, Fault> {
         Some(Value::String(model)) => Some(model),
         Some(_) => return Err(invalid("model", "must be a string")),
     };
-    input.native = native_of(NAME, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
@@ -155,7 +157,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
     let is_native =
         (q.get("type").and_then(Value::as_str)).is_some_and(|kind| !KNOWN_TYPES.contains(&kind));
     if is_native {
-        let ask = Ask::Native(NativeValue::new(NAME, Value::Object(q)));
+        let ask = Ask::Native(Native::json::<Key>(q));
         return Ok(Question::new(id, ask));
     }
     let criteria = q.remove("criteria").unwrap_or_default();
@@ -188,7 +190,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
     };
     let mut question = Question::new(id, ask);
     question.instructions = q.remove("instructions").filter(|v| !v.is_null());
-    question.native = native_of(NAME, q);
+    question.native = Native::json::<Key>(q);
     Ok(question)
 }
 
@@ -197,9 +199,9 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     let mut questions = Map::new();
     for q in &input.questions {
         if let Ask::Native(native) = &q.ask
-            && &*native.format == NAME
+            && let Some(question) = native.value::<Key>()
         {
-            questions.insert(q.id.clone(), (*native.value).clone());
+            questions.insert(q.id.clone(), question.clone());
             continue;
         }
         let mut v = Map::new();
@@ -221,7 +223,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         v.insert("type".into(), kind.into());
         set(&mut v, "instructions", q.instructions.clone());
         set(&mut v, "criteria", criteria);
-        merge_missing(&mut v, &kept(NAME, &q.native));
+        merge_missing(&mut v, q.native.fields::<Key>());
         questions.insert(q.id.clone(), v.into());
     }
     if questions.is_empty() && !input.questions.is_empty() {
@@ -233,7 +235,7 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     set(&mut v, "model", input.model.clone());
     v.insert("state".into(), input.state.clone());
     v.insert("questions".into(), questions.into());
-    merge_missing(&mut v, &kept(NAME, &input.native));
+    merge_missing(&mut v, input.native.fields::<Key>());
     Ok(v)
 }
 
@@ -246,12 +248,14 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         )));
     };
     let mut start = Start::new(v["model"].as_str().map(Into::into));
-    start.native = native_of(NAME, rest_of(&v, &["model", "answers", "usage"]));
+    start.native = Native::json::<Key>(rest_of(&v, &["model", "answers", "usage"]));
     out.push(Output::Start(start));
     for (id, a) in answers {
         match decode_answer(id, a) {
             Some(answer) => out.push(Output::Answer(answer)),
-            None => out.push(Output::native(NAME, json!({ "answers": { id: a } }))),
+            None => out.push(Output::Native(Decisions::native(
+                json!({ "answers": { id: a } }),
+            ))),
         }
     }
     if v["usage"].is_object() {
@@ -267,7 +271,9 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         )));
         let extras = rest_of(&v["usage"], &["input_tokens", "output_tokens"]);
         if !extras.is_empty() {
-            out.push(Output::native(NAME, json!({ "usage": extras })));
+            out.push(Output::Native(Decisions::native(
+                json!({ "usage": extras }),
+            )));
         }
     }
     Ok(())
@@ -305,7 +311,7 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
     let mut answer = Answer::new(id, verdict);
     answer.confidence = number("confidence");
     let taken = [&["type", "confidence"], taken].concat();
-    answer.native = native_of(NAME, rest_of(a, &taken));
+    answer.native = Native::json::<Key>(rest_of(a, &taken));
     Some(answer)
 }
 
@@ -316,17 +322,18 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
         match event {
             Output::Start(start) => {
                 set(&mut body, "model", start.model.clone());
-                merge_missing(&mut body, &kept(NAME, &start.native));
+                merge_missing(&mut body, start.native.fields::<Key>());
             }
             Output::Answer(answer) => {
                 answers.insert(answer.id.clone(), encode_answer(answer)?.into());
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format == NAME => {
-                if let Some(more) = n.value["answers"].as_object() {
+            Output::Native(n) => {
+                let n = n.value::<Key>().unwrap_or_default();
+                if let Some(more) = n["answers"].as_object() {
                     merge_missing(&mut answers, more);
                 }
-                if let Some(more) = n.value["usage"].as_object() {
+                if let Some(more) = n["usage"].as_object() {
                     merge_missing(&mut extras, more);
                 }
             }
@@ -379,7 +386,7 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
         }
     }
     set(&mut v, "confidence", answer.confidence);
-    merge_missing(&mut v, &kept(NAME, &answer.native));
+    merge_missing(&mut v, answer.native.fields::<Key>());
     Ok(v)
 }
 
@@ -465,7 +472,9 @@ mod tests {
         });
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
         for i in [0, 2, 3] {
-            assert!(matches!(&input.questions[i].ask, Ask::Native(n) if &*n.format == NAME));
+            assert!(
+                matches!(&input.questions[i].ask, Ask::Native(n) if n.value::<Key>().is_some())
+            );
         }
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
     }

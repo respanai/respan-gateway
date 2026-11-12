@@ -1,4 +1,4 @@
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
@@ -6,7 +6,7 @@ use respan_gateway_realtime::{
 };
 use serde_json::{Value, json};
 
-use super::{NAME, input, output};
+use super::{Key, input, output};
 
 /// What `events` are written as, to a provider.
 fn sent(events: &[Input]) -> Result<Vec<Value>, Fault> {
@@ -38,7 +38,7 @@ fn audio(data: Vec<u8>, rate: u32) -> Input {
             data: Bytes::from(data),
             format: AudioFormat::pcm16(rate),
         },
-        native: None,
+        native: Native::default(),
     }
 }
 
@@ -74,10 +74,7 @@ fn a_session_that_says_nothing_is_no_frame() {
 fn a_sessions_own_fields_are_kept() {
     let mut session = Session::default();
     let native = json!({"session": {"target_streaming_delay_ms": 240}});
-    session.native = Some(NativeFields::new(
-        NAME,
-        native.as_object().cloned().expect("object"),
-    ));
+    session.native = Native::json::<Key>(native);
     let frames = sent(&[Input::Session(session)]).expect("sent");
     assert_eq!(
         frames,
@@ -105,7 +102,10 @@ fn what_it_cannot_do_is_refused() {
     other.model = Some("other".into());
     let opening = Input::Session(Session::default());
     sent(&[opening, Input::Session(other)]).expect_err("a model is taken at connect");
-    let fault = sent(&[Input::Respond { native: None }]).expect_err("refused");
+    let fault = sent(&[Input::Respond {
+        native: Native::default(),
+    }])
+    .expect_err("refused");
     assert_eq!(fault.code(), "bad_request");
 }
 
@@ -131,7 +131,10 @@ fn audio_is_appended_in_the_sessions_format_and_in_parts() {
 #[test]
 fn a_commit_flushes_and_the_end_of_events_ends_the_audio() {
     assert_eq!(
-        sent(&[Input::Commit { native: None }]).expect("sent"),
+        sent(&[Input::Commit {
+            native: Native::default()
+        }])
+        .expect("sent"),
         [json!({"type": "input_audio.flush"})]
     );
     let mut provider = input::Provider::new("voxtral".into());
@@ -150,11 +153,11 @@ fn a_commit_flushes_and_the_end_of_events_ends_the_audio() {
 
 #[test]
 fn another_formats_events_are_dropped() {
-    let dropped = Input::native("openai-realtime", json!({"type": "response.create"}));
+    let dropped = Input::Native(Native::json::<()>(json!({"type": "response.create"})));
     assert_eq!(sent(&[dropped]).expect("dropped"), Vec::<Value>::new());
     let own = json!({"type": "input_audio.flush"});
     assert_eq!(
-        sent(&[Input::native(NAME, own.clone())]).expect("own"),
+        sent(&[Input::Native(Native::json::<Key>(own.clone()))]).expect("own"),
         [own]
     );
 }
@@ -172,10 +175,9 @@ fn a_session_is_opened_with_its_model_and_format() {
     assert_eq!(session.input_audio, Some(AudioFormat::pcm16(16_000)));
     assert_eq!(session.input_transcription, Some(true));
     assert_eq!(session.purpose, Some(Purpose::Transcription));
-    let kept = session.native.as_ref().expect("native");
     assert_eq!(
-        serde_json::Value::Object(kept.fields.clone()),
-        json!({"session": {"request_id": "r1", "target_streaming_delay_ms": 480}})
+        session.native.value::<Key>(),
+        Some(&json!({"session": {"request_id": "r1", "target_streaming_delay_ms": 480}}))
     );
 
     let updated = outputs(&[json!({"type": "session.updated", "session": {
@@ -210,15 +212,12 @@ fn deltas_and_the_end_are_the_users_transcript() {
     assert_eq!(usage.tokens.input_tokens, 12);
     assert_eq!(usage.tokens.output_tokens, 3);
     assert_eq!(usage.input_audio_tokens, 12);
-    let Output::InputTranscript {
-        native: Some(rest), ..
-    } = &events[3]
-    else {
+    let Output::InputTranscript { native, .. } = &events[3] else {
         panic!("{events:?}");
     };
     assert_eq!(
-        Value::Object(rest.fields.clone()),
-        json!({"model": "voxtral", "language": "en", "usage": {"prompt_audio_seconds": 2}})
+        native.value::<Key>(),
+        Some(&json!({"model": "voxtral", "language": "en", "usage": {"prompt_audio_seconds": 2}}))
     );
 }
 
@@ -262,8 +261,8 @@ fn what_the_kind_has_no_form_for_stays_native() {
         segment.clone(),
         json!({"type": "unheard"}),
     ]);
-    assert_eq!(events[0], Output::native(NAME, language));
-    assert_eq!(events[1], Output::native(NAME, segment));
+    assert_eq!(events[0], Output::Native(Native::json::<Key>(language)));
+    assert_eq!(events[1], Output::Native(Native::json::<Key>(segment)));
     assert!(matches!(events[2], Output::Native(_)));
 }
 
@@ -335,7 +334,7 @@ fn a_clients_session_is_a_transcription_of_its_model_whose_turns_it_ends() {
     };
     assert_eq!(s.input_audio, Some(AudioFormat::MULAW));
     assert_eq!(audio.format, AudioFormat::MULAW);
-    assert!(s.native.is_some(), "its delay stays Mistral's");
+    assert!(!s.native.is_empty(), "its delay stays Mistral's");
     assert!(read(&[json!({"type": "input_audio.append", "audio": 1})]).is_err());
 }
 
@@ -350,18 +349,20 @@ fn a_client_is_told_the_transcript_with_its_usage_and_not_an_answer() {
     let transcript = |text: &str, complete| Output::InputTranscript {
         text: text.into(),
         complete,
-        native: None,
+        native: Native::default(),
     };
     let frames = told(&[
         Output::Opened(session),
         transcript("Hel", false),
-        Output::ResponseStart { native: None },
+        Output::ResponseStart {
+            native: Native::default(),
+        },
         Output::Usage(usage),
         transcript("Hello", true),
         Output::Error {
             cause: Cause::Invalid,
             message: "bad audio".into(),
-            native: None,
+            native: Native::default(),
         },
     ]);
     assert_eq!(

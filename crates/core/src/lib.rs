@@ -31,7 +31,7 @@ pub use extensions::Extensions;
 pub use fault::{Details, ErrorCode, Fault, FaultKind, RetryAfter, guarded};
 pub use format::{Connection, Format};
 pub use gateway::Gateway;
-pub use native::{FormatId, NativeFields, NativeValue};
+pub use native::{Key, Native};
 pub use plugin::{Filter, Plugin};
 pub use provider::{Provider, ProviderContext};
 pub use response::Response;

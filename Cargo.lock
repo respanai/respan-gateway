@@ -1809,7 +1809,6 @@ dependencies = [
  "bytes",
  "respan-gateway-conversation",
  "respan-gateway-core",
- "serde_json",
 ]
 
 [[package]]
@@ -1952,6 +1951,7 @@ dependencies = [
  "respan-gateway-http",
  "respan-gateway-http-faults",
  "respan-gateway-realtime",
+ "respan-gateway-realtime-ws",
  "serde_json",
  "tokio",
  "wildmatch",

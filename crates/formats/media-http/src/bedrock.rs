@@ -199,7 +199,7 @@ fn read_response(model: Option<String>, tokens: Option<u64>) -> Box<dyn Decoder<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_core::{NativeFields, NativeValue};
+    use respan_gateway_core::Native;
 
     fn call(
         model: &str,
@@ -272,12 +272,10 @@ mod tests {
     #[test]
     fn what_bedrock_has_no_field_for_is_refused() {
         assert!(call("amazon.nova-micro-v1:0", &["a"], |_| {}).is_err());
-        let parts =
-            |i: &mut Input| i.items = vec![Item::Native(NativeValue::new("x", json!([{}])))];
+        let parts = |i: &mut Input| i.items = vec![Item::Native(Native::json::<()>(json!([{}])))];
         assert!(call("cohere.embed-v4:0", &["a"], parts).is_err());
         let foreign = call("cohere.embed-v4:0", &["a"], |i| {
-            let seed = serde_json::Map::from_iter([("seed".into(), 1.into())]);
-            i.native = Some(NativeFields::new("openai-embeddings", seed));
+            i.native = Native::json::<()>(json!({"seed": 1}));
         });
         assert!(foreign.is_ok());
     }
