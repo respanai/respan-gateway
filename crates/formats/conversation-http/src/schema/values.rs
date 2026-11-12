@@ -3,7 +3,9 @@
 //! faults of what cannot be written, and small JSON helpers.
 
 use crate::fields;
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::Engine;
+use base64::alphabet;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
@@ -33,17 +35,71 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
+/// The marker of base64 data in a `data:` URL.
+const BASE64_DATA: &str = ";base64,";
+
+/// Base64 decoding that accepts the data with or without its padding.
+const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
+    let config =
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    GeneralPurpose::new(alphabet, config)
+}
+
+/// The base64 alphabets a `data:` URL is read in, the standard one first.
+const DATA_URL_BASE64: [GeneralPurpose; 2] =
+    [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
+
+/// The bytes of a `data:` URL's base64 `data`, read with or without padding,
+/// in either alphabet, across the line breaks a client may have wrapped it at.
+fn data_url_bytes(data: &str) -> Option<Vec<u8>> {
+    let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    DATA_URL_BASE64
+        .iter()
+        .find_map(|engine| engine.decode(&data).ok())
+}
+
 /// The media type and source of a URL: the data of a `data:` URL, else the
 /// URL, of type `fallback`.
 pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSource)> {
     match url.strip_prefix("data:") {
         Some(data) => {
-            let (mime, data) = data.split_once(";base64,")?;
-            let bytes = STANDARD.decode(data).ok()?;
+            let (mime, data) = data.split_once(BASE64_DATA)?;
+            let bytes = data_url_bytes(data)?;
             Some((mime.into(), MediaSource::Bytes(bytes.into())))
         }
         None => Some((fallback.into(), MediaSource::Url(url.into()))),
     }
+}
+
+/// Refuse a part of `messages` whose `data:` URL says it is base64 and is
+/// not: no format could send it, and one that cannot hold the part as it
+/// came would drop it.
+pub(crate) fn check_data_urls(messages: &Value) -> Result<(), Fault> {
+    let parts = messages
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m["content"].as_array())
+        .flatten();
+    for part in parts {
+        let urls = [
+            &part["image_url"]["url"],
+            &part["image_url"],
+            &part["file"]["file_data"],
+            &part["file_data"],
+        ];
+        let is_unreadable = urls.into_iter().filter_map(Value::as_str).any(|url| {
+            url.strip_prefix("data:")
+                .and_then(|data| data.split_once(BASE64_DATA))
+                .is_some_and(|(_, data)| data_url_bytes(data).is_none())
+        });
+        if is_unreadable {
+            return Err(Fault::bad_request(
+                "a `data:` URL in the messages is not valid base64",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A request body that is not a JSON object.
@@ -686,5 +742,33 @@ mod tests {
         assert_eq!(totals.increment(&total(3)).output_tokens, 2);
         assert!(totals.increment(&total(3)).is_empty());
         assert!(totals.increment(&total(2)).is_empty(), "never negative");
+    }
+
+    #[test]
+    fn a_data_url_that_is_not_base64_is_refused_and_an_unusual_one_is_read() {
+        let messages = |url: &str| {
+            serde_json::json!([{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": url}},
+            ]}])
+        };
+        let refused = check_data_urls(&messages("data:image/png;base64,AAAAnotanimage"));
+        assert!(refused.is_err(), "not base64");
+        let file = serde_json::json!([{"role": "user", "content": [
+            {"type": "input_file", "file_data": "data:application/pdf;base64,%%%"},
+        ]}]);
+        assert!(check_data_urls(&file).is_err(), "a file's data");
+        for url in [
+            "data:image/png;base64,aGVsbG8=",
+            "data:image/png;base64,aGVsbG8",
+            "data:image/png;base64,-_8=",
+            "data:image/png;base64,aGVs\r\nbG8=",
+            "data:image/svg+xml,%3Csvg%2F%3E",
+            "https://example.com/a.png",
+        ] {
+            assert!(check_data_urls(&messages(url)).is_ok(), "{url}");
+            if let Some((_, MediaSource::Bytes(bytes))) = source_url(url, "image/*") {
+                assert!(!bytes.is_empty(), "{url}");
+            }
+        }
     }
 }

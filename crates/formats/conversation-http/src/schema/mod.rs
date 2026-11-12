@@ -15,7 +15,8 @@
 //! it reads ([`Schema::fields`]), and is written only by that format;
 //! another drops it. A request that asks
 //! for several OpenAI Chat choices (`n > 1`) is refused on input, before
-//! translation can drop the choice count.
+//! translation can drop the choice count, and so is one whose base64
+//! `data:` URL does not decode, before translation can drop the part.
 
 mod errors;
 mod exchange;
@@ -36,11 +37,12 @@ pub(crate) use values::{
     EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
-    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, decode_tools, each_tool, edit_native, encode_content,
-    encode_message, ended, fits, merge_fields, merge_into, merge_missing, only, own_fields,
-    own_shapes, read_search, remainder, sealed, set, source_url, stop_json, take_strict, take_text,
-    tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
+    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, check_data_urls,
+    check_usage, count, decode_content, decode_message, decode_tools, each_tool, edit_native,
+    encode_content, encode_message, ended, fits, merge_fields, merge_into, merge_missing, only,
+    own_fields, own_shapes, read_search, remainder, sealed, set, source_url, stop_json,
+    take_strict, take_text, tidy, unsupported_fields, untranslatable, unwritable_content,
+    usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};

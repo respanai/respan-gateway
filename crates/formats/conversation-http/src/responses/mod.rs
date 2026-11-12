@@ -76,8 +76,9 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, Own, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, Own, Schema, UsageFields, check_data_urls, count, edit_native, merge_details,
+    merge_fields, own_fields, parts_within_totals, unsupported_fields, unwritable_content,
+    usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -191,6 +192,10 @@ impl Schema for OpenAiResponses {
                 include.push(encrypted);
             }
         }
+    }
+
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        check_data_urls(&v["input"])
     }
 
     fn decoder(&self) -> ResponsesDecoder {

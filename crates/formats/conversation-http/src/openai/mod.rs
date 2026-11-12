@@ -60,9 +60,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, edit_native,
-    merge_details, merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json,
-    take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_data_urls, check_usage, count, decode_message,
+    edit_native, merge_details, merge_fields, merge_into, parse_effort, parts_within_totals, set,
+    stop_json, take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -268,7 +268,8 @@ impl Schema for OpenAiChat {
     }
 
     fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
-        check_choice_count(&v["n"])
+        check_choice_count(&v["n"])?;
+        check_data_urls(&v["messages"])
     }
 
     fn decode_json(&self, v: &Value) -> Input {
