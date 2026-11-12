@@ -38,10 +38,10 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
-    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, merge_missing, own_fields, says, sealed, set, stop_json, unsupported_fields,
-    unwritable_content, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
+    decode_content, decode_message, edit_native, encode_content, encode_message, merge_details,
+    merge_fields, merge_into, merge_missing, own_fields, says, sealed, set, stop_json,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -295,7 +295,9 @@ impl Schema for AnthropicMessages {
             .map(|(k, x)| (k.clone(), x.clone()))
             .collect();
         if !others.is_empty() {
-            Self::fields_mut(&mut chat.native).insert("metadata".into(), others.into());
+            edit_native::<Self, _>(&mut chat.native, |f| {
+                f.insert("metadata".into(), others.into())
+            });
         }
         if says(&v["system"]) {
             let mut system = Message::new(Role::System, "");
@@ -308,9 +310,6 @@ impl Schema for AnthropicMessages {
             chat.messages.push(message);
         }
         read_tools_of(v, &mut chat);
-        chat.native = AnthropicMessages::native(std::mem::take(AnthropicMessages::fields_mut(
-            &mut chat.native,
-        )));
         read_output(v, &mut chat);
         read_thinking(&mut chat);
         read_effort(&mut chat);

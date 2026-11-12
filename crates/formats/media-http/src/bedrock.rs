@@ -272,10 +272,10 @@ mod tests {
     #[test]
     fn what_bedrock_has_no_field_for_is_refused() {
         assert!(call("amazon.nova-micro-v1:0", &["a"], |_| {}).is_err());
-        let parts = |i: &mut Input| i.items = vec![Item::Native(Native::json::<()>(json!([{}])))];
+        let parts = |i: &mut Input| i.items = vec![Item::Native(Native::new(json!([{}])))];
         assert!(call("cohere.embed-v4:0", &["a"], parts).is_err());
         let foreign = call("cohere.embed-v4:0", &["a"], |i| {
-            i.native = Native::json::<()>(json!({"seed": 1}));
+            i.native = Native::new(json!({"seed": 1}));
         });
         assert!(foreign.is_ok());
     }

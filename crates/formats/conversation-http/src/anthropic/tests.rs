@@ -1,6 +1,7 @@
 use super::*;
-use crate::Schema;
 use crate::anthropic::AnthropicMessages;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
 
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
@@ -264,15 +265,15 @@ fn an_event_it_cannot_read_is_content_filters_see() {
         ": a comment\n\n",
     ]);
     // A comment says nothing; the others are events of this format.
-    assert_eq!(
-        out,
-        [
+    assert_same::<AnthropicMessages>(
+        &out,
+        &[
             Output::Native(AnthropicMessages::native(
-                json!({ "type": "future", "text": "secret" })
+                json!({ "type": "future", "text": "secret" }),
             )),
             Output::Native(AnthropicMessages::native("not json")),
             Output::Native(AnthropicMessages::native(json!({ "type": "ping" }))),
-        ]
+        ],
     );
     assert!(out.iter().all(|r| !r.is_content()));
 }
@@ -449,9 +450,9 @@ fn a_whole_response_decodes_into_events_per_block() {
     if let Output::Usage(u) = &mut totals {
         u.output_tokens += 1;
     }
-    assert_eq!(
-        events,
-        [
+    assert_same::<AnthropicMessages>(
+        &events,
+        &[
             Output::start("m", "c"),
             totals,
             Output::block_start(0, Block::Reasoning),
@@ -472,7 +473,7 @@ fn a_whole_response_decodes_into_events_per_block() {
             Output::text(4, "cited"),
             Output::block_end(4),
             Output::finished(Finish::ToolUse),
-        ]
+        ],
     );
     // Written again, the whole body is what it was.
     let again = body_of(&events).expect("a body");
@@ -914,13 +915,8 @@ fn extra_fields_of_the_message_survive_in_the_same_format() {
         panic!("{events:?}");
     };
     assert_eq!(
-        start.native,
-        AnthropicMessages::native(
-            json!({ "container": { "id": "k" } })
-                .as_object()
-                .cloned()
-                .unwrap_or_default()
-        )
+        AnthropicMessages::value(&start.native),
+        Some(&json!({ "container": { "id": "k" } }))
     );
     assert_eq!(
         body_of(&events).expect("a body")["container"],

@@ -515,7 +515,7 @@ mod tests {
             }
         );
         assert_eq!(commit.model(), None);
-        let native = Input::Native(Native::json::<()>(serde_json::json!({"type": "x"})));
+        let native = Input::Native(Native::new(serde_json::json!({"type": "x"})));
         assert_eq!(native.model(), None);
     }
 }

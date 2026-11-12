@@ -9,13 +9,13 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{Method, request::Parts as RequestHead};
 use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole};
+use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
 
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 /// What ends the path of a download, after its job's escaped id.
 const CONTENT: &str = "/content";
 

@@ -1,6 +1,7 @@
 use super::*;
-use crate::Schema;
 use crate::responses::OpenAiResponses;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
 use respan_gateway_core::Native;
 
 use crate::anthropic::AnthropicMessages;
@@ -480,7 +481,7 @@ fn a_stream_decodes_to_the_kinds_events() {
         Output::text(0, " world"),
         Output::block_end(0),
     ];
-    assert_eq!(out[1..6], rest);
+    assert_same::<OpenAiResponses>(&out[1..6], &rest);
     let mut usage = Usage::new(5, 3);
     usage.cached_input_tokens = 2;
     usage.reasoning_tokens = 1;
@@ -500,7 +501,7 @@ fn a_message_streamed_without_its_parts_events_decodes_alike() {
     let unparted: Vec<_> = text_stream().into_iter().filter(|e| !part(e)).collect();
     let (out, end) = decode_stream(&unparted);
     end.expect("a whole stream");
-    assert_eq!(out, decode_stream(&text_stream()).0);
+    assert_same::<OpenAiResponses>(&out, &decode_stream(&text_stream()).0);
 }
 
 #[test]
@@ -551,10 +552,11 @@ fn function_calls_and_reasoning_are_blocks() {
         ]
     );
     assert_eq!(all.finish, Some(Finish::ToolUse));
-    assert!(out.contains(&Output::block_fields(
-        0,
-        OpenAiResponses::native(rest_of(&json!({ "id": "rs_1" }), &[]))
-    )));
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Output::BlockFields { block: 0, native }
+        if OpenAiResponses::value(native) == Some(&json!({ "id": "rs_1" }))))
+    );
 }
 
 #[test]
@@ -585,11 +587,7 @@ fn incomplete_has_its_reason_as_the_finish() {
         let mut body = response("incomplete", json!([]));
         body["incomplete_details"] = json!({ "reason": reason });
         let out = decode_body(&body);
-        assert_eq!(
-            out.last(),
-            Some(&Output::finished(finish.clone())),
-            "{reason}"
-        );
+        assert_same::<OpenAiResponses>(&out[out.len() - 1..], &[Output::finished(finish)]);
         let written = body_of(&out).expect("a body");
         assert_eq!(written["status"], "incomplete");
         assert_eq!(written["incomplete_details"]["reason"], reason);

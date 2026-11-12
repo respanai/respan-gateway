@@ -1,8 +1,8 @@
 use super::*;
-use crate::Schema;
 use crate::anthropic::AnthropicMessages;
 use crate::gemini::GeminiGenerate;
 use crate::openai::OpenAiChat;
+use crate::schema::{Own, Schema};
 use respan_gateway_core::Fault;
 
 use super::encode::reason_of;
@@ -410,7 +410,7 @@ fn what_gemini_cannot_say_is_dropped_or_its_nearest() {
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
-        OpenAiChat::fields_mut(&mut c.native).insert("seed".into(), 1.into());
+        c.native = OpenAiChat::with_fields(&c.native, |f| _ = f.insert("seed".into(), 1.into()));
     }));
 }
 

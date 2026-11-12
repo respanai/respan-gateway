@@ -6,11 +6,12 @@
 //! it.
 
 use respan_gateway_conversation::Content;
-use respan_gateway_core::{Key, Native};
+use respan_gateway_core::Native;
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{Input, Output};
 
 /// Whether `native` is another format's than the one of key `K`.
-fn foreign<K: Key>(native: &Native) -> bool {
+fn foreign<K: 'static>(native: &Native) -> bool {
     native.value::<K>().is_none()
 }
 
@@ -22,7 +23,7 @@ fn warn(writer: &str, what: &str) {
 /// `event` for `writer`'s provider, without other formats' native events and
 /// parts; `None` if nothing of it is left.
 // WARN: other formats' native fields are dropped by the writer, silently.
-pub(crate) fn admit<K: Key>(writer: &str, event: &Input) -> Option<Input> {
+pub(crate) fn admit<K: 'static>(writer: &str, event: &Input) -> Option<Input> {
     let mut event = event.clone();
     match &mut event {
         Input::Message { message, .. } => {
@@ -49,7 +50,7 @@ pub(crate) fn admit<K: Key>(writer: &str, event: &Input) -> Option<Input> {
 
 /// `event` for the client of the format of key `K`: `None` for another
 /// format's native event. Another's native fields its writer drops.
-pub(crate) fn strip<K: Key>(event: &Output) -> Option<Output> {
+pub(crate) fn strip<K: 'static>(event: &Output) -> Option<Output> {
     match event {
         Output::Native(native) if foreign::<K>(native) => None,
         _ => Some(event.clone()),

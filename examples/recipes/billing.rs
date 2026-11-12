@@ -38,9 +38,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use mockllm::{Answer, FakeOpenAi};
 use respan_gateway_conversation::{Block, Content, Input, Output, ResponseFormat, Usage};
+use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{
-    ErrorCode, Fault, Gateway, Plugin, Provider, ProviderContext, async_trait, futures,
+    ErrorCode, Fault, Gateway, Native, Plugin, Provider, ProviderContext, async_trait, futures,
 };
 use respan_gateway_http::http::{self, HeaderMap, HeaderValue, StatusCode};
 use respan_gateway_http::http_body_util::BodyExt;
@@ -376,7 +377,7 @@ fn meter(call: &Call, reply: &Output) -> Result<(), Fault> {
             kind: Block::ToolCall { name, .. },
             ..
         } => name.len(),
-        Output::Native(native) => native.len(),
+        Output::Native(native) => native_len(native),
         _ => 0,
     };
     call.chars.fetch_add(chars, Ordering::Relaxed);
@@ -402,7 +403,7 @@ fn refuse(status: StatusCode, code: &'static str, message: String) -> Fault {
 /// and 8 a message for framing. Content with no byte bound, such as an
 /// image, is refused.
 fn input_bound(chat: &Input) -> Result<u64, Fault> {
-    let mut bytes = chat.native.len();
+    let mut bytes = native_len(&chat.native);
     if let Some(ResponseFormat::JsonSchema {
         name,
         description,
@@ -416,12 +417,21 @@ fn input_bound(chat: &Input) -> Result<u64, Fault> {
         bytes += tool.name.len()
             + tool.description.as_deref().map_or(0, str::len)
             + tool.parameters.to_string().len()
-            + tool.native.len();
+            + native_len(&tool.native);
     }
     for message in &chat.messages {
-        bytes += content_bytes(&message.content)? + message.native.len() + 8;
+        bytes += content_bytes(&message.content)? + native_len(&message.native) + 8;
     }
     Ok(bytes as u64)
+}
+
+/// The bytes of what only Chat Completions reads in `native`, as it prints;
+/// another format's this provider never gets.
+fn native_len(native: &Native) -> usize {
+    match OpenAiChat::fields(native) {
+        fields if fields.is_empty() => 0,
+        fields => Value::Object(fields.clone()).to_string().len(),
+    }
 }
 
 fn content_bytes(parts: &[Content]) -> Result<usize, Fault> {

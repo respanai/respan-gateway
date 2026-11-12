@@ -1,8 +1,7 @@
 //! Converse, streamed or whole, as events: the decoder.
 
-use crate::Schema;
 use crate::bedrock::BedrockConverse;
-use crate::schema::{count, ended, unsupported_fields};
+use crate::schema::{Own, count, ended, unsupported_fields};
 use respan_gateway_conversation::{Block, Output, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault};
 use respan_gateway_eventstream::{Message, Parser};

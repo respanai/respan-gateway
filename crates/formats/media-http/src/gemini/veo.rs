@@ -15,7 +15,7 @@ use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::forwarded_path;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
@@ -24,7 +24,7 @@ use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
 
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 /// What starts the id of a job of Veo's.
 const PREFIX: &str = "veo_";
 
@@ -80,7 +80,14 @@ impl GeminiVeo {
     /// The format's name, `gemini-veo`.
     pub const NAME: &'static str = NAME;
 
-    respan_gateway_core::native_doors!(Key);
+    /// Its own fields in `native`: none if it holds another format's.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key>(edit)
+    }
 
     /// The job id of the operation `name`.
     pub fn job_id(name: &str) -> String {

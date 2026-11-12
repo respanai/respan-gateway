@@ -18,4 +18,4 @@ serde = { workspace = true, optional = true }
 
 [features]
 # `Serialize` and `Deserialize` for a conversation's messages, for a host that keeps them.
-serde = ["dep:serde", "respan-gateway-core/serde", "bytes/serde"]
+serde = ["dep:serde", "bytes/serde"]

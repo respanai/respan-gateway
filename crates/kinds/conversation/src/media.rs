@@ -14,6 +14,7 @@ pub struct Media {
     /// Optional display name or filename.
     pub name: Option<String>,
     /// Provider-specific semantic fields, such as image detail or cache hints.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub native: Native,
 }
 

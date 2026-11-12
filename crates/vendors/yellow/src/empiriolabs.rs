@@ -87,16 +87,17 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    let fields = OpenAiImages::fields_mut(&mut input.native);
-    // WARN: EmpirioLabs AI edits take no mask; it is dropped.
-    fields.shift_remove("mask");
-    fields.entry("sync").or_insert(true.into());
-    fields.entry("response_format").or_insert("b64_json".into());
-    if !input.images.is_empty() {
-        let images = input.images.iter().map(|m| Value::from(media_url(m)));
-        fields.insert("image".into(), images.collect::<Vec<_>>().into());
-    }
-    input.images.clear();
+    let images = std::mem::take(&mut input.images);
+    input.native = OpenAiImages::with_fields(&input.native, |fields| {
+        // WARN: EmpirioLabs AI edits take no mask; it is dropped.
+        fields.shift_remove("mask");
+        fields.entry("sync").or_insert(true.into());
+        fields.entry("response_format").or_insert("b64_json".into());
+        if !images.is_empty() {
+            let images = images.iter().map(|m| Value::from(media_url(m)));
+            fields.insert("image".into(), images.collect::<Vec<_>>().into());
+        }
+    });
     Ok(())
 }
 
@@ -376,14 +377,18 @@ mod tests {
         );
 
         let mut urls = image::Input::new("a fox");
-        urls.native = OpenAiImages::native(json!({ "response_format": "url" }));
+        let url = |f: &mut serde_json::Map<String, Value>| {
+            _ = f.insert("response_format".into(), "url".into())
+        };
+        urls.native = OpenAiImages::with_fields(&urls.native, url);
         taken_image(&mut urls).expect("taken");
         let fields = OpenAiImages::fields(&urls.native);
         assert_eq!(fields["response_format"], "url", "a request's own is kept");
 
         let mut masked = edit.clone();
-        let mask = json!({ "mask": { "image_url": "https://x.test/m.png" } });
-        masked.native = OpenAiImages::native(mask);
+        let mask = json!({ "image_url": "https://x.test/m.png" });
+        masked.native =
+            OpenAiImages::with_fields(&masked.native, |f| _ = f.insert("mask".into(), mask));
         taken_image(&mut masked).expect("taken");
         let fields = OpenAiImages::fields(&masked.native);
         assert!(!fields.contains_key("mask"), "a mask is dropped");

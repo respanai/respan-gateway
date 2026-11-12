@@ -17,7 +17,8 @@ is the kind's types alone, depending only on `respan-gateway-core`,
 `serde_json` and `bytes`, for plugins that need no I/O. With the `serde`
 feature a conversation's messages (`Message`, `Role`, `Content`, `Media`)
 are `Serialize` and `Deserialize`, for a host that keeps them, such as a
-shared store of the responses plugin.
+shared store of the responses plugin. Natives are not kept: one is written as
+nothing and read back as none, one kept before as its format's JSON too.
 
 `Usage` is the token counts a provider reports: input, output, and the
 cached, cache-write and reasoning counts that are parts of them. A count
@@ -55,7 +56,7 @@ What the kind has no form for stays as the format that decoded it has it, in a
 format: what has meaning across formats belongs here.
 
 Input values are plain data: they keep nothing of the bytes they were
-decoded from, and compare by what they say. A request is always written
+decoded from, and compare by what they say, a native by which value it is. A request is always written
 again from its value, and a response from its events: a format's promise is
 that a request of its own round-trips.
 

@@ -23,7 +23,7 @@ use crate::session::{self as spec, Spec};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 
 pub(crate) const SPEC: Spec = Spec {
     name: "phonic-sts",

@@ -3,7 +3,7 @@
 //! Mistral's.
 
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{Cause, Output, Session, Usage};
 use serde_json::{Value, json};
 

@@ -3,7 +3,7 @@
 use respan_gateway_conversation::{Block, Delta, Input, Output};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_core::{Filter, Result};
+use respan_gateway_core::{Filter, Native, Result};
 use serde_json::{Map, Value};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor, chat};
@@ -44,9 +44,10 @@ fn write_reasoning(input: &mut Input) -> Result<()> {
     chat::write_reasoning(input)?;
     for message in &mut input.messages {
         if OpenAiChat::fields(&message.native).contains_key("reasoning_content") {
-            let fields = OpenAiChat::fields_mut(&mut message.native);
-            let text = fields.shift_remove("reasoning_content");
-            fields.extend(text.map(|text| ("reasoning".into(), text)));
+            message.native = OpenAiChat::with_fields(&message.native, |fields| {
+                let text = fields.shift_remove("reasoning_content");
+                fields.extend(text.map(|text| ("reasoning".into(), text)));
+            });
         }
     }
     Ok(())
@@ -117,14 +118,14 @@ impl Filter<Output> for Reasoning {
 /// `output` with `edit` made to its first choice, if it is a native of
 /// Chat Completions that has one; `None` once nothing is left of it.
 fn first_choice(output: Output, edit: impl FnOnce(&mut Map<String, Value>)) -> Option<Output> {
-    let mut value = match &output {
-        Output::Native(native) => match OpenAiChat::value(native) {
-            Some(value) if value["choices"].is_array() => value.clone(),
+    let mut fields = match &output {
+        Output::Native(native) => match OpenAiChat::fields(native) {
+            fields if fields.get("choices").is_some_and(Value::is_array) => fields.clone(),
             _ => return Some(output),
         },
         _ => return Some(output),
     };
-    let choices = value["choices"].as_array_mut()?;
+    let choices = fields.get_mut("choices").and_then(Value::as_array_mut)?;
     let first = choices
         .iter_mut()
         .find(|c| c["index"].as_u64().unwrap_or(0) == 0);
@@ -139,10 +140,15 @@ fn first_choice(output: Output, edit: impl FnOnce(&mut Map<String, Value>)) -> O
         }
     }
     choices.retain(|c| c.as_object().is_none_or(|c| c.keys().any(|k| k != "index")));
-    if choices.is_empty() && value.as_object().is_some_and(|o| o.len() == 1) {
+    if choices.is_empty() && fields.len() == 1 {
         return None;
     }
-    Some(Output::Native(OpenAiChat::native(value)))
+    Some(Output::Native(chat_native(fields)))
+}
+
+/// `fields` as Chat Completions' own.
+fn chat_native(fields: Map<String, Value>) -> Native {
+    OpenAiChat::with_fields(&Native::default(), |f| *f = fields)
 }
 
 #[cfg(test)]
@@ -159,7 +165,12 @@ mod tests {
         let mut out = Vec::new();
         let delta = json!({ "choices": [{ "index": 0, "delta": { "reasoning": "hm" } }] });
         reasoning
-            .edit(Output::Native(OpenAiChat::native(delta)), &mut out)
+            .edit(
+                Output::Native(chat_native(
+                    serde_json::from_value(delta).expect("an object"),
+                )),
+                &mut out,
+            )
             .expect("read");
         reasoning
             .edit(
@@ -181,7 +192,8 @@ mod tests {
             ]
         );
         // Responses' fields on its items do not keep their reasoning back.
-        let responses = OpenAiResponses::native(json!({ "id": "rs_1" }));
+        let id = |f: &mut Map<String, Value>| _ = f.insert("id".into(), "rs_1".into());
+        let responses = OpenAiResponses::with_fields(&Native::default(), id);
         let mut message = Message::new(Role::Assistant, "ok");
         message.native = responses.clone();
         let reasoning = Content::Reasoning {

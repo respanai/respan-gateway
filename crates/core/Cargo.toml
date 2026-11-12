@@ -16,12 +16,6 @@ async-trait.workspace = true
 futures.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync"] }
-serde = { workspace = true, features = ["rc"], optional = true }
-
-[features]
-# `Serialize` and `Deserialize` for the native carriers, for a host that keeps them.
-serde = ["dep:serde"]
-
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

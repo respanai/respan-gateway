@@ -1,8 +1,7 @@
 //! Gemini generateContent, streamed or whole, as events: the decoder.
 
-use crate::Schema;
 use crate::gemini::GeminiGenerate;
-use crate::schema::{Totals, error_event, remainder, says, says_error, unreadable_event};
+use crate::schema::{Own, Totals, error_event, remainder, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;

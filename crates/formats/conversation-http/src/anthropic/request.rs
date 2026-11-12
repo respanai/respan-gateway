@@ -3,12 +3,12 @@
 //! the kind has no form for, such as a tool the provider runs, stays in the
 //! `native` of the request, the tool or the part.
 
-use crate::Schema;
 use crate::schema::{
     EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
     encode_content, merge_missing, only, read_search, remainder, rest_of, set, take_native,
     untranslatable, write_search,
 };
+use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,

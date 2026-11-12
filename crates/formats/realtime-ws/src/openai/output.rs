@@ -1,6 +1,7 @@
 //! What the model says: OpenAI Realtime's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
+use respan_gateway_http::native::Json;
 use std::collections::HashMap;
 
 use respan_gateway_core::{Fault, Native};
@@ -105,8 +106,10 @@ impl Provider {
             // A response's start is OpenAI's even if it says nothing more:
             // its items are the provider's.
             "response.created" => {
-                let mut native = Native::default();
-                native.fields_mut::<Key>().extend(rest.as_object()?.clone());
+                let native = match rest.as_object()? {
+                    rest if rest.is_empty() => Native::own::<Key>(),
+                    rest => Native::json::<Key>(rest.clone()),
+                };
                 Output::ResponseStart { native }
             }
             "response.output_audio.delta" => Output::Audio {

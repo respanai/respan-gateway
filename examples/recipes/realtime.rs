@@ -311,15 +311,16 @@ impl Filter<Output> for Answers {
 /// OpenAI's `max_output_tokens` of its `object` (a session or a response) in
 /// `native`, at most `TURN`.
 fn cap(native: &mut Native, object: &str) {
-    let fields = OpenAiRealtime::fields_mut(native);
-    let object = fields.entry(object).or_insert_with(|| json!({}));
-    if !object.is_object() {
-        *object = json!({});
-    }
-    let cap = &mut object["max_output_tokens"];
-    if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
-        *cap = TURN.into();
-    }
+    *native = OpenAiRealtime::with_fields(native, |fields| {
+        let object = fields.entry(object).or_insert_with(|| json!({}));
+        if !object.is_object() {
+            *object = json!({});
+        }
+        let cap = &mut object["max_output_tokens"];
+        if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
+            *cap = TURN.into();
+        }
+    });
 }
 
 /// A response's end as the log names it.
@@ -328,9 +329,6 @@ fn finish(status: &Status) -> &str {
         Status::Completed => "completed",
         Status::Cancelled | Status::Interrupted => "cancelled",
         Status::Filtered => "incomplete",
-        Status::Native { native, .. } => OpenAiRealtime::value(native)
-            .and_then(Value::as_str)
-            .unwrap_or("failed"),
         _ => "failed",
     }
 }
@@ -348,7 +346,10 @@ fn text_tokens(text: &str) -> i64 {
 
 /// A bound on the tokens of an OpenAI Realtime event or part: its JSON's.
 fn native_tokens(native: &Native) -> i64 {
-    OpenAiRealtime::value(native).map_or(0, |v| text_tokens(&v.to_string()))
+    match OpenAiRealtime::fields(native) {
+        fields if fields.is_empty() => 0,
+        fields => text_tokens(&Value::Object(fields.clone()).to_string()),
+    }
 }
 
 /// What an input adds to the context.

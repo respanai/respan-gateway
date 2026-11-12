@@ -1,6 +1,7 @@
 //! A GA session object as the kind's [`Session`], both ways.
 
 use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{
     AudioFormat, Encoding, Modality, Purpose, Session, Tool, Turns, Vad,
 };

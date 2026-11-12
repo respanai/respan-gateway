@@ -2,13 +2,14 @@
 //! questions and their answers as ordered lists.
 
 use super::*;
+use respan_gateway_http::native::Json;
 use std::borrow::Cow;
 
 const OPENAI: &str = "openai-decisions";
 /// The most questions a request asks.
 const MAX_QUESTIONS: usize = 400;
 
-respan_gateway_core::native_key!(Key = OPENAI);
+enum Key {}
 
 /// OpenAI's decisions contract, as Azure OpenAI serves it: a client's
 /// `POST` to its path (`/v1/decisions` unless [`OpenAiDecisions::serving`]
@@ -39,7 +40,14 @@ impl Default for OpenAiDecisions {
 }
 
 impl OpenAiDecisions {
-    respan_gateway_core::native_doors!(Key);
+    /// Its own fields in `native`: none if it holds another format's.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key>(edit)
+    }
 
     /// Its clients served at `/v1/decisions`.
     pub const DEFAULT: Self = Self {

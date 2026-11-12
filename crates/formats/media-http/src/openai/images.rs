@@ -17,14 +17,14 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-images";
 
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 const GENERATIONS: &str = "/images/generations";
 const EDITS: &str = "/images/edits";
 
@@ -58,7 +58,14 @@ impl OpenAiImages {
     /// The format's name, `openai-images`.
     pub const NAME: &'static str = NAME;
 
-    respan_gateway_core::native_doors!(Key);
+    /// Its own fields in `native`: none if it holds another format's.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key>(edit)
+    }
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiImages {

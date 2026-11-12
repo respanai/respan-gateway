@@ -1,6 +1,7 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
 use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, Turns, Vad};
 use serde_json::{Map, Value, json};
 

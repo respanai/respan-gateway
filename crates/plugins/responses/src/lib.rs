@@ -176,7 +176,9 @@ impl Plugin for Responses {
                 let Some(before) = before.clone() else {
                     return Ok(());
                 };
-                OpenAiResponses::fields_mut(&mut input.native).shift_remove("previous_response_id");
+                input.native = OpenAiResponses::with_fields(&input.native, |f| {
+                    f.shift_remove("previous_response_id");
+                });
                 let at = instructions(&pending, input);
                 let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(at..at, before);
@@ -185,12 +187,12 @@ impl Plugin for Responses {
         }
         px.filter(move |input: &mut Input| {
             let kept = keeps(&input.native);
-            let parent = match OpenAiResponses::value(&input.native) {
-                Some(_) => OpenAiResponses::fields_mut(&mut input.native)
-                    .shift_remove("previous_response_id")
-                    .and_then(|p| p.as_str().map(str::to_owned)),
-                None => None,
-            };
+            let parent = previous_response_id(input);
+            if OpenAiResponses::fields(&input.native).contains_key("previous_response_id") {
+                input.native = OpenAiResponses::with_fields(&input.native, |f| {
+                    f.shift_remove("previous_response_id");
+                });
+            }
             let instructions = instructions(&pending, input);
             let added = input.messages[instructions..].to_vec();
             if let Some(id) = &parent {

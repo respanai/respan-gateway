@@ -1,6 +1,6 @@
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{Encoder, native::Json};
 use respan_gateway_realtime::{
     Audio, AudioFormat, Cause, Input, Output, Purpose, Session, Turns, Vad,
 };
@@ -219,6 +219,7 @@ fn deltas_and_the_end_are_the_users_transcript() {
         native.value::<Key>(),
         Some(&json!({"model": "voxtral", "language": "en", "usage": {"prompt_audio_seconds": 2}}))
     );
+    assert_eq!(super::MistralRealtime::heard_seconds(native), Some(2.0));
 }
 
 #[test]
@@ -261,8 +262,8 @@ fn what_the_kind_has_no_form_for_stays_native() {
         segment.clone(),
         json!({"type": "unheard"}),
     ]);
-    assert_eq!(events[0], Output::Native(Native::json::<Key>(language)));
-    assert_eq!(events[1], Output::Native(Native::json::<Key>(segment)));
+    assert!(matches!(&events[0], Output::Native(n) if n.value::<Key>() == Some(&language)));
+    assert!(matches!(&events[1], Output::Native(n) if n.value::<Key>() == Some(&segment)));
     assert!(matches!(events[2], Output::Native(_)));
 }
 

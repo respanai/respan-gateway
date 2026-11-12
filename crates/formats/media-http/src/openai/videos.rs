@@ -17,14 +17,14 @@ use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::{escape, forwarded_path};
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-videos";
 
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 
 /// OpenAI Videos, as OpenAI or a compatible vendor serves it: a request to
 /// a path ending in `/videos`, `/videos/{id}`, `/videos/{id}/content` or
@@ -44,7 +44,14 @@ impl OpenAiVideos {
     /// The format's name, `openai-videos`.
     pub const NAME: &'static str = NAME;
 
-    respan_gateway_core::native_doors!(Key);
+    /// Its own fields in `native`: none if it holds another format's.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key>(edit)
+    }
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiVideos {

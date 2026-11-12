@@ -1,9 +1,8 @@
 //! Anthropic Messages, streamed or whole, as events: the decoder.
 
-use crate::Schema;
 use crate::anthropic::AnthropicMessages;
 use crate::schema::{
-    Totals, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
+    Own, Totals, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Output, Start};
 use respan_gateway_core::Fault;

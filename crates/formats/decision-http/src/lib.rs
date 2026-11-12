@@ -26,7 +26,7 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{self, Method, response::Parts as ResponseHead};
 use respan_gateway_http::path::{path_ends_with, set_path};
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 
@@ -41,7 +41,7 @@ const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
 const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
-respan_gateway_core::native_key!(Key = NAME);
+enum Key {}
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -53,7 +53,14 @@ impl Decisions {
     /// The format's name, `decisions`.
     pub const NAME: &'static str = NAME;
 
-    respan_gateway_core::native_doors!(Key);
+    /// Its own fields in `native`: none if it holds another format's.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key>(edit)
+    }
 }
 
 impl Format<ClientIo, Input, Output> for Decisions {
@@ -253,7 +260,7 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     for (id, a) in answers {
         match decode_answer(id, a) {
             Some(answer) => out.push(Output::Answer(answer)),
-            None => out.push(Output::Native(Decisions::native(
+            None => out.push(Output::Native(Native::json::<Key>(
                 json!({ "answers": { id: a } }),
             ))),
         }
@@ -271,7 +278,7 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         )));
         let extras = rest_of(&v["usage"], &["input_tokens", "output_tokens"]);
         if !extras.is_empty() {
-            out.push(Output::Native(Decisions::native(
+            out.push(Output::Native(Native::json::<Key>(
                 json!({ "usage": extras }),
             )));
         }

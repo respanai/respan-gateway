@@ -59,9 +59,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Schema, UsageFields, check_usage, count, decode_message, merge_details,
-    merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json, take_native,
-    take_text, tidy, unix_now, unsupported_fields, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, edit_native,
+    merge_details, merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json,
+    take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -282,7 +282,7 @@ impl Schema for OpenAiChat {
         chat.user = v["user"].as_str().map(Into::into);
         chat.native = OpenAiChat::native(unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
-            OpenAiChat::fields_mut(&mut chat.native).shift_remove("user");
+            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
         }
         chat.options.service_tier = take_text::<OpenAiChat>(&mut chat, "service_tier");
         for m in v["messages"].as_array().into_iter().flatten() {
@@ -292,7 +292,6 @@ impl Schema for OpenAiChat {
             chat.messages.push(message);
         }
         read_openai_tools(v, &mut chat);
-        chat.native = OpenAiChat::native(std::mem::take(OpenAiChat::fields_mut(&mut chat.native)));
         read_response_format(v, &mut chat);
         chat.options.reasoning =
             take_native::<OpenAiChat, _>(&mut chat.native, "reasoning_effort", |e| {

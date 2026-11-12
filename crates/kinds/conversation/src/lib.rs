@@ -25,8 +25,9 @@
 //! format reads it, and another drops it: what has meaning across formats
 //! belongs here.
 //!
-//! Values are plain data: they say what they hold and compare by it. They
-//! keep nothing of the bytes they were decoded from.
+//! Values are plain data: they say what they hold and compare by it, a
+//! native by which value it is. They keep nothing of the bytes they were
+//! decoded from.
 //!
 //! Direction is gateway-wide: [`Input`] travels from client to provider;
 //! [`Output`] travels from provider to client, on either transport edge.
@@ -43,6 +44,21 @@ use respan_gateway_core::Native;
 
 mod media;
 mod usage;
+/// How a native is kept: as nothing, and read back as none.
+// WARN: natives are not kept: one kept before reads back as none.
+#[cfg(feature = "serde")]
+mod dropped {
+    use respan_gateway_core::Native;
+    use serde::{Deserialize, Deserializer, Serializer, de::IgnoredAny};
+
+    pub(crate) fn serialize<S: Serializer>(_: &Native, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_unit()
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Native, D::Error> {
+        IgnoredAny::deserialize(d).map(|_| Native::default())
+    }
+}
 pub use media::{Media, MediaSource};
 pub use usage::Usage;
 
@@ -214,6 +230,7 @@ pub struct Message {
     /// What it says, part by part.
     pub content: Vec<Content>,
     /// The message's fields the kind has no place for, such as a name.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub native: Native,
 }
 
@@ -268,6 +285,7 @@ pub enum Role {
     Assistant,
     /// A role the kind has no form for, as its format names it; only a call
     /// in that format can send it.
+    #[cfg_attr(feature = "serde", serde(with = "dropped"))]
     Native(Native),
 }
 
@@ -284,6 +302,7 @@ pub enum Content {
         text: String,
         /// The part's fields the kind has no place for, such as a cache
         /// marker.
+        #[cfg_attr(feature = "serde", serde(skip))]
         native: Native,
     },
     /// Reasoning retained in conversation history.
@@ -291,6 +310,7 @@ pub enum Content {
         /// Reasoning text.
         text: String,
         /// The part's fields the kind has no place for.
+        #[cfg_attr(feature = "serde", serde(skip))]
         native: Native,
     },
     /// A provider's opaque signature over the part right before it, carried
@@ -320,6 +340,7 @@ pub enum Content {
         /// Its arguments, as JSON text.
         arguments: String,
         /// The part's fields the kind has no place for.
+        #[cfg_attr(feature = "serde", serde(skip))]
         native: Native,
     },
     /// What a tool answered a call.
@@ -332,10 +353,12 @@ pub enum Content {
         /// Whether the call failed.
         is_error: bool,
         /// The part's fields the kind has no place for.
+        #[cfg_attr(feature = "serde", serde(skip))]
         native: Native,
     },
     /// A part the kind has no form for, such as a provider-run tool's
     /// block, as its format has it; only a call in that format can send it.
+    #[cfg_attr(feature = "serde", serde(with = "dropped"))]
     Native(Native),
 }
 
@@ -937,7 +960,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn a_message_is_read_back_as_it_was_kept() {
-        let native = Native::json::<()>(json!({"cache": "x"}));
+        let native = Native::new(json!({"cache": "x"}));
         let mut message = Message::new(Role::User, "hi");
         message.content.extend([
             Content::Reasoning {
@@ -961,11 +984,24 @@ mod tests {
         if let Content::Reasoning { native: n, .. } = &mut natives.content[1] {
             *n = native;
         }
-        // A native is kept with its format's name, and read back as it was.
+        natives.content.push(Content::Native(Native::new(1)));
+        message.content.push(Content::Native(Native::default()));
+        // A native is not kept: it reads back as none.
         let kept = serde_json::to_vec(&natives).expect("kept");
         let back = serde_json::from_slice::<Message>(&kept).expect("read back");
-        assert_eq!(back, natives);
-        assert_ne!(back, message);
+        assert_eq!(back, message);
+        // One kept as a format's JSON before reads back as none.
+        let old = json!({"format": "openai", "value": {"cache": "x"}});
+        let mut kept = serde_json::to_value(&message).expect("kept");
+        kept["native"] = old.clone();
+        kept["content"][1]["Reasoning"]["native"] = old.clone();
+        kept["content"][7]["Native"] = old;
+        kept["role"] = json!({"Native": {"format": "openai", "name": "critic"}});
+        let back = serde_json::from_value::<Message>(kept).expect("read back");
+        assert_eq!(
+            (back.role, back.content),
+            (Role::Native(Native::default()), message.content)
+        );
     }
 
     #[test]
@@ -973,45 +1009,43 @@ mod tests {
         let a = Message::new(Role::User, "hi");
         let mut b = a.clone();
         assert_eq!(a, b);
-        b.native = Native::json::<()>(json!({"name": "x"}));
+        b.native = Native::new(json!({"name": "x"}));
         assert_ne!(a, b);
         assert!(a.is_plain() && !b.is_plain());
-        let tagged = Message::new(Role::Native(Native::json::<()>("tool")), "x");
+        let tagged = Message::new(Role::Native(Native::new("tool")), "x");
         assert!(!tagged.is_plain());
     }
 
     #[test]
     fn parts_roles_and_finishes_carry_their_format_and_extra() {
-        respan_gateway_core::native_key!(Other = "other");
+        struct Other;
         let mut cached = Message::new(Role::User, "hi");
         if let Content::Text { native, .. } = &mut cached.content[0] {
-            *native = Native::json::<()>(json!({"cache_control": 1}));
+            *native = Native::new(json!({"cache_control": 1}));
         }
         // A part's native does not change what it says.
         assert!(cached.is_plain());
         assert_ne!(cached, Message::new(Role::User, "hi"));
-        let role = |native| Role::Native(native);
-        let critic = || Native::json::<()>("critic");
-        assert_eq!(role(critic()), role(critic()));
-        assert_ne!(role(critic()), role(Native::json::<Other>("critic")));
+        // A native is the one value it holds, readable only as its type.
+        let critic = Native::new("critic");
+        assert_eq!(Role::Native(critic.clone()), Role::Native(critic.clone()));
         assert_ne!(
-            Finish::native(Native::json::<()>("x"), None),
-            Finish::native(Native::json::<Other>("x"), None)
+            Role::Native(critic.clone()),
+            Role::Native(Native::new("critic"))
         );
-        // Only the format a native is of reads it; another's it replaces.
-        let mut native = critic();
-        assert_eq!(native.value::<Other>(), None);
-        assert!(native.fields::<Other>().is_empty());
-        native.fields_mut::<Other>().insert("a".into(), 1.into());
-        assert_eq!(native.value::<()>(), None);
-        assert_eq!(native.value::<Other>(), Some(&json!({"a": 1})));
-        assert!(Native::json::<Other>(json!({})).is_empty());
+        assert_ne!(
+            Finish::native(Native::new("x"), None),
+            Finish::native(Native::new(Other), None)
+        );
+        assert_eq!(critic.get::<&str>(), Some(&"critic"));
+        assert!(critic.get::<Other>().is_none());
+        assert!(Native::new(Other).get::<&str>().is_none());
     }
 
     #[test]
     fn events_fold_into_the_whole_answer() {
         let usage = Usage::new(3, 0);
-        let fields = Native::json::<()>(json!({"index": 0}));
+        let fields = Native::new(json!({"index": 0}));
         let all = fold(&[
             Output::start("r1", "m"),
             Output::block_start(0, Block::Reasoning),
@@ -1035,7 +1069,7 @@ mod tests {
             Output::arguments(2, "1}"),
             Output::signature(Some(2), "call"),
             Output::block_end(2),
-            Output::Native(Native::json::<()>(json!({"type": "ping"}))),
+            Output::Native(Native::new(json!({"type": "ping"}))),
             Output::usage(usage),
             Output::usage(usage),
             Output::finished(Finish::ToolUse),
@@ -1081,7 +1115,7 @@ mod tests {
         assert_eq!(all.finish, Some(Finish::ToolUse));
         assert_eq!(all.usage.input_tokens, 6);
         assert!(matches!(all.items().last(), Some(AssembledItem::Native(n))
-            if n.value::<()>() == Some(&json!({"type": "ping"}))));
+            if n.get::<Value>() == Some(&json!({"type": "ping"}))));
     }
 
     #[test]
@@ -1115,7 +1149,7 @@ mod tests {
         let mut all = fold(&[
             Output::block_start(9, Block::Reasoning),
             Output::reasoning(9, "think"),
-            Output::Native(Native::json::<()>(signature.clone())),
+            Output::Native(Native::new(signature.clone())),
             Output::block_start(2, Block::Text),
             Output::text(2, "ans"),
             Output::reasoning(9, "ing"),
@@ -1126,7 +1160,7 @@ mod tests {
         assert!(matches!(&all.items()[0], AssembledItem::Block(p)
             if p.block == 9 && p.kind == Block::Reasoning && p.text == "thinking"));
         assert!(matches!(&all.items()[1], AssembledItem::Native(n)
-            if n.value::<()>() == Some(&signature)));
+            if n.get::<Value>() == Some(&signature)));
         assert!(matches!(&all.items()[2], AssembledItem::Block(p)
             if p.block == 2 && p.kind == Block::Text && p.text == "answer"));
         assert_eq!(all.text(), "answer");
@@ -1169,6 +1203,6 @@ mod tests {
         assert!(Output::text(0, "x").is_content());
         assert!(Output::finished(Finish::Stop).is_content());
         assert!(!Output::usage(Usage::default()).is_content());
-        assert!(!Output::Native(Native::json::<()>(1)).is_content());
+        assert!(!Output::Native(Native::new(1)).is_content());
     }
 }

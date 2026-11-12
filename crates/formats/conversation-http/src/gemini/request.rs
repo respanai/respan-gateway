@@ -17,8 +17,8 @@ use serde_json::{Map, Value, json};
 
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    arguments_object, effort_name, merge_fields, merge_missing, parse_effort, remainder, sealed,
-    set, untranslatable, write_search,
+    Own, arguments_object, edit_native, effort_name, merge_fields, merge_missing, parse_effort,
+    remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -553,7 +553,8 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
         chat.tools = tools;
         chat.provider_tools = provided;
     } else if says(&v["tools"]) {
-        GeminiGenerate::fields_mut(&mut chat.native).insert("tools".into(), v["tools"].clone());
+        let tools = v["tools"].clone();
+        edit_native::<GeminiGenerate, _>(&mut chat.native, |f| f.insert("tools".into(), tools));
     }
     let config = &v["toolConfig"];
     if !config.is_object() || config.as_object().is_some_and(Map::is_empty) {
@@ -571,7 +572,9 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
         }
     }
     if !rest.is_empty() {
-        GeminiGenerate::fields_mut(&mut chat.native).insert("toolConfig".into(), rest.into());
+        edit_native::<GeminiGenerate, _>(&mut chat.native, |f| {
+            f.insert("toolConfig".into(), rest.into())
+        });
     }
 }
 
@@ -689,7 +692,10 @@ pub(super) fn read_config(v: &Value, chat: &mut Input) {
     chat.options.response_format = read_format(&mut rest);
     rest.retain(|_, v| says(v) || v.is_boolean() || v.is_number());
     if !rest.is_empty() {
-        GeminiGenerate::fields_mut(&mut chat.native).insert("generationConfig".into(), rest.into());
+        let config = rest.into();
+        edit_native::<GeminiGenerate, _>(&mut chat.native, |f| {
+            f.insert("generationConfig".into(), config)
+        });
     }
 }
 

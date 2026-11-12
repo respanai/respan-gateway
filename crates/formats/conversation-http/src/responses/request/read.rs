@@ -4,7 +4,7 @@ use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
-use crate::schema::{only, remainder, says, source_url};
+use crate::schema::{Own, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use serde_json::{Map, Value, json};
 

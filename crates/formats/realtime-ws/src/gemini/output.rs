@@ -7,6 +7,7 @@
 //! would be written as several, such as a turn of two parts, reaches its
 //! client as several, each saying its part.
 
+use respan_gateway_http::native::Json;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_core::{Fault, Native};
@@ -78,8 +79,7 @@ impl Provider {
         let mut said = Vec::new();
         if self.decode(&mut shared.lock(), &mut v, &mut events) {
             // Its own, as its client's writer tells a response of another's.
-            let mut native = Native::default();
-            native.fields_mut::<Key>();
+            let native = Native::own::<Key>();
             said.push(Output::ResponseStart { native });
         }
         said.extend(used.map(Output::Usage));
@@ -302,12 +302,9 @@ fn keep(event: &mut Output, rest: Option<&Map<String, Value>>) {
         | Output::Error { native, .. } => native,
         _ => return,
     };
-    let fields = native.fields_mut::<Key>();
-    let mut all = Value::Object(std::mem::take(fields));
+    let mut all = Value::Object(native.fields::<Key>().clone());
     merge(&mut all, rest);
-    if let Value::Object(all) = all {
-        *fields = all;
-    }
+    *native = Native::json::<Key>(all);
 }
 
 /// A part of the model's turn: its text, or its audio as PCM at the rate

@@ -2,7 +2,7 @@
 //! [`Input`], read at the client's edge and written at the provider's.
 
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
