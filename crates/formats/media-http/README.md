@@ -166,9 +166,9 @@ generation, as a provider only, its key a bearer token. Its job ids start
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.
 
-- Cohere Embed (`cohere.embed-*`) embeds every text in one call, as the
-  client's `input_type` (an `openai-embeddings` field) says, else
-  `search_document`; v4 takes `dimensions` as `output_dimension`.
+- Cohere Embed (`cohere.embed-*`) embeds every text in one call as a
+  `search_document`: a client's `input_type` is another format's native
+  field, so it is dropped; v4 takes `dimensions` as `output_dimension`.
 - Titan Text (`amazon.titan-embed-text-*`) and Titan Multimodal's texts
   (`amazon.titan-embed-image-v1`) embed one text per call, so a request of
   several is refused, 400; v2 and Multimodal take `dimensions`.

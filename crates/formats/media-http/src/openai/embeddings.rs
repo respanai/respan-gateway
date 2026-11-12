@@ -6,8 +6,7 @@ use super::{
     unb64, unreadable, whole_json,
 };
 use respan_gateway_conversation::Usage;
-use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format, NativeValue, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
@@ -105,7 +104,7 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
             .map(|text| Item::Text(text.to_owned()))
             .collect(),
         Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object) => {
-            vec![Item::Parts(all.clone())]
+            vec![Item::Native(NativeValue::new(NAME, v.clone()))]
         }
         Value::Array(all) if all.iter().all(Value::is_array) => all
             .iter()
@@ -145,7 +144,8 @@ fn items_json(items: &[Item]) -> Result<Value, Fault> {
     let item = |item: &Item| match item {
         Item::Text(text) => Value::from(text.clone()),
         Item::Tokens(ids) => Value::from(ids.clone()),
-        Item::Parts(parts) => Value::from(parts.clone()),
+        Item::Native(n) if &*n.format == NAME => (*n.value).clone(),
+        // WARN: another format's item has no form here; it is sent as null.
         _ => Value::Null,
     };
     if let [only] = items {
@@ -302,6 +302,8 @@ mod tests {
     fn every_form_of_input_is_read_and_written_back() {
         let tokens = |ids: &[u32]| Item::Tokens(ids.to_vec());
         let text = |t: &str| Item::Text(t.to_owned());
+        let parts = json!([{"type": "image", "url": "u"}]);
+        let native = Item::Native(NativeValue::new(NAME, parts.clone()));
         let cases = [
             (json!("a"), vec![text("a")], json!("a")),
             (json!(["a"]), vec![text("a")], json!("a")),
@@ -316,6 +318,7 @@ mod tests {
                 vec![tokens(&[1]), tokens(&[2, 3])],
                 json!([[1], [2, 3]]),
             ),
+            (parts.clone(), vec![native], parts),
         ];
         for (asked, read, written) in cases {
             let read_back = items(asked.clone()).expect("items");
