@@ -558,13 +558,7 @@ mod tests {
             let foreign = Question::new("q", ask);
             let input = Input::new(json!("s"), vec![foreign.clone()]);
             assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
-            let kept = Question::new(
-                "p",
-                Ask::Noul {
-                    yes: None,
-                    no: None,
-                },
-            );
+            let kept = Question::new("p", Ask::Noul);
             let input = Input::new(json!("s"), vec![foreign, kept]);
             let sent = encode_request(&input).expect("call");
             assert_eq!(
