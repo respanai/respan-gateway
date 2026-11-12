@@ -45,6 +45,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - A video's `seconds` is a string in OpenAI's API, as it is written; a
   client may send a number. Its `/videos/{id}` never takes
   `/videos/{id}/content` or `/remix`; an id is escaped in a call's path.
+  A remix, a deletion, a page of jobs and a still (`?variant=thumbnail` or
+  `spritesheet`) are the format's own operations, relayed as they came, the
+  answer too, to an `openai-videos` provider only.
 - Usage `{"type": "tokens"}` is `Usage`, `{"type": "duration"}` `Seconds`; a
   usage object's other fields, such as `input_token_details`, stay native.
 - A stream that ends before its end event fails `truncated`.
@@ -126,8 +129,8 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   may redirect it to storage: the transport follows only if told to
   (`HttpTransport::follow_redirects`, which says which locations), else the
   answer is a 502. A redirect to another origin leaves the key behind.
-- Veo cannot remix, delete or list videos, nor make a thumbnail or
-  spritesheet: those are refused, 400 `unsupported`, before any call.
+- Another format's operation, such as OpenAI's remix, delete, list or
+  thumbnail, is refused, 400 `unsupported`, before any call.
 - What Veo answers beyond the kind is dropped rather than kept native.
 - A client of it, served by any provider of the kind: it creates with
   `POST .../models/{model}:predictLongRunning` (one instance; its prompt,
@@ -162,8 +165,8 @@ generation, as a provider only, its key a bearer token. Its job ids start
   content of a job not finished, as for a job it never made, so
   `video::LocateContent` retrieves the job first and refuses one not
   finished, 400 `video_not_ready`.
-- It cannot remix, delete or list videos, nor make a thumbnail or a
-  spritesheet: those are refused, 400 `unsupported`, before any call.
+- Another format's operation, such as OpenAI's remix, delete, list or
+  thumbnail, is refused, 400 `unsupported`, before any call.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider

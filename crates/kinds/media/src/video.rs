@@ -2,16 +2,16 @@
 //! downloaded.
 //!
 //! Each request is one operation on a job ([`Input`]); a response is a
-//! sequence of events: a [`Output::Job`] for one job's state, a
-//! [`Output::Jobs`] for a page of them, the content's bytes in
-//! [`Output::Content`] chunks, or [`Output::Deleted`], with
-//! [`Output::Native`] among them.
+//! sequence of events: a [`Output::Job`] for one job's state, or the
+//! content's bytes in [`Output::Content`] chunks, with [`Output::Native`]
+//! among them.
 //!
 //! A job's id is the provider's, opaque, as a client gives it back: a
-//! follow-up (`Retrieve`, `Content`, `Remix`, `Delete`) has to reach the
-//! provider that made the job, which the id alone says only by its spelling
-//! ([`Input::job_id`]). Some providers serve a finished job's content only at
-//! the URLs it names ([`Job::videos`]); [`LocateContent`] finds them first.
+//! follow-up (`Retrieve`, `Content`, or a format's own operation on a job)
+//! has to reach the provider that made the job, which the id alone says
+//! only by its spelling ([`Input::job_id`]). Some providers serve a finished
+//! job's content only at the URLs it names ([`Job::videos`]);
+//! [`LocateContent`] finds them first.
 //! [`VideoJobs`] sends a follow-up to its job's provider.
 
 use bytes::Bytes;
@@ -26,47 +26,33 @@ use serde_json::Value;
 /// The kind's input: one operation on a video job.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
+// A request is one operation: its size costs nothing.
+#[allow(clippy::large_enum_variant)]
 pub enum Input {
     /// Start a job making a video.
     Create(Create),
-    /// Start a job remaking the finished video `id` as `prompt` says.
-    Remix {
-        /// The video to remake.
-        id: String,
-        /// What to change.
-        prompt: String,
-        /// The request's fields the kind has no place for.
-        native: Option<NativeFields>,
-    },
     /// A job's state.
     Retrieve {
         /// The job.
         id: String,
     },
-    /// A finished job's content.
+    /// A finished job's video.
     Content {
         /// The job.
         id: String,
-        /// Which of its content.
-        variant: Variant,
         /// Where the provider serves it, if the job named it
         /// ([`Job::videos`]); a provider that serves content only there
         /// needs it.
         url: Option<String>,
     },
-    /// Delete a job and its content.
-    Delete {
-        /// The job.
-        id: String,
-    },
-    /// A page of jobs, newest first unless `order` says otherwise.
-    List {
-        /// The id of the job the page starts after.
-        after: Option<String>,
-        /// How many jobs, at most.
-        limit: Option<u32>,
-        /// `asc` or `desc`, by when they were made.
-        order: Option<String>,
+    /// An operation the kind has no form for, as its format has it, such
+    /// as OpenAI's remix, delete, list or thumbnail: only a provider of that
+    /// format can make it.
+    Native {
+        /// The job it is on, or a page starts after, if any.
+        id: Option<String>,
+        /// The operation.
+        native: NativeValue,
     },
 }
 
@@ -87,14 +73,13 @@ impl Input {
         }
     }
 
-    /// The job an operation is on: `None` for `Create` and `List`.
+    /// The job an operation follows: the one it is on, or the one a page
+    /// starts after; `None` for `Create`.
     pub fn job_id(&self) -> Option<&str> {
         match self {
-            Input::Remix { id, .. }
-            | Input::Retrieve { id }
-            | Input::Content { id, .. }
-            | Input::Delete { id } => Some(id),
-            Input::Create(_) | Input::List { .. } => None,
+            Input::Retrieve { id } | Input::Content { id, .. } => Some(id),
+            Input::Native { id, .. } => id.as_deref(),
+            Input::Create(_) => None,
         }
     }
 }
@@ -127,19 +112,6 @@ impl Create {
     }
 }
 
-/// Which of a finished job's content.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Variant {
-    /// The video.
-    #[default]
-    Video,
-    /// A still of it.
-    Thumbnail,
-    /// Stills of it in one image.
-    Spritesheet,
-}
-
 /// The kind's output: one event of a response.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
@@ -148,12 +120,8 @@ pub enum Variant {
 pub enum Output {
     /// A job's state.
     Job(Job),
-    /// A page of jobs.
-    Jobs(Jobs),
     /// The next bytes of the content.
     Content(Bytes),
-    /// The job deleted.
-    Deleted(String),
     /// An event the kind has no form for, as `format` has it. Sent only in
     /// that format.
     Native(NativeValue),
@@ -274,29 +242,6 @@ impl JobError {
     }
 }
 
-/// A page of jobs.
-#[derive(Debug, Clone, Default, PartialEq)]
-#[non_exhaustive]
-pub struct Jobs {
-    /// The jobs, in the order asked.
-    pub jobs: Vec<Job>,
-    /// Whether more follow the last.
-    pub has_more: bool,
-    /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
-}
-
-impl Jobs {
-    /// A page of `jobs`.
-    pub fn new(jobs: Vec<Job>, has_more: bool) -> Self {
-        Self {
-            jobs,
-            has_more,
-            native: None,
-        }
-    }
-}
-
 /// For a provider that serves a finished job's content only at the URLs
 /// the job names ([`Job::videos`]), as Veo does: a `Content` request without
 /// a `url` whose target is one of its providers first retrieves the job
@@ -324,13 +269,7 @@ impl LocateContent {
 #[async_trait]
 impl Plugin for LocateContent {
     async fn on_client(&self, cx: &mut ClientContext) -> Result<Option<Response>, Fault> {
-        // Only the video itself is at a URL; a provider refuses a still.
-        let Ok(Input::Content {
-            id,
-            variant: Variant::Video,
-            url: None,
-        }) = cx.input::<Input>()
-        else {
+        let Ok(Input::Content { id, url: None }) = cx.input::<Input>() else {
             return Ok(None);
         };
         let Some(target) = cx
@@ -387,10 +326,9 @@ struct Maker {
     shared: bool,
 }
 
-/// Sends a job's follow-up (`Retrieve`, `Content`, `Remix`, `Delete`, and a
-/// `List` after it) to the provider that made the job, which only the job's
-/// id says: by its
-/// spelling (OpenAI's start `video_`, Veo's `veo_`), or, when several
+/// Sends a job's follow-up (`Retrieve`, `Content`, and a native operation
+/// on it or a page after it) to the provider that made the job, which only
+/// the job's id says: by its spelling (OpenAI's start `video_`, Veo's `veo_`), or, when several
 /// providers spell their ids alike, by the provider's name it wraps them in
 /// on the way out, `<provider>~<id>`, and unwraps on the way in. An id
 /// spelled as several providers' goes to the target if it is one of them,
@@ -454,7 +392,7 @@ impl Plugin for VideoJobs {
         let Ok(input) = cx.input::<Input>() else {
             return Ok(None);
         };
-        let found = followed(input).and_then(|id| {
+        let found = input.job_id().and_then(|id| {
             let (maker, inner) = self.maker(id, cx.target())?;
             Some((
                 maker.internal.clone(),
@@ -483,46 +421,47 @@ impl Plugin for VideoJobs {
     }
 }
 
-/// The job an operation follows: the one it is on, or the one a page
-/// starts after.
-fn followed(input: &Input) -> Option<&str> {
-    match input {
-        Input::List { after, .. } => after.as_deref(),
-        _ => input.job_id(),
-    }
-}
-
 fn set_job_id(input: &mut Input, inner: &str) {
     match input {
-        Input::Remix { id, .. }
-        | Input::Retrieve { id, .. }
+        Input::Retrieve { id, .. }
         | Input::Content { id, .. }
-        | Input::Delete { id, .. }
-        | Input::List {
-            after: Some(id), ..
-        } => *id = inner.to_owned(),
+        | Input::Native { id: Some(id), .. } => *id = inner.to_owned(),
         _ => {}
     }
 }
 
+/// The ids of `output` wrapped in `provider`: a job's, the video it was
+/// remixed from, and, of OpenAI Videos' own answers, a deletion's and a
+/// page's.
 fn wrap_ids(output: &mut Output, provider: &str) {
     let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
+    let openai = |format: &FormatId| &**format == "openai-videos";
     match output {
-        Output::Job(job) => wrap_job(job, provider),
-        Output::Jobs(jobs) => jobs.jobs.iter_mut().for_each(|job| wrap_job(job, provider)),
-        Output::Deleted(id) => wrap(id),
+        Output::Job(job) => {
+            wrap(&mut job.id);
+            if let Some(native) = job.native.as_mut().filter(|n| openai(&n.format))
+                && let Some(Value::String(source)) = native.fields.get_mut("remixed_from_video_id")
+            {
+                wrap(source);
+            }
+        }
+        Output::Native(native) if openai(&native.format) => {
+            let wrap_all = |v: &mut Value| {
+                for key in ["id", "first_id", "last_id", "remixed_from_video_id"] {
+                    if let Some(Value::String(id)) = v.get_mut(key) {
+                        wrap(id);
+                    }
+                }
+            };
+            let v = std::sync::Arc::make_mut(&mut native.value);
+            v["data"]
+                .as_array_mut()
+                .into_iter()
+                .flatten()
+                .for_each(wrap_all);
+            wrap_all(v);
+        }
         _ => {}
-    }
-}
-
-fn wrap_job(job: &mut Job, provider: &str) {
-    let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
-    wrap(&mut job.id);
-    if let Some(native) = &mut job.native
-        && &*native.format == "openai-videos"
-        && let Some(Value::String(source)) = native.fields.get_mut("remixed_from_video_id")
-    {
-        wrap(source);
     }
 }
 
@@ -565,9 +504,13 @@ mod tests {
 
     #[test]
     fn ids_are_wrapped_in_their_provider() {
-        let mut deleted = Output::Deleted("video_1".into());
-        wrap_ids(&mut deleted, "east");
-        assert_eq!(deleted, Output::Deleted("east~video_1".into()));
+        let page = |first: &str, id: &str| {
+            let page = serde_json::json!({"first_id": first, "data": [{"id": id}]});
+            Output::native("openai-videos", page)
+        };
+        let mut listed = page("video_1", "video_1");
+        wrap_ids(&mut listed, "east");
+        assert_eq!(listed, page("east~video_1", "east~video_1"));
         let mut input = Input::Retrieve {
             id: "east~video_1".into(),
         };
@@ -600,24 +543,17 @@ mod tests {
     /// in, and went to whichever provider the router picked.
     #[test]
     fn a_page_after_a_wrapped_job_goes_to_its_maker_unwrapped() {
-        let mut input = Input::List {
-            after: Some("west~video_1".into()),
-            limit: None,
-            order: None,
+        let list = |after: Option<&str>| Input::Native {
+            id: after.map(str::to_owned),
+            native: NativeValue::new("openai-videos", Value::Null),
         };
-        let after = followed(&input).map(str::to_owned);
-        assert_eq!(after.as_deref(), Some("west~video_1"));
-        let found = after
-            .as_deref()
+        let mut input = list(Some("west~video_1"));
+        let found = input
+            .job_id()
             .and_then(|id| maker(id, Some("east:openai-videos")));
         assert_eq!(found, Some(("west".to_owned(), "video_1".to_owned())));
         set_job_id(&mut input, "video_1");
-        assert_eq!(followed(&input), Some("video_1"));
-        let first = Input::List {
-            after: None,
-            limit: None,
-            order: None,
-        };
-        assert_eq!(followed(&first), None);
+        assert_eq!(input.job_id(), Some("video_1"));
+        assert_eq!(list(None).job_id(), None);
     }
 }

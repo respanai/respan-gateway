@@ -21,7 +21,7 @@ use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
 
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
 /// What starts the id of a job of Veo's.
@@ -60,8 +60,8 @@ const PREFIX: &str = "veo_";
 /// until the file is `ACTIVE`, then `completed`, its video the file's
 /// download URI.
 ///
-/// Veo cannot remix, delete or list videos, nor make a thumbnail or a
-/// spritesheet: those are refused, 400, before any call. What Veo answers
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call. What Veo answers
 /// beyond the kind is dropped.
 ///
 /// A client speaks it too, of any provider of the kind: it creates with
@@ -197,19 +197,13 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             };
             (Method::GET, format!("/{name}"), None, asked)
         }
-        Input::Content { id, variant, url } => {
-            if *variant != Variant::Video {
-                return Err(unsupported("make a thumbnail or a spritesheet"));
-            }
+        Input::Content { id, url } => {
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
                 Fault::config("Veo's content is at the URL its job names, which the request needs")
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
         _ => return Err(unsupported("answer this request")),
     };
     head.method = method;
@@ -617,11 +611,7 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
     Ok(match route {
         Route::Create(model) => Input::Create(read_create(model, raw)?),
         Route::Retrieve { id, .. } => Input::Retrieve { id },
-        Route::Download(id) => Input::Content {
-            id,
-            variant: Variant::Video,
-            url: None,
-        },
+        Route::Download(id) => Input::Content { id, url: None },
     })
 }
 
