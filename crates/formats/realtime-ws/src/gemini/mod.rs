@@ -66,7 +66,7 @@ pub(crate) const SPEC: Spec = Spec {
 /// ends, stays native, so a relay to Gemini keeps what every message says.
 ///
 /// To a client of another format it says what the Live API cannot: a
-/// session opened before its setup, an update that changes nothing, and
+/// session opened before its setup, a later session, and
 /// the end of a response the client cancelled, whose rest it drops.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiLive;

@@ -247,10 +247,7 @@ impl Responses {
             return Ok(());
         }
         // Read before the call, as a shared store answers in its own time.
-        let calls = px
-            .input::<Input>()
-            .map(unreasoned_calls)
-            .unwrap_or_default();
+        let calls = px.input::<Input>().map(first_calls).unwrap_or_default();
         let read = calls.into_iter().map(|id| async move {
             let turn = self.store.get(&call_key(&id)).await?;
             let reasoning: Vec<Content> =
@@ -277,60 +274,63 @@ fn previous_response_id(input: &Input) -> Option<String> {
     Some(parent.to_owned())
 }
 
-/// The first call's id of each assistant message [`put_back`] may give
-/// reasoning to: one with tool calls and none of its own.
-fn unreasoned_calls(input: &Input) -> Vec<String> {
+/// The first call's id of each assistant message, which [`put_back`] may
+/// give reasoning to.
+fn first_calls(input: &Input) -> Vec<String> {
     (input.messages.iter())
         .filter(|m| m.role == Role::Assistant)
-        .filter(|m| {
-            !m.content
-                .iter()
-                .any(|p| matches!(p, Content::Reasoning { .. }))
-        })
-        .filter_map(|m| {
-            m.content.iter().find_map(|p| match p {
-                Content::ToolCall { id, .. } => Some(id.clone()),
-                _ => None,
-            })
-        })
+        .filter_map(|m| first_call(m).map(|(_, id)| id.to_owned()))
         .collect()
 }
 
-/// `input` with the reasoning `earlier` finds for each assistant message
-/// without any put back before its tool calls, by its first call's id.
+/// The place and id of `m`'s first tool call.
+fn first_call(m: &Message) -> Option<(usize, &str)> {
+    m.content.iter().enumerate().find_map(|(at, p)| match p {
+        Content::ToolCall { id, .. } => Some((at, id.as_str())),
+        _ => None,
+    })
+}
+
+/// `input` with the reasoning `earlier` finds for each assistant message,
+/// by its first call's id, put back before its calls. It takes the place of
+/// the reasoning the message has there, and its signatures: what the
+/// provider gave is what it reads back, which a client of another format
+/// may echo only in part, as Chat's `reasoning_content`.
 fn put_back(input: &mut Input, earlier: impl Fn(&str) -> Option<Vec<Content>>) {
     for message in &mut input.messages {
-        let reasons = message
-            .content
-            .iter()
-            .any(|p| matches!(p, Content::Reasoning { .. }));
-        if message.role != Role::Assistant || reasons {
-            continue;
-        }
-        let first_call = message
-            .content
-            .iter()
-            .enumerate()
-            .find_map(|(at, p)| match p {
-                Content::ToolCall { id, .. } => Some((at, id)),
-                _ => None,
-            });
-        let Some((at, id)) = first_call else {
+        let Some((at, id)) = first_call(message).filter(|_| message.role == Role::Assistant) else {
             continue;
         };
-        if let Some(reasoning) = earlier(id) {
-            message.content.splice(at..at, reasoning);
-        }
+        let Some(reasoning) = earlier(id) else {
+            continue;
+        };
+        let calls = message.content.split_off(at);
+        let mut said = false;
+        message.content.retain(|p| {
+            said = matches!(p, Content::Reasoning { .. })
+                || said && matches!(p, Content::Signature(_));
+            !said
+        });
+        message.content.extend(reasoning);
+        message.content.extend(calls);
     }
 }
 
 /// `message` without what `format` cannot write: reasoning or a native part
-/// of another format, which only its own provider reads back.
+/// of another format, which only its own provider reads back, and the
+/// signatures that seal it.
 fn writable(mut message: Message, format: &str) -> Message {
-    message.content.retain(|part| match part {
-        Content::Reasoning { native, .. } => native.as_ref().is_some_and(|n| &*n.format == format),
-        Content::Native(native) => &*native.format == format,
-        _ => true,
+    let mut is_dropped = false;
+    message.content.retain(|part| {
+        is_dropped = match part {
+            Content::Reasoning { native, .. } => {
+                !native.as_ref().is_some_and(|n| &*n.format == format)
+            }
+            Content::Native(native) => &*native.format != format,
+            Content::Signature(_) => is_dropped,
+            _ => false,
+        };
+        !is_dropped
     });
     message
 }
@@ -419,6 +419,7 @@ impl Filter<Output> for KeepReasoning {
                     };
                     self.store.put(call_key(id), turn);
                 }
+                Content::Signature(_) if !reasoning.is_empty() => reasoning.push(part),
                 Content::ToolCall { .. } => {}
                 _ => reasoning.clear(),
             }
@@ -512,9 +513,10 @@ mod tests {
         serde_json::from_slice(&bytes).unwrap_or_default()
     }
 
-    /// The calls whose reasoning is read ahead are those `put_back` fills.
+    /// The calls whose reasoning is read ahead are those `put_back` fills:
+    /// each assistant's first, its reasoning there given way to the kept.
     #[test]
-    fn only_an_unreasoned_assistants_first_call_is_read_ahead() {
+    fn an_assistants_first_call_is_read_ahead_and_given_its_reasoning() {
         let mut called = Message::new(Role::Assistant, "");
         called.content = vec![
             Content::tool_call("c1", "f", "{}"),
@@ -524,25 +526,38 @@ mod tests {
         reasoned.content.insert(
             0,
             Content::Reasoning {
-                text: "r".into(),
+                text: "echoed".into(),
                 native: None,
             },
         );
         let mut user = Message::new(Role::User, "hi");
         user.content.push(Content::tool_call("c3", "f", "{}"));
         let mut input = Input::new([user, called, reasoned]);
-        assert_eq!(unreasoned_calls(&input), ["c1"]);
-        put_back(&mut input, |id| {
-            (id == "c1").then(|| {
-                vec![Content::Reasoning {
-                    text: "kept".into(),
-                    native: None,
-                }]
-            })
-        });
-        assert!(
-            matches!(&input.messages[1].content[0], Content::Reasoning { text, .. } if text == "kept")
-        );
+        assert_eq!(first_calls(&input), ["c1", "c1"]);
+        let kept = [
+            Content::Reasoning {
+                text: "kept".into(),
+                native: None,
+            },
+            Content::Signature("sealed".into()),
+        ];
+        put_back(&mut input, |id| (id == "c1").then(|| kept.to_vec()));
+        assert_eq!(input.messages[1].content[..2], kept);
+        assert_eq!(input.messages[2].content[..2], kept);
+        assert_eq!(input.messages[2].content.len(), 4);
+        // Another format's reasoning goes with its signature; a call's stays.
+        let mut signed = Message::new(Role::Assistant, "");
+        signed.content = vec![
+            Content::Reasoning {
+                text: "r".into(),
+                native: None,
+            },
+            Content::Signature("theirs".into()),
+            Content::tool_call("c1", "f", "{}"),
+            Content::Signature("call".into()),
+        ];
+        let kept = writable(signed, RESPONSES).content;
+        assert_eq!(kept[1..], [Content::Signature("call".into())]);
     }
 
     /// A follow-up reaching another gateway than its response is sent the

@@ -37,8 +37,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (s.voice.is_some(), "a voice"),
         (s.output_audio.is_some(), "output audio"),
         (s.tools.is_some(), "tools"),
-        (s.tool_choice.is_some(), "a tool choice"),
-        (s.max_output_tokens.is_some(), "an output limit"),
         (s.input_transcription == Some(false), "no transcription"),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {

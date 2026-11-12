@@ -107,7 +107,6 @@ impl Provider {
             // A response's start is OpenAI's even if it says nothing more:
             // its items are the provider's.
             "response.created" => Output::ResponseStart {
-                id: take(v, &["response", "id"], string, text),
                 native: Some(NativeFields::new(NAME, rest.as_object()?.clone())),
             },
             "response.output_audio.delta" => Output::Audio {
@@ -170,7 +169,6 @@ impl Provider {
                 Output::Error {
                     cause,
                     message: take(v, &["error", "message"], string, text)?,
-                    code: take(v, &["error", "type"], string, text),
                     native: json::native(NAME, rest),
                 }
             }
@@ -190,12 +188,7 @@ fn status(v: &mut Value) -> Option<Status> {
         .and_then(|d| d.get("type"))
         .is_none_or(|t| *t == *said);
     let reason = details.and_then(|d| d["reason"].as_str());
-    let known = [
-        Status::Interrupted,
-        Status::Cancelled,
-        Status::Length,
-        Status::Filtered,
-    ];
+    let known = [Status::Interrupted, Status::Cancelled, Status::Filtered];
     let named = known
         .into_iter()
         .find(|s| typed && spelled(s) == Some((said.as_str(), reason)));
@@ -210,8 +203,10 @@ fn status(v: &mut Value) -> Option<Status> {
         (_, None) => Status::Native {
             format: NAME.into(),
             reason: said.clone(),
-            fallback: Box::new(match said.as_str() {
-                "cancelled" => Status::Cancelled,
+            // A response cut at its token limit is whole as far as it went.
+            fallback: Box::new(match (said.as_str(), reason) {
+                ("cancelled", _) => Status::Cancelled,
+                ("incomplete", Some("max_output_tokens")) => Status::Completed,
                 _ => Status::Failed,
             }),
         },
@@ -227,7 +222,6 @@ fn spelled(status: &Status) -> Option<(&str, Option<&str>)> {
         Status::Completed => ("completed", None),
         Status::Interrupted => ("cancelled", Some("turn_detected")),
         Status::Cancelled => ("cancelled", Some("client_cancelled")),
-        Status::Length => ("incomplete", Some("max_output_tokens")),
         Status::Filtered => ("incomplete", Some("content_filter")),
         Status::Failed => ("failed", None),
         Status::Native { format, reason, .. } if **format == *NAME => (reason.as_str(), None),
@@ -352,7 +346,7 @@ impl Client {
                 }
                 (v, native)
             }
-            Output::ResponseStart { id, native } if native.is_none() => {
+            Output::ResponseStart { native: None } => {
                 // What was heard of the turn it answers is all there is.
                 if let Some(heard) = self.heard.take() {
                     out.push(
@@ -361,7 +355,7 @@ impl Client {
                     );
                 }
                 self.user = None;
-                let id = id.clone().unwrap_or_else(|| self.ids.next("resp"));
+                let id = self.ids.next("resp");
                 out.push(json!({"type": "response.created", "response": {
                     "object": "realtime.response", "id": id, "status": "in_progress",
                     "status_details": null, "output": [], "usage": null}}));
@@ -372,13 +366,9 @@ impl Client {
                 });
                 return Ok(());
             }
-            Output::ResponseStart { id, native } => {
+            Output::ResponseStart { native } => {
                 self.response = None;
-                let mut v = json!({"type": "response.created", "response": {}});
-                if let Some(id) = id {
-                    v["response"]["id"] = id.as_str().into();
-                }
-                (v, native)
+                (json!({"type": "response.created", "response": {}}), native)
             }
             Output::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.output);
@@ -458,21 +448,19 @@ impl Client {
             }
             Output::Error {
                 cause,
-                code,
                 message,
                 native,
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
-                // Another format's code is its own: OpenAI's says the cause.
-                let code = match native.as_ref().is_some_and(|n| *n.format == *NAME) {
-                    true => code.clone(),
-                    false => None,
-                };
-                let typed = code.unwrap_or_else(|| match cause {
-                    Cause::Invalid | Cause::NothingToCancel => "invalid_request_error".into(),
-                    _ => "server_error".into(),
-                });
-                v["error"]["type"] = typed.into();
+                // Its own type it kept; otherwise the cause says one.
+                merge(&mut v, own(native));
+                if v["error"]["type"].is_null() {
+                    v["error"]["type"] = match cause {
+                        Cause::Invalid | Cause::NothingToCancel => "invalid_request_error",
+                        _ => "server_error",
+                    }
+                    .into();
+                }
                 if *cause == Cause::NothingToCancel && native.is_none() {
                     v["error"]["code"] = "response_cancel_not_active".into();
                 }

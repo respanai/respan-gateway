@@ -12,10 +12,10 @@ use respan_gateway_conversation::{
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
 
-use super::{GEMINI, ROLES, SYNTHETIC};
+use super::{GEMINI, ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, set, untranslatable, write_search,
+    parse_effort, reasoning_of, remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -82,10 +82,17 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
 
 fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Vec<Content> {
     let parts = parts.as_array().into_iter().flatten();
-    parts
-        .enumerate()
-        .map(|(at, p)| read_part(p, message, at, calls))
-        .collect()
+    let mut out = Vec::new();
+    for (at, p) in parts.enumerate() {
+        let part = read_part(p, message, at, calls);
+        let signed = !matches!(part, Content::Native(_));
+        out.push(part);
+        // A part's signature is a signature after it.
+        if let Some(s) = p[SIGNATURE].as_str().filter(|_| signed) {
+            out.push(Content::Signature(s.into()));
+        }
+    }
+    out
 }
 
 /// A part as the kind's, or, if the kind has no form for all of it, as
@@ -116,7 +123,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
                 Value::Bool(true) => true,
                 _ => return own(),
             };
-            let native = part_fields(&["text", "thought"]);
+            let native = part_fields(&["text", "thought", SIGNATURE]);
             match thought {
                 true => Content::Reasoning {
                     text: text.into(),
@@ -155,7 +162,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
             };
             let mut part = Content::tool_call(id, name, args);
             if let Content::ToolCall { native, .. } = &mut part {
-                *native = part_fields(&["functionCall"]);
+                *native = part_fields(&["functionCall", SIGNATURE]);
             }
             part
         }
@@ -254,11 +261,18 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 .name(role)
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
         };
-        let parts: Vec<Value> = m
-            .content
-            .iter()
-            .map(|c| write_part(c, &mut names))
-            .collect::<Result<_, _>>()?;
+        let mut parts: Vec<Value> = Vec::new();
+        for (c, signature) in sealed(&m.content) {
+            // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+            if matches!(c, Content::Signature(_) | Content::Withheld(_)) {
+                continue;
+            }
+            let mut part = write_part(c, &mut names)?;
+            if let Some(s) = signature {
+                part[SIGNATURE] = s.into();
+            }
+            parts.push(part);
+        }
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
@@ -325,7 +339,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Image(media) | Content::Audio(media) | Content::Document(media) => {
-            write_media(media)
+            write_media(media, false)
         }
         Content::ToolCall {
             id,
@@ -357,8 +371,8 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
                      response names its tool"
                 ))
             })?;
-            let mut response =
-                json!({ "name": name, "response": result_json(content, *is_error)? });
+            let mut response = json!({ "name": name });
+            write_result(content, *is_error, &mut response)?;
             if !is_synthetic(id) {
                 response["id"] = id.as_str().into();
             }
@@ -371,23 +385,28 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
     }
 }
 
-/// What a tool said as the object of `functionResponse.response`: a JSON
-/// object as it is, else the text under `output`, or under `error` for a
-/// failure, as Gemini's examples do.
-fn result_json(content: &[Content], is_error: bool) -> Result<Value, Fault> {
+/// What a tool said as a `functionResponse`'s `response`: a JSON object as
+/// it is, else the text under `output`, or under `error` for a failure, as
+/// Gemini's examples do; and its images and documents as its `parts`.
+fn write_result(content: &[Content], is_error: bool, response: &mut Value) -> Result<(), Fault> {
     let mut text = String::new();
+    let mut parts = Vec::new();
     for c in content {
         match c {
-            Content::Text {
-                text: t, native, ..
-            } if native.is_empty() => text.push_str(t),
-            _ => return Err(untranslatable("a tool result that is not text")),
+            // WARN: a text part's native fields are dropped here, silently.
+            Content::Text { text: t, .. } => text.push_str(t),
+            Content::Image(m) | Content::Document(m) => parts.push(write_media(m, true)?),
+            _ => return Err(untranslatable("audio or other content in a tool result")),
         }
     }
-    if let Ok(object @ Value::Object(_)) = serde_json::from_str::<Value>(&text) {
-        return Ok(object);
+    response["response"] = match serde_json::from_str::<Value>(&text) {
+        Ok(object @ Value::Object(_)) => object,
+        _ => json!({ if is_error { "error" } else { "output" }: text }),
+    };
+    if !parts.is_empty() {
+        response["parts"] = parts.into();
     }
-    Ok(json!({ if is_error { "error" } else { "output" }: text }))
+    Ok(())
 }
 
 /// `media` as an `inlineData` or `fileData` part. Gemini refuses a wildcard
@@ -406,14 +425,19 @@ pub fn media_part(media: &Media) -> Value {
     }
 }
 
-/// An `inlineData` or `fileData` part of `media`, with its native fields.
-fn write_media(media: &Media) -> Result<Value, Fault> {
-    if media.name.is_some() {
-        return Err(untranslatable("a display name on media content"));
-    }
-    let native = media.native.fields_for(GEMINI);
+/// An `inlineData` or `fileData` part of `media`, with its native fields; only
+/// a tool result's part takes a display name.
+fn write_media(media: &Media, in_result: bool) -> Result<Value, Fault> {
     let mut part = media_part(media);
-    merge_fields(&mut part, &native);
+    let data = part.as_object_mut().and_then(|p| p.values_mut().next());
+    match (&media.name, data) {
+        (Some(name), Some(Value::Object(data))) if in_result => {
+            data.insert("displayName".into(), name.as_str().into());
+        }
+        (Some(_), _) => return Err(untranslatable("a display name on media content")),
+        (None, _) => {}
+    }
+    merge_fields(&mut part, &media.native.fields_for(GEMINI));
     Ok(part)
 }
 

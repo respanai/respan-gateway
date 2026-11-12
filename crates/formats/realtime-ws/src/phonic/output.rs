@@ -110,7 +110,6 @@ impl Provider {
                 native: json::native(NAME, rest),
             },
             "assistant_started_speaking" => Output::ResponseStart {
-                id: None,
                 native: json::native(NAME, rest),
             },
             "assistant_finished_speaking" => Output::ResponseDone {
@@ -128,7 +127,6 @@ impl Provider {
                 };
                 Output::Error {
                     cause: Cause::Provider,
-                    code: take(v, &["error", "code"], string, text),
                     message,
                     native: json::native(NAME, rest),
                 }
@@ -291,17 +289,11 @@ impl Client {
             } => (typed("interrupted_response"), native),
             Output::ResponseDone { native, .. } => (typed("assistant_finished_speaking"), native),
             Output::Error {
-                code,
-                message,
+                message, native, ..
+            } => (
+                json!({"type": "error", "error": {"message": message}}),
                 native,
-                ..
-            } => {
-                let mut v = json!({"type": "error", "error": {"message": message}});
-                if let Some(code) = code {
-                    v["error"]["code"] = code.as_str().into();
-                }
-                (v, native)
-            }
+            ),
             Output::Text { .. } => return refuse("text"),
             Output::ToolCall { .. } => return refuse("a tool's call"),
             Output::Native(NativeValue { format, value }) if **format == *NAME => {

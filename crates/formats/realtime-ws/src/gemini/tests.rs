@@ -1,3 +1,4 @@
+use respan_gateway_conversation::{Message, Role};
 use respan_gateway_core::Fault;
 use respan_gateway_core::FaultKind;
 use respan_gateway_http::bytes::Bytes;
@@ -120,12 +121,11 @@ fn every_client_message_is_written_back_as_it_came() {
     assert_eq!(session.output, Some(Modality::Audio));
     assert_eq!(session.voice.as_deref(), Some("Kore"));
     assert_eq!(session.instructions.as_deref(), Some("Be brief."));
-    assert_eq!(session.max_output_tokens, Some(900));
     assert_eq!(session.tools.as_ref().map(Vec::len), Some(1));
     let Some(Turns::Server(vad)) = &session.turns else {
         panic!("{session:?}")
     };
-    assert_eq!((vad.silence_ms, vad.interrupt), (Some(500), Some(false)));
+    assert_eq!(vad.silence_ms, Some(500));
     assert_eq!(
         (session.input_transcription, session.output_transcription),
         (Some(true), Some(true))
@@ -202,26 +202,40 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
     let (say, mut said) = session::say();
     let mut provider = input::Provider::new(shared, say);
     let mut frames = Vec::new();
-    for event in [&events[0], &events[0]] {
-        provider.write(event, &mut frames).expect("written");
-    }
-    assert_eq!(
-        frames.len(),
-        1,
-        "the update that changes nothing is no frame"
-    );
-    let acknowledged = said.try_recv().expect("said");
-    assert!(matches!(acknowledged, Output::Updated(s) if s.model.as_deref() == Some("m")));
     let mut changed = Session::default();
     changed.instructions = Some("Be brief.".into());
-    let fault = provider
-        .write(&Input::Session(changed), &mut frames)
-        .expect_err("refused");
-    assert_eq!(fault.get::<CloseCode>(), Some(&CloseCode(1008)));
-    assert!(
-        fault
-            .message()
-            .ends_with("this update changes `instructions`")
+    for event in [&events[0], &events[0], &Input::Session(changed)] {
+        provider.write(event, &mut frames).expect("written");
+    }
+    assert_eq!(frames.len(), 1, "a later session is no frame");
+    for _ in 0..2 {
+        let acknowledged = said.try_recv().expect("said");
+        assert!(matches!(acknowledged, Output::Updated(s)
+            if s.model.as_deref() == Some("m") && s.instructions.is_none()));
+    }
+    // An OpenAI client's commit and a response to nothing under voice
+    // detection are dropped, and a message but the user's text is a turn.
+    let system = Input::Message {
+        message: Message::new(Role::System, "Be brief."),
+        native: None,
+    };
+    let respond = Input::Respond { native: None };
+    for event in [
+        Input::Commit { native: None },
+        system,
+        respond.clone(),
+        respond,
+    ] {
+        provider.write(&event, &mut frames).expect("written");
+    }
+    let turns: Vec<Value> = frames[1..]
+        .iter()
+        .map(|f| serde_json::from_slice(f).unwrap_or_default())
+        .collect();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(
+        turns[0]["clientContent"]["turns"][0]["parts"][0]["text"],
+        "Be brief."
     );
 }
 
@@ -323,6 +337,14 @@ fn every_server_message_is_written_back_as_it_came() {
     written[13]["serverContent"]["turnComplete"] = true.into();
     written[13]["serverContent"]["turnCompleteReason"] = "MALFORMED_FUNCTION_CALL".into();
     assert_eq!(written, messages);
+    // Another format's calls, started as Phonic's are, end the turn too.
+    let mut foreign = outputs(&applied, &messages[11..12]);
+    foreign[0] = Output::ResponseStart { native: None };
+    let ended = json!({"serverContent": {"turnComplete": true}});
+    assert_eq!(
+        heard(&foreign).expect("written"),
+        [messages[11].clone(), ended]
+    );
 }
 
 #[test]
@@ -341,7 +363,6 @@ fn the_setup_written_is_the_session_its_completion_says() {
 fn a_refusal_closes_a_live_client() {
     let error = Output::Error {
         cause: Cause::Invalid,
-        code: None,
         message: "no".into(),
         native: None,
     };
@@ -355,7 +376,6 @@ fn a_refusal_closes_a_live_client() {
 fn a_cancel_that_found_no_response_closes_no_live_client() {
     let error = Output::Error {
         cause: Cause::NothingToCancel,
-        code: None,
         message: "Cancellation failed: no active response found".into(),
         native: None,
     };
@@ -461,28 +481,6 @@ fn a_transcriber_ends_the_users_transcript_at_its_generations_end() {
         })
         .collect();
     assert_eq!(said, [("Hello there.", false), ("Hello there.", true)]);
-}
-
-#[test]
-fn a_session_that_says_no_purpose_is_a_conversation() {
-    // An OpenAI client's session opened by its first audio says none; its
-    // next says it converses, which changes nothing.
-    let shared = Shared::default();
-    let mut conversation = Session::default();
-    conversation.purpose = Some(Purpose::Conversation);
-    let sessions = [
-        Input::Session(Session::default()),
-        Input::Session(conversation),
-    ];
-    sent(&shared, &sessions).expect("no change");
-    let mut transcription = Session::default();
-    transcription.purpose = Some(Purpose::Transcription);
-    let shared = Shared::default();
-    let sessions = [
-        Input::Session(Session::default()),
-        Input::Session(transcription),
-    ];
-    sent(&shared, &sessions).expect_err("a change of purpose");
 }
 
 /// The user's whole transcripts of a transcription told by `messages`.

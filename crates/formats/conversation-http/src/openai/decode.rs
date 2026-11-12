@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
 use super::encode::rekey;
-use super::{FINISH, Fields, OPENAI, extra_usage, usage_of};
+use super::{FINISH, Fields, OPENAI, SIGNED, extra_usage, take_signature, usage_of};
 
 /// Decodes chunks and whole bodies of OpenAI Chat into events, as the
 /// module says.
@@ -87,6 +87,7 @@ struct Call {
     /// for, even null or empty ones.
     entry: Map<String, Value>,
     function: Map<String, Value>,
+    signature: Option<String>,
 }
 
 /// The fields of tool call `block` the kind has no place for, the entry's,
@@ -242,6 +243,15 @@ impl OpenAiDecoder {
         if let Some(text) = body["content"].as_str().filter(|t| !t.is_empty()) {
             self.say(Key::Text, Block::Text, Delta::Text(text.into()), out);
         }
+        // A text's signature is the message's, even on a last empty text.
+        if let Some(s) = body[SIGNED]["google"]["thought_signature"].as_str() {
+            let text = self.blocks.iter().rposition(|b| b.key == Key::Text);
+            let block = match text.and_then(|at| u32::try_from(at).ok()) {
+                Some(block) => block,
+                None => self.open(Key::Text, Block::Text, out),
+            };
+            out.push(Output::signature(Some(block), s));
+        }
         for call in calls.into_iter().flatten() {
             let key = Key::Call(self.call_index(&call));
             let block = match (call.start, self.open_block(&key)) {
@@ -257,6 +267,7 @@ impl OpenAiDecoder {
                     ));
                 }
             };
+            out.extend(call.signature.map(|s| Output::signature(Some(block), s)));
             if !call.arguments.is_empty() {
                 out.push(Output::arguments(block, call.arguments));
             }
@@ -376,6 +387,7 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
                 body.insert(field.clone(), y.clone());
             }
         }
+        take_signature(&mut body);
         if !body.is_empty() {
             rest.insert("delta".into(), body.into());
         }
@@ -406,11 +418,13 @@ fn tool_calls(body: &Value) -> Option<Vec<Call>> {
             None => None,
         };
         let start = c["id"].as_str().zip(function["name"].as_str());
+        let mut entry = remainder(c, &["index", "id", "type", "function"]);
         Some(Call {
+            signature: take_signature(&mut entry),
             index,
             start: start.map(|(id, name)| (id.to_owned(), name.to_owned())),
             arguments: arguments.to_owned(),
-            entry: remainder(c, &["index", "id", "type", "function"]),
+            entry,
             function: remainder(function, &["name", "arguments"]),
         })
     };

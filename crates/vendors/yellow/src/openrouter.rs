@@ -101,7 +101,7 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
 /// both at `/images`, an edit's images as JSON `input_references`, each a
 /// URL or a data URL of its bytes, and its usage counted in Chat
 /// Completions' `prompt_tokens` and `completion_tokens`. It takes no mask,
-/// which fails `bad_request` before sending.
+/// which is dropped.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenRouterImages;
 
@@ -125,21 +125,19 @@ impl Dialect for OpenRouterImages {
 
 /// `input` with its images in `input_references`, and no mask.
 fn referenced(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request("OpenRouter edits an image with no mask"));
-    }
-    if input.images.is_empty() {
-        return Ok(());
-    }
     let mut fields = kept(OpenAiImages::NAME, &input.native);
-    let references = input
-        .images
-        .drain(..)
-        .map(|m| json!({ "type": "image_url", "image_url": { "url": media_url(&m) } }));
-    fields.insert(
-        "input_references".into(),
-        references.collect::<Vec<Value>>().into(),
-    );
+    // WARN: OpenRouter takes no mask; it is dropped.
+    fields.shift_remove("mask");
+    if !input.images.is_empty() {
+        let references = input
+            .images
+            .drain(..)
+            .map(|m| json!({ "type": "image_url", "image_url": { "url": media_url(&m) } }));
+        fields.insert(
+            "input_references".into(),
+            references.collect::<Vec<Value>>().into(),
+        );
+    }
     input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
 }
@@ -246,6 +244,11 @@ mod tests {
             "image/png",
             MediaSource::Url("https://a.example/cat.png".into()),
         )];
+        let mask = json!({ "mask": { "image_url": "https://a.example/mask.png" } });
+        input.native = native_of(
+            OpenAiImages::NAME,
+            mask.as_object().cloned().unwrap_or_default(),
+        );
         referenced(&mut input).expect("taken");
         assert!(input.images.is_empty());
         let fields = kept(OpenAiImages::NAME, &input.native);
@@ -253,11 +256,7 @@ mod tests {
             fields["input_references"],
             json!([{ "type": "image_url", "image_url": { "url": "https://a.example/cat.png" } }])
         );
-        input.mask = Some(Media::new(
-            "image/png",
-            MediaSource::Url("https://a.example/mask.png".into()),
-        ));
-        assert!(referenced(&mut input).is_err());
+        assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 
     #[test]

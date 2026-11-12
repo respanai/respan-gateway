@@ -230,6 +230,23 @@ pub(crate) fn remainder(v: &Value, keys: &[&str]) -> Map<String, Value> {
     rest.map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
+/// Each part of `parts` with the signature right after it, which seals it.
+pub(crate) fn sealed(parts: &[Content]) -> impl Iterator<Item = (&Content, Option<&str>)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let part = parts.get(at)?;
+        at += 1;
+        let seal = match parts.get(at) {
+            Some(Content::Signature(s)) => {
+                at += 1;
+                Some(s.as_str())
+            }
+            _ => None,
+        };
+        Some((part, seal))
+    })
+}
+
 /// Add to `base`, an object, the fields of `fields` it lacks: the semantic
 /// fields `base` was written with take precedence over native edits.
 pub(crate) fn merge_missing(base: &mut Value, fields: Map<String, Value>) {
@@ -514,7 +531,7 @@ impl Names<Finish> {
     }
 
     /// The reason to write: a native one in its own format, else its
-    /// fallback; one without is refused, not invented as a normal completion.
+    /// fallback, else a stop.
     pub fn reason<'a>(&self, finish: &'a Finish) -> Result<&'a str, Fault> {
         match finish {
             Finish::Native { format, reason, .. } if **format == *self.1 => Ok(reason),
@@ -522,9 +539,9 @@ impl Names<Finish> {
                 fallback: Some(fallback),
                 ..
             } => self.reason(fallback),
-            Finish::Native { format, reason, .. } => Err(unwritable(Some(format!(
-                "{format}'s finish reason `{reason}`"
-            )))),
+            // WARN: a native reason without a fallback, such as an
+            // OpenAI-compatible vendor's own, is written as a stop.
+            Finish::Native { .. } => self.reason(&Finish::Stop),
             _ => self.name(finish).ok_or_else(unwritable_content),
         }
     }
@@ -546,16 +563,7 @@ pub(crate) fn untranslatable(what: &str) -> Fault {
 
 /// A 502 for content the client's format cannot write anew, such as a tool call.
 pub(crate) fn unwritable_content() -> Fault {
-    unwritable(None)
-}
-
-fn unwritable(what: Option<String>) -> Fault {
-    let message = "the response holds content that cannot yet be written anew in this format";
-    let message = match what {
-        Some(what) => format!("{message}: {what}"),
-        None => message.to_owned(),
-    };
-    Fault::new(message)
+    Fault::new("the response holds content that cannot yet be written anew in this format")
         .with(ErrorCode("untranslatable".into()))
         .with(Status(StatusCode::BAD_GATEWAY))
 }

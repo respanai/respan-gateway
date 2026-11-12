@@ -39,7 +39,9 @@ impl Dialect for MiniMaxImages {
     }
 
     fn request(&self, _: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        Ok(Some(Box::new(|body| crate::without(body, "stream"))))
+        // WARN: MiniMax edits take no mask; it is dropped.
+        let body = |body| crate::without(crate::without(body, "stream")?, "mask");
+        Ok(Some(Box::new(body)))
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
@@ -50,11 +52,6 @@ impl Dialect for MiniMaxImages {
 }
 
 fn validate(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request(
-            "MiniMax image edits do not support masks",
-        ));
-    }
     if input.count.is_some_and(|n| !(1..=10).contains(&n)) {
         return Err(Fault::bad_request(
             "MiniMax image count must be between 1 and 10",
@@ -355,6 +352,7 @@ mod tests {
             "--mock-boundary\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\nedit it\r\n",
             "--mock-boundary\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\ntrue\r\n",
             "--mock-boundary\r\nContent-Disposition: form-data; name=\"image\"; filename=\"cat.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n",
+            "--mock-boundary\r\nContent-Disposition: form-data; name=\"mask\"; filename=\"mask.png\"\r\nContent-Type: image/png\r\n\r\nPNG\r\n",
             "--mock-boundary--\r\n"
         );
         let request = Request::builder()
@@ -379,16 +377,13 @@ mod tests {
             "data:image/png;base64,UE5H"
         );
         assert!(sent["body"].get("stream").is_none());
+        assert!(sent["body"].get("mask").is_none(), "a mask is dropped");
         assert!(body.contains("image_edit.completed"), "{body}");
     }
 
     #[tokio::test]
     async fn invalid_input_is_refused_before_http() {
-        for extra in [
-            json!({"n":11}),
-            json!({"background":"transparent"}),
-            json!({"images":[{"image_url":"https://example.com/cat.jpg"}],"mask":{"image_url":"https://example.com/mask.png"}}),
-        ] {
+        for extra in [json!({"n":11}), json!({"background":"transparent"})] {
             let mut request = json!({"model":"MiniMax-H3-Image","prompt":"fox"});
             request
                 .as_object_mut()
@@ -445,9 +440,6 @@ mod tests {
             matches!(&input.images[0].source, MediaSource::Url(url) if url == "data:image/jpeg;base64,/9j/")
         );
         input.images.push(media.clone());
-        assert!(validate(&mut input).is_err());
-        input.images.clear();
-        input.mask = Some(media);
         assert!(validate(&mut input).is_err());
     }
 }

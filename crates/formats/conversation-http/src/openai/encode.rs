@@ -10,7 +10,9 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, usage_body, usage_fields};
+use super::{
+    FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, sign, usage_body, usage_fields,
+};
 
 /// What a tool call's block fields say: the block, the entry's fields and
 /// the function's.
@@ -165,10 +167,13 @@ pub(super) struct Chunks {
     gate: Gate,
     /// The vendor fields of usage, written in the usage chunk.
     usage_extra: Map<String, Value>,
-    /// The fields of tool calls that have not started, by block.
+    /// The fields of tool calls not yet started, by block.
     call_fields: Vec<(u32, Fields, Fields)>,
     /// The response's fields a later chunk changed, for the next chunk.
     response: Fields,
+    /// A call's opening delta, held for its signature, which comes next if
+    /// at all.
+    opening: Option<(u32, Value)>,
 }
 
 #[derive(Debug)]
@@ -197,6 +202,7 @@ impl Chunks {
             usage_extra: Map::new(),
             call_fields: Vec::new(),
             response: Map::new(),
+            opening: None,
         }
     }
 
@@ -245,16 +251,17 @@ impl Chunks {
             };
         }
         self.begin(out);
-        let call = match kind {
-            Block::ToolCall { id, name } => {
+        let at = self.call_fields.iter().position(|(b, ..)| *b == block);
+        let fields = at.map(|at| self.call_fields.remove(at));
+        let call = match (kind, fields) {
+            (Block::ToolCall { id, name }, fields) => {
                 let index = self.calls;
                 self.calls += 1;
                 let mut call = call_json(Some(index), Some(id), Some(name), "");
-                if let Some(at) = self.call_fields.iter().position(|(b, ..)| *b == block) {
-                    let (_, entry, function) = self.call_fields.remove(at);
+                if let Some((_, entry, function)) = fields {
                     merge_call(&mut call, &entry, &function);
                 }
-                self.delta(out, json!({ "tool_calls": [call] }));
+                self.opening = Some((block, call));
                 Some(index)
             }
             _ => None,
@@ -337,6 +344,22 @@ impl Encoder<Output> for Chunks {
 
 impl Chunks {
     fn write(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some((block, mut call)) = self.opening.take() {
+            let signature = match reply {
+                Output::Signature {
+                    block: Some(b),
+                    data,
+                } if *b == block => Some(data),
+                _ => None,
+            };
+            if let Some(s) = signature {
+                sign(&mut call, s);
+            }
+            self.delta(out, json!({ "tool_calls": [call] }));
+            if signature.is_some() {
+                return Ok(());
+            }
+        }
         match reply {
             Output::Start(start) => _ = self.start.get_or_insert_with(|| start.clone()),
             Output::BlockStart { block, kind } => self.open(*block, kind, out)?,
@@ -353,6 +376,15 @@ impl Chunks {
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
                 self.write_native(raw, out);
+            }
+            // WARN: Chat has no place for a signature over reasoning, or alone, or one that comes after its call opened; it is dropped here, silently.
+            Output::Signature { block, data } => {
+                let over = block.and_then(|b| self.blocks.iter().find(|s| s.block == b));
+                if over.is_some_and(|s| s.kind == Block::Text) {
+                    let mut delta = json!({});
+                    sign(&mut delta, data);
+                    self.delta(out, delta);
+                }
             }
             // Another format's: only a client of that format could read it.
             Output::Native(_) => {}
@@ -387,6 +419,9 @@ impl Chunks {
     }
 
     fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some((_, call)) = self.opening.take() {
+            self.delta(out, json!({ "tool_calls": [call] }));
+        }
         if let Err(f) = end {
             // What the provider finished before it broke off is kept.
             if let Some(finish) = self.finish.take() {

@@ -38,8 +38,8 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
     decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
-    unwritable_content, usage_extra,
+    merge_into, merge_missing, native_fields, own_fields, says, sealed, set, stop_json,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -54,7 +54,7 @@ use serde_json::{Map, Value, json};
 use decode::AnthropicDecoder;
 use encode::EventStream;
 use request::{
-    effort_thinking, read_effort, read_output, read_thinking, read_tools_of, write_output,
+    effort_thinking, read_effort, read_output, read_thinking, read_tools_of, signed, write_output,
     write_thinking, write_tools,
 };
 
@@ -181,19 +181,30 @@ fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
     Ok((parts.collect(), rest))
 }
 
-/// `m` as Anthropic takes it: without reasoning it did not sign, which it
-/// refuses and lets an earlier turn leave out, and without empty text parts
-/// if it says something else, such as a tool call.
+/// `m` as Anthropic takes it: its signed reasoning a `thinking` block,
+/// without reasoning it did not sign, which it refuses and lets an earlier
+/// turn leave out, and without empty text parts if it says something else,
+/// such as a tool call.
 fn writable(m: &Message) -> std::borrow::Cow<'_, Message> {
-    let unsigned = |c: &Content| match c {
-        Content::Reasoning { native, .. } => {
-            native.format() != Some(ANTHROPIC) || !native.fields().contains_key("signature")
-        }
-        _ => false,
-    };
     let mut m = std::borrow::Cow::Borrowed(m);
-    if m.content.iter().any(unsigned) {
-        m.to_mut().content.retain(|c| !unsigned(c));
+    if m.content
+        .iter()
+        .any(|c| matches!(c, Content::Reasoning { .. } | Content::Signature(_)))
+    {
+        let content = sealed(&m.content)
+            .filter_map(|(part, signature)| match part {
+                Content::Reasoning { text, native } => {
+                    let mut block =
+                        json!({ "type": "thinking", "thinking": text, "signature": signature? });
+                    merge_missing(&mut block, native.fields_for(ANTHROPIC));
+                    Some(Content::native(ANTHROPIC, block))
+                }
+                // WARN: Anthropic signs only thinking; another part's signature is dropped here, silently.
+                Content::Signature(_) => None,
+                part => Some(part.clone()),
+            })
+            .collect();
+        m.to_mut().content = content;
     }
     let empty = |c: &Content| matches!(c, Content::Text { text, .. } if text.is_empty());
     if m.content.iter().any(empty) && !m.content.iter().all(empty) {
@@ -301,7 +312,9 @@ impl Schema for AnthropicMessages {
             chat.messages.push(system);
         }
         for m in v["messages"].as_array().into_iter().flatten() {
-            chat.messages.push(decode_message::<Self>(m, &ROLES));
+            let mut message = decode_message::<Self>(m, &ROLES);
+            signed(&mut message, &m["content"]);
+            chat.messages.push(message);
         }
         read_tools_of(v, &mut chat);
         chat.native = native_fields(ANTHROPIC, std::mem::take(chat.native.fields_mut(ANTHROPIC)));
@@ -410,7 +423,13 @@ impl Schema for AnthropicMessages {
                     let block = match &part.kind {
                         Block::Text if part.text.is_empty() => continue,
                         Block::Text => json!({ "type": "text", "text": part.text }),
-                        Block::Reasoning => json!({ "type": "thinking", "thinking": part.text }),
+                        Block::Reasoning => {
+                            let mut b = json!({ "type": "thinking", "thinking": part.text });
+                            if let Some(s) = whole.signature(part.block) {
+                                b["signature"] = s.into();
+                            }
+                            b
+                        }
                         Block::ToolCall { id, name } => {
                             let input =
                                 arguments_object(&part.text).map_err(|_| unwritable_content())?;
@@ -425,13 +444,17 @@ impl Schema for AnthropicMessages {
                     at.push((part.block, content.len()));
                     content.push(block);
                 }
+                AssembledItem::Signature { block: None, data } => {
+                    content.push(json!({ "type": "redacted_thinking", "data": data }));
+                }
+                // WARN: Anthropic signs only thinking; another block's signature is dropped here, silently.
+                AssembledItem::Signature { .. } => {}
                 AssembledItem::Native(NativeValue { format, value: raw })
                     if **format == *ANTHROPIC && block_fields(raw).is_some() =>
                 {
                     let Some((block, more)) = block_fields(raw) else {
                         continue;
                     };
-                    // A block placed takes them now, as a signature after it.
                     match at.iter().find(|(b, _)| *b == block) {
                         Some((_, place)) => merge_fields(&mut content[*place], more),
                         None => fields.push((block, more.clone())),
@@ -456,9 +479,6 @@ impl Schema for AnthropicMessages {
                         (Some("content_block_delta"), Some(place)) => {
                             let delta = &raw["delta"];
                             match delta["type"].as_str() {
-                                Some("signature_delta") => {
-                                    content[place]["signature"] = delta["signature"].clone();
-                                }
                                 Some("citations_delta") => {
                                     let cites = &mut content[place]["citations"];
                                     if !cites.is_array() {

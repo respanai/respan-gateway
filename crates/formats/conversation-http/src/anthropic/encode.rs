@@ -121,23 +121,41 @@ impl EventStream {
         Ok(())
     }
 
-    /// Fields of `block`: those of a block not yet on the wire join its
-    /// start; a signature that comes after, a `signature_delta` of it.
-    fn block_fields(&mut self, block: u32, fields: &Map<String, Value>, out: &mut BytesMut) {
-        let index = self
-            .blocks
-            .iter()
-            .find(|b| b.block == block)
-            .and_then(|b| b.index);
-        match (index, fields.get("signature")) {
-            (Some(index), Some(signature)) => {
-                let delta = json!({ "type": "signature_delta", "signature": signature });
+    /// The signature of thinking `block`: a `signature_delta` once it is on
+    /// the wire, else part of its start.
+    fn signature(&mut self, block: u32, data: &str, out: &mut BytesMut) {
+        // WARN: Anthropic signs only thinking; another block's signature is dropped here, silently.
+        let thinking = |b: &&Slot| b.block == block && b.kind == Block::Reasoning;
+        let Some(slot) = self.blocks.iter().find(thinking) else {
+            return;
+        };
+        match slot.index {
+            Some(index) => {
+                let delta = json!({ "type": "signature_delta", "signature": data });
                 let event =
                     json!({ "type": "content_block_delta", "index": index, "delta": delta });
                 emit(out, event);
             }
-            _ => self.fields.push((block, fields.clone())),
+            None => {
+                let signed = Map::from_iter([("signature".to_owned(), data.into())]);
+                self.fields.push((block, signed));
+            }
         }
+    }
+
+    /// Reasoning withheld, as a `redacted_thinking` block of its own: only a
+    /// provider that says its blocks one at a time withholds it, so no other
+    /// block is open on the wire.
+    fn withheld(&mut self, data: &str, out: &mut BytesMut) {
+        self.begin(out);
+        let index = self.next;
+        self.next += 1;
+        let block = json!({ "type": "redacted_thinking", "data": data });
+        emit(
+            out,
+            json!({ "type": "content_block_start", "index": index, "content_block": block }),
+        );
+        emit(out, json!({ "type": "content_block_stop", "index": index }));
     }
 
     fn open(&mut self, block: u32, kind: &Block, out: &mut BytesMut) -> Result<(), Fault> {
@@ -279,11 +297,16 @@ impl EventStream {
                 self.finish = Some(finish.clone());
                 self.begin(out);
             }
+            Output::Signature {
+                block: Some(block),
+                data,
+            } => self.signature(*block, data, out),
+            Output::Signature { block: None, data } => self.withheld(data, out),
             Output::Native(NativeValue { format, value: raw })
                 if **format == *ANTHROPIC && block_fields(raw).is_some() =>
             {
                 if let Some((block, fields)) = block_fields(raw) {
-                    self.block_fields(block, fields, out);
+                    self.fields.push((block, fields.clone()));
                 }
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *ANTHROPIC => {

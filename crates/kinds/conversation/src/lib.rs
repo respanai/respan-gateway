@@ -304,9 +304,19 @@ pub enum Content {
     Reasoning {
         /// Reasoning text.
         text: String,
-        /// Native fields such as a provider signature.
+        /// The part's fields the kind has no place for.
         native: Option<NativeFields>,
     },
+    /// A provider's opaque signature over the part right before it, carried
+    /// back untouched.
+    // WARN: not every format can carry every signature: Anthropic, Bedrock
+    // and Responses sign only reasoning, Gemini any part, and Chat
+    // Completions only a call or a text, by Google's `extra_content`.
+    Signature(String),
+    /// Reasoning the provider withheld, as its opaque data, carried back
+    /// untouched.
+    // WARN: only Anthropic and Bedrock have a form for it.
+    Withheld(String),
     /// An image with a typed source and MIME type.
     Image(Media),
     /// Audio with a typed source and MIME type.
@@ -481,8 +491,17 @@ pub enum Output {
     Usage(Usage),
     /// Why the model stopped.
     Finish(Finish),
+    /// The provider's opaque signature over block `block`
+    /// ([`Content::Signature`]), or, `None`, reasoning withheld
+    /// ([`Content::Withheld`]).
+    Signature {
+        /// The block it seals.
+        block: Option<u32>,
+        /// The signature, untouched.
+        data: String,
+    },
     /// An event the kind has no form for, as `format` has it (pings,
-    /// signatures, provider-specific events). Sent only in that format.
+    /// provider-specific events). Sent only in that format.
     Native(NativeValue),
 }
 
@@ -596,6 +615,14 @@ impl Output {
         Output::BlockEnd { block }
     }
 
+    /// The provider's signature over `block`, or over reasoning withheld.
+    pub fn signature(block: Option<u32>, data: impl Into<String>) -> Self {
+        Output::Signature {
+            block,
+            data: data.into(),
+        }
+    }
+
     /// Usage the provider reports, as an increment.
     pub fn usage(usage: Usage) -> Self {
         Output::Usage(usage)
@@ -612,7 +639,7 @@ impl Output {
     }
 
     /// Fields of block `block` the kind has no place for, as `format` has
-    /// them, such as a signature: a client of `format` gets them back with
+    /// them: a client of `format` gets them back with
     /// the block, [`Assembled::replay`] keeps them on its part, and another
     /// format drops them. Read by [`block_fields`].
     pub fn block_fields(
@@ -706,6 +733,13 @@ pub struct AssembledBlock {
 pub enum AssembledItem {
     /// An assembled content block.
     Block(AssembledBlock),
+    /// A signature, over `block` or over reasoning withheld.
+    Signature {
+        /// The block it seals.
+        block: Option<u32>,
+        /// The signature.
+        data: String,
+    },
     /// A format-specific event, kept without interpretation.
     Native(NativeValue),
 }
@@ -733,11 +767,22 @@ impl Assembled {
         &self.items
     }
 
+    /// The provider's signature over block `block`, if it signed it.
+    pub fn signature(&self, block: u32) -> Option<&str> {
+        self.items.iter().find_map(|item| match item {
+            AssembledItem::Signature {
+                block: Some(b),
+                data,
+            } if *b == block => Some(data.as_str()),
+            _ => None,
+        })
+    }
+
     /// The content blocks, in the order they opened.
     pub fn blocks(&self) -> impl Iterator<Item = &AssembledBlock> {
         self.items.iter().filter_map(|item| match item {
             AssembledItem::Block(part) => Some(part),
-            AssembledItem::Native(..) => None,
+            _ => None,
         })
     }
 
@@ -751,7 +796,7 @@ impl Assembled {
 
     /// What the model said, as the assistant message holds it: its text,
     /// reasoning and tool calls in order, each with the fields its format kept
-    /// beside it.
+    /// beside it and its signatures after it.
     pub fn replay(&self) -> Vec<Content> {
         let mut kept: HashMap<u32, NativeFields> = HashMap::new();
         for item in self.items() {
@@ -772,15 +817,17 @@ impl Assembled {
             match item {
                 AssembledItem::Block(b) => {
                     let native = native_of(b.block);
+                    // A part a provider signed is kept for its signature, even empty.
+                    let signed = self.signature(b.block).is_some();
                     match &b.kind {
-                        Block::Text if !b.text.is_empty() => {
+                        Block::Text if !b.text.is_empty() || signed => {
                             let mut part = Content::from(b.text.clone());
                             if let Content::Text { native: n, .. } = &mut part {
                                 *n = native;
                             }
                             parts.push(part);
                         }
-                        Block::Reasoning if !b.text.is_empty() || native.is_some() => {
+                        Block::Reasoning if !b.text.is_empty() || native.is_some() || signed => {
                             parts.push(Content::Reasoning {
                                 text: b.text.clone(),
                                 native,
@@ -797,16 +844,11 @@ impl Assembled {
                         _ => {}
                     }
                 }
-                // Thinking the provider redacted is only a native block; it must
-                // be sent back as it came.
-                AssembledItem::Native(native) => {
-                    let block = &native.value["content_block"];
-                    if native.value["type"] == "content_block_start"
-                        && block["type"] == "redacted_thinking"
-                    {
-                        parts.push(Content::native(native.format.clone(), block.clone()));
-                    }
-                }
+                AssembledItem::Signature { block, data } => parts.push(match block {
+                    Some(_) => Content::Signature(data.clone()),
+                    None => Content::Withheld(data.clone()),
+                }),
+                AssembledItem::Native(_) => {}
             }
         }
         parts
@@ -847,6 +889,16 @@ impl Assembled {
             Output::BlockEnd { block } => self.open_part(*block)?.ended = true,
             Output::Usage(usage) => self.usage += usage,
             Output::Finish(finish) => self.finish = Some(finish.clone()),
+            // A signature follows the block it seals; reasoning withheld, what came before.
+            Output::Signature { block, data } => {
+                let sealed =
+                    |i: &_| matches!(i, AssembledItem::Block(b) if Some(b.block) == *block);
+                let at =
+                    (self.items.iter().rposition(sealed)).map_or(self.items.len(), |at| at + 1);
+                let (block, data) = (*block, data.clone());
+                self.items
+                    .insert(at, AssembledItem::Signature { block, data });
+            }
             Output::Native(respan_gateway_core::NativeValue { format, value: raw }) => {
                 self.items.push(AssembledItem::Native(NativeValue {
                     format: format.clone(),
@@ -915,7 +967,7 @@ mod tests {
     fn a_message_is_read_back_as_it_was_kept() {
         let native = NativeFields::new(
             "f",
-            json!({"signature": "s"})
+            json!({"cache": "x"})
                 .as_object()
                 .cloned()
                 .expect("an object"),
@@ -927,6 +979,7 @@ mod tests {
                 text: "why".into(),
                 native: Some(native),
             },
+            Content::Signature("s".into()),
             Content::tool_call("c1", "lookup", "{}"),
             Content::tool_result("c1", vec![Content::from("42")], false),
             Content::Image(Media::new(
@@ -998,7 +1051,9 @@ mod tests {
             Output::start("r1", "m"),
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
+            Output::signature(None, "withheld"),
             Output::block_start(1, Block::Text),
             Output::text(1, "Hel"),
             Output::text(1, "lo"),
@@ -1012,6 +1067,7 @@ mod tests {
             ),
             Output::arguments(2, "{\"a\":"),
             Output::arguments(2, "1}"),
+            Output::signature(Some(2), "call"),
             Output::block_end(2),
             Output::native("chat", json!({"type": "ping"})),
             Output::usage(usage),
@@ -1036,6 +1092,22 @@ mod tests {
             ]
         );
         assert_eq!(all.text(), "Hello");
+        // Each signature follows the part it seals; reasoning withheld stays in place.
+        let reasoning = Content::Reasoning {
+            text: "hm".into(),
+            native: None,
+        };
+        assert_eq!(
+            all.replay(),
+            [
+                reasoning,
+                Content::Signature("sig".into()),
+                Content::Withheld("withheld".into()),
+                Content::from("Hello"),
+                Content::tool_call("t", "f", "{\"a\":1}"),
+                Content::Signature("call".into()),
+            ]
+        );
         assert_eq!(all.finish, Some(Finish::ToolUse));
         assert_eq!(all.usage.input_tokens, 6);
         assert!(

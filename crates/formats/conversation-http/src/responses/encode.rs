@@ -1,5 +1,6 @@
 //! Events as Responses, whole or streamed: the encoders.
 
+use super::decode::SEALED;
 use super::{
     ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
 };
@@ -135,6 +136,9 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     .iter()
                     .filter(mine)
                     .for_each(|(_, f)| merge_into(&mut more, f));
+                if let (Block::Reasoning, Some(s)) = (&part.kind, whole.signature(part.block)) {
+                    more.insert(SEALED.into(), s.into());
+                }
                 let cites: Vec<Value> = annotations
                     .iter()
                     .filter(|(b, _)| *b == part.block)
@@ -152,6 +156,8 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     &more,
                 )?);
             }
+            // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
+            AssembledItem::Signature { .. } => {}
             AssembledItem::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
                 match raw["type"].as_str() {
                     Some("response.output_item.done") => output.push(raw["item"].clone()),
@@ -610,6 +616,13 @@ impl Events {
                 status_of(finish)?;
                 self.finish = Some(finish.clone());
                 self.begin(out);
+            }
+            // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
+            Output::Signature { block, data } => {
+                let slot = self.blocks.iter_mut().find(|b| Some(b.block) == *block);
+                if let Some(slot) = slot.filter(|s| s.kind == Block::Reasoning) {
+                    slot.fields.insert(SEALED.into(), data.as_str().into());
+                }
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
                 if let Some((block, fields)) = block_fields(raw) {

@@ -162,11 +162,11 @@ fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
         return Err(Fault::bad_request("setup configuration must be an object"));
     }
     kept["setup"]["proactivity"]["proactiveAudio"] = false.into();
+    kept["setup"]["generationConfig"]["maxOutputTokens"] = OUTPUT.into();
     if let Value::Object(kept) = kept {
         native.fields = kept;
     }
     setup.model = Some(model.to_owned());
-    setup.max_output_tokens = u64::try_from(OUTPUT).ok();
     setup.turns = Some(Turns::Manual);
     Ok(())
 }

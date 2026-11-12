@@ -1,6 +1,7 @@
 //! Reading a Responses request's input items as messages.
 
 use super::super::RESPONSES;
+use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::schema::{NativeFieldsExt, native_fields, only, remainder, says, source_url};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
@@ -207,10 +208,12 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             _ => return None,
         }
     }
-    let native = native_fields(RESPONSES, remainder(item, &["type", "summary"]));
+    let native = native_fields(RESPONSES, remainder(item, &["type", "summary", SEALED]));
     let text = texts.join("\n\n");
-    assistant(out)
-        .content
-        .push(Content::Reasoning { text, native });
+    let content = &mut assistant(out).content;
+    content.push(Content::Reasoning { text, native });
+    if let Some(data) = item[SEALED].as_str() {
+        content.push(Content::Signature(data.into()));
+    }
     Some(())
 }

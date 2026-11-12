@@ -2,7 +2,7 @@
 //!
 //! A response is a sequence of events: a [`Output::Start`], then an
 //! [`Output::Embedding`] for each item of the request, in order (as many as
-//! the model answers for an [`Item::Parts`]), with
+//! the model answers for an [`Item::Native`]), with
 //! [`Output::Usage`] and [`Output::Native`] among them.
 
 use respan_gateway_conversation::Usage;
@@ -19,10 +19,8 @@ pub struct Input {
     pub items: Vec<Item>,
     /// How many numbers each vector holds, if the model can shorten them.
     pub dimensions: Option<u32>,
-    /// The end user's id, as the client names them to the provider.
-    pub user: Option<String>,
     /// The request's fields the kind has no place for, such as how the
-    /// vectors are encoded.
+    /// vectors are encoded or the end user's id.
     pub native: Option<NativeFields>,
 }
 
@@ -52,12 +50,10 @@ impl Input {
 pub enum Item {
     /// A text.
     Text(String),
-    /// A text as the ids of its tokens, in the model's own vocabulary.
-    Tokens(Vec<u32>),
-    /// Parts (texts, images, videos), each as the client wrote it, such as
-    /// `{"type": "image", "url": ..}`: the model answers one vector for them
-    /// all, or one for each.
-    Parts(Vec<Value>),
+    /// An item the kind has no form for, such as token ids or parts (texts,
+    /// images, videos) the model answers one vector for, or one each; only a
+    /// call in its format can send it.
+    Native(NativeValue),
 }
 
 /// The kind's output: one event of a response.

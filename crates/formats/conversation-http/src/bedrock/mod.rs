@@ -37,7 +37,8 @@
 //! - `output.message.content` blocks are numbered as Converse numbers them:
 //!   `text` is a `lock::Text`, `toolUse` a `lock::ToolCall` whose input
 //!   is one arguments delta, and `reasoningContent` a `lock::Reasoning`
-//!   with its `signature` or `redactedContent` as the block's fields. A
+//!   and its `signature` an [`Output::Signature`] over it; `redactedContent`
+//!   alone is one over no block, reasoning withheld. A
 //!   stream sends no start for text or reasoning: the first delta opens it.
 //! - `stopReason` is the [`Output::Finish`]: `end_turn` and `stop_sequence`
 //!   a stop, `tool_use`, `max_tokens`, and `content_filtered` and

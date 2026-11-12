@@ -226,24 +226,10 @@ impl Tab {
     fn before(&mut self, input: &mut Input) -> Result<(), Fault> {
         self.context = self.context.saturating_add(input_bound(input));
         match input {
-            Input::Session(session) => {
-                // The cap of the turns the provider starts on its own.
-                let turn = TURN.unsigned_abs();
-                if session.max_output_tokens.is_none_or(|n| n > turn) {
-                    session.max_output_tokens = Some(turn);
-                }
-            }
+            // The cap of the turns the provider starts on its own.
+            Input::Session(session) => cap(&mut session.native, "session"),
             Input::Respond { native } => {
-                let ours = || NativeFields::new(OpenAiRealtime::NAME, Map::new());
-                let fields = &mut native.get_or_insert_with(ours).fields;
-                let response = fields.entry("response").or_insert_with(|| json!({}));
-                if !response.is_object() {
-                    *response = json!({});
-                }
-                let cap = &mut response["max_output_tokens"];
-                if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
-                    *cap = TURN.into();
-                }
+                cap(native, "response");
                 self.hold()?;
             }
             _ => {}
@@ -322,12 +308,27 @@ impl Filter<Output> for Answers {
     }
 }
 
+/// OpenAI's `max_output_tokens` of its `object` (a session or a response) in
+/// `native`, at most `TURN`.
+fn cap(native: &mut Option<NativeFields>, object: &str) {
+    let ours = || NativeFields::new(OpenAiRealtime::NAME, Map::new());
+    let fields = &mut native.get_or_insert_with(ours).fields;
+    let object = fields.entry(object).or_insert_with(|| json!({}));
+    if !object.is_object() {
+        *object = json!({});
+    }
+    let cap = &mut object["max_output_tokens"];
+    if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
+        *cap = TURN.into();
+    }
+}
+
 /// A response's end as the log names it.
 fn finish(status: &Status) -> &str {
     match status {
         Status::Completed => "completed",
         Status::Cancelled | Status::Interrupted => "cancelled",
-        Status::Length | Status::Filtered => "incomplete",
+        Status::Filtered => "incomplete",
         Status::Native { reason, .. } => reason,
         _ => "failed",
     }

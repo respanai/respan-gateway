@@ -21,7 +21,7 @@ use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
 
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
 /// What starts the id of a job of Veo's.
@@ -60,8 +60,8 @@ const PREFIX: &str = "veo_";
 /// until the file is `ACTIVE`, then `completed`, its video the file's
 /// download URI.
 ///
-/// Veo cannot remix, delete or list videos, nor make a thumbnail or a
-/// spritesheet: those are refused, 400, before any call. What Veo answers
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call. What Veo answers
 /// beyond the kind is dropped.
 ///
 /// A client speaks it too, of any provider of the kind: it creates with
@@ -146,9 +146,13 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
     }
 }
 
-/// An operation Veo has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("Veo cannot {what}")).with(ErrorCode("unsupported".into()))
+/// An operation Veo has no form for, refused, named by its format.
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { native, .. } => format!("{} operation", native.format),
+        _ => "operation of this kind".to_owned(),
+    };
+    Fault::bad_request(format!("Veo has no video {what}")).with(ErrorCode("unsupported".into()))
 }
 
 /// The operation a job `id` names, else a 404.
@@ -197,20 +201,14 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             };
             (Method::GET, format!("/{name}"), None, asked)
         }
-        Input::Content { id, variant, url } => {
-            if *variant != Variant::Video {
-                return Err(unsupported("make a thumbnail or a spritesheet"));
-            }
+        Input::Content { id, url } => {
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
                 Fault::config("Veo's content is at the URL its job names, which the request needs")
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
-        _ => return Err(unsupported("answer this request")),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     head.uri = path
@@ -473,11 +471,6 @@ fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let file = file.ok_or_else(|| unreadable("holds no video"))?;
     let mut job = Job::new(GeminiVeo::job_id(&file), Status::InProgress);
     job.model = v["model"].as_str().map(str::to_owned);
-    let fields = ["id", "usage"]
-        .into_iter()
-        .filter_map(|key| v.get(key).cloned().map(|value| (key.to_owned(), value)))
-        .collect();
-    job.native = Some(NativeFields::new(NAME, fields));
     Ok(job)
 }
 
@@ -622,11 +615,7 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
     Ok(match route {
         Route::Create(model) => Input::Create(read_create(model, raw)?),
         Route::Retrieve { id, .. } => Input::Retrieve { id },
-        Route::Download(id) => Input::Content {
-            id,
-            variant: Variant::Video,
-            url: None,
-        },
+        Route::Download(id) => Input::Content { id, url: None },
     })
 }
 
@@ -1028,10 +1017,7 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
-        assert_eq!(
-            job.native.as_ref().and_then(|n| n.fields.get("usage")),
-            Some(&json!({"total_input_tokens": 12}))
-        );
+        assert_eq!(job.native, None);
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;

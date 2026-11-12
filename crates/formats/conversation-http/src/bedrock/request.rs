@@ -16,8 +16,7 @@ use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    NativeFieldsExt, arguments_object, reasoning_of, set, stop_json, untranslatable,
-    unwritable_content,
+    NativeFieldsExt, arguments_object, reasoning_of, sealed, set, stop_json, untranslatable,
 };
 
 /// The leading system messages as `system` blocks, and the rest; a later
@@ -66,7 +65,22 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 .ok_or_else(|| untranslatable("a role this format has no place for"))?,
         };
         let mut blocks: Vec<Value> = Vec::new();
-        for part in m.content.iter().filter(|c| !is_unsigned(c)) {
+        for (part, signature) in sealed(&m.content) {
+            match (part, signature) {
+                (Content::Reasoning { text, .. }, Some(signature)) => {
+                    let text = json!({ "text": text, "signature": signature });
+                    blocks.push(json!({ "reasoningContent": { "reasoningText": text } }));
+                    continue;
+                }
+                (Content::Withheld(data), _) => {
+                    blocks.push(json!({ "reasoningContent": { "redactedContent": data } }));
+                    continue;
+                }
+                // Reasoning Bedrock did not sign it refuses, and an earlier turn may leave out.
+                // WARN: Bedrock signs only reasoning; another part's signature is dropped here, silently.
+                (Content::Reasoning { .. } | Content::Signature(_), _) => continue,
+                _ => {}
+            }
             if let Some(written) = block(part)? {
                 blocks.push(written);
                 if marked(part) {
@@ -125,7 +139,6 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
         Content::Text { text, .. } => Ok(json!({ "text": text })),
         Content::Image(media) => image(media),
         Content::Document(media) => document(media),
-        Content::Reasoning { text, native } => reasoning(text, native),
         Content::ToolCall {
             id,
             name,
@@ -172,35 +185,6 @@ fn result_block(part: &Content) -> Result<Value, Fault> {
     match part {
         Content::Text { .. } | Content::Image(_) | Content::Document(_) => content_block(part),
         _ => Err(untranslatable("a tool result that is not text or media")),
-    }
-}
-
-/// Reasoning kept in the history, signed or redacted by Bedrock.
-fn reasoning(text: &str, native: &Option<NativeFields>) -> Result<Value, Fault> {
-    let own = native.format() == Some(BEDROCK);
-    let field = |key: &str| own.then(|| native.fields().get(key)).flatten();
-    if let Some(redacted) = field("redactedContent") {
-        return Ok(json!({ "reasoningContent": { "redactedContent": redacted } }));
-    }
-    match field("signature") {
-        Some(signature) => Ok(json!({
-            "reasoningContent": { "reasoningText": { "text": text, "signature": signature } }
-        })),
-        None => Err(unwritable_content()),
-    }
-}
-
-/// Whether a part is reasoning Bedrock cannot take back, which a message
-/// leaves out as Anthropic's does.
-pub(super) fn is_unsigned(part: &Content) -> bool {
-    match part {
-        Content::Reasoning { native, .. } => {
-            let signed = ["signature", "redactedContent"]
-                .iter()
-                .any(|k| native.fields().contains_key(*k));
-            native.format() != Some(BEDROCK) || !signed
-        }
-        _ => false,
     }
 }
 

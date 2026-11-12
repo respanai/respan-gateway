@@ -98,7 +98,7 @@ fn every_event_is_written_back_as_it_came() {
         .collect();
     assert_eq!(billed, [1.5, 1.5]);
     assert!(matches!(&events[0], Output::Updated(_)));
-    assert!(matches!(&events[6], Output::Error { code: Some(c), .. } if c == "unknown_parameter"));
+    assert!(matches!(&events[6], Output::Error { .. }));
     assert_eq!(heard(&events).expect("written"), server);
 }
 
@@ -132,14 +132,9 @@ fn what_the_live_api_has_none_of_is_refused() {
         vec![session(|s| s.purpose = Some(Purpose::Transcription))],
         vec![session(|s| s.output = Some(Modality::Text))],
         vec![session(|s| s.turns = Some(Turns::Manual))],
-        vec![session(|s| s.max_output_tokens = Some(1))],
         vec![session(|s| s.model = None)],
         vec![start.clone(), Input::Commit { native: None }],
         vec![start.clone(), Input::Respond { native: None }],
-        vec![
-            start.clone(),
-            session(|s| s.instructions = Some("x".into())),
-        ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
         assert_eq!(
@@ -148,13 +143,13 @@ fn what_the_live_api_has_none_of_is_refused() {
             "{events:?}"
         );
     }
-    // A later session that changes nothing is acknowledged.
+    // A later session is acknowledged, what it changes dropped.
     let (say, mut said) = spec::say();
     let mut provider = input::Provider::new(None, say);
-    let written =
-        frames(&[start.clone(), start], |e, out| provider.write(e, out)).expect("written");
+    let changed = session(|s| s.instructions = Some("x".into()));
+    let written = frames(&[start, changed], |e, out| provider.write(e, out)).expect("written");
     assert_eq!(written.len(), 1);
-    assert!(matches!(said.try_recv(), Ok(Output::Updated(_))));
+    assert!(matches!(said.try_recv(), Ok(Output::Updated(s)) if s.instructions.is_none()));
 }
 
 #[test]
@@ -164,10 +159,7 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
     let events = [
         Output::Opened(opened.clone()),
         Output::Updated(opened),
-        Output::ResponseStart {
-            id: None,
-            native: None,
-        },
+        Output::ResponseStart { native: None },
         Output::InputTranscript {
             text: "Hi".into(),
             complete: false,
@@ -184,7 +176,6 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
         },
         Output::Error {
             cause: respan_gateway_realtime::Cause::Provider,
-            code: Some("500".into()),
             message: "Oops.".into(),
             native: None,
         },

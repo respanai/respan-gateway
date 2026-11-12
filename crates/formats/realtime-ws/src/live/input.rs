@@ -6,14 +6,13 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
 use crate::json::{self, merge, own, string, take, text, untranslatable_input};
-use crate::session::{Say, changes};
+use crate::session::Say;
 
 /// A session's audio format until it says another.
 pub(super) const DEFAULT_FORMAT: AudioFormat = AudioFormat::pcm16(24_000);
@@ -133,7 +132,6 @@ impl Provider {
             (s.output == Some(Modality::Text), "text output"),
             (s.turns == Some(Turns::Manual), "turns the client ends"),
             (s.tools.as_ref().is_some_and(|t| !t.is_empty()), "tools"),
-            (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
             return Err(untranslatable_input(NAME, what));
@@ -149,23 +147,17 @@ impl Provider {
         Ok(v)
     }
 
-    /// A later session: the Live client's own update, as it came; else one
-    /// that changes nothing, acknowledged, as the rest is fixed at its start.
+    /// A later session: the Live client's own update, as it came; else
+    /// acknowledged with the session as it was started.
     fn update(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
-        let started = self.started.get_or_insert_default();
-        let mut asked = s.clone();
-        let native = asked.native.take();
-        if let Some(field) = changes(started, &asked) {
-            let fixed = format!(
-                "OpenAI Live fixes a session's configuration at its start: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
-        }
-        if let Some(native) = native {
+        if let Some(native) = &s.native {
             let mut v = json!({"type": "session.update"});
             merge(&mut v, Some(&native.fields));
             return Ok(Some(v));
         }
+        // WARN: OpenAI Live fixes a session at its start, so what a later
+        // one changes is dropped.
+        let started = self.started.get_or_insert_default();
         let _ = self.say.unbounded_send(Output::Updated(started.clone()));
         Ok(None)
     }

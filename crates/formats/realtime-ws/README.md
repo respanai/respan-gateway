@@ -97,18 +97,21 @@ would send, its usage in `response.done`.
 
 What one spec has and the other has not is emulated, dropped or refused:
 
-- To Gemini: the session is created before its setup; an update that
-  changes nothing is acknowledged, one that changes anything closes the
-  session 1008 (Gemini fixes its setup); `response.cancel` ends the
-  response at once and drops the rest of its turn; with manual turns the
-  user's audio opens an activity and its commit ends it. The usage of a
-  response that ended in calls or an interruption, which Gemini reports
-  after, at its turn's end, is in the next `response.done`.
-  `conversation.item.truncate` is dropped, as Gemini keeps only what it
-  sent; so are ids, tracing, noise reduction, transcription settings and
-  VAD tuning. A message is taken only as the user's text answered at once;
-  history, item edits, response overrides, a commit under server VAD, a
-  tool choice other than `auto` and `create_response: false` are refused.
+- To Gemini: the session is created before its setup; a later session is
+  acknowledged, what it changes dropped (Gemini fixes its setup);
+  `response.cancel` ends the response at once and drops the rest of its
+  turn; with manual turns the user's audio opens an activity and its
+  commit ends it. The usage of a response that ended in calls or an
+  interruption, which Gemini reports after, at its turn's end, is in the
+  next `response.done`. `conversation.item.truncate` is dropped, as Gemini
+  keeps only what it sent; so are ids, tracing, noise reduction,
+  transcription settings, VAD tuning and OpenAI's own tool choice, output
+  limit and `create_response`/`interrupt_response`, as are a commit and a
+  `response.create` to nothing under server VAD (Gemini answers each turn
+  itself). The user's text alone is answered at once; any other message,
+  such as history, is a `clientContent` turn, a system message the user's,
+  its parts but text dropped, and a message with no text dropped whole.
+  Item edits and response overrides are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
   its answers dropped: the user's transcript streams, and is whole at an
@@ -130,8 +133,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   but 24 kHz) is left out, and the audio converted to 24 kHz PCM.
 
 - To OpenAI Live: the session is fixed at its start, in the client's
-  audio format if it takes it, else 24 kHz PCM; a later session that
-  changes anything closes it 1008. Voice detection and transcription
+  audio format if it takes it, else 24 kHz PCM; a later session is
+  acknowledged, what it changes dropped. Voice detection and transcription
   settings are dropped; anything else it has none of, such as tools, text
   output, commits, messages and responses, is refused.
 - From OpenAI Live: the first session told of is its `session.started`;
@@ -139,8 +142,8 @@ What one spec has and the other has not is emulated, dropped or refused:
   text and tools' calls are refused. OpenAI sends a session with a Live
   model (`gpt-live-` and a version) to its Live API, any other to Realtime.
 - To Phonic: the session is fixed at its `config`, each audio format the
-  client's if it takes it, else 44.1 kHz PCM; a later session that changes
-  anything closes it 1008. Audio is sent in chunks of at most 40 ms, the
+  client's if it takes it, else 44.1 kHz PCM; a later session is
+  acknowledged, what it changes dropped. Audio is sent in chunks of at most 40 ms, the
   longest it takes. A voice is kept only from a Phonic client, as another
   format's names another vendor's. Voice detection and transcription
   settings are dropped; anything else it has none of, such as tools, text

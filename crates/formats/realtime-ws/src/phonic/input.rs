@@ -6,14 +6,13 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
 use crate::json::{self, merge, own, string, take, text, untranslatable_input};
-use crate::session::{Say, changes};
+use crate::session::Say;
 
 /// The longest audio chunk Phonic takes, in milliseconds.
 const CHUNK_MS: usize = 40;
@@ -73,8 +72,8 @@ pub(super) struct Provider {
     voiced: bool,
     /// The session as its `config` started it, once it did.
     applied: Applied,
-    /// The session as the client asked it, which a later one is judged by.
-    asked: Option<Session>,
+    /// Whether its `config` was written.
+    started: bool,
     say: Say,
     /// The format of the audio it takes, as its `config` said.
     input: AudioFormat,
@@ -87,7 +86,7 @@ impl Provider {
             model,
             voiced,
             applied,
-            asked: None,
+            started: false,
             say,
             input: DEFAULT_FORMAT,
             convert: Convert::default(),
@@ -106,10 +105,13 @@ impl Provider {
 
     fn encode(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {
         let refuse = |what: &str| Err(untranslatable_input(NAME, what));
-        let started = self.asked.is_some();
+        let started = self.started;
         match event {
             Input::Session(s) if !started => Ok(vec![self.start(s)?]),
-            Input::Session(s) => self.update(s).map(|()| Vec::new()),
+            Input::Session(_) => {
+                self.update();
+                Ok(Vec::new())
+            }
             _ if !started => Err(Fault::internal("a Phonic session begins with its config")),
             Input::Audio { audio, native } => {
                 let Some(data) = self.convert.to(audio, self.input) else {
@@ -138,7 +140,7 @@ impl Provider {
     /// format's names another vendor's. The provider's voice detection and
     /// transcription, which it always does, are dropped.
     fn start(&mut self, s: &Session) -> Result<Value, Fault> {
-        self.asked = Some(s.clone());
+        self.started = true;
         let mut s = s.clone();
         s.model = self.model.take().or(s.model);
         s.voice = s.voice.filter(|_| self.voiced);
@@ -147,7 +149,6 @@ impl Provider {
             (s.output == Some(Modality::Text), "text output"),
             (s.turns == Some(Turns::Manual), "turns the client ends"),
             (s.tools.as_ref().is_some_and(|t| !t.is_empty()), "tools"),
-            (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
             return Err(untranslatable_input(NAME, what));
@@ -163,19 +164,13 @@ impl Provider {
         Ok(v)
     }
 
-    /// A later session, which another format's client may send: one that
-    /// changes nothing the client asked, acknowledged with the session as
-    /// it was applied, as the rest is fixed at its start.
-    fn update(&mut self, s: &Session) -> Result<(), Fault> {
-        if let Some(field) = changes(self.asked.as_ref().unwrap_or(s), s) {
-            let fixed = format!(
-                "Phonic fixes a session's configuration at its config: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
-        }
+    /// A later session, which another format's client may send:
+    /// acknowledged with the session as it was applied.
+    fn update(&mut self) {
+        // WARN: Phonic fixes a session at its `config`, so what a later one
+        // changes is dropped.
         let applied = self.applied.lock().clone().unwrap_or_default();
         let _ = self.say.unbounded_send(Output::Updated(applied));
-        Ok(())
     }
 }
 

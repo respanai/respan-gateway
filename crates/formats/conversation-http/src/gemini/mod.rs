@@ -20,9 +20,10 @@
 //! answer finds by name, and which is never sent back to Gemini. A
 //! `functionResponse`'s `response` object is the result's text, as JSON;
 //! writing it, an object stays as it is, other text goes under `output`
-//! (`error` for a failed call). `systemInstruction` is a leading system
-//! message; `tools` are the function declarations, their `parameters` (or
-//! `parametersJsonSchema`) JSON Schema; `toolConfig` gives the tool choice;
+//! (`error` for a failed call), and images and documents are its `parts`.
+//! `systemInstruction` is a leading system message; `tools` are the function
+//! declarations, their `parameters` (or `parametersJsonSchema`) JSON Schema;
+//! `toolConfig` gives the tool choice;
 //! `generationConfig` the output limit, `temperature`, `topP`, `topK`, stop
 //! sequences, structured output (`responseMimeType` with a schema) and
 //! `thinkingConfig`: `thinkingLevel` is an effort, `thinkingBudget` a token
@@ -33,7 +34,8 @@
 //! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`.
+//! the kind has no choice for and video parts. A part's `thoughtSignature`
+//! is the kind's `Content::Signature` after it.
 //! An end user's id is dropped when written; a request for several
 //! candidates or one tool call at a time is refused.
 //!
@@ -103,11 +105,14 @@ use request::{
 pub use request::{media_part, needs_signatures};
 
 /// This format's name.
-const GEMINI: &str = "gemini-generate";
+pub(crate) const GEMINI: &str = "gemini-generate";
 
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.
 pub const SIGNATURE_PLACEHOLDER: &str = "skip_thought_signature_validator";
+
+/// The field of a part that holds its signature.
+const SIGNATURE: &str = "thoughtSignature";
 
 /// What starts the id of a tool call Gemini named none for.
 const SYNTHETIC: &str = "gemini_call_";
@@ -135,8 +140,8 @@ const FINISH: Names<Finish> = Names(
 /// The finish reason of a prompt Gemini blocked, which has no candidate.
 const BLOCKED: &str = "PROMPT_BLOCKED";
 
-/// A reason as a [`Finish`]: those that filter the answer, as the kind has
-/// it, stay Gemini's own for a client of this format.
+/// A reason as a [`Finish`]: Gemini's others stay its own for a client of
+/// this format, and another writes the kind's nearest.
 fn finish_of(reason: &str) -> Finish {
     match reason {
         "RECITATION"
@@ -146,8 +151,17 @@ fn finish_of(reason: &str) -> Finish {
         | "IMAGE_SAFETY"
         | "IMAGE_PROHIBITED_CONTENT"
         | "IMAGE_RECITATION"
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "ESCALATION"
+        | "PUP_LIMITED_DISABLED"
         | "LANGUAGE" => Finish::native_or(GEMINI, reason, Finish::Filtered),
-        _ => FINISH.finish(reason),
+        "CONTINUATION" => Finish::native_or(GEMINI, reason, Finish::Length),
+        "STOP" | "MAX_TOKENS" | "SAFETY" => FINISH.finish(reason),
+        // OTHER, FINISH_REASON_UNSPECIFIED, MALFORMED_FUNCTION_CALL,
+        // UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MALFORMED_RESPONSE,
+        // MISSING_THOUGHT_SIGNATURE, and any Google adds.
+        _ => Finish::native_or(GEMINI, reason, Finish::Stop),
     }
 }
 
@@ -389,9 +403,11 @@ impl Schema for GeminiGenerate {
         for item in whole.items() {
             match item {
                 AssembledItem::Block(part) => {
+                    let signature = whole.signature(part.block);
                     let mut written = match &part.kind {
                         Block::Text | Block::Reasoning if part.text.is_empty() => {
-                            if !fields.iter().any(|(b, _)| *b == part.block) {
+                            if signature.is_none() && !fields.iter().any(|(b, _)| *b == part.block)
+                            {
                                 continue;
                             }
                             part_of(&part.kind, "")?
@@ -401,8 +417,13 @@ impl Schema for GeminiGenerate {
                     if let Some(i) = fields.iter().position(|(b, _)| *b == part.block) {
                         merge_fields(&mut written, &fields.remove(i).1);
                     }
+                    if let Some(s) = signature {
+                        written[SIGNATURE] = s.into();
+                    }
                     parts.push(written);
                 }
+                // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+                AssembledItem::Signature { .. } => {}
                 AssembledItem::Native(NativeValue { format, value: raw })
                     if **format == *GEMINI =>
                 {

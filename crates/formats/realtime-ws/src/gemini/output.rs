@@ -77,9 +77,9 @@ impl Provider {
         let shared = self.shared.clone();
         let mut said = Vec::new();
         if self.decode(&mut shared.lock(), &mut v, &mut events) {
+            // Its own, as its client's writer tells a response of another's.
             said.push(Output::ResponseStart {
-                id: None,
-                native: None,
+                native: Some(NativeFields::new(NAME, Map::new())),
             });
         }
         said.extend(used.map(Output::Usage));
@@ -521,9 +521,6 @@ impl Client {
     }
 
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        if let Output::ResponseStart { native, .. } = event {
-            self.foreign = native.as_ref().is_some_and(|n| *n.format != *NAME);
-        }
         let Some(event) = foreign::strip(NAME, event) else {
             return Ok(());
         };
@@ -576,8 +573,9 @@ impl Client {
                 self.heard = !complete;
                 (content("inputTranscription", json!({"text": text})), native)
             }
-            Output::ResponseStart { .. } => {
+            Output::ResponseStart { native, .. } => {
                 self.interrupted = false;
+                self.foreign = native.is_none();
                 return Ok(Vec::new());
             }
             Output::Audio { audio, native } => {
