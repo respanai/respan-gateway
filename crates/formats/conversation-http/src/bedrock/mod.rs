@@ -60,7 +60,7 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{Asked, Framing, Names, Schema, rest_of, unwritable_content};
+use crate::schema::{Asked, Framing, Names, Own, Schema, rest_of, unwritable_content};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;

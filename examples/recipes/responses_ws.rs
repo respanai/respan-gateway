@@ -31,7 +31,7 @@ use respan_gateway_core::{
     ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
 use respan_gateway_realtime::{Input, Output};
-use respan_gateway_realtime_ws::ResponsesWs;
+use respan_gateway_realtime_ws::{Natives, ResponsesWs};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 
@@ -114,12 +114,10 @@ impl Plugin for Sessions {
 /// Pin a `response.create` to `model`, cap its output and reserve its lane's
 /// turn. One with `generate: false` only warms the cache, and costs nothing.
 fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
-    let Some(json) = (match event {
-        Input::Native(native) => ResponsesWs::value_mut(native),
-        _ => None,
-    }) else {
+    let Input::Native(native) = event else {
         return Ok(());
     };
+    let mut json = Value::Object(ResponsesWs::fields(native).clone());
     if json["type"] != "response.create" {
         return Ok(());
     }
@@ -129,24 +127,29 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
         ));
     }
     json["model"] = model.into();
-    if json["generate"] == false {
-        return Ok(());
+    let generate = json["generate"] != false;
+    if generate {
+        let cap = &mut json["max_output_tokens"];
+        if cap.as_i64().is_none_or(|n| !(1..=OUTPUT).contains(&n)) {
+            *cap = OUTPUT.into();
+        }
     }
-    let cap = &mut json["max_output_tokens"];
-    if cap.as_i64().is_none_or(|n| !(1..=OUTPUT).contains(&n)) {
-        *cap = OUTPUT.into();
+    let lane = json["stream_id"].as_str().unwrap_or("default").to_owned();
+    if let Value::Object(json) = json {
+        *native = ResponsesWs::with_fields(native, |f| *f = json);
     }
-    budget.begin(json["stream_id"].as_str().unwrap_or("default"))
+    match generate {
+        true => budget.begin(&lane),
+        false => Ok(()),
+    }
 }
 
 /// At a response's end, settle its lane's turn at the usage it reports.
 fn settle(budget: &Budget, event: &Output) {
-    let Some(json) = (match event {
-        Output::Native(native) => ResponsesWs::value(native),
-        _ => None,
-    }) else {
+    let Output::Native(native) = event else {
         return;
     };
+    let json = Value::Object(ResponsesWs::fields(native).clone());
     let kind = json["type"].as_str().unwrap_or_default();
     if !matches!(
         kind,

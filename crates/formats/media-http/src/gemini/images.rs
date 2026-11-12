@@ -15,14 +15,14 @@ use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
-use respan_gateway_http::{All, ClientIo, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "gemini-images";
 
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<GeminiImages>;
 
 /// Gemini's image models, such as Nano Banana, as the Gemini API serves
 /// them: a `POST` to `.../models/{model}:generateContent`, its answer's
@@ -55,8 +55,6 @@ pub struct GeminiImages;
 impl GeminiImages {
     /// The format's name, `gemini-images`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 
     /// The model a client's call at `uri` names, if it is one of this
     /// format's.

@@ -1,7 +1,7 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
+    Gate, Own, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;

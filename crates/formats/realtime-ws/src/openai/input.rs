@@ -3,7 +3,7 @@
 
 use respan_gateway_conversation::{Content, Message, Role};
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, ToolResult};
 use serde_json::{Value, json};
 

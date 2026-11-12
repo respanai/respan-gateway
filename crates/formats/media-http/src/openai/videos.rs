@@ -17,14 +17,14 @@ use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::{escape, forwarded_path};
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-videos";
 
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<OpenAiVideos>;
 
 /// OpenAI Videos, as OpenAI or a compatible vendor serves it: a request to
 /// a path ending in `/videos`, `/videos/{id}`, `/videos/{id}/content` or
@@ -43,8 +43,6 @@ pub struct OpenAiVideos;
 impl OpenAiVideos {
     /// The format's name, `openai-videos`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiVideos {

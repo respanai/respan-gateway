@@ -1,6 +1,7 @@
 //! A session object as the kind's [`Session`], both ways.
 
 use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
 

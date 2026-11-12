@@ -1,10 +1,10 @@
 //! Cross-format checks of the shared schema helpers, which are private to
 //! this crate.
 
-use respan_gateway_conversation::{Assembled, Content};
+use respan_gateway_conversation::{Assembled, Content, Finish, Output};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::Schema;
 use crate::anthropic::AnthropicMessages;
@@ -12,7 +12,23 @@ use crate::gemini::GeminiGenerate;
 use crate::openai::OpenAiChat;
 use crate::responses::OpenAiResponses;
 use crate::schema::errors::answer;
-use crate::schema::{decode_content, encode_content};
+use crate::schema::{Own, decode_content, encode_content};
+
+/// Asserts `a` and `b` are the same events, their natives by `C`'s JSON.
+#[track_caller]
+pub(crate) fn assert_same<C: Schema>(a: &[Output], b: &[Output]) {
+    let json = |events: &[Output]| -> Vec<Option<Value>> {
+        let natives = events.iter().filter_map(|e| match e {
+            Output::Start(start) => Some(&start.native),
+            Output::BlockFields { native, .. } | Output::BlockNative { native, .. } => Some(native),
+            Output::Native(native) | Output::Finish(Finish::Native { native, .. }) => Some(native),
+            _ => None,
+        });
+        natives.map(|n| C::value(n).cloned()).collect()
+    };
+    assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    assert_eq!(json(a), json(b));
+}
 
 #[test]
 fn a_cache_marker_stays_with_its_own_part_among_equal_text() {

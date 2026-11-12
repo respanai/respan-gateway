@@ -28,7 +28,7 @@ A turn is read before the call it is sent on (`Store::get` is async), so a
 shared store may answer over the network; `put` returns at once, such a
 store writing the turn after. The `serde` feature makes a `Turn`
 `Serialize` and `Deserialize`, for such a store to write.
-The memory budget includes retained format-specific JSON values and fields.
+A turn is kept without its natives, in memory as a shared store keeps it.
 
 ```rust,ignore
 use respan_gateway_plugin_responses::Responses;

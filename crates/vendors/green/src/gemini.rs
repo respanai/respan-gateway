@@ -107,9 +107,16 @@ fn signed(input: &mut Input) -> Result<(), Fault> {
 
 /// `native` with `signature` in its `extra_content`, as Google's Chat takes it.
 fn sign(native: &mut Native, signature: String) {
-    let fields = OpenAiChat::fields_mut(native);
-    let extra = fields.entry("extra_content").or_insert_with(|| json!({}));
-    extra["google"]["thought_signature"] = signature.into();
+    *native = OpenAiChat::with_fields(native, |fields| {
+        let extra = fields.entry("extra_content").or_insert_with(|| json!({}));
+        let google = extra
+            .as_object_mut()
+            .map(|e| e.entry("google").or_insert(json!({})));
+        // WARN: a client's `extra_content` that is no object is not signed.
+        if let Some(google) = google.and_then(Value::as_object_mut) {
+            google.insert("thought_signature".into(), signature.into());
+        }
+    });
 }
 
 /// Its models, as its own API lists them (`{"models": [{"name", ..}]}`),

@@ -62,8 +62,10 @@ impl XGroqUsage {
             out.push(Output::Usage(more));
         }
         if !extra.is_empty() {
-            out.push(Output::Native(OpenAiChat::native(
-                json!({ "usage": extra }),
+            let usage = |f: &mut Map<String, Value>| _ = f.insert("usage".into(), json!(extra));
+            out.push(Output::Native(OpenAiChat::with_fields(
+                &Native::default(),
+                usage,
             )));
         }
         Ok(())
@@ -80,28 +82,26 @@ impl Filter<Output> for XGroqUsage {
             }
             Output::Start(mut start) => {
                 self.report(out)?;
-                if OpenAiChat::value(&start.native).is_some() {
-                    let fields = OpenAiChat::fields_mut(&mut start.native);
-                    self.said = take_usage(fields);
-                    if fields.is_empty() {
-                        start.native = Native::default();
-                    }
+                if !OpenAiChat::fields(&start.native).is_empty() {
+                    let said = &mut self.said;
+                    start.native =
+                        OpenAiChat::with_fields(&start.native, |f| *said = take_usage(f));
                 }
                 // The chunk's own usage comes after its start.
                 out.push(Output::Start(start));
                 return Ok(());
             }
-            Output::Native(native) if OpenAiChat::value(&native).is_some() => {
+            Output::Native(native) if !OpenAiChat::fields(&native).is_empty() => {
                 self.report(out)?;
-                let mut value = OpenAiChat::value(&native).cloned().unwrap_or_default();
-                let response = value.get_mut("response").and_then(Value::as_object_mut);
+                let mut fields = OpenAiChat::fields(&native).clone();
+                let response = fields.get_mut("response").and_then(Value::as_object_mut);
                 if let Some(response) = response {
                     self.said = take_usage(response);
                     if response.is_empty() {
                         return self.report(out);
                     }
                 }
-                Output::Native(OpenAiChat::native(value))
+                Output::Native(OpenAiChat::with_fields(&native, |f| *f = fields))
             }
             output => output,
         };

@@ -85,7 +85,7 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Schema, UsageFields, check_usage, count, merge_details, merge_fields, set,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, merge_details, merge_fields, set,
     unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
@@ -372,8 +372,6 @@ impl Schema for GeminiGenerate {
         read_messages(v, &mut chat);
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat.native =
-            GeminiGenerate::native(std::mem::take(GeminiGenerate::fields_mut(&mut chat.native)));
         chat
     }
 

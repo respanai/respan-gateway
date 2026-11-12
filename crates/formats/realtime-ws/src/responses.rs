@@ -17,7 +17,7 @@ pub(crate) const SPEC: Spec = Spec {
     transcribes: false,
 };
 
-respan_gateway_core::native_key!(Key = SPEC.name);
+type Key = crate::Own<ResponsesWs>;
 
 /// OpenAI's Responses over WebSocket: a `GET` upgrade to a path ending in
 /// `/responses`, as for HTTP, and a call to it after the base URL its SDKs
@@ -35,8 +35,6 @@ impl ResponsesWs {
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
-
-    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {

@@ -22,7 +22,7 @@ mod exchange;
 mod values;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) use crate::fields::{rest_of, unix_now};
 pub use errors::{merge_details, read_provider_error};
@@ -49,14 +49,24 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::http::{
     self, StatusCode, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
-use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, rules::bodiless};
+use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, rules::bodiless};
 use serde_json::{Map, Value};
 
-/// What only format `F` reads of a value: a key no other crate can name.
-pub(crate) struct Key<F>(std::marker::PhantomData<fn() -> F>);
-impl<F: Schema> respan_gateway_core::Key for Key<F> {
-    const NAME: &'static str = F::NAME;
+/// What only format `F` reads of a value: a type no other crate can name.
+struct Key<F>(std::marker::PhantomData<fn() -> F>);
+
+/// A format's own natives, which only this crate opens.
+pub(crate) trait Own: Schema {
+    /// `value` as this format's own: none if it says nothing.
+    fn native(value: impl Into<Value>) -> Native {
+        Native::json::<Key<Self>>(value)
+    }
+    /// The value of this format's own in `native`, if it holds one.
+    fn value(native: &Native) -> Option<&Value> {
+        native.value::<Key<Self>>()
+    }
 }
+impl<F: Schema> Own for F {}
 
 /// Provider HTTP delivery preference, set in call extensions.
 /// Without an override the HTTP binding follows the original client request,
@@ -106,24 +116,16 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// [`Schema::CARRIED`] is.
     const CARRIED_QUERY: &'static [&'static str] = &[];
     /// The fields of this format's own in `native`, none if it holds
-    /// another's: with `fields_mut`, `native` and `value`, the door through
-    /// which only code that names this format, such as a vendor's dialect,
+    /// another's: with [`Schema::with_fields`], the door through which only
+    /// code that names this format, such as a vendor's dialect or a host,
     /// reaches its own.
     fn fields(native: &Native) -> &Map<String, Value> {
         native.fields::<Key<Self>>()
     }
-    /// The fields of this format's own in `native`, to edit, in place of
-    /// another's.
-    fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
-        native.fields_mut::<Key<Self>>()
-    }
-    /// `value` as this format's own: none if it says nothing.
-    fn native(value: impl Into<Value>) -> Native {
-        Native::json::<Key<Self>>(value)
-    }
-    /// The value of this format's own in `native`, if it holds one.
-    fn value(native: &Native) -> Option<&Value> {
-        native.value::<Key<Self>>()
+    /// A native of this format's own fields in `native`, edited by `edit`:
+    /// another's dropped, and none if no field is left.
+    fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key<Self>>(edit)
     }
     /// The keys of a conversation's `native` this format writes itself, from
     /// the conversation and the native together.

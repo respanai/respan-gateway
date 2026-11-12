@@ -1,7 +1,8 @@
 use super::*;
-use crate::Schema;
 use crate::anthropic::AnthropicMessages;
 use crate::bedrock::BedrockConverse;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
 use respan_gateway_core::Native;
 
 use respan_gateway_conversation::{
@@ -317,9 +318,9 @@ fn a_stream_is_blocks_a_finish_and_usage() {
     let mut usage = Usage::new(16, 5);
     usage.cached_input_tokens = 4;
     usage.cache_write_input_tokens = 2;
-    assert_eq!(
-        decode_chunks(&text_stream()).expect("events"),
-        [
+    assert_same::<BedrockConverse>(
+        &decode_chunks(&text_stream()).expect("events"),
+        &[
             Output::Start(Start::new("", "")),
             Output::block_start(0, Block::Text),
             Output::text(0, "Hel"),
@@ -328,9 +329,9 @@ fn a_stream_is_blocks_a_finish_and_usage() {
             Output::finished(Finish::Stop),
             Output::Usage(usage),
             native(
-                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } })
+                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } }),
             ),
-        ]
+        ],
     );
 }
 
@@ -427,9 +428,9 @@ fn a_whole_body_is_the_same_events() {
         id: "t1".into(),
         name: "lookup".into(),
     };
-    assert_eq!(
-        events,
-        [
+    assert_same::<BedrockConverse>(
+        &events,
+        &[
             Output::Start(Start::new("", "")),
             Output::Usage(Usage::new(10, 5)),
             Output::block_start(0, Block::Reasoning),
@@ -445,17 +446,17 @@ fn a_whole_body_is_the_same_events() {
             Output::block_native(
                 3,
                 BedrockConverse::native(
-                    json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } })
-                )
+                    json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } }),
+                ),
             ),
             Output::finished(Finish::ToolUse),
             native(
-                json!({ "type": "stop_fields", "fields": { "additionalModelResponseFields": { "x": 1 } } })
+                json!({ "type": "stop_fields", "fields": { "additionalModelResponseFields": { "x": 1 } } }),
             ),
             native(
-                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } })
+                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } }),
             ),
-        ]
+        ],
     );
 }
 

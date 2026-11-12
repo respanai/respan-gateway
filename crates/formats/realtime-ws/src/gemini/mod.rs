@@ -22,7 +22,7 @@ use respan_gateway_ws::WsTransport;
 use crate::session::{self, Spec};
 
 const NAME: &str = SPEC.name;
-respan_gateway_core::native_key!(pub(crate) Key = NAME);
+pub(crate) type Key = crate::Own<GeminiLive>;
 
 /// What a session's writer to its provider and reader of it share.
 #[derive(Debug, Default)]
@@ -77,8 +77,6 @@ impl GeminiLive {
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
-
-    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]),
     /// taking binary frames as text ([`WsTransport::with_binary_text`]).

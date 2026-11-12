@@ -45,7 +45,34 @@ pub use openai::OpenAiRealtime;
 pub use phonic::PhonicSts;
 pub use responses::ResponsesWs;
 
-use respan_gateway_http::raw::Original;
+/// What only format `F` of this crate reads of a value: no other crate can name it.
+struct Own<F>(std::marker::PhantomData<fn() -> F>);
+
+/// A format's own natives, which code that names the format reaches.
+pub trait Natives: Sized + 'static {
+    /// Its own fields in `native`: none if it holds another format's.
+    fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Own<Self>>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped, and its own
+    /// still if no field is left, as its writer tells events.
+    fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        let edited = native.with_fields::<Own<Self>>(edit);
+        if edited.is_empty() {
+            Native::own::<Own<Self>>()
+        } else {
+            edited
+        }
+    }
+}
+impl Natives for OpenAiRealtime {}
+impl Natives for GeminiLive {}
+impl Natives for OpenAiLive {}
+impl Natives for ResponsesWs {}
+
+use respan_gateway_core::Native;
+use respan_gateway_http::{native::Json, raw::Original};
+use serde_json::{Map, Value};
 
 /// The model routing chose for a session, in a call's extensions: a format
 /// whose provider takes its model at connect, as OpenAI's does at

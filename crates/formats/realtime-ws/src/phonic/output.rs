@@ -1,6 +1,7 @@
 //! What the model says: Phonic's server messages as the kind's [`Output`],
 //! read at the provider's edge and written at the client's.
 
+use respan_gateway_http::native::Json;
 use std::time::Instant;
 
 use respan_gateway_core::{Fault, Native};

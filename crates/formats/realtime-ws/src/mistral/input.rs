@@ -2,8 +2,8 @@
 //! read at the client's edge, and the kind's written to Mistral's session.
 
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{Encoder, native::Json};
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, Turns};
 use serde_json::{Value, json};
 

@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 
+use super::Own;
 use super::Schema;
 use super::errors::says;
 
@@ -668,17 +669,15 @@ pub(crate) fn take_native<C: Schema, T>(
     Some(parsed)
 }
 
-/// `edit` of `C`'s fields in `native`, which it leaves none if they end
-/// empty; another format's it replaces.
+/// `edit` of `C`'s fields in `native`, which it replaces: none if they end
+/// empty; another format's dropped.
 pub(crate) fn edit_native<C: Schema, T>(
     native: &mut Native,
     edit: impl FnOnce(&mut Map<String, Value>) -> T,
 ) -> T {
-    let fields = C::fields_mut(native);
-    let edited = edit(fields);
-    if fields.is_empty() {
-        *native = Native::default();
-    }
+    let mut fields = C::fields(native).clone();
+    let edited = edit(&mut fields);
+    *native = C::native(fields);
     edited
 }
 

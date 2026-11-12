@@ -18,7 +18,7 @@ use crate::session::{self as spec, Spec};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<OpenAiLive>;
 
 pub(crate) const SPEC: Spec = Spec {
     name: "openai-live",
@@ -45,8 +45,6 @@ impl OpenAiLive {
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
-
-    respan_gateway_core::native_doors!(Key);
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {

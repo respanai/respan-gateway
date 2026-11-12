@@ -17,14 +17,14 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-images";
 
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<OpenAiImages>;
 const GENERATIONS: &str = "/images/generations";
 const EDITS: &str = "/images/edits";
 
@@ -57,8 +57,6 @@ pub struct OpenAiImages;
 impl OpenAiImages {
     /// The format's name, `openai-images`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiImages {

@@ -1,9 +1,8 @@
 //! Responses, streamed or whole, as events: the decoder.
 
 use super::{RESPONSE_FIELDS, USAGE_FIELDS, extra_usage, response_fields, usage_of};
-use crate::Schema;
 use crate::responses::OpenAiResponses;
-use crate::schema::{Totals, ended, error_event, rest_of, says, says_error, unreadable_event};
+use crate::schema::{Own, Totals, ended, error_event, rest_of, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;

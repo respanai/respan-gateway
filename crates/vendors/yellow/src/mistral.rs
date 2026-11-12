@@ -10,6 +10,7 @@ use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::speech;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTranscriptions};
 use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;
@@ -80,8 +81,9 @@ fn taken(input: &mut speech::Input) -> Result<(), Fault> {
     let Some(voice) = input.voice.take() else {
         return Ok(());
     };
-    let fields = OpenAiSpeech::fields_mut(&mut input.native);
-    fields.entry("voice_id").or_insert_with(|| voice.into());
+    input.native = OpenAiSpeech::with_fields(&input.native, |fields| {
+        fields.entry("voice_id").or_insert_with(|| voice.into());
+    });
     Ok(())
 }
 
@@ -137,7 +139,7 @@ mod tests {
         input.voice = Some("v".into());
         taken(&mut input).expect("taken");
         assert_eq!(input.voice, None);
-        assert_eq!(OpenAiSpeech::fields_mut(&mut input.native)["voice_id"], "v");
+        assert_eq!(OpenAiSpeech::fields(&input.native)["voice_id"], "v");
         let mut asked = speech::Input::new("hi");
         asked.speed = Some(1.5);
         assert!(taken(&mut asked).is_err());

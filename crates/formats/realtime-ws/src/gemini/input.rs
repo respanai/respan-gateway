@@ -1,6 +1,7 @@
 //! What the client says: the Live API's client messages as the kind's
 //! [`Input`], read at the client's edge and written at the provider's.
 
+use respan_gateway_http::native::Json;
 use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation::{Content, Message, Role};

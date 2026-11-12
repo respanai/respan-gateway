@@ -5,7 +5,7 @@ use super::{read::read_media, write::write_media};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    decode_tools, each_tool, edit_native, effort_for, effort_name, merge_fields, only,
+    Own, decode_tools, each_tool, edit_native, effort_for, effort_name, merge_fields, only,
     parse_effort, read_search, rest_of, set, take_strict, untranslatable, write_search,
 };
 use respan_gateway_conversation::{

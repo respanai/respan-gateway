@@ -30,7 +30,7 @@ use respan_gateway_core::{
     ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
 use respan_gateway_realtime::{Input, Output, Session, Status, Turns};
-use respan_gateway_realtime_ws::GeminiLive;
+use respan_gateway_realtime_ws::{GeminiLive, Natives};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 
@@ -120,8 +120,9 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
     match event {
         Input::Session(setup) => configure(setup, model)?,
         Input::Native(native)
-            if GeminiLive::value(native)
-                .is_some_and(|v| v["realtimeInput"].get("activityStart").is_some()) =>
+            if GeminiLive::fields(native)
+                .get("realtimeInput")
+                .is_some_and(|v| v.get("activityStart").is_some()) =>
         {
             budget.begin("turn")?
         }
@@ -153,8 +154,7 @@ fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
             "model is outside the configured budget policy",
         ));
     }
-    let fields = GeminiLive::fields_mut(&mut setup.native);
-    let mut kept = Value::Object(std::mem::take(fields));
+    let mut kept = Value::Object(GeminiLive::fields(&setup.native).clone());
     if CONFIGURATION
         .iter()
         .any(|path| kept.pointer(path).is_some_and(|v| !v.is_object()))
@@ -164,7 +164,7 @@ fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
     kept["setup"]["proactivity"]["proactiveAudio"] = false.into();
     kept["setup"]["generationConfig"]["maxOutputTokens"] = OUTPUT.into();
     if let Value::Object(kept) = kept {
-        *GeminiLive::fields_mut(&mut setup.native) = kept;
+        setup.native = GeminiLive::with_fields(&setup.native, |f| *f = kept);
     }
     setup.model = Some(model.to_owned());
     setup.turns = Some(Turns::Manual);

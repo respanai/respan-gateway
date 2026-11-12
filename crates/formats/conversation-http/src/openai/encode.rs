@@ -1,6 +1,8 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
-use crate::schema::{Gate, Schema, check_usage, fits, merge_into, unix_now, unwritable_content};
+use crate::schema::{
+    Gate, Own, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
+};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;

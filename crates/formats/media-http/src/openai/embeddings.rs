@@ -10,14 +10,14 @@ use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
 use serde_json::{Map, Value};
 
 const NAME: &str = "openai-embeddings";
 
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<OpenAiEmbeddings>;
 const EMBEDDINGS: &str = "/embeddings";
 
 /// OpenAI Embeddings, as OpenAI or a compatible vendor serves it: a `POST`
@@ -37,8 +37,6 @@ pub struct OpenAiEmbeddings;
 impl OpenAiEmbeddings {
     /// The format's name, `openai-embeddings`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiEmbeddings {
@@ -310,7 +308,8 @@ mod tests {
         ];
         for (asked, read, written) in cases {
             let read_back = items(asked.clone()).expect("items");
-            assert_eq!(read_back, read, "{asked}");
+            // Its natives say what they hold as they are written back.
+            assert_eq!(format!("{read_back:?}"), format!("{read:?}"), "{asked}");
             assert_eq!(items_json(&read_back).expect("input"), written);
         }
     }

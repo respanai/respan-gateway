@@ -1,7 +1,7 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Schema, arguments_object, check_usage, merge_fields, merge_into, own_fields,
+    Gate, Own, Schema, arguments_object, check_usage, merge_fields, merge_into, own_fields,
     unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};

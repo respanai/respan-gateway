@@ -76,7 +76,7 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
+    Asked, Own, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
     parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
@@ -209,11 +209,12 @@ impl Schema for OpenAiResponses {
         chat.user = v["user"].as_str().map(Into::into);
         chat.native = OpenAiResponses::native(unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
-            OpenAiResponses::fields_mut(&mut chat.native).shift_remove("user");
+            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
-            Self::fields_mut(&mut chat.native).insert(request::INSTRUCTIONS.into(), true.into());
+            let instructions = request::INSTRUCTIONS.into();
+            edit_native::<Self, _>(&mut chat.native, |f| f.insert(instructions, true.into()));
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);

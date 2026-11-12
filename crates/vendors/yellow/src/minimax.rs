@@ -7,7 +7,7 @@ use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media_http::{Natives, openai::OpenAiImages};
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 use serde_json::{Value, json};
 
@@ -415,9 +415,10 @@ mod tests {
     fn validation_respects_native_identity_and_converts_file_references() {
         let mut input = image::Input::new("fox");
         let transparent = json!({"background": "transparent"});
-        input.native = Native::json::<()>(transparent.clone());
+        input.native = Native::new(transparent.clone());
         validate(&mut input).expect("foreign native fields ignored");
-        input.native = OpenAiImages::native(transparent);
+        let transparent = transparent.as_object().cloned().unwrap_or_default();
+        input.native = OpenAiImages::with_fields(&Native::default(), |f| *f = transparent);
         assert!(validate(&mut input).is_err());
         input.native = Native::default();
         for (count, accepted) in [(0, false), (1, true), (10, true), (11, false)] {

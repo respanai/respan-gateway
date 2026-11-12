@@ -1,6 +1,7 @@
 use super::*;
-use crate::Schema;
 use crate::openai::OpenAiChat;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
 
@@ -168,9 +169,9 @@ fn real_openai_chunks_decode_to_text_and_tool_calls() {
         let fields = fields.as_object().cloned().unwrap_or_default();
         s.native = OpenAiChat::native(fields);
     }
-    assert_eq!(
-        out,
-        [
+    assert_same::<OpenAiChat>(
+        &out,
+        &[
             start,
             // An empty text opens no block.
             Output::block_start(0, Block::Text),
@@ -180,16 +181,16 @@ fn real_openai_chunks_decode_to_text_and_tool_calls() {
             Output::block_start(1, call("call_1", "f")),
             Output::block_end(1),
             Output::finished(Finish::ToolUse),
-        ]
+        ],
     );
 }
 
 #[test]
 fn a_native_finish_is_written_as_its_fallback() {
-    let full = Finish::native(Native::json::<()>("context_full"), Some(Finish::Length));
+    let full = Finish::native(Native::new("context_full"), Some(Finish::Length));
     let body = body_of(&[Output::start("x", "m"), Output::finished(full)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "length");
-    let paused = Finish::native(Native::json::<()>("pause_turn"), None);
+    let paused = Finish::native(Native::new("pause_turn"), None);
     let body = body_of(&[Output::start("x", "m"), Output::finished(paused)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
 }
@@ -251,13 +252,13 @@ fn a_choice_with_logprobs_is_other_content() {
     // Its text is text, as in a whole response, so a filter sees it; the
     // rest is other content, which comes first.
     let rest = json!({ "choices": [{ "index": 0, "logprobs": { "content": [] } }] });
-    assert_eq!(
-        out[1..],
-        [
+    assert_same::<OpenAiChat>(
+        &out[1..],
+        &[
             Output::Native(OpenAiChat::native(rest)),
             Output::block_start(0, Block::Text),
             Output::text(0, "Hi"),
-        ]
+        ],
     );
 }
 
@@ -266,12 +267,12 @@ fn a_choices_unknown_field_stays_native_and_goes_back_as_it_came() {
     let chunk = "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\",\"x_vendor\":\"stop\",\"x_null\":null}]}\n\n";
     let (out, _) = decode_all(&[chunk]);
     let rest = json!({ "choices": [{ "index": 0, "x_vendor": "stop" }] });
-    assert_eq!(
-        out[1..],
-        [
+    assert_same::<OpenAiChat>(
+        &out[1..],
+        &[
             Output::Native(OpenAiChat::native(rest)),
-            Output::finished(Finish::Stop)
-        ]
+            Output::finished(Finish::Stop),
+        ],
     );
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":\"stop\""), "{stream}");
@@ -373,7 +374,7 @@ fn content_the_kind_cannot_hold_is_other() {
         "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"no\"}}]}\n\n",
     ]);
     let refusal = json!({ "choices": [{ "index": 0, "delta": { "refusal": "no" } }] });
-    assert_eq!(out[1..], [Output::Native(OpenAiChat::native(refusal))]);
+    assert_same::<OpenAiChat>(&out[1..], &[Output::Native(OpenAiChat::native(refusal))]);
 }
 
 #[test]
@@ -546,9 +547,9 @@ fn a_whole_response_decodes_into_events() {
     if let Output::Usage(u) = &mut totals {
         u.output_tokens += 1;
     }
-    assert_eq!(
-        decode_body(&v),
-        [
+    assert_same::<OpenAiChat>(
+        &decode_body(&v),
+        &[
             start,
             totals,
             Output::block_start(0, Block::Text),
@@ -558,7 +559,7 @@ fn a_whole_response_decodes_into_events() {
             Output::arguments(1, "{}"),
             Output::block_end(1),
             Output::finished(Finish::ToolUse),
-        ]
+        ],
     );
     // Logprobs and content that is not text are other content too.
     let logprobs = json!({ "choices": [{ "index": 0, "logprobs": { "content": [] },
@@ -639,7 +640,7 @@ fn what_a_later_chunk_changes_of_the_response_is_native_after_its_usage() {
         json!({ "response": { "x_vendor": { "id": "r", "usage": { "prompt_tokens": 1 } } } });
     let at = out
         .iter()
-        .position(|r| *r == Output::Native(OpenAiChat::native(changed.clone())));
+        .position(|r| matches!(r, Output::Native(n) if OpenAiChat::value(n) == Some(&changed)));
     let usage = out.iter().position(|r| matches!(r, Output::Usage(_)));
     assert!(usage < at && at.is_some(), "{out:?}");
     assert_eq!(
@@ -1096,8 +1097,10 @@ fn the_user_field_is_read_redacted_and_translated() {
 fn a_plugin_that_removes_tools_sends_the_request_without_them() {
     let body = json!({ "model": "m", "messages": [], "tools": [{ "type": "function" }] });
     let edited = written(body, |c| {
-        OpenAiChat::fields_mut(&mut c.native).shift_remove("tools");
-        OpenAiChat::fields_mut(&mut c.native).insert("seed".into(), 7.into());
+        c.native = OpenAiChat::with_fields(&c.native, |f| {
+            f.shift_remove("tools");
+            f.insert("seed".into(), 7.into());
+        });
     });
     assert_eq!(
         edited.ok(),

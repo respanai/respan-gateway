@@ -30,7 +30,7 @@ leniently, as compatible servers send it, is public, `read_provider_error`,
 for the HTTP formats of other JSON kinds, such as the media kinds'.
 
 What a format has no form for stays native to it (a `Native` only it, or
-code that names it through its `Schema::fields` door, reads), is written
+code that names it through `Schema::fields` and `Schema::with_fields`, reads), is written
 only by that format, and is dropped by another, silently: what has meaning
 beyond its format belongs in the kind. A message whose every part a format drops is left out. A call
 to a provider of the client's own format carries the client's spec headers and

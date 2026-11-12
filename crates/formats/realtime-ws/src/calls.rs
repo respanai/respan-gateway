@@ -1,5 +1,6 @@
 //! Tools' calls, left out of what this crate's formats say only natively.
 
+use respan_gateway_http::native::Json;
 use std::collections::HashSet;
 
 use respan_gateway_core::Native;
@@ -28,7 +29,7 @@ impl Calls {
         let Some(event) = own(native) else {
             return false;
         };
-        if let Value::Object(fields) = &*event {
+        if let Value::Object(fields) = event {
             let held = std::iter::once(fields).chain(fields.values().filter_map(Value::as_object));
             let ours: Vec<&Map<String, Value>> = held.filter(|o| self.is_ours(o)).collect();
             if !ours.is_empty() {
@@ -37,21 +38,29 @@ impl Calls {
                 return true;
             }
         }
-        self.prune(event);
+        self.fields(native);
         false
     }
 
     /// Leaves the calls out of an event's own fields.
     pub fn fields(&mut self, native: &mut Native) {
-        if let Some(fields) = own(native) {
-            self.prune(fields);
+        let Some(mut value) = own(native).cloned() else {
+            return;
+        };
+        if self.prune(&mut value) {
+            // Its format's own, written anew without them.
+            *native = match native.value::<openai::Key>() {
+                Some(_) => Native::json::<openai::Key>(value),
+                None => Native::json::<gemini::Key>(value),
+            };
         }
     }
 
-    /// Takes the calls out of the arrays in `value`.
-    fn prune(&mut self, value: &mut Value) {
+    /// Takes the calls out of the arrays in `value`: whether it held any.
+    fn prune(&mut self, value: &mut Value) -> bool {
         match value {
             Value::Array(items) => {
+                let held = items.len();
                 items.retain(|item| match item.as_object() {
                     Some(o) if self.is_ours(o) => {
                         self.ids.extend(ids_of(o));
@@ -59,10 +68,15 @@ impl Calls {
                     }
                     _ => true,
                 });
-                items.iter_mut().for_each(|item| self.prune(item));
+                let inner = items
+                    .iter_mut()
+                    .fold(false, |any, item| self.prune(item) | any);
+                inner || items.len() != held
             }
-            Value::Object(fields) => fields.values_mut().for_each(|v| self.prune(v)),
-            _ => {}
+            Value::Object(fields) => fields
+                .values_mut()
+                .fold(false, |any, v| self.prune(v) | any),
+            _ => false,
         }
     }
 
@@ -77,11 +91,8 @@ impl Calls {
 }
 
 /// The value of a format of this crate's with tools, if `native` is one's.
-fn own(native: &mut Native) -> Option<&mut Value> {
-    if native.value::<openai::Key>().is_some() {
-        return native.value_mut::<openai::Key>();
-    }
-    native.value_mut::<gemini::Key>()
+fn own(native: &Native) -> Option<&Value> {
+    (native.value::<openai::Key>()).or_else(|| native.value::<gemini::Key>())
 }
 
 /// The keys of the ids a format gives a call, or the item that holds it.

@@ -8,6 +8,7 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
@@ -72,8 +73,9 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
         return Ok(());
     };
     let url = media_url(&reference);
-    let fields = OpenAiVideos::fields_mut(&mut create.native);
-    fields.entry("image_url").or_insert_with(|| url.into());
+    create.native = OpenAiVideos::with_fields(&create.native, |fields| {
+        fields.entry("image_url").or_insert_with(|| url.into());
+    });
     Ok(())
 }
 
@@ -210,15 +212,13 @@ mod tests {
             create.reference = Some(Media::new("image/png", reference));
             let mut input = video::Input::Create(create);
             referenced(&mut input).expect("referenced");
-            let video::Input::Create(mut c) = input else {
+            let video::Input::Create(c) = input else {
                 return None;
             };
             if c.reference.is_some() {
                 return None;
             }
-            OpenAiVideos::fields_mut(&mut c.native)
-                .get("image_url")
-                .cloned()
+            OpenAiVideos::fields(&c.native).get("image_url").cloned()
         };
         let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
         assert_eq!(image_url(bytes), Some(json!("data:image/png;base64,cG5n")));

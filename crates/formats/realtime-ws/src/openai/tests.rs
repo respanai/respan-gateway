@@ -1,6 +1,6 @@
 use respan_gateway_core::FaultKind;
 use respan_gateway_core::Native;
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{
     AudioFormat, Cause, Input, Output, Purpose, Session, Status, ToolResult,
 };

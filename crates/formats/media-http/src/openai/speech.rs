@@ -14,14 +14,14 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{ClientIo, Decoder, Encoder, ProviderIo};
+use respan_gateway_http::{ClientIo, Decoder, Encoder, ProviderIo, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::speech::{Input, Output};
 use serde_json::{Map, Value};
 
 const NAME: &str = "openai-speech";
 
-respan_gateway_core::native_key!(Key = NAME);
+type Key = crate::Own<OpenAiSpeech>;
 const SPEECH: &str = "/audio/speech";
 
 /// OpenAI Audio Speech, as OpenAI or a compatible vendor serves it: a
@@ -40,8 +40,6 @@ pub struct OpenAiSpeech;
 impl OpenAiSpeech {
     /// The format's name, `openai-speech`.
     pub const NAME: &'static str = NAME;
-
-    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiSpeech {

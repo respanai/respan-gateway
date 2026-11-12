@@ -5,7 +5,7 @@ use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::Schema;
 use crate::fields::media_url;
 use crate::responses::OpenAiResponses;
-use crate::schema::{FAILED_RESULT_PREFIX, merge_missing, sealed};
+use crate::schema::{FAILED_RESULT_PREFIX, Own, merge_missing, sealed};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;

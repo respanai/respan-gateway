@@ -5,7 +5,7 @@ use super::{RESPONSE_FIELDS, USAGE, USAGE_FIELDS, response_body, status_of};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Gate, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    Gate, Own, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,

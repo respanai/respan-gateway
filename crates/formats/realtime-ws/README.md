@@ -190,9 +190,11 @@ with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 A refused input is `bad_request`, closing the client 1008; a refused
 output `upstream`. Another format's natives, fields and events alike, are
 dropped by a writer, with a warning at the provider's: what has meaning
-beyond its format belongs in the kind. Each format but Mistral's and
-Phonic's opens its own to code that names it (`value`, `fields_mut`, ..),
-and `Calls` leaves some tools' calls out of them. An error says its
+beyond its format belongs in the kind. OpenAI's, Gemini's and Responses'
+open their own to code that names them (`fields`, `with_fields`), OpenAI
+Live's for reading (`fields`), Mistral's to say what its transcript heard
+(`heard_seconds`), and `Calls` leaves some tools' calls out of OpenAI's and
+Gemini's. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 
