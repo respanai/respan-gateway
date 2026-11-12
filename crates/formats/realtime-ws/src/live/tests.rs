@@ -98,7 +98,7 @@ fn every_event_is_written_back_as_it_came() {
         .collect();
     assert_eq!(billed, [1.5, 1.5]);
     assert!(matches!(&events[0], Output::Updated(_)));
-    assert!(matches!(&events[6], Output::Error { code: Some(c), .. } if c == "unknown_parameter"));
+    assert!(matches!(&events[6], Output::Error { .. }));
     assert_eq!(heard(&events).expect("written"), server);
 }
 
@@ -184,7 +184,6 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
         },
         Output::Error {
             cause: respan_gateway_realtime::Cause::Provider,
-            code: Some("500".into()),
             message: "Oops.".into(),
             native: None,
         },

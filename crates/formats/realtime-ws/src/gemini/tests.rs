@@ -341,7 +341,6 @@ fn the_setup_written_is_the_session_its_completion_says() {
 fn a_refusal_closes_a_live_client() {
     let error = Output::Error {
         cause: Cause::Invalid,
-        code: None,
         message: "no".into(),
         native: None,
     };
@@ -355,7 +354,6 @@ fn a_refusal_closes_a_live_client() {
 fn a_cancel_that_found_no_response_closes_no_live_client() {
     let error = Output::Error {
         cause: Cause::NothingToCancel,
-        code: None,
         message: "Cancellation failed: no active response found".into(),
         native: None,
     };

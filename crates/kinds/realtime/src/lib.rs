@@ -379,12 +379,10 @@ pub enum Output {
     Error {
         /// Why, as any format reads it.
         cause: Cause,
-        /// The provider's own code for it, which only its format reads.
-        code: Option<String>,
         /// What it said.
         message: String,
-        /// The event's fields the kind has no place for, such as the id of
-        /// the event it refuses.
+        /// The event's fields the kind has no place for, such as the
+        /// provider's own code and the id of the event it refuses.
         native: Option<NativeFields>,
     },
     /// An event the kind has no form for, as `format` has it. Sent only in
