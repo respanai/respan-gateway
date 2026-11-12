@@ -156,7 +156,12 @@ impl Reading {
                 let block = self.numbers.get(&block).copied().unwrap_or(block);
                 vec![Output::block_end(block)]
             }
-            Output::Delta { .. } | Output::BlockEnd { .. } => Vec::new(),
+            // A signature goes with its block: renumbered, or held with it.
+            Output::Signature { block, data } if block.is_none_or(|b| !self.held.contains(&b)) => {
+                let block = block.map(|b| self.numbers.get(&b).copied().unwrap_or(b));
+                vec![Output::signature(block, data)]
+            }
+            Output::Delta { .. } | Output::BlockEnd { .. } | Output::Signature { .. } => Vec::new(),
             Output::Usage(usage) => {
                 self.usage += usage;
                 Vec::new()

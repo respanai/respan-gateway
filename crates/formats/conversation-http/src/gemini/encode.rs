@@ -12,7 +12,7 @@ use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 
 use super::request::is_synthetic;
-use super::{BLOCKED, FINISH, GEMINI, GeminiGenerate, USAGE, usage_body};
+use super::{BLOCKED, FINISH, GEMINI, GeminiGenerate, SIGNATURE, USAGE, usage_body};
 
 /// Writes the SSE frames of `inner` as the elements of one JSON array, which
 /// is how Gemini streams without `alt=sse`.
@@ -382,6 +382,18 @@ impl EventStream {
                 reason_of(finish)?;
                 self.finish = Some(finish.clone());
             }
+            Output::Signature {
+                block: Some(block),
+                data,
+            } => {
+                let signed = Map::from_iter([(SIGNATURE.to_owned(), data.as_str().into())]);
+                match self.blocks.iter_mut().find(|b| b.block == *block) {
+                    Some(slot) => slot.fields.get_or_insert_default().extend(signed),
+                    None => self.pending.push((*block, signed)),
+                }
+            }
+            // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+            Output::Signature { block: None, .. } => {}
             Output::Native(NativeValue { format, value: raw }) if **format == *GEMINI => {
                 match (block_fields(raw), raw["type"].as_str()) {
                     (Some((block, fields)), _) => {

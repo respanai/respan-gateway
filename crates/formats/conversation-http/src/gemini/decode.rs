@@ -10,7 +10,7 @@ use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
 
-use super::{BLOCKED, GEMINI, SYNTHETIC, extra_usage, finish_of, usage_of};
+use super::{BLOCKED, GEMINI, SIGNATURE, SYNTHETIC, extra_usage, finish_of, usage_of};
 
 /// A block of text or reasoning that is open, and may take more.
 #[derive(Debug, Clone, Copy)]
@@ -96,16 +96,19 @@ impl GeminiDecoder {
         let payload = |k: &str| p.get(k).is_some();
         if let Some(text) = p["text"].as_str().filter(|_| payload("text")) {
             let reasoning = p["thought"] == true;
-            let fields = remainder(p, &["text", "thought"]);
+            let fields = remainder(p, &["text", "thought", SIGNATURE]);
             let fields: Map<String, Value> =
                 fields.into_iter().filter(|(_, v)| !v.is_null()).collect();
+            let signature = p[SIGNATURE].as_str();
             let kind = || match reasoning {
                 true => Block::Reasoning,
                 false => Block::Text,
             };
-            if !fields.is_empty() {
+            if !fields.is_empty() || signature.is_some() {
                 let block = self.block(fields, out);
                 out.push(Output::block_start(block, kind()));
+                // Its signature first, for an encoder to write with its text.
+                out.extend(signature.map(|s| Output::signature(Some(block), s)));
                 out.extend(self.delta(block, text, reasoning));
                 out.push(Output::block_end(block));
             } else if !text.is_empty() {
@@ -132,7 +135,7 @@ impl GeminiDecoder {
             let (Some(name), Some(args), true) = (name, args, clean) else {
                 return self.opaque(p, out);
             };
-            let fields = remainder(p, &["functionCall"]);
+            let fields = remainder(p, &["functionCall", SIGNATURE]);
             let block = self.block(fields, out);
             self.called = true;
             let id = match call.get("id").and_then(Value::as_str) {
@@ -152,6 +155,8 @@ impl GeminiDecoder {
             } else {
                 args.clone()
             };
+            let signature = p[SIGNATURE].as_str();
+            out.extend(signature.map(|s| Output::signature(Some(block), s)));
             out.push(Output::arguments(block, args.to_string()));
             out.push(Output::block_end(block));
         } else {

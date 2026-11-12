@@ -154,7 +154,12 @@ fn a_request_reads_as_the_conversation_it_says_and_writes_back() {
     assert!(is_synthetic(id));
     assert_eq!(name, "weather");
     assert_eq!(arguments, r#"{"city":"Paris"}"#);
-    assert_eq!(native.fields().get("thoughtSignature"), Some(&json!("sig")));
+    assert!(native.is_none());
+    // Its signature is the part after it.
+    assert_eq!(
+        chat.messages[2].content[2],
+        Content::Signature("sig".into())
+    );
     // The result finds its call by name.
     let Content::ToolResult {
         id: answered,
@@ -487,15 +492,9 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     assert_eq!(call, Some(("gemini_call_r_1".into(), "f".into())));
     assert!(events.contains(&Output::finished(Finish::ToolUse)));
     assert!(events.contains(&Output::arguments(1, r#"{"a":1}"#)));
-    // The signature is kept for this format; another drops it.
-    let fields = events.iter().find_map(|e| match e {
-        Output::Native(n) if n.value["type"] == "block_fields" => Some(Value::clone(&n.value)),
-        _ => None,
-    });
-    assert_eq!(
-        fields,
-        Some(json!({ "type": "block_fields", "block": 1, "fields": { "thoughtSignature": "s" } }))
-    );
+    // Each signature is the kind's, over its part's block.
+    assert!(events.contains(&Output::signature(Some(1), "s")));
+    assert!(events.contains(&Output::signature(Some(2), "t")));
     assert_eq!(decode_body(&chunk), events);
 
     // A Chat client has them in `extra_content`: the call's on its entry, the
@@ -530,6 +529,17 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         call.map(|d| &d["tool_calls"][0]["extra_content"]),
         Some(&google("s"))
     );
+
+    // Sent back, the client's are its parts' again.
+    let turn = json!({ "model": "gemini-3-pro", "messages": [
+        { "role": "user", "content": "go" }, message,
+    ] });
+    let back = GeminiGenerate
+        .encode_request(&chat.decode_json(&turn))
+        .expect("a request");
+    let parts = &Value::from(back)["contents"][1]["parts"];
+    assert_eq!(parts[0]["thoughtSignature"], "t");
+    assert_eq!(parts[1]["thoughtSignature"], "s");
 }
 
 #[test]

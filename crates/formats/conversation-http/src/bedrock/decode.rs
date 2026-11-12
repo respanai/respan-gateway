@@ -1,13 +1,13 @@
 //! Converse, streamed or whole, as events: the decoder.
 
-use crate::schema::{count, ended, says, unsupported_fields};
+use crate::schema::{count, ended, unsupported_fields};
 use respan_gateway_conversation::{Block, Output, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault};
 use respan_gateway_eventstream::{Message, Parser};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use super::{BEDROCK, finish_of};
@@ -133,14 +133,12 @@ impl ConverseDecoder {
         }
     }
 
-    /// Reasoning's `signature` or `redactedContent`, which its block carries
-    /// back, as the block's fields.
-    fn signed(&self, block: u32, fields: Map<String, Value>, out: &mut Vec<Output>) {
-        out.push(Output::block_fields(self.name.clone(), block, fields));
-    }
-
     /// The events of a reasoning block's `reasoningContent`, text or not.
     fn reasoning(&mut self, block: u32, r: &Value, out: &mut Vec<Output>) {
+        // Reasoning withheld opens no block: it signs none.
+        if let Some(data) = r["redactedContent"].as_str() {
+            return out.push(Output::signature(None, data));
+        }
         self.open(block, Block::Reasoning, out);
         let text = &r["reasoningText"];
         let (words, signature) = match text.is_object() {
@@ -150,14 +148,8 @@ impl ConverseDecoder {
         if let Some(words) = words.as_str().filter(|t| !t.is_empty()) {
             out.push(Output::reasoning(block, words));
         }
-        for (key, value) in [
-            ("signature", signature),
-            ("redactedContent", &r["redactedContent"]),
-        ] {
-            if says(value) {
-                let fields = Map::from_iter([(key.to_owned(), value.clone())]);
-                self.signed(block, fields, out);
-            }
+        if let Some(s) = signature.as_str().filter(|s| !s.is_empty()) {
+            out.push(Output::signature(Some(block), s));
         }
     }
 

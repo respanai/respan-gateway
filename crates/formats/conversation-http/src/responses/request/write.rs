@@ -1,9 +1,10 @@
 //! Writing a conversation as a Responses request's input items.
 
 use super::super::RESPONSES;
+use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, untranslatable};
+use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, sealed, untranslatable};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -92,6 +93,8 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
             Content::Reasoning { .. } | Content::ToolCall { .. } => {
                 return Err(untranslatable("an assistant's content in another role"));
             }
+            // WARN: a signature has no place in another role; it is dropped here, silently.
+            Content::Signature(_) | Content::Withheld(_) => {}
             part => parts.push(write_input_part(part)?),
         }
     }
@@ -230,7 +233,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     }
     let before = items.len();
     let mut run: Vec<&Content> = Vec::new();
-    for c in &m.content {
+    for (c, signature) in sealed(&m.content) {
         match c {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
@@ -273,8 +276,13 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.insert("type".into(), "reasoning".into());
                 v.insert("summary".into(), summary);
                 v.extend(native.fields_for(RESPONSES));
+                if let Some(s) = signature {
+                    v.insert(SEALED.into(), s.into());
+                }
                 items.push(v.into());
             }
+            // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
+            Content::Signature(_) | Content::Withheld(_) => {}
             _ => return Err(untranslatable("an unsupported kind of part")),
         }
     }

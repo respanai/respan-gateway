@@ -230,6 +230,23 @@ pub(crate) fn remainder(v: &Value, keys: &[&str]) -> Map<String, Value> {
     rest.map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
+/// Each part of `parts` with the signature right after it, which seals it.
+pub(crate) fn sealed(parts: &[Content]) -> impl Iterator<Item = (&Content, Option<&str>)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let part = parts.get(at)?;
+        at += 1;
+        let seal = match parts.get(at) {
+            Some(Content::Signature(s)) => {
+                at += 1;
+                Some(s.as_str())
+            }
+            _ => None,
+        };
+        Some((part, seal))
+    })
+}
+
 /// Add to `base`, an object, the fields of `fields` it lacks: the semantic
 /// fields `base` was written with take precedence over native edits.
 pub(crate) fn merge_missing(base: &mut Value, fields: Map<String, Value>) {

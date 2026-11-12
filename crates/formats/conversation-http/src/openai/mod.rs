@@ -75,9 +75,8 @@ use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
-use crate::gemini::GEMINI;
 use decode::OpenAiDecoder;
-use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice, signature_of};
+use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice};
 use request::{
     read_openai_message, read_openai_tools, read_response_format, write_openai_message,
     write_openai_tools, write_reasoning, write_response_format,
@@ -85,6 +84,31 @@ use request::{
 
 /// The wire format's name ([`Schema::NAME`]).
 pub(crate) const OPENAI: &str = "openai-chat";
+
+/// Where Google's Chat Completions keeps a part's thought signature, the
+/// only one Chat has a place for: a call's on its `tool_calls` entry, a
+/// text's on the message.
+const SIGNED: &str = "extra_content";
+
+/// Sign `v`, a call or a message, with `signature`, as [`SIGNED`] says.
+fn sign(v: &mut Value, signature: &str) {
+    v[SIGNED]["google"]["thought_signature"] = signature.into();
+}
+
+/// The signature `fields` hold as [`SIGNED`] says, taken out of them.
+fn take_signature(fields: &mut Map<String, Value>) -> Option<String> {
+    let extra = fields.get_mut(SIGNED)?;
+    let google = extra.get_mut("google")?.as_object_mut()?;
+    let signature = google.get("thought_signature")?.as_str()?.to_owned();
+    google.shift_remove("thought_signature");
+    if google.is_empty() {
+        extra.as_object_mut().map(|e| e.shift_remove("google"));
+    }
+    if extra.as_object().is_some_and(Map::is_empty) {
+        fields.shift_remove(SIGNED);
+    }
+    Some(signature)
+}
 
 /// OpenAI Chat Completions, `openai-chat`: a `POST` to any path ending in
 /// `/chat/completions`. The provider's base URL includes the version, such
@@ -354,10 +378,6 @@ impl Schema for OpenAiChat {
                     format: f,
                     value: raw,
                 }) if **f == *OPENAI => call_fields_of(raw),
-                AssembledItem::Native(NativeValue {
-                    format: f,
-                    value: raw,
-                }) if **f == *GEMINI => signature_of(raw),
                 _ => None,
             })
             .collect();
@@ -370,6 +390,9 @@ impl Schema for OpenAiChat {
                     for (_, entry, function) in fields.iter().filter(|(b, ..)| *b == p.block) {
                         merge_call(&mut call, entry, function);
                     }
+                    if let Some(s) = whole.signature(p.block) {
+                        sign(&mut call, s);
+                    }
                     Some(call)
                 }
                 _ => None,
@@ -379,11 +402,14 @@ impl Schema for OpenAiChat {
         if !reasoning.is_empty() {
             message["reasoning_content"] = reasoning.into();
         }
-        // A text's signature, Gemini's, is the message's.
-        for p in whole.blocks().filter(|p| p.kind == Block::Text) {
-            for (_, entry, _) in fields.iter().filter(|(b, ..)| *b == p.block) {
-                merge_fields(&mut message, entry);
-            }
+        // WARN: Chat has no place for a signature over reasoning, or alone; it is dropped here, silently.
+        let text_signature = whole
+            .blocks()
+            .filter(|p| p.kind == Block::Text)
+            .filter_map(|p| whole.signature(p.block))
+            .last();
+        if let Some(s) = text_signature {
+            sign(&mut message, s);
         }
         if !calls.is_empty() {
             if text.is_empty() {

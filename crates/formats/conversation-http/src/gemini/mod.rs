@@ -34,10 +34,8 @@
 //! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`
-//! (which Chat Completions carries both ways in
-//! `extra_content.google.thought_signature`, as Google's does a call's: a
-//! call's on its `tool_calls` entry, a text's on the message).
+//! the kind has no choice for and video parts. A part's `thoughtSignature`
+//! is the kind's `Content::Signature` after it.
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!
@@ -112,6 +110,9 @@ pub(crate) const GEMINI: &str = "gemini-generate";
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.
 pub const SIGNATURE_PLACEHOLDER: &str = "skip_thought_signature_validator";
+
+/// The field of a part that holds its signature.
+const SIGNATURE: &str = "thoughtSignature";
 
 /// What starts the id of a tool call Gemini named none for.
 const SYNTHETIC: &str = "gemini_call_";
@@ -402,9 +403,11 @@ impl Schema for GeminiGenerate {
         for item in whole.items() {
             match item {
                 AssembledItem::Block(part) => {
+                    let signature = whole.signature(part.block);
                     let mut written = match &part.kind {
                         Block::Text | Block::Reasoning if part.text.is_empty() => {
-                            if !fields.iter().any(|(b, _)| *b == part.block) {
+                            if signature.is_none() && !fields.iter().any(|(b, _)| *b == part.block)
+                            {
                                 continue;
                             }
                             part_of(&part.kind, "")?
@@ -414,8 +417,13 @@ impl Schema for GeminiGenerate {
                     if let Some(i) = fields.iter().position(|(b, _)| *b == part.block) {
                         merge_fields(&mut written, &fields.remove(i).1);
                     }
+                    if let Some(s) = signature {
+                        written[SIGNATURE] = s.into();
+                    }
                     parts.push(written);
                 }
+                // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+                AssembledItem::Signature { .. } => {}
                 AssembledItem::Native(NativeValue { format, value: raw })
                     if **format == *GEMINI =>
                 {

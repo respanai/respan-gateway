@@ -1526,17 +1526,41 @@ fn reasoning_in_a_request_is_dropped_but_anthropics_thinking() {
         Some(json!("ok"))
     );
     // Signed, it is Anthropic's thinking.
-    let mut signature = serde_json::Map::new();
-    signature.insert("signature".into(), "sig".into());
-    chat.messages[1].content[0] = Content::Reasoning {
-        text: "hm".into(),
-        native: Some(NativeFields::new(AnthropicMessages.name(), signature)),
-    };
+    chat.messages[1]
+        .content
+        .insert(1, Content::Signature("sig".into()));
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     let thinking = json!({ "type": "thinking", "thinking": "hm", "signature": "sig" });
     assert_eq!(
         sent.ok().map(|v| v["messages"][1]["content"][0].clone()),
-        Some(thinking)
+        Some(thinking.clone())
+    );
+    // Anthropic's reply keeps its signature for a Responses client, which
+    // has no form for thinking withheld, and both for Anthropic; Chat has
+    // no place for either.
+    let withheld = json!({ "type": "redacted_thinking", "data": "hidden" });
+    let reply = json!({ "id": "m", "type": "message", "role": "assistant", "model": "c",
+        "content": [thinking.clone(), withheld.clone(), { "type": "text", "text": "ok" }],
+        "stop_reason": "end_turn", "usage": { "input_tokens": 1, "output_tokens": 1 } });
+    let mut events = Vec::new();
+    AnthropicMessages
+        .decode_body(&reply, &mut events)
+        .expect("events");
+    let mut whole = Assembled::default();
+    events
+        .iter()
+        .try_for_each(|e| whole.push(e))
+        .expect("a reply");
+    let message = OpenAiChat.encode_whole(&whole).expect("a body")["choices"][0]["message"].take();
+    assert!(message.get("extra_content").is_none(), "{message}");
+    let output = OpenAiResponses.encode_whole(&whole).expect("a body")["output"].take();
+    assert_eq!(output[0]["encrypted_content"], "sig");
+    assert_eq!(output.as_array().map(Vec::len), Some(2));
+    chat.messages[1].content = whole.replay();
+    let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.ok().map(|v| v["messages"][1]["content"].clone()),
+        Some(json!([thinking, withheld, { "type": "text", "text": "ok" }]))
     );
 }
 
@@ -1680,29 +1704,29 @@ fn stop_after_a_tool_call_finishes_as_tool_use() {
     assert_eq!(finish(out), Some(Finish::Stop));
 }
 
-/// Regression: a tool call's own fields, such as a vendor's signature of it,
-/// were lost when the call was replayed, as a tool loop's next step does.
+/// Regression: a tool call's own fields were lost when the call was
+/// replayed, as a tool loop's next step does. Its signature is the kind's,
+/// which a call upstream does not send.
 #[test]
 fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
+    let extra = json!({ "google": { "thought_signature": "s" }, "other": 1 });
     let v = json!({ "id": "c", "model": "m", "choices": [{ "index": 0, "finish_reason": "tool_calls",
         "message": { "role": "assistant", "content": null, "tool_calls": [{
-            "id": "call_1", "type": "function", "extra_content": { "google": { "thought_signature": "s" } },
+            "id": "call_1", "type": "function", "extra_content": extra,
             "function": { "name": "f", "arguments": "{}" } }] } }] });
     let mut whole = Assembled::default();
     for event in decode_body(&v) {
         whole.push(&event).expect("folds");
     }
     let replayed = whole.replay();
+    assert_eq!(replayed[1], Content::Signature("s".into()));
     let native = replayed.iter().find_map(|part| match part {
         Content::ToolCall { native, .. } => native.clone(),
         _ => None,
     });
     let native = native.expect("the call's fields");
     assert_eq!(&*native.format, OPENAI);
-    assert_eq!(
-        native.fields["extra_content"],
-        json!({ "google": { "thought_signature": "s" } })
-    );
+    assert_eq!(native.fields["extra_content"], json!({ "other": 1 }));
     // Written again for this format, the call carries them.
     let mut message = Message::new(respan_gateway_conversation::Role::Assistant, "");
     message.content = replayed;
@@ -1712,10 +1736,7 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
     ]);
     let body = OpenAiChat.encode_request(&request).expect("a request");
     let call = &body["messages"][1]["tool_calls"][0];
-    assert_eq!(
-        call["extra_content"]["google"]["thought_signature"], "s",
-        "{body:?}"
-    );
+    assert_eq!(call["extra_content"], json!({ "other": 1 }), "{body:?}");
 }
 
 #[test]
@@ -1837,7 +1858,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
     assert!(AnthropicMessages.encode_request(&chat).is_ok());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
     // Gemini answers both calls of a turn in one content, beside a named
-    // system message; signatures in `extra_content` are Gemini's own, and a
+    // system message; signatures in `extra_content` are the parts', and a
     // first call without one takes the placeholder.
     let google = |s: &str| json!({ "google": { "thought_signature": s } });
     let body = json!({ "model": "gemini-3-flash-preview", "messages": [
