@@ -6,6 +6,7 @@ use crate::fields;
 use base64::Engine;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
@@ -38,10 +39,12 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
 /// The marker of base64 data in a `data:` URL.
 const BASE64_DATA: &str = ";base64,";
 
-/// Base64 decoding that accepts the data with or without its padding.
+/// Base64 decoding that accepts the data with or without its padding, and
+/// a last symbol whose unused bits are not zero.
 const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
-    let config =
-        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    let config = GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true);
     GeneralPurpose::new(alphabet, config)
 }
 
@@ -50,8 +53,10 @@ const DATA_URL_BASE64: [GeneralPurpose; 2] =
     [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
 
 /// The bytes of a `data:` URL's base64 `data`, read with or without padding,
-/// in either alphabet, across the line breaks a client may have wrapped it at.
+/// in either alphabet, across the line breaks a client may have wrapped it at,
+/// and percent-decoded first, as a URL's data may be.
 fn data_url_bytes(data: &str) -> Option<Vec<u8>> {
+    let data = percent_decode_str(data).decode_utf8().ok()?;
     let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
     DATA_URL_BASE64
         .iter()
@@ -95,7 +100,7 @@ pub(crate) fn check_data_urls(messages: &Value) -> Result<(), Fault> {
         });
         if is_unreadable {
             return Err(Fault::bad_request(
-                "a `data:` URL in the messages is not valid base64",
+                "a `data:` URL in the request is not valid base64",
             ));
         }
     }
@@ -751,7 +756,7 @@ mod tests {
                 {"type": "image_url", "image_url": {"url": url}},
             ]}])
         };
-        let refused = check_data_urls(&messages("data:image/png;base64,AAAAnotanimage"));
+        let refused = check_data_urls(&messages("data:image/png;base64,not*base64!"));
         assert!(refused.is_err(), "not base64");
         let file = serde_json::json!([{"role": "user", "content": [
             {"type": "input_file", "file_data": "data:application/pdf;base64,%%%"},
@@ -761,6 +766,8 @@ mod tests {
             "data:image/png;base64,aGVsbG8=",
             "data:image/png;base64,aGVsbG8",
             "data:image/png;base64,-_8=",
+            "data:image/png;base64,aGVsbG9=",
+            "data:image/png;base64,iVBORw0KGgo%3D",
             "data:image/png;base64,aGVs\r\nbG8=",
             "data:image/svg+xml,%3Csvg%2F%3E",
             "https://example.com/a.png",

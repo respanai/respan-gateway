@@ -45,7 +45,7 @@ A Chat Completions request with `n > 1` is refused before the provider
 is called, including when the selected provider speaks another format. So
 is a Chat Completions or Responses request with an image or file `data:`
 URL that says it is base64 and is not; base64 with or without padding, in
-the URL-safe alphabet, or wrapped across lines is read.
+the URL-safe alphabet, wrapped across lines or percent-encoded is read.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
