@@ -34,7 +34,10 @@
 //! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`.
+//! the kind has no choice for, video parts, and a part's `thoughtSignature`
+//! (which Chat Completions carries both ways in
+//! `extra_content.google.thought_signature`, as Google's does a call's: a
+//! call's on its `tool_calls` entry, a text's on the message).
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!
@@ -104,7 +107,7 @@ use request::{
 pub use request::{media_part, needs_signatures};
 
 /// This format's name.
-const GEMINI: &str = "gemini-generate";
+pub(crate) const GEMINI: &str = "gemini-generate";
 
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.
