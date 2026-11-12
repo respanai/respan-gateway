@@ -360,10 +360,8 @@ pub struct PluginsConfig {
     pub hedge: Option<serde::de::IgnoredAny>,
     /// Run tools of tool servers inside chat requests; off if unset.
     pub tool_loop: Option<ToolLoopConfig>,
-    /// Keep the conversation state a client or provider cannot: Responses
-    /// translated to another provider's format, so a client's
-    /// `previous_response_id` works with it, and a Chat client's reasoning
-    /// between tool calls with OpenAI's Responses. On unless
+    /// Keep the conversation of Responses translated to another provider's
+    /// format, so a client's `previous_response_id` works with it. On unless
     /// `enabled = false`.
     #[serde(default)]
     pub responses: ResponsesConfig,

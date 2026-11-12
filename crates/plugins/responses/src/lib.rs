@@ -1,38 +1,28 @@
 #![warn(missing_docs)]
-//! The responses plugin ([`Responses`]): conversation state that a client or
-//! a provider of the conversation kind cannot keep, kept by the gateway, in
-//! a [`Store`] ([`Memory`] unless told otherwise).
+//! The responses plugin ([`Responses`]): a Responses client's
+//! `previous_response_id`, kept by the gateway for a provider that keeps
+//! nothing, in a [`Store`] ([`Memory`] unless told otherwise).
 //!
-//! - **A Responses client, translated to a provider that keeps nothing.**
-//!   Its `previous_response_id` works: a response is given an id the
-//!   gateway mints (`resp_…`, random, so no provider's ids collide or are
-//!   guessed) and kept as its turn (the messages its request added, and the
-//!   reply) beside the response it followed; a follow-up naming it is sent
-//!   the conversation, read back by following them. A request that says
-//!   `store: false` is not kept, and OpenAI's own Responses keep theirs.
-//! - **A client of another format, such as Chat Completions, whose call
-//!   goes to Responses.** Such a call stores nothing, and its reasoning
-//!   comes encrypted (`openai-responses` asks so); the reasoning an
-//!   assistant's tool calls came of is kept under each call's id, and put
-//!   back before those calls when the client sends them again, as the
-//!   client cannot. Without it the model
-//!   loses its reasoning between tool calls.
+//! A response is given an id the gateway mints (`resp_…`, random, so no
+//! provider's ids collide or are guessed) and kept as its turn (the
+//! messages its request added, and the reply) beside the response it
+//! followed; a follow-up naming it is sent the conversation, read back by
+//! following them. A request that says `store: false` is not kept, and
+//! OpenAI's own Responses keep theirs.
 //!
 //! What is kept is reached by its id alone, which none can guess.
 
 mod store;
 
 use parking_lot::{Mutex, MutexGuard};
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use respan_gateway_conversation::{Assembled, Content, Input, Message, Output, Role};
+use respan_gateway_conversation::{Assembled, Input, Message, Output, Role};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{
     ClientContext, Fault, Filter, Native, Plugin, ProviderContext, Result, async_trait,
-    futures::future::join_all,
 };
 use respan_gateway_http::raw::Original;
 use serde_json::Value;
@@ -91,11 +81,6 @@ async fn conversation(store: &dyn Store, id: &str) -> Option<Vec<Message>> {
     Some(turns.into_iter().rev().flat_map(|t| t.messages).collect())
 }
 
-/// The key a tool call's reasoning is kept under.
-fn call_key(id: &str) -> String {
-    format!("call:{id}")
-}
-
 /// What a client's request adds to its conversation, once a call of it is
 /// translated; shared by the request's client edge and its calls.
 #[derive(Clone, Default)]
@@ -151,16 +136,13 @@ impl Plugin for Responses {
     async fn on_provider(&self, px: &mut ProviderContext) -> Result<()> {
         // A call of another kind, such as a tool loop's to its tool server,
         // carries the request's extensions too.
-        if !px.is_kind::<Input>() {
+        if !px.is_kind::<Input>() || px.client().format() != RESPONSES {
             return Ok(());
-        }
-        if px.client().format() != RESPONSES {
-            return self.carry_reasoning(px).await;
         }
         let Some(pending) = px.extensions().get::<Pending>().cloned() else {
             return Ok(());
         };
-        let (keep, target) = (self.keep, px.format().to_owned());
+        let keep = self.keep;
         // Read before the call, as a shared store answers in its own time.
         let parent = px.input::<Input>().ok().and_then(previous_response_id);
         let before = match &parent {
@@ -180,7 +162,6 @@ impl Plugin for Responses {
                     f.shift_remove("previous_response_id");
                 });
                 let at = instructions(&pending, input);
-                let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(at..at, before);
                 Ok(())
             });
@@ -203,7 +184,6 @@ impl Plugin for Responses {
                         keep.as_secs()
                     ))
                 })?;
-                let before = before.into_iter().map(|m| writable(m, &target));
                 input.messages.splice(instructions..instructions, before);
             }
             // A tool loop's later calls add its own steps: the client's
@@ -234,107 +214,11 @@ fn instructions(pending: &Pending, input: &Input) -> usize {
     usize::from(pending.lock().instructed && leading)
 }
 
-impl Responses {
-    /// A call of a client of another format than Responses: Responses, if
-    /// it is the one to write it, puts back the reasoning kept for its tool
-    /// calls; and the reasoning this call's answer gives before its tool
-    /// calls is kept under their ids.
-    async fn carry_reasoning(&self, px: &mut ProviderContext) -> Result<()> {
-        // Only Responses writes, and answers with, its own reasoning.
-        if px.format() != RESPONSES {
-            return Ok(());
-        }
-        // Read before the call, as a shared store answers in its own time.
-        let calls = px.input::<Input>().map(first_calls).unwrap_or_default();
-        let read = calls.into_iter().map(|id| async move {
-            let turn = self.store.get(&call_key(&id)).await?;
-            let reasoning: Vec<Content> =
-                turn.messages.into_iter().flat_map(|m| m.content).collect();
-            Some((id, reasoning))
-        });
-        let kept: HashMap<String, Vec<Content>> =
-            join_all(read).await.into_iter().flatten().collect();
-        px.filter(move |input: &mut Input| {
-            put_back(input, |id| kept.get(id).cloned());
-            Ok(())
-        })?;
-        px.filter(KeepReasoning {
-            store: self.store.clone(),
-            said: Assembled::default(),
-        })
-    }
-}
-
 /// The `previous_response_id` a Responses request names.
 fn previous_response_id(input: &Input) -> Option<String> {
     let fields = OpenAiResponses::fields(&input.native);
     let parent = fields.get("previous_response_id")?.as_str()?;
     Some(parent.to_owned())
-}
-
-/// The first call's id of each assistant message, which [`put_back`] may
-/// give reasoning to.
-fn first_calls(input: &Input) -> Vec<String> {
-    (input.messages.iter())
-        .filter(|m| m.role == Role::Assistant)
-        .filter_map(|m| first_call(m).map(|(_, id)| id.to_owned()))
-        .collect()
-}
-
-/// The place and id of `m`'s first tool call.
-fn first_call(m: &Message) -> Option<(usize, &str)> {
-    m.content.iter().enumerate().find_map(|(at, p)| match p {
-        Content::ToolCall { id, .. } => Some((at, id.as_str())),
-        _ => None,
-    })
-}
-
-/// `input` with the reasoning `earlier` finds for each assistant message,
-/// by its first call's id, put back before its calls. It takes the place of
-/// the reasoning the message has there, and its signatures: what the
-/// provider gave is what it reads back, which a client of another format
-/// may echo only in part, as Chat's `reasoning_content`.
-fn put_back(input: &mut Input, earlier: impl Fn(&str) -> Option<Vec<Content>>) {
-    for message in &mut input.messages {
-        let Some((at, id)) = first_call(message).filter(|_| message.role == Role::Assistant) else {
-            continue;
-        };
-        let Some(reasoning) = earlier(id) else {
-            continue;
-        };
-        let calls = message.content.split_off(at);
-        let mut said = false;
-        message.content.retain(|p| {
-            said = matches!(p, Content::Reasoning { .. })
-                || said && matches!(p, Content::Signature(_));
-            !said
-        });
-        message.content.extend(reasoning);
-        message.content.extend(calls);
-    }
-}
-
-/// `message` without what `format` cannot write: reasoning sealed by a
-/// signature, which only its own provider reads back, and the signatures
-/// that seal it, unless `format` is Responses, whose writer drops another
-/// format's reasoning. Plain reasoning is the kind's, which any writes.
-fn writable(mut message: Message, format: &str) -> Message {
-    let mut is_dropped = false;
-    let mut parts = std::mem::take(&mut message.content).into_iter().peekable();
-    while let Some(part) = parts.next() {
-        is_dropped = match part {
-            // WARN: signed reasoning is dropped for another format than Responses.
-            Content::Reasoning { .. } => {
-                format != RESPONSES && matches!(parts.peek(), Some(Content::Signature(_)))
-            }
-            Content::Signature(_) => is_dropped,
-            _ => false,
-        };
-        if !is_dropped {
-            message.content.push(part);
-        }
-    }
-    message
 }
 
 /// The response its client is given, named anew and kept once it ended well.
@@ -384,48 +268,6 @@ impl Filter<Output> for Keep {
     }
 }
 
-/// The reasoning a call's answer gives before its tool calls, kept under
-/// each call's id once the answer ended well: Responses' own, as only it
-/// reads it back.
-struct KeepReasoning {
-    store: Arc<dyn Store>,
-    said: Assembled,
-}
-
-impl Filter<Output> for KeepReasoning {
-    fn edit(&mut self, output: Output, out: &mut Vec<Output>) -> Result<()> {
-        // What cannot be folded is only not kept; the response goes on.
-        let _ = self.said.push(&output);
-        out.push(output);
-        Ok(())
-    }
-
-    fn end(&mut self, end: &Result<()>, _out: &mut Vec<Output>) -> Result<()> {
-        if end.is_err() {
-            return Ok(());
-        }
-        let mut reasoning = Vec::new();
-        for part in std::mem::take(&mut self.said).replay() {
-            match part {
-                Content::Reasoning { .. } => reasoning.push(part),
-                Content::ToolCall { ref id, .. } if !reasoning.is_empty() => {
-                    let mut message = Message::new(Role::Assistant, "");
-                    message.content = reasoning.clone();
-                    let turn = Turn {
-                        parent: None,
-                        messages: vec![message],
-                    };
-                    self.store.put(call_key(id), turn);
-                }
-                Content::Signature(_) if !reasoning.is_empty() => reasoning.push(part),
-                Content::ToolCall { .. } => {}
-                _ => reasoning.clear(),
-            }
-        }
-        Ok(())
-    }
-}
-
 /// A response id of the gateway's: `resp_` and a random UUID's hex.
 fn new_id() -> String {
     format!("resp_{}", uuid::Uuid::new_v4().simple())
@@ -440,6 +282,7 @@ mod tests {
     use respan_gateway_http::Body;
     use respan_gateway_http::bytes::Bytes;
     use respan_gateway_http::http;
+    use std::collections::HashMap;
 
     /// Turns two gateways share, read back only after a yield, as over a
     /// network.
@@ -509,60 +352,6 @@ mod tests {
             .collect();
         gateway.idle().await;
         serde_json::from_slice(&bytes).unwrap_or_default()
-    }
-
-    /// The calls whose reasoning is read ahead are those `put_back` fills:
-    /// each assistant's first, its reasoning there given way to the kept.
-    #[test]
-    fn an_assistants_first_call_is_read_ahead_and_given_its_reasoning() {
-        let mut called = Message::new(Role::Assistant, "");
-        called.content = vec![
-            Content::tool_call("c1", "f", "{}"),
-            Content::tool_call("c2", "f", "{}"),
-        ];
-        let mut reasoned = called.clone();
-        reasoned.content.insert(
-            0,
-            Content::Reasoning {
-                text: "echoed".into(),
-                native: Native::default(),
-            },
-        );
-        let mut user = Message::new(Role::User, "hi");
-        user.content.push(Content::tool_call("c3", "f", "{}"));
-        let mut input = Input::new([user, called, reasoned]);
-        assert_eq!(first_calls(&input), ["c1", "c1"]);
-        let kept = [
-            Content::Reasoning {
-                text: "kept".into(),
-                native: Native::default(),
-            },
-            Content::Signature("sealed".into()),
-        ];
-        put_back(&mut input, |id| (id == "c1").then(|| kept.to_vec()));
-        assert_eq!(input.messages[1].content[..2], kept);
-        assert_eq!(input.messages[2].content[..2], kept);
-        assert_eq!(input.messages[2].content.len(), 4);
-        // Signed reasoning goes with its signature for another format; plain
-        // reasoning and a call's signature stay.
-        let plain = Content::Reasoning {
-            text: "p".into(),
-            native: Native::default(),
-        };
-        let mut signed = Message::new(Role::Assistant, "");
-        signed.content = vec![
-            Content::Reasoning {
-                text: "r".into(),
-                native: Native::default(),
-            },
-            Content::Signature("theirs".into()),
-            plain.clone(),
-            Content::tool_call("c1", "f", "{}"),
-            Content::Signature("call".into()),
-        ];
-        let kept = writable(signed, OpenAiChat::NAME).content;
-        assert_eq!(kept[0], plain);
-        assert_eq!(kept[2..], [Content::Signature("call".into())]);
     }
 
     /// A follow-up reaching another gateway than its response is sent the

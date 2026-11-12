@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-plugin-responses"
-description = "The responses plugin: the conversation state a client or a provider of the conversation kind cannot keep, kept by the gateway: Responses' previous_response_id with any provider, and a Chat client's reasoning between tool calls with OpenAI's Responses."
+description = "The responses plugin: Responses' previous_response_id with any provider, its conversation kept by the gateway."
 version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true

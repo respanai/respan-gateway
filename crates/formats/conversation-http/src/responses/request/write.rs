@@ -254,9 +254,11 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.extend(OpenAiResponses::fields(native).clone());
                 items.push(v.into());
             }
-            // Reasoning is only valid with the id of the item it was.
-            // WARN: another format's reasoning is dropped here, silently.
-            Content::Reasoning { native, .. } if OpenAiResponses::fields(native).is_empty() => {}
+            // Reasoning is Responses' by its item's id or its encrypted content.
+            // WARN: unsigned reasoning without an id, another format's, is dropped here, silently.
+            // WARN: a signature is written as Responses' own; gateway-next strips another family's.
+            Content::Reasoning { native, .. }
+                if signature.is_none() && OpenAiResponses::fields(native).is_empty() => {}
             Content::Reasoning { text, native } => {
                 flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {
