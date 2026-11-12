@@ -25,8 +25,10 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   as the client's request did, if to the same endpoint, else not. `stream`
   and `stream_format` are framing, not part of an `Input`.
 - An edit goes to `/images/edits` as a form of its images' bytes, or in JSON
-  if one is a URL. An image a client names by file id cannot be relayed and
-  is refused.
+  if one, or the mask, is a URL. An image a client names by file id cannot be
+  relayed and is refused. The mask is `openai-images`' native field
+  (`mask: {"image_url"}`, a data URL of a form's file): another format drops
+  it.
 - An answer's image is of its `output_format`, else of the type its bytes
   say, else PNG.
 - An image request's `quality`, `output_format` and `user`, and an answer's
@@ -71,8 +73,8 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   prompt. Its `size` is the `imageConfig` of the nearest aspect ratio
   Gemini draws (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9;
   within 5%, else 400), with an `imageSize` of `2K` or `4K` above 1K; its
-  count `candidateCount`, which Gemini's image models refuse above 1. A
-  mask is refused, 400, as Gemini edits by prompt alone.
+  count `candidateCount`, which Gemini's image models refuse above 1. As
+  Gemini edits by prompt alone, a mask is dropped.
 - An answer's images are its parts' `inlineData` (or `fileData`), not its
   thoughts'; its text is dropped; its usage is `usageMetadata`'s. An
   answer with no image is refused, 400 `no_image`, saying why: the

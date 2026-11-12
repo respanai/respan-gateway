@@ -19,8 +19,6 @@ pub struct Input {
     pub prompt: String,
     /// The source images of an edit; none for a generation.
     pub images: Vec<Media>,
-    /// Where an edit may change its first image: the transparent areas.
-    pub mask: Option<Media>,
     /// How many images, if not one.
     pub count: Option<u32>,
     /// Their size, as the provider names it, such as `1024x1024`.
