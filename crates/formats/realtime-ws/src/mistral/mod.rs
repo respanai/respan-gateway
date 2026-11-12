@@ -60,6 +60,8 @@ impl MistralRealtime {
     /// The path it is sent to.
     pub const PATH: &'static str = SPEC.path;
 
+    respan_gateway_core::native_doors!(Key);
+
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {
         SPEC.transport(base_url)
