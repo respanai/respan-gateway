@@ -142,6 +142,22 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   Polling a Gemini Omni operation by its qualified name returns that same
   name, including when the provider reports the video through the Files API.
 
+`openrouter::OpenRouterVideos`, named `openrouter-videos`: OpenRouter's video
+generation, as a provider only, its key a bearer token. Its job ids start
+`gen-vid-`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /videos` makes a job: the kind's `seconds` go as `duration`, its
+  `size` as it is, its reference image, a URL or a data URL of its bytes, as
+  the first of the `frame_images`, and its `openrouter-videos` native fields
+  (`resolution`, `aspect_ratio`, `generate_audio`, `seed`) as they are.
+- `GET /videos/{id}` polls it: `pending` is `queued`, `in_progress`,
+  `completed` and `failed` are the kind's, its error a string; its `usage`
+  and the signed `urls` of its video are dropped. It reports no progress,
+  model, size or length. `GET /videos/{id}/content` is the video's
+  bytes, relayed as they come.
+- It cannot remix, delete or list videos, nor make a thumbnail or a
+  spritesheet: those are refused, 400 `unsupported`, before any call.
+
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.

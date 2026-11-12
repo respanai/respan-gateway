@@ -781,6 +781,19 @@ fn veo_is_served_to_its_clients() {
 }
 
 #[test]
+fn openrouter_videos_are_called_at_its_api_and_spoken_by_no_client() {
+    let text = "providers = { o = { vendor = \"openrouter\", key = \"k\" } }\n";
+    let plan = plan(text).unwrap_or_else(|e| panic!("{e}"));
+    let videos = plan.upstreams[0]
+        .entries
+        .iter()
+        .find(|e| e.format == "openrouter-videos");
+    let base = videos.map(|e| e.base_url.as_str());
+    assert_eq!(base, Some("https://openrouter.ai/api/v1"));
+    assert!(!plan.serves("openrouter-videos"));
+}
+
+#[test]
 fn an_empty_key_is_refused_and_keys_are_trimmed() {
     let one = "providers = { p = { formats = \"openai-chat\", base_url = \"http://x.test\" } }\n";
     for keys in ["['']", "['  ']"] {

@@ -22,6 +22,7 @@ use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
@@ -270,6 +271,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
+        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
