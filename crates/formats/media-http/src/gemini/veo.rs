@@ -146,9 +146,13 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
     }
 }
 
-/// An operation Veo has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("Veo cannot {what}")).with(ErrorCode("unsupported".into()))
+/// An operation Veo has no form for, refused, named by its format.
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { native, .. } => format!("{} operation", native.format),
+        _ => "operation of this kind".to_owned(),
+    };
+    Fault::bad_request(format!("Veo has no video {what}")).with(ErrorCode("unsupported".into()))
 }
 
 /// The operation a job `id` names, else a 404.
@@ -204,7 +208,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        _ => return Err(unsupported("answer this request")),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     head.uri = path

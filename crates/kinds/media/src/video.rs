@@ -122,15 +122,25 @@ pub enum Output {
     Job(Job),
     /// The next bytes of the content.
     Content(Bytes),
-    /// An event the kind has no form for, as `format` has it. Sent only in
-    /// that format.
-    Native(NativeValue),
+    /// An answer the kind has no form for, as its format has it, such as
+    /// OpenAI's page of jobs or deletion: only a client of that format gets
+    /// it.
+    Native {
+        /// The jobs' ids it names, in its format's order; the format writes
+        /// them back in that order.
+        ids: Vec<String>,
+        /// The answer.
+        native: NativeValue,
+    },
 }
 
 impl Output {
-    /// An event of `format` the kind has no form for.
+    /// An event of `format` the kind has no form for, naming no job.
     pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
+        Output::Native {
+            ids: Vec::new(),
+            native: NativeValue::new(format, raw),
+        }
     }
 }
 
@@ -431,37 +441,25 @@ fn set_job_id(input: &mut Input, inner: &str) {
 }
 
 /// The ids of `output` wrapped in `provider`: a job's, the video it was
-/// remixed from, and, of OpenAI Videos' own answers, a deletion's and a
-/// page's.
+/// remixed from, and a native answer's.
 fn wrap_ids(output: &mut Output, provider: &str) {
     let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
-    let openai = |format: &FormatId| &**format == "openai-videos";
     match output {
         Output::Job(job) => {
             wrap(&mut job.id);
-            if let Some(native) = job.native.as_mut().filter(|n| openai(&n.format))
+            // A remix's source is openai-videos' native field, read here
+            // until it has a typed place, as a native answer's ids have.
+            if let Some(native) = job
+                .native
+                .as_mut()
+                .filter(|n| &*n.format == "openai-videos")
                 && let Some(Value::String(source)) = native.fields.get_mut("remixed_from_video_id")
             {
                 wrap(source);
             }
         }
-        Output::Native(native) if openai(&native.format) => {
-            let wrap_all = |v: &mut Value| {
-                for key in ["id", "first_id", "last_id", "remixed_from_video_id"] {
-                    if let Some(Value::String(id)) = v.get_mut(key) {
-                        wrap(id);
-                    }
-                }
-            };
-            let v = std::sync::Arc::make_mut(&mut native.value);
-            v["data"]
-                .as_array_mut()
-                .into_iter()
-                .flatten()
-                .for_each(wrap_all);
-            wrap_all(v);
-        }
-        _ => {}
+        Output::Native { ids, .. } => ids.iter_mut().for_each(wrap),
+        Output::Content(_) => {}
     }
 }
 
@@ -504,13 +502,13 @@ mod tests {
 
     #[test]
     fn ids_are_wrapped_in_their_provider() {
-        let page = |first: &str, id: &str| {
-            let page = serde_json::json!({"first_id": first, "data": [{"id": id}]});
-            Output::native("openai-videos", page)
+        let page = |ids: &[&str]| Output::Native {
+            ids: ids.iter().map(|id| id.to_string()).collect(),
+            native: NativeValue::new("openai-videos", Value::Null),
         };
-        let mut listed = page("video_1", "video_1");
+        let mut listed = page(&["video_1", "video_2"]);
         wrap_ids(&mut listed, "east");
-        assert_eq!(listed, page("east~video_1", "east~video_1"));
+        assert_eq!(listed, page(&["east~video_1", "east~video_2"]));
         let mut input = Input::Retrieve {
             id: "east~video_1".into(),
         };

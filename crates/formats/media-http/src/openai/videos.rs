@@ -223,9 +223,13 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let body = body.map(|b| (b, "application/json".to_owned()));
             (method, uri, body)
         }
+        Input::Native { native, .. } => {
+            let what = format!("OpenAI has no video {} operation", native.format);
+            return Err(Fault::bad_request(what));
+        }
         _ => {
             return Err(Fault::bad_request(
-                "a video request this format has no form for",
+                "OpenAI has no video operation of this kind",
             ));
         }
     };
@@ -279,9 +283,9 @@ fn read_response(sent: &http::Request<Bytes>) -> Box<dyn Decoder<Output>> {
 }
 
 /// The events of a whole JSON answer: a job, else, such as a page of jobs
-/// or a deletion, this format's own.
+/// or a deletion, this format's own, its jobs' ids typed.
 fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-    let v = whole_json(NAME, raw, |v| {
+    let mut v = whole_json(NAME, raw, |v| {
         matches!(
             v["object"].as_str(),
             Some("video" | "list" | "video.deleted")
@@ -293,9 +297,29 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         && v["deleted"] != true;
     out.push(match job {
         true => Output::Job(job_of(&v)?),
-        false => Output::native(NAME, v),
+        false => {
+            let mut ids = Vec::new();
+            each_id(&mut v, &mut |id| ids.push(id.clone()));
+            let native = NativeValue::new(NAME, v);
+            Output::Native { ids, native }
+        }
     });
     Ok(())
+}
+
+/// Each job id a page or a deletion names, in order: its own, then each
+/// job's, with the one it was remixed from.
+fn each_id(v: &mut Value, f: &mut impl FnMut(&mut String)) {
+    let mut visit = |v: &mut Value| {
+        for key in ["id", "first_id", "last_id", "remixed_from_video_id"] {
+            if let Some(Value::String(id)) = v.get_mut(key) {
+                f(id);
+            }
+        }
+    };
+    visit(v);
+    let data = v.get_mut("data").and_then(Value::as_array_mut);
+    data.into_iter().flatten().for_each(visit);
 }
 
 fn id_of(v: &Value) -> Result<String, Fault> {
@@ -382,8 +406,14 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     for event in events {
         match event {
             Output::Job(job) => body = Some(job_json(job)?),
-            Output::Native(native) if &*native.format == NAME => {
-                body = native.value.as_object().cloned();
+            Output::Native { ids, native } if &*native.format == NAME => {
+                let (mut v, mut ids) = ((*native.value).clone(), ids.iter());
+                each_id(&mut v, &mut |id| {
+                    if let Some(given) = ids.next() {
+                        id.clone_from(given);
+                    }
+                });
+                body = v.as_object().cloned();
             }
             // A body has no place for another event.
             _ => {}
@@ -532,6 +562,7 @@ mod tests {
         let page = json!({"object": "list", "data": [{"id": "video_1"}], "has_more": false});
         let mut out = Vec::new();
         decode_whole(Bytes::from(page.to_string()), &mut out).expect("read");
+        assert!(matches!(&out[..], [Output::Native { ids, .. }] if ids == &["video_1"]));
         let written: Value =
             serde_json::from_slice(&encode_whole(&out).expect("written")).expect("JSON");
         assert_eq!(written, page);

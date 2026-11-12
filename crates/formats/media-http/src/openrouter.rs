@@ -70,9 +70,14 @@ impl Format<ProviderIo, Output, Input> for OpenRouterVideos {
     }
 }
 
-/// An operation OpenRouter has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("OpenRouter cannot {what}")).with(ErrorCode("unsupported".into()))
+/// An operation OpenRouter has no form for, refused, named by its format.
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { native, .. } => format!("{} operation", native.format),
+        _ => "operation of this kind".to_owned(),
+    };
+    Fault::bad_request(format!("OpenRouter has no video {what}"))
+        .with(ErrorCode("unsupported".into()))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
@@ -86,7 +91,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         ),
         Input::Retrieve { id } => (Method::GET, path(id, ""), None),
         Input::Content { id, .. } => (Method::GET, path(id, CONTENT), None),
-        _ => return Err(unsupported("answer this request")),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     set_path(head, &path)?;
