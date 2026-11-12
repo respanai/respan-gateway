@@ -88,7 +88,7 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
 }
 
 /// The items of a request's `input`: its texts, else, as token ids or
-/// parts, the format's own, as it came.
+/// parts, the format's own, as it came; a list of token lists is one each.
 fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
     let items = match v {
         Value::String(text) => vec![Item::Text(text.clone())],
@@ -96,6 +96,10 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
             .iter()
             .filter_map(Value::as_str)
             .map(|text| Item::Text(text.to_owned()))
+            .collect(),
+        Value::Array(all) if all.iter().all(Value::is_array) => all
+            .iter()
+            .map(|ids| Item::Native(NativeValue::new(NAME, ids.clone())))
             .collect(),
         Value::Array(_) => vec![Item::Native(NativeValue::new(NAME, v.clone()))],
         _ => return Err(invalid("input", "must be a string or an array")),
@@ -290,7 +294,14 @@ mod tests {
                 json!(["a", "b"]),
             ),
             (tokens.clone(), native(&tokens), tokens),
-            (lists.clone(), native(&lists), lists),
+            (
+                lists.clone(),
+                [json!([1]), json!([2, 3])]
+                    .iter()
+                    .flat_map(native)
+                    .collect(),
+                lists,
+            ),
             (parts.clone(), native(&parts), parts),
         ];
         for (asked, read, written) in cases {
