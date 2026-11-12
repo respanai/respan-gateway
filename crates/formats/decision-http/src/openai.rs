@@ -2,7 +2,6 @@
 //! questions and their answers as ordered lists.
 
 use super::*;
-use respan_gateway_decision::ChoiceValue;
 use std::borrow::Cow;
 
 const OPENAI: &str = "openai-decisions";
@@ -68,10 +67,11 @@ impl OpenAiDecisions {
                 choice,
                 probabilities,
             } => {
-                v.insert("choice".into(), choice_json(choice));
-                let by_value = probabilities
-                    .iter()
-                    .map(|(c, p)| json!({ "value": choice_json(c), "probability": p }));
+                let choices = &question["choices"];
+                (v.entry("choice")).or_insert_with(|| typed(choice, None, choices));
+                let by_value = probabilities.iter().enumerate().map(
+                    |(i, (c, p))| json!({ "value": typed(c, Some(i), choices), "probability": p }),
+                );
                 v.insert("probabilities".into(), by_value.collect());
             }
             Verdict::Score {
@@ -172,21 +172,23 @@ impl Format<ProviderIo, Output, Input> for OpenAiDecisions {
     }
 }
 
-/// A choice's value, a string or a boolean.
-fn choice_of(v: &Value) -> Option<ChoiceValue> {
+/// A choice's value, a string or a boolean, as the kind's string.
+fn choice_of(v: &Value) -> Option<String> {
     match v {
-        Value::String(s) => Some(ChoiceValue::String(s.clone())),
-        Value::Bool(b) => Some(ChoiceValue::Boolean(*b)),
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
 
-/// A choice's value as JSON.
-fn choice_json(v: &ChoiceValue) -> Value {
-    match v {
-        ChoiceValue::String(s) => s.clone().into(),
-        ChoiceValue::Boolean(b) => (*b).into(),
-    }
+/// Choice `value` as `choices` type it: as the one at `at`, else the first,
+/// of its name there; a string if none is.
+fn typed(value: &str, at: Option<usize>, choices: &Value) -> Value {
+    let choices = choices.as_array().map(Vec::as_slice).unwrap_or_default();
+    let named = |c: &&Value| choice_of(&c["value"]).is_some_and(|v| v == value);
+    let at = at.and_then(|i| choices.get(i)).filter(named);
+    at.or_else(|| choices.iter().find(named))
+        .map_or_else(|| value.into(), |c| c["value"].clone())
 }
 
 /// The type of an answer of `verdict`.
@@ -282,20 +284,17 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
         return Err(invalid(&param("instructions"), "must be a text or parts"));
     }
     let ask = match q.remove("type").as_ref().and_then(Value::as_str) {
-        Some("predicate") => Ask::Noul {
-            yes: None,
-            no: None,
-        },
+        Some("predicate") => Ask::Noul,
         Some("choice") => {
             let Some(Value::Array(choices)) = q.remove("choices") else {
                 return Err(invalid(&param("choices"), "must be a list"));
             };
-            let mut options: Vec<(ChoiceValue, Option<Value>)> = Vec::new();
-            for c in choices {
+            let mut options = Vec::new();
+            for (i, c) in choices.iter().enumerate() {
                 let value = choice_of(&c["value"]).ok_or_else(|| {
                     invalid(&param("choices"), "must hold string or boolean values")
                 })?;
-                if options.iter().any(|(v, _)| v == &value) {
+                if choices[..i].iter().any(|d| d["value"] == c["value"]) {
                     return Err(invalid(&param("choices"), "must hold unique values"));
                 }
                 let about = c.get("description").filter(|d| !d.is_null()).cloned();
@@ -306,6 +305,10 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             }
             if !(2..=255).contains(&options.len()) {
                 return Err(invalid(&param("choices"), "must hold 2 to 255 choices"));
+            }
+            // The kind's choices are strings; a boolean's type stays as this format's own.
+            if choices.iter().any(|c| c["value"].is_boolean()) {
+                q.insert("choices".into(), choices.into());
             }
             Ask::Choice { options }
         }
@@ -341,16 +344,15 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             Fault::bad_request(format!("{OPENAI} cannot ask question '{}': {what}", q.id))
         };
         match &q.ask {
-            Ask::Noul {
-                yes: None,
-                no: None,
-            } => _ = v.insert("type".into(), "predicate".into()),
-            Ask::Noul { .. } => return Err(refused("a predicate has no criteria")),
+            Ask::Noul => _ = v.insert("type".into(), "predicate".into()),
             Ask::Choice { options } => {
                 v.insert("type".into(), "choice".into());
-                let choices = options.iter().map(|(value, about)| {
+                let typed_as = kept(OPENAI, &q.native)
+                    .remove("choices")
+                    .unwrap_or_default();
+                let choices = options.iter().enumerate().map(|(i, (value, about))| {
                     let mut c = Map::new();
-                    c.insert("value".into(), choice_json(value));
+                    c.insert("value".into(), typed(value, Some(i), &typed_as));
                     let about = about.as_ref().map(|a| match a {
                         Value::String(text) => text.clone(),
                         other => other.to_string(),
@@ -447,7 +449,12 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
                     choice,
                     probabilities,
                 };
-                (verdict, &["choice", "probabilities"])
+                // A boolean choice's type stays as this format's own.
+                let taken: &[_] = match a["choice"] {
+                    Value::Bool(_) => &["probabilities"],
+                    _ => &["choice", "probabilities"],
+                };
+                (verdict, taken)
             }
             "score" => {
                 let levels = q["levels"].as_array().map_or(0, Vec::len);
@@ -585,8 +592,9 @@ mod tests {
         });
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
         assert_eq!(input.questions[0].id, "damaged");
+        // The kind's choices are strings; their types stay as the format's own.
         assert!(
-            matches!(&input.questions[1].ask, Ask::Choice { options } if options[0].0 != options[1].0)
+            matches!(&input.questions[1].ask, Ask::Choice { options } if options.iter().all(|(v, _)| v == "true"))
         );
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
     }
@@ -613,6 +621,7 @@ mod tests {
             "questions": {
                 "tone": {"type": "choice", "criteria": {"angry": null, "calm": {"x": 1}}},
                 "urgency": {"type": "score", "criteria": ["Low", {"label": "High"}]},
+                "spam": {"type": "noul", "criteria": {"true": "Unsolicited"}},
             },
         });
         let input = super::super::decode_request(raw.to_string().as_bytes()).expect("input");
@@ -627,6 +636,7 @@ mod tests {
                      "name": "tone", "instructions": ""},
                     {"type": "score", "levels": [{"label": "Low"}, {"label": "High"}],
                      "name": "urgency", "instructions": ""},
+                    {"type": "predicate", "name": "spam", "instructions": ""},
                 ],
             })
         );
@@ -635,6 +645,7 @@ mod tests {
              "probabilities": [{"value": "angry", "probability": 0.3}, {"value": "calm", "probability": 0.7}]},
             {"type": "score", "name": "urgency", "score": 0.9, "confidence": 0.9,
              "probabilities": [{"label": "Low", "value": 0, "probability": 0.1}, {"label": "High", "value": 1, "probability": 0.9}]},
+            {"type": "refusal", "name": "spam"},
         ]});
         let asked = call["questions"].as_array().cloned().unwrap_or_default();
         let events = events_of(&answers, &asked).expect("events");
@@ -645,6 +656,7 @@ mod tests {
             written["answers"]["urgency"]["probabilities"],
             json!({"0": 0.1, "1": 0.9})
         );
+        assert!(written["answers"].get("spam").is_none(), "{written}");
     }
 
     #[test]
@@ -652,6 +664,7 @@ mod tests {
         let asked = json!([
             {"type": "predicate", "name": "spam", "instructions": "Is it spam?"},
             {"type": "score", "instructions": "Urgency?", "levels": [{"label": "low"}, {"label": "high"}]},
+            {"type": "choice", "name": "refund", "instructions": "", "choices": [{"value": true}, {"value": false}]},
         ]);
         let raw = json!({"model": "jev-latest", "input": "Charged twice", "questions": asked});
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
@@ -660,10 +673,15 @@ mod tests {
             call["questions"]["1"]["criteria"],
             json!([{"label": "low"}, {"label": "high"}])
         );
+        assert_eq!(
+            call["questions"]["refund"]["criteria"],
+            json!({"true": null, "false": null})
+        );
         let answers = json!({"model": "jev-1", "answers": {
             "spam": {"type": "noul", "noul": 0.9},
             "1": {"type": "score", "score": 1.0, "confidence": 0.6, "probabilities": {"0": 0.4, "1": 0.6},
                   "legend": {"0": {"label": "low"}, "1": {"label": "high"}}},
+            "refund": {"type": "choice", "choice": "true", "confidence": 0.8, "probabilities": {"true": 0.8, "false": 0.2}},
         }});
         let mut events = Vec::new();
         super::super::decode_response(Bytes::from(answers.to_string()), &mut events)
@@ -676,6 +694,8 @@ mod tests {
                 {"type": "predicate", "name": "spam", "probability": 0.9},
                 {"type": "score", "score": 1.0, "confidence": 0.6, "probabilities": [
                     {"label": "low", "value": 0, "probability": 0.4}, {"label": "high", "value": 1, "probability": 0.6}]},
+                {"type": "choice", "name": "refund", "choice": true, "confidence": 0.8, "probabilities": [
+                    {"value": true, "probability": 0.8}, {"value": false, "probability": 0.2}]},
             ])
         );
     }

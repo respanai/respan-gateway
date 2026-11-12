@@ -33,12 +33,15 @@ standalone gateway serves them at `/openai/v1/decisions`, beside `decisions`.
   served by either's provider. A question's id is its `name`, or its
   position for one unnamed or named as one before it, and a provider is sent
   each question named for its id. Evidence another format gave as JSON is
-  sent as its JSON text; a predicate with criteria is refused, 400.
+  sent as its JSON text; a `noul`'s criteria, which it has no form for, are
+  dropped.
 - An answer is read against the question at its position: one out of turn,
   of another type than the question's but a `refusal`, or unreadable is the
   provider's fault. A client is answered from its own request, so its names
   and levels' labels are as it asked them.
-- Boolean choices stay apart from strings, and `decisions`, whose choices
-  are named, refuses them, as it refuses a refusal.
+- The kind's choices are strings: a boolean is `"true"` or `"false"`, and
+  keeps its type only between this format's client and provider, or where
+  the client asked it as one. A `decisions` client is not written a
+  refusal, which it has no form for; the rest of its answers are.
 - Azure (`vendor = "azure"`) serves it in its dialect: the key in `api-key`,
   called at `/decisions` under the configured v1 base.

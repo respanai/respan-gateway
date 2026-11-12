@@ -17,7 +17,6 @@ type it does not know, stays as the format that decoded it has it, and only
 that format writes it. The crate is the kind's types alone, depending only
 on `respan-gateway-core`, the conversation kind's `Usage`, and `serde_json`.
 
-`ChoiceValue` distinguishes string and boolean values in both questions and
-answers. This changes the former string-only choice API: callers constructing
-choices must wrap strings in `ChoiceValue::String`. A format with string-keyed
-choices cannot encode a boolean and refuses it rather than coercing it.
+A choice's options are strings, and a noul has no criteria: a format whose
+choices are typed, or whose nouls say what each side means, keeps that as
+its own.
