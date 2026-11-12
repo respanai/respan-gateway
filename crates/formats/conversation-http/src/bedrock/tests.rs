@@ -1,7 +1,8 @@
 use super::*;
 
 use respan_gateway_conversation::{
-    Block, Effort, Media, MediaSource, Message, Reasoning, Start, Tool, ToolChoice, Usage,
+    Block, Effort, Media, MediaSource, Message, Reasoning, ResponseFormat, Start, Tool, ToolChoice,
+    Usage,
 };
 use respan_gateway_core::NativeFields;
 use respan_gateway_eventstream::{Header, Message as Frame};
@@ -81,7 +82,7 @@ fn a_request_is_system_messages_and_inference_config() {
 }
 
 #[test]
-fn media_is_bytes_and_a_url_is_refused() {
+fn media_is_bytes_and_a_url_is_dropped() {
     let mut message = user("what is this");
     message
         .content
@@ -101,7 +102,13 @@ fn media_is_bytes_and_a_url_is_refused() {
     let url = Media::new("image/png", MediaSource::Url("https://x.io/a.png".into()));
     let mut remote = user("see");
     remote.content.push(Content::Image(url));
-    assert!(refused(&chat([remote])).contains("data URL"));
+    remote
+        .content
+        .push(Content::Audio(media("audio/mpeg", b"ID3")));
+    assert_eq!(
+        written(&chat([remote]))["messages"][0]["content"],
+        json!([{ "text": "see" }, { "audio": { "format": "mp3", "source": { "bytes": "SUQz" } } }])
+    );
 }
 
 #[test]
@@ -187,16 +194,31 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
 }
 
 #[test]
-fn what_converse_has_no_field_for_is_refused_or_dropped() {
+fn what_converse_has_no_field_for_is_dropped_or_its_nearest() {
     let base = || chat([user("hi")]);
     let mut c = base();
     c.user = Some("u".into());
+    c.options.parallel_tool_calls = Some(false);
+    c.options.response_format = Some(ResponseFormat::JsonObject);
     assert_eq!(written(&c), written(&base()));
     let mut c = base();
     c.options.reasoning = Some(Reasoning::effort(Effort::High));
-    assert!(refused(&c).contains("budget"));
+    assert_eq!(
+        written(&c),
+        written(&base()),
+        "Nova names its effort its own way"
+    );
+    c.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
+    assert_eq!(
+        written(&c)["additionalModelRequestFields"],
+        json!({ "thinking": { "type": "enabled", "budget_tokens": 4096 } })
+    );
     let c = chat([user("a"), Message::new(Role::System, "late")]);
-    assert!(refused(&c).contains("system message"));
+    assert_eq!(
+        written(&c)["messages"],
+        json!([{ "role": "user", "content": [{ "text": "a" }, { "text": "late" }] }])
+    );
+    assert!(refused(&chat([])).contains("at least one"));
 }
 
 #[test]

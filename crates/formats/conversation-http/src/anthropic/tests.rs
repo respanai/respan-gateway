@@ -302,17 +302,33 @@ fn a_system_message_goes_in_the_system_prompt_only_before_the_conversation() {
     let v = v.unwrap_or_default();
     assert_eq!(v["system"], "be brief");
     assert_eq!(v["messages"], json!([{ "role": "user", "content": "hi" }]));
+    // A later one is a user's, which Anthropic joins to the turn before it.
     chat.messages.push(Message::new(Role::System, "later"));
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let v = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        v.unwrap_or_default()["messages"][1],
+        json!({ "role": "user", "content": "later" })
+    );
 }
 
 #[test]
-fn a_temperature_above_1_is_refused() {
+fn a_temperature_above_1_is_1_and_beside_thinking_dropped() {
+    use respan_gateway_conversation::Reasoning;
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.temperature = Some(1.5);
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
-    chat.options.temperature = Some(1.0);
-    assert!(AnthropicMessages.encode_request(&chat).is_ok());
+    let sent = |chat: &Input| AnthropicMessages.encode_request(chat).map(Value::from);
+    assert_eq!(
+        sent(&chat).ok().map(|v| v["temperature"].clone()),
+        Some(json!(1.0))
+    );
+    chat.options.temperature = Some(0.5);
+    chat.options.reasoning = Some(Reasoning::budget(500));
+    let v = sent(&chat).unwrap_or_default();
+    assert!(v.get("temperature").is_none(), "{v}");
+    assert_eq!(
+        v["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
 }
 
 #[test]

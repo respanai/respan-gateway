@@ -162,22 +162,13 @@ fn is_system(m: &Message) -> bool {
 }
 
 /// The parts of the leading system messages, as the system prompt, and
-/// the rest; a later system message is refused.
-fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
+/// the rest, where a later system message is a user's.
+// WARN: a system message's own fields have no place in the prompt; dropped.
+fn split_system(chat: &Input) -> (Vec<Content>, &[Message]) {
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
-    if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Anthropic has no place for a system message after the conversation starts",
-        ));
-    }
-    if !system.iter().all(unsaid) {
-        return Err(Fault::bad_request(
-            "Anthropic's system prompt has no place for a message's other fields",
-        ));
-    }
     let parts = system.iter().flat_map(|m| m.content.iter().cloned());
-    Ok((parts.collect(), rest))
+    (parts.collect(), rest)
 }
 
 /// `m` as Anthropic takes it: its signed reasoning a `thinking` block,
@@ -323,18 +314,13 @@ impl Schema for AnthropicMessages {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let (system, rest) = split_system(chat)?;
+        let (system, rest) = split_system(chat);
         if rest.is_empty() {
             return Err(Fault::bad_request(
                 "Anthropic needs at least one user or assistant message",
             ));
         }
-        if chat.options.temperature.is_some_and(|t| t > 1.0) {
-            return Err(Fault::bad_request(
-                "Anthropic's temperature is at most 1, so a higher one cannot be translated",
-            ));
-        }
-        let thinking = write_thinking(chat)?;
+        let thinking = write_thinking(chat);
         // Anthropic's `max_tokens` must exceed the thinking budget.
         let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
         let default = match budget {
@@ -364,11 +350,11 @@ impl Schema for AnthropicMessages {
         let messages = kept.map(|(_, m)| encode_message::<Self>(&m, &ROLES));
         let messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
         v.insert("messages".into(), messages.into());
-        set(
-            &mut v,
-            "temperature",
-            chat.options.temperature.map(Into::into),
-        );
+        // WARN: a temperature above Anthropic's most, 1, is 1; one but 1 beside
+        // a thinking budget, which Anthropic refuses, is dropped.
+        let temperature = chat.options.temperature.map(|t| t.min(1.0));
+        let temperature = temperature.filter(|t| budget.is_none() || *t == 1.0);
+        set(&mut v, "temperature", temperature.map(Into::into));
         set(&mut v, "top_p", chat.options.top_p.map(Into::into));
         set(&mut v, "stop_sequences", stop_json(&chat.options.stop));
         let mut metadata = Value::Object(Map::new());

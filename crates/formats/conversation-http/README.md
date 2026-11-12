@@ -54,7 +54,8 @@ appeared, so a relay in this format sends it back and a plugin can read it
 departures from the spec, such as reasoning in `reasoning_content`, are its
 plugins' in the [vendors crate](../../vendors/README.md), which read
 these. Reasoning has no field in this format, and is dropped; media in a tool
-result is refused.
+result leads the message after the results. A part Chat has no form for
+(audio but WAV or MP3, a document by URL) is dropped.
 
 A block is any number unique in a response, such as a plugin's own: both
 formats' encoders write blocks in the order they open.
@@ -143,8 +144,10 @@ What the kind has no form for stays native and is dropped in another format:
 beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
 on a function call in the history: written for one, the first call of each turn
 without one takes Google's documented placeholder).
-Writing drops an end user's id and refuses a request for several candidates
-and one tool call at a time.
+Writing drops an end user's id, one tool call at a time and a schema's
+description, and refuses a request for several candidates. A system message
+after the conversation starts is a user's turn, as it is in Anthropic and
+Converse.
 
 A response's first candidate is the events: consecutive text parts one text
 block, a function call a tool block (its arguments whole), `STOP` a tool use
@@ -164,7 +167,7 @@ Bedrock API key as a bearer token. The model is escaped whole into the path,
 so a profile's id or an ARN is one segment. A stream is the AWS event stream
 (`respan-gateway-eventstream`), not SSE; an `exception` message in it is an
 upstream fault of its type. The module says how each part, option and event
-maps; what Converse has no field for is refused.
+maps; what Converse has no field for is dropped, or written as its nearest.
 
 ## Reasoning and sampling
 
@@ -177,17 +180,19 @@ to its own format unchanged, and is dropped by another.
 | Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
 | --- | --- | --- | --- | --- | --- |
 | `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
-| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
-| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | refused | refused |
-| `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
+| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | a Claude's budget (below), else dropped |
+| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | a Claude's budget, else dropped |
+| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024) | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
 | `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
-| `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
+| `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
 
-An effort and a budget do not convert, so each travels only to a format that
-has it (see the [kind](../../kinds/conversation/README.md)); asking for both
-at once is refused everywhere but Anthropic. Anthropic's rules of thinking
-hold beside a budget: one under 1024 or a temperature but 1 is
-refused, and a default `max_tokens` exceeds the budget. Gemini levels are
+An effort and a budget do not convert exactly (see the
+[kind](../../kinds/conversation/README.md)): a format that has only one
+writes the nearest, by Anthropic's budgets per effort (`low` 1024, `medium`
+2048, `high` 4096, `xhigh` 8192; a budget is at most `high`), Converse for a
+Claude only. Asked for both at once, a format writes the one it takes, the
+effort if it takes either. Beside a budget, Anthropic's temperature but 1 is
+dropped, and a default `max_tokens` exceeds the budget. Gemini levels are
 read in either case and written in lower case.
 
 ## Finish

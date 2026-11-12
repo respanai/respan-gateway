@@ -229,9 +229,7 @@ impl Schema for OpenAiResponses {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        if !chat.options.stop.is_empty() {
-            return Err(crate::schema::untranslatable("stop sequences in Responses"));
-        }
+        // WARN: Responses has no stop sequences; they are dropped.
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
         request::write_tools(chat, &mut v)?;

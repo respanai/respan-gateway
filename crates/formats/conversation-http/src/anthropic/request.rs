@@ -154,8 +154,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         Content::Document(media) => write_media("document", media),
         Content::ToolCall { .. } | Content::ToolResult { .. } => tool_block(c),
         Content::Withheld(data) => Ok(json!({ "type": "redacted_thinking", "data": data })),
-        Content::Audio(_) => Err(untranslatable("this media kind")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        // WARN: audio and other parts have no form in Anthropic; dropped.
+        _ => Ok(Value::Null),
     }
 }
 
@@ -200,11 +200,9 @@ fn read_media(v: &Value) -> Option<Content> {
     })
 }
 
-/// An image or document block of `media`, refusing what Anthropic cannot say.
+/// An image or document block of `media`; an image's display name, which
+/// Anthropic has no field for, is dropped.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
-    if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
-    }
     let native = media.native.fields_for(ANTHROPIC);
     let source = match &media.source {
         MediaSource::Url(url) => json!({"type":"url","url":url}),
@@ -213,7 +211,7 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
         }
     };
     let mut v = json!({"type":kind,"source":source});
-    if let Some(name) = &media.name {
+    if let Some(name) = media.name.as_ref().filter(|_| kind == "document") {
         v["title"] = name.clone().into();
     }
     merge_missing(&mut v, native);
@@ -390,16 +388,14 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
 /// output requirement says and the effort its reasoning names.
 pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Result<(), Fault> {
     let own = input.native.format() == Some(ANTHROPIC);
+    // WARN: an `output_config` that is no object is dropped.
     let mut config = own
         .then(|| input.native.fields().get("output_config").cloned())
-        .flatten();
+        .flatten()
+        .filter(Value::is_object);
     let effort = input.options.reasoning.as_ref().and_then(|r| r.effort);
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
-        let config = config.get_or_insert_with(|| json!({}));
-        if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
-        }
-        config["effort"] = effort.into();
+        config.get_or_insert_with(|| json!({}))["effort"] = effort.into();
     }
     // A JSON object without a schema has no format here: the prompt asks
     // for JSON. A schema wrapper's description and strictness have no field,
@@ -409,11 +405,8 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
         Some(ResponseFormat::JsonSchema { schema, .. }) => Some(output_schema(schema)),
     };
     if let Some(schema) = schema {
-        let config = config.get_or_insert_with(|| json!({}));
-        if !config.is_object() {
-            return Err(untranslatable("non-object output_config"));
-        }
-        config["format"] = json!({"type":"json_schema","schema":schema});
+        config.get_or_insert_with(|| json!({}))["format"] =
+            json!({"type":"json_schema","schema":schema});
     }
     set(out, "output_config", config);
     Ok(())
@@ -561,34 +554,16 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
 /// The request's `thinking`: the kind's reasoning, else the request's own.
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s
 /// ([`write_output`]), and it returns its thinking whenever it thinks.
-pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
+pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
     let own = || own_native(input, ANTHROPIC, "thinking");
+    // WARN: an ask to withhold the thinking is dropped.
     let Some(r) = &input.options.reasoning else {
-        return Ok(own());
+        return own();
     };
-    if r.summary == Some(false) {
-        return Err(untranslatable("withholding the thinking in Anthropic"));
-    }
-    Ok(match (r.effort, r.budget_tokens) {
+    match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
-        (_, Some(budget)) => {
-            check_thinking(input, budget)?;
-            Some(json!({ "type": "enabled", "budget_tokens": budget }))
-        }
+        // WARN: a budget under Anthropic's least, 1024, is raised to it.
+        (_, Some(budget)) => Some(json!({ "type": "enabled", "budget_tokens": budget.max(1024) })),
         (_, None) => own(),
-    })
-}
-
-/// Refuse what Anthropic refuses beside a thinking budget: a budget under
-/// 1024, a temperature but 1.
-fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
-    if budget < 1024 {
-        return Err(untranslatable("a thinking budget under 1024 in Anthropic"));
     }
-    if input.options.temperature.is_some_and(|t| t != 1.0) {
-        return Err(untranslatable(
-            "a temperature other than 1 beside thinking in Anthropic",
-        ));
-    }
-    Ok(())
 }

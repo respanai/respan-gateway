@@ -41,7 +41,9 @@ pub(crate) use values::{
     take_strict, take_text, tidy, unsupported_fields, untranslatable, unwritable_content,
     usage_extra, write_search,
 };
-pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
+pub(crate) use values::{
+    budget_for, effort_for, effort_name, own_native, parse_effort, take_native,
+};
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};
 use respan_gateway_core::{Connection, EventSink, Fault};
@@ -124,7 +126,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// a tool block; `None` keeps the part this format's own.
     fn decode_part(p: &Value) -> Option<Content>;
     /// A part beyond text and this format's own parts, as it writes it, or
-    /// refused.
+    /// `Value::Null` for one it drops.
     fn encode_part(c: &Content) -> Result<Value, Fault>;
     /// Whether a successful body is a whole response of this format.
     fn is_response(v: &Value) -> bool;

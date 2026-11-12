@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
-use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
+use respan_gateway_conversation::{Effort, MediaSource, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
@@ -287,6 +287,7 @@ pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fa
         parts => parts
             .iter()
             .map(encode_any_part::<C>)
+            .filter(|p| !matches!(p, Ok(Value::Null)))
             .collect::<Result<_, _>>()?,
     })
 }
@@ -369,22 +370,23 @@ pub(crate) fn tidy(message: &mut Message) {
 /// A message of format `C` written anew: role, content and its other fields.
 pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let mut v = Map::new();
-    v.insert("role".into(), role_of(C::NAME, m, roles)?);
+    v.insert("role".into(), role_of(C::NAME, m, roles));
     v.insert("content".into(), encode_content::<C>(&m.content)?);
     v.extend(m.native.fields_for(C::NAME));
     Ok(v.into())
 }
 
-/// The role to write, if this format has it.
-fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
+/// The role to write: a user's for one this format lacks.
+fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Value {
     let role = match &m.role {
         Role::Native {
             format: f, name, ..
         } if **f == *format => Some(name.as_str()),
         role => roles.name(role),
     };
-    let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    // WARN: a role this format lacks, such as a system message after the
+    // conversation starts, is written as a user's.
+    role.unwrap_or("user").into()
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is
@@ -670,15 +672,29 @@ pub(crate) fn parse_effort(name: &str) -> Option<Effort> {
     })
 }
 
-/// The reasoning controls of `input`, refused if they name an effort and a
-/// budget at once, as no vendor takes both.
-pub(crate) fn reasoning_of(input: &Input) -> Result<Option<&Reasoning>, Fault> {
-    match &input.options.reasoning {
-        Some(r) if r.effort.is_some() && r.budget_tokens.is_some() => Err(Fault::bad_request(
-            "reasoning with both an effort and a token budget cannot be written",
-        )),
-        r => Ok(r.as_ref()),
+/// The thinking budget Anthropic gives an effort: each the nearest of the
+/// other, for a format that takes only one.
+const EFFORT_BUDGETS: [(Effort, u64); 4] = [
+    (Effort::Low, 1024),
+    (Effort::Medium, 2048),
+    (Effort::High, 4096),
+    (Effort::XHigh, 8192),
+];
+
+/// The effort nearest a thinking budget of `tokens`, at most `high`, which
+/// every model that takes an effort has.
+pub(crate) fn effort_for(tokens: u64) -> Effort {
+    let near = EFFORT_BUDGETS[..3].iter().find(|(_, b)| tokens <= *b);
+    match tokens {
+        0 => Effort::Off,
+        _ => near.map_or(Effort::High, |(e, _)| *e),
     }
+}
+
+/// The thinking budget nearest an `effort` but `Off`.
+pub(crate) fn budget_for(effort: Effort) -> u64 {
+    let near = EFFORT_BUDGETS.iter().find(|(e, _)| *e == effort);
+    near.map_or(EFFORT_BUDGETS[0].1, |(_, b)| *b)
 }
 
 /// The value of the request's native field `key` if `parse` reads all of it,

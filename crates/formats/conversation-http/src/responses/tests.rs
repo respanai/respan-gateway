@@ -355,11 +355,11 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
 }
 
 #[test]
-fn stop_sequences_cannot_be_written() {
+fn stop_sequences_are_dropped() {
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.stop = vec!["x".into()];
-    let refused = OpenAiResponses.encode_request(&chat).expect_err("stop");
-    assert!(refused.message().contains("stop sequences"));
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert!(sent.get("stop").is_none(), "{sent:?}");
 }
 
 #[test]

@@ -309,13 +309,17 @@ fn results_of_one_turn_are_one_content_and_name_their_tools() {
             { "functionResponse": { "name": "one", "response": { "k": 1 }, "id": "call_a" } },
         ])
     );
-    // A result of an unknown call is refused.
+    // A result of an unknown call is named by its id.
     chat.messages.push({
         let mut m = respan_gateway_conversation::Message::new(Role::User, "");
         m.content = vec![Content::tool_result("nope", vec!["x".into()], false)];
         m
     });
-    assert!(GeminiGenerate.encode_request(&chat).is_err());
+    let v = GeminiGenerate.encode_request(&chat).expect("a request");
+    assert_eq!(
+        v["contents"][2]["parts"][2]["functionResponse"]["name"],
+        "nope"
+    );
     // A Responses turn's text drops its fields, and images and documents are `parts`.
     let annotated = json!([{ "type": "file_citation", "file_id": "f" }]);
     let text = |t: &str| json!({ "type": "input_text", "text": t, "annotations": annotated });
@@ -374,18 +378,24 @@ fn structured_output_is_a_mime_type_and_a_schema() {
 }
 
 #[test]
-fn what_gemini_cannot_say_is_refused_or_dropped() {
+fn what_gemini_cannot_say_is_dropped_or_its_nearest() {
     let one = json!({ "contents": [{ "parts": [{ "text": "x" }] }] });
     let refused = |edit: fn(&mut Input)| written(one.clone(), edit).is_err();
     let body = |edit: fn(&mut Input)| written(one.clone(), edit).expect("written");
     assert_eq!(body(|c| c.user = Some("u".into())), body(|_| {}));
-    assert!(refused(|c| c.options.parallel_tool_calls = Some(false)));
+    assert_eq!(
+        body(|c| c.options.parallel_tool_calls = Some(false)),
+        body(|_| {})
+    );
     assert!(refused(|c| c.messages.clear()));
-    assert!(refused(|c| {
-        let mut m = respan_gateway_conversation::Message::new(Role::System, "late");
-        m.role = Role::System;
+    let late = body(|c| {
+        let m = respan_gateway_conversation::Message::new(Role::System, "late");
         c.messages.push(m);
-    }));
+    });
+    assert_eq!(
+        late["contents"][1],
+        json!({ "role": "user", "parts": [{ "text": "late" }] })
+    );
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
@@ -741,7 +751,7 @@ fn a_json_array_element_joins_the_data_lines_of_its_event() {
 }
 
 #[test]
-fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
+fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_its_highest() {
     use respan_gateway_conversation::{Effort, Reasoning};
     for level in ["minimal", "low", "medium", "high"] {
         let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
@@ -754,16 +764,13 @@ fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
         "generationConfig": { "thinkingConfig": { "thinkingLevel": "max" } } });
     assert!(GeminiGenerate.decode_json(&v).options.reasoning.is_none());
     assert_eq!(written(v.clone(), |_| {}).ok(), Some(v));
-    let (effort, name) = (Effort::XHigh, "xhigh");
     let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
     let sent = written(one, |c| {
-        c.options.reasoning = Some(Reasoning::effort(effort))
+        c.options.reasoning = Some(Reasoning::effort(Effort::XHigh))
     });
     assert_eq!(
-        sent.err().map(|f| f.message().to_owned()),
-        Some(format!(
-            "Gemini does not take a reasoning effort of \"{name}\"; its highest is \"high\""
-        ))
+        sent.ok().map(|v| v["generationConfig"].clone()),
+        Some(json!({ "thinkingConfig": { "thinkingLevel": "high" } }))
     );
 }
 
@@ -809,5 +816,8 @@ fn a_chats_effort_is_the_thinking_its_gemini_has() {
             "{model} {effort}"
         );
     }
-    assert!(effort_thinking("gemini-2.5-flash", "xhigh").is_err());
+    assert_eq!(
+        effort_thinking("gemini-2.5-flash", "xhigh").ok(),
+        Some(budget(4096, true))
+    );
 }

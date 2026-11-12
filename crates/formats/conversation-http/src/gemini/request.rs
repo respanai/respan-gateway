@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 use super::{GEMINI, ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
     NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_fields,
-    parse_effort, reasoning_of, remainder, sealed, set, untranslatable, write_search,
+    parse_effort, remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -217,28 +217,21 @@ fn read_media(p: &Value, which: &str) -> Option<Content> {
 }
 
 /// The messages `chat` has after its leading system ones, and the
-/// instruction they make: later system messages are refused.
+/// instruction they make: a later system message is a user's
+/// ([`write_messages`]).
 pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), Fault> {
     let is_system = |m: &Message| matches!(m.role, Role::System | Role::Developer);
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
-    if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Gemini has no place for a system message after the conversation starts",
-        ));
-    }
     let mut names = Vec::new();
     let mut parts = Vec::new();
+    // WARN: a system message's own fields have no place in the instruction; dropped.
     for m in system {
-        if !unsaid(m) {
-            return Err(Fault::bad_request(
-                "Gemini's system instruction has no place for a message's other fields",
-            ));
-        }
         for c in &m.content {
             parts.push(write_part(c, &mut names)?);
         }
     }
+    parts.retain(|p| !p.is_null());
     let instruction = (!parts.is_empty()).then(|| json!({ "parts": parts }));
     Ok((instruction, rest))
 }
@@ -257,9 +250,8 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     for m in messages {
         let role = match &m.role {
             Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
+            // WARN: a role Gemini lacks, such as a later system message's, is a user's.
+            role => ROLES.name(role).unwrap_or("user"),
         };
         let mut parts: Vec<Value> = Vec::new();
         for (c, signature) in sealed(&m.content) {
@@ -268,6 +260,9 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 continue;
             }
             let mut part = write_part(c, &mut names)?;
+            if part.is_null() {
+                continue;
+            }
             if let Some(s) = signature {
                 part[SIGNATURE] = s.into();
             }
@@ -322,8 +317,9 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
     }
 }
 
-/// A part of the kind's as Gemini writes it; `names` has the calls made so
-/// far, by id, for the results that answer them.
+/// A part of the kind's as Gemini writes it, `Null` for one it drops;
+/// `names` has the calls made so far, by id, for the results that answer
+/// them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
     let fields = |native: &Option<NativeFields>| native.fields_for(GEMINI);
     match c {
@@ -339,7 +335,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Image(media) | Content::Audio(media) | Content::Document(media) => {
-            write_media(media, false)
+            Ok(write_media(media, false))
         }
         Content::ToolCall {
             id,
@@ -364,15 +360,14 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             native,
             ..
         } => {
-            let name = names.iter().rev().find(|(i, _)| i == id).map(|(_, n)| n);
-            let name = name.ok_or_else(|| {
-                Fault::bad_request(format!(
-                    "a tool result answers call '{id}', which no message makes; Gemini's \
-                     response names its tool"
-                ))
-            })?;
+            // WARN: a result of a call no message makes is named by its id.
+            let name = names
+                .iter()
+                .rev()
+                .find(|(i, _)| i == id)
+                .map_or(id, |(_, n)| n);
             let mut response = json!({ "name": name });
-            write_result(content, *is_error, &mut response)?;
+            write_result(content, *is_error, &mut response);
             if !is_synthetic(id) {
                 response["id"] = id.as_str().into();
             }
@@ -381,22 +376,23 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             Ok(part)
         }
         Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        _ => Ok(Value::Null),
     }
 }
 
 /// What a tool said as a `functionResponse`'s `response`: a JSON object as
 /// it is, else the text under `output`, or under `error` for a failure, as
 /// Gemini's examples do; and its images and documents as its `parts`.
-fn write_result(content: &[Content], is_error: bool, response: &mut Value) -> Result<(), Fault> {
+fn write_result(content: &[Content], is_error: bool, response: &mut Value) {
     let mut text = String::new();
     let mut parts = Vec::new();
     for c in content {
         match c {
             // WARN: a text part's native fields are dropped here, silently.
             Content::Text { text: t, .. } => text.push_str(t),
-            Content::Image(m) | Content::Document(m) => parts.push(write_media(m, true)?),
-            _ => return Err(untranslatable("audio or other content in a tool result")),
+            Content::Image(m) | Content::Document(m) => parts.push(write_media(m, true)),
+            // WARN: audio and other parts have no place in a result; dropped.
+            _ => {}
         }
     }
     response["response"] = match serde_json::from_str::<Value>(&text) {
@@ -406,7 +402,6 @@ fn write_result(content: &[Content], is_error: bool, response: &mut Value) -> Re
     if !parts.is_empty() {
         response["parts"] = parts.into();
     }
-    Ok(())
 }
 
 /// `media` as an `inlineData` or `fileData` part. Gemini refuses a wildcard
@@ -426,19 +421,15 @@ pub fn media_part(media: &Media) -> Value {
 }
 
 /// An `inlineData` or `fileData` part of `media`, with its native fields; only
-/// a tool result's part takes a display name.
-fn write_media(media: &Media, in_result: bool) -> Result<Value, Fault> {
+/// a tool result's part takes a display name, which another drops.
+fn write_media(media: &Media, in_result: bool) -> Value {
     let mut part = media_part(media);
     let data = part.as_object_mut().and_then(|p| p.values_mut().next());
-    match (&media.name, data) {
-        (Some(name), Some(Value::Object(data))) if in_result => {
-            data.insert("displayName".into(), name.as_str().into());
-        }
-        (Some(_), _) => return Err(untranslatable("a display name on media content")),
-        (None, _) => {}
+    if let (Some(name), Some(Value::Object(data)), true) = (&media.name, data, in_result) {
+        data.insert("displayName".into(), name.as_str().into());
     }
     merge_fields(&mut part, &media.native.fields_for(GEMINI));
-    Ok(part)
+    part
 }
 
 /// Gemini's `Schema` (OpenAPI's subset, with upper-case type names) as JSON
@@ -615,11 +606,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         .then(|| tools.into())
         .or_else(|| native("tools"));
     set(v, "tools", tools);
-    if chat.options.parallel_tool_calls == Some(false) {
-        return Err(Fault::bad_request(
-            "Gemini cannot turn off parallel tool calls",
-        ));
-    }
+    // WARN: Gemini cannot turn off parallel tool calls; the ask is dropped.
     let mode = match &chat.options.tool_choice {
         None => None,
         Some(ToolChoice::Auto) => Some(json!({ "mode": "AUTO" })),
@@ -728,22 +715,15 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         Some(ResponseFormat::JsonObject) => {
             set_field("responseMimeType", Some("application/json".into()));
         }
-        Some(ResponseFormat::JsonSchema {
-            schema,
-            description,
-            ..
-        }) => {
-            // The wrapper's description has no field to instruct the model with.
-            if description.is_some() {
-                return Err(untranslatable("a schema wrapper description in Gemini"));
-            }
+        // WARN: the wrapper's description has no field; dropped.
+        Some(ResponseFormat::JsonSchema { schema, .. }) => {
             set_field("responseMimeType", Some("application/json".into()));
             set_field("responseJsonSchema", Some(schema.clone()));
         }
     }
     // WARN: an end user's id has no field in Gemini; dropped silently.
-    if let Some(r) = reasoning_of(chat)? {
-        write_thinking(r, &mut config)?;
+    if let Some(r) = &o.reasoning {
+        write_thinking(r, &mut config);
     }
     set(
         v,
@@ -890,15 +870,15 @@ fn level_name(effort: Effort) -> Option<&'static str> {
     }
 }
 
-/// `thinkingConfig` of `config` with the kind's reasoning over its own,
-/// refused for an effort Gemini has no level for.
-fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
+/// `thinkingConfig` of `config` with the kind's reasoning over its own: an
+/// effort above Gemini's levels is its highest, `high`.
+fn write_thinking(r: &Reasoning, config: &mut Value) {
     let Some(config) = config.as_object_mut() else {
-        return Ok(());
+        return;
     };
     let thinking = config.entry("thinkingConfig").or_insert_with(|| json!({}));
     let Some(thinking) = thinking.as_object_mut() else {
-        return Ok(());
+        return;
     };
     if r.effort.is_some() || r.budget_tokens.is_some() {
         thinking.shift_remove("thinkingBudget");
@@ -907,12 +887,7 @@ fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
     match (r.effort, r.budget_tokens) {
         (Some(Effort::Off), _) => _ = thinking.insert("thinkingBudget".into(), 0.into()),
         (Some(effort), _) => {
-            let Some(level) = level_name(effort) else {
-                return Err(Fault::bad_request(format!(
-                    "Gemini does not take a reasoning effort of \"{}\"; its highest is \"high\"",
-                    effort_name(effort)?
-                )));
-            };
+            let level = level_name(effort).unwrap_or("high");
             thinking.insert("thinkingLevel".into(), level.into());
         }
         (None, Some(n)) => _ = thinking.insert("thinkingBudget".into(), n.into()),
@@ -924,5 +899,4 @@ fn write_thinking(r: &Reasoning, config: &mut Value) -> Result<(), Fault> {
     if thinking.is_empty() {
         config.shift_remove("thinkingConfig");
     }
-    Ok(())
 }

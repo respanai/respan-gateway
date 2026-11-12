@@ -67,13 +67,13 @@ and Anthropic's effort `max`.
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
 `Minimal`, `Low`, `Medium`, `High`, `XHigh`), a `budget_tokens` limit, and `summary`
 (whether the thinking is returned). Vendors state either an effort or a
-budget, and the two do not convert: a budget does not pick an effort, and an
-effort buys different thinking from different models. So an effort travels
-between formats that have efforts, a budget between formats that have budgets,
-only `Off` is both, and a format refuses the one it lacks (a plugin that wants
-one as the other decides it by its own policy, in a filter). A vendor's value
-the kind has no name for (such as an effort `xhigh`) stays native to its
-format.
+budget, and the two do not convert exactly: an effort buys different
+thinking from different models. So an effort travels between formats that
+have efforts, a budget between formats that have budgets, only `Off` is both,
+and a format that has only one writes the nearest of the other, by the
+budgets Anthropic gives its efforts (a plugin that wants another policy sets
+the one the provider takes, in a filter). A vendor's value the kind has no
+name for (such as an effort `max`) stays native to its format.
 `Content` includes text, reasoning, tool calls/results, images, audio, documents,
 and native values. A `Media` has a MIME type, URL or bytes, optional name, and
 optional native fields. Formats do not fetch URLs.

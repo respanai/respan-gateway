@@ -36,8 +36,9 @@
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
 //! the kind has no choice for and video parts. A part's `thoughtSignature`
 //! is the kind's `Content::Signature` after it.
-//! An end user's id is dropped when written; a request for several
-//! candidates or one tool call at a time is refused.
+//! An end user's id and one tool call at a time are dropped when written,
+//! and a later system message is a user's; a request for several
+//! candidates is refused.
 //!
 //! A Gemini 3 model refuses a function call in the history that has no
 //! `thoughtSignature`, as a call made in another format has none: written
