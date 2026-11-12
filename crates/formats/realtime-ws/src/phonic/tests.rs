@@ -187,11 +187,7 @@ fn what_phonic_has_none_of_is_refused() {
     for events in [
         vec![session(|s| s.purpose = Some(Purpose::Transcription))],
         vec![session(|s| s.output = Some(Modality::Text))],
-        vec![start.clone(), Input::Commit { native: None }],
-        vec![
-            start.clone(),
-            session(|s| s.instructions = Some("x".into())),
-        ],
+        vec![start, Input::Commit { native: None }],
     ] {
         let fault = sent(None, &events).expect_err("refused");
         assert_eq!(
@@ -200,9 +196,7 @@ fn what_phonic_has_none_of_is_refused() {
             "{events:?}"
         );
     }
-    // A later session that changes nothing the client asked is
-    // acknowledged, though another format's voice and its model were not
-    // what Phonic was told.
+    // A later session is acknowledged, what it changes dropped.
     let (say, mut said) = spec::say();
     let mut provider =
         input::Provider::new(Some("phonic-1".into()), false, Applied::default(), say);
@@ -210,8 +204,8 @@ fn what_phonic_has_none_of_is_refused() {
         s.model = Some("alias".into());
         s.voice = Some("alloy".into());
     });
-    let written =
-        frames(&[asked.clone(), asked], |e, out| provider.write(e, out)).expect("written");
+    let changed = session(|s| s.instructions = Some("x".into()));
+    let written = frames(&[asked, changed], |e, out| provider.write(e, out)).expect("written");
     assert_eq!(written.len(), 1);
     assert!(matches!(said.try_recv(), Ok(Output::Updated(_))));
 }

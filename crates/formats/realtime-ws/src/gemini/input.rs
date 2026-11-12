@@ -124,7 +124,7 @@ fn decode(v: &Value, answering: bool) -> Option<Vec<Input>> {
     for event in &events {
         provider.encode(event, &mut written).ok()?;
     }
-    provider.flush(&mut written).ok()?;
+    provider.flush(&mut written);
     (written.as_slice() == std::slice::from_ref(v)).then_some(events)
 }
 
@@ -187,23 +187,26 @@ fn message(turn: &Value) -> Option<Message> {
     Some(message)
 }
 
-fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
-    let role = match m.role {
-        Role::User => "user",
-        Role::Assistant => "model",
-        _ => return Err(refuse("a message of this role")),
+fn message_json(m: &Message) -> Value {
+    // WARN: Gemini Live's turns are the user's or the model's, so a message
+    // of another role, such as a system message, is the user's.
+    let role = if m.role == Role::Assistant {
+        "model"
+    } else {
+        "user"
     };
+    // WARN: a part but text, such as an image, is dropped.
     let part = |c: &Content| match c {
-        Content::Text { text, native, .. } if native.is_none() => Ok(json!({"text": text})),
+        Content::Text { text, native, .. } if native.is_none() => Some(json!({"text": text})),
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
-            Ok(Value::clone(value))
+            Some(Value::clone(value))
         }
-        _ => Err(refuse("a message part of this kind")),
+        _ => None,
     };
-    let parts = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
+    let parts: Vec<Value> = m.content.iter().filter_map(part).collect();
     let mut v = json!({"role": role, "parts": parts});
     merge(&mut v, own(&m.native));
-    Ok(v)
+    v
 }
 
 /// A function's answer: its response, as JSON text, and its other fields,
@@ -248,10 +251,9 @@ enum Held {
 ///
 /// What only another format says is emulated: with manual turns, the
 /// user's activity begins at its first audio; a cancel ends the response
-/// at once, and the rest of its turn is dropped; an update that changes
-/// nothing is acknowledged. A message is written only as the user's text,
-/// answered at once, and a tool's answer to a call the provider cancelled
-/// not at all.
+/// at once, and the rest of its turn is dropped; a later session is
+/// acknowledged. A tool's answer to a call the provider cancelled is not
+/// written at all.
 #[derive(Debug)]
 pub(super) struct Provider {
     shared: Shared,
@@ -324,14 +326,14 @@ impl Provider {
                 match &mut self.held {
                     Some(Held::Messages(held)) => held.push(event.clone()),
                     _ => {
-                        self.flush(out)?;
+                        self.flush(out);
                         self.held = Some(Held::Messages(vec![event.clone()]));
                     }
                 }
                 if shaped(native)
                     && let Some(Held::Messages(messages)) = self.held.take()
                 {
-                    out.push(messages_json(&messages, refuse)?);
+                    out.push(messages_json(&messages));
                 }
                 return Ok(());
             }
@@ -345,16 +347,16 @@ impl Provider {
                 match &mut self.held {
                     Some(Held::Results(held)) => held.push(result.clone()),
                     _ => {
-                        self.flush(out)?;
+                        self.flush(out);
                         self.held = Some(Held::Results(vec![result.clone()]));
                     }
                 }
                 return Ok(());
             }
             Input::Respond { .. } if answered && self.held.is_none() => return Ok(()),
-            Input::Respond { native } => (self.respond(native)?, native),
+            Input::Respond { native } => (self.respond(native), native),
             _ => {
-                self.flush(out)?;
+                self.flush(out);
                 let manual = self.manual();
                 match event {
                     Input::Audio { audio, native } => {
@@ -371,9 +373,9 @@ impl Provider {
                         let blob = json!({"mimeType": mime, "data": json::base64(&data)});
                         (json!({"realtimeInput": {"audio": blob}}), native)
                     }
-                    Input::Commit { .. } if !manual => {
-                        return Err(refuse("a commit under the provider's voice detection"));
-                    }
+                    // WARN: the provider's voice detection ends the user's
+                    // turns, so a commit under it is dropped.
+                    Input::Commit { .. } if !manual => return Ok(()),
                     Input::Commit { native } => {
                         (self.activity, self.answered) = (false, true);
                         (json!({"realtimeInput": {"activityEnd": {}}}), native)
@@ -406,18 +408,13 @@ impl Provider {
         matches!(turns, Some(Turns::Manual))
     }
 
-    /// A later session, which the Live API cannot take: one that changes
-    /// nothing is acknowledged, and one that changes anything refused.
+    /// A later session, which the Live API cannot take: acknowledged with
+    /// the session as it was set up.
     fn update(&mut self, s: &Session) -> Result<(), Fault> {
         let mut state = self.shared.lock();
         let applied = state.applied.get_or_insert_default();
-        if let Some(field) = session::changes(applied, s) {
-            let fixed = format!(
-                "Gemini Live fixes a session's configuration at its setup: this update changes `{field}`"
-            );
-            return Err(Fault::bad_request(fixed).with(CloseCode(1008)));
-        }
-        // Audio formats are each chunk's own.
+        // WARN: Gemini Live fixes a session at its setup, so what a later
+        // one changes is dropped, but its audio formats, each chunk's own.
         applied.input_audio = s.input_audio.or(applied.input_audio);
         applied.output_audio = s.output_audio.or(applied.output_audio);
         let _ = self.say.unbounded_send(Output::Updated(applied.clone()));
@@ -443,29 +440,33 @@ impl Provider {
         Ok(())
     }
 
-    /// The message that asks for an answer to what is held: messages as
-    /// `clientContent` if `native` says they came so, else the user's text
-    /// alone; tools' answers; or a complete turn of nothing more, as it
-    /// came.
-    fn respond(&mut self, native: &Option<NativeFields>) -> Result<Value, Fault> {
-        let refuse = |what: &str| untranslatable_input(NAME, what);
-        let content = shaped(native);
-        match self.held.take() {
-            None if content => Ok(json!({"clientContent": {"turnComplete": true}})),
-            None => Err(refuse("a response to nothing the client said")),
-            Some(Held::Results(results)) => Ok(self.results(&results)),
-            Some(Held::Messages(messages)) if content => {
-                let mut v = messages_json(&messages, refuse)?;
-                v["clientContent"]["turnComplete"] = true.into();
-                Ok(v)
-            }
-            Some(Held::Messages(messages)) => match messages.as_slice() {
-                [Input::Message { message, native }] if native.is_none() && said(message) => {
-                    Ok(json!({"realtimeInput": {"text": message.text()}}))
-                }
-                _ => Err(refuse(UNANSWERED)),
+    /// The message that asks for an answer to what is held: the user's
+    /// text alone unless `native` says it came as `clientContent`, else
+    /// messages as a complete `clientContent` turn; tools' answers; or a
+    /// complete turn of nothing more.
+    fn respond(&mut self, native: &Option<NativeFields>) -> Value {
+        let messages = match self.held.take() {
+            Some(Held::Results(results)) => return self.results(&results),
+            Some(Held::Messages(messages)) => messages,
+            None => Vec::new(),
+        };
+        if let [
+            Input::Message {
+                message,
+                native: None,
             },
+        ] = messages.as_slice()
+            && !shaped(native)
+            && said(message)
+        {
+            return json!({"realtimeInput": {"text": message.text()}});
         }
+        let mut v = match messages.as_slice() {
+            [] => json!({"clientContent": {}}),
+            _ => messages_json(&messages),
+        };
+        v["clientContent"]["turnComplete"] = true.into();
+        v
     }
 
     fn results(&self, results: &[ToolResult]) -> Value {
@@ -475,21 +476,16 @@ impl Provider {
         json!({"toolResponse": {"functionResponses": answers}})
     }
 
-    /// Write what is held, which nothing answers: tools' answers; messages
-    /// the Live API would not answer at once are refused.
-    fn flush(&mut self, out: &mut Vec<Value>) -> Result<(), Fault> {
+    /// Write what is held, which nothing answers: tools' answers, or
+    /// messages as a `clientContent` turn not yet complete.
+    fn flush(&mut self, out: &mut Vec<Value>) {
         match self.held.take() {
             None => {}
-            Some(Held::Messages(_)) => return Err(untranslatable_input(NAME, UNANSWERED)),
+            Some(Held::Messages(messages)) => out.push(messages_json(&messages)),
             Some(Held::Results(results)) => out.push(self.results(&results)),
         }
-        Ok(())
     }
 }
-
-/// The messages the Live API takes only as they came, in `clientContent`:
-/// it answers any other message at once, as the user's text.
-const UNANSWERED: &str = "a message but the user's text, answered at once,";
 
 /// Whether `message` is the user's text alone.
 fn said(message: &Message) -> bool {
@@ -514,12 +510,12 @@ fn shaped(native: &Option<NativeFields>) -> bool {
 }
 
 /// Messages as one `clientContent`, with what each event kept.
-fn messages_json(messages: &[Input], refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn messages_json(messages: &[Input]) -> Value {
     let mut turns = Vec::new();
     let mut kept = Map::new();
     for event in messages {
         if let Input::Message { message, native } = event {
-            turns.push(message_json(message, refuse)?);
+            turns.push(message_json(message));
             if let Some(fields) = own(native) {
                 kept.extend(fields.clone());
             }
@@ -527,5 +523,5 @@ fn messages_json(messages: &[Input], refuse: fn(&str) -> Fault) -> Result<Value,
     }
     let mut v = json!({"clientContent": {"turns": turns}});
     merge(&mut v, Some(&kept));
-    Ok(v)
+    v
 }
