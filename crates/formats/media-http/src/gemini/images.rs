@@ -30,8 +30,8 @@ const NAME: &str = "gemini-images";
 /// `fileData`, for an image named by URL), then the prompt. Its `count` is
 /// `candidateCount`, which Gemini's image models refuse above 1; its `size`
 /// an `imageConfig` of the nearest `aspectRatio` Gemini draws (within 5%,
-/// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. A mask
-/// is refused, 400, as Gemini edits by prompt alone. Its native fields go in the body, `generationConfig`
+/// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. As
+/// Gemini edits by prompt alone, a mask is dropped. Its native fields go in the body, `generationConfig`
 /// merged with what it says. An answer's images are its parts' `inlineData`
 /// (or `fileData`), not its thoughts', its usage `usageMetadata`'s; its text
 /// is dropped. An answer with no image is refused, 400 `no_image`, saying why.
@@ -112,12 +112,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         return Err(Fault::bad_request(
             "a Gemini image needs a model, such as gemini-2.5-flash-image",
         ));
-    }
-    if input.mask.is_some() {
-        return Err(
-            Fault::bad_request("Gemini edits by prompt, and takes no mask")
-                .with(ErrorCode("unsupported".into())),
-        );
     }
     head.uri = format!("/models/{model}:generateContent")
         .parse()
@@ -548,16 +542,6 @@ mod tests {
             "generationConfig": { "temperature": 1, "imageConfig": { "aspectRatio": "3:2" } },
         });
         assert_eq!(written, want);
-    }
-
-    #[test]
-    fn a_mask_is_refused() {
-        let mut input = Input::new("p");
-        input.model = Some("m".into());
-        input.images = vec![png(b"a")];
-        input.mask = Some(png(b"m"));
-        let mut head = http::Request::new(()).into_parts().0;
-        assert!(call(&mut head, &input).is_err_and(|f| f.is(FaultKind::Client)));
     }
 
     #[test]

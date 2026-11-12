@@ -63,9 +63,9 @@ pub const VENDOR: Vendor = Vendor {
 /// unless asked to wait (`sync`), and an image at a signed URL of its own
 /// storage unless asked for its bytes: it is asked for both, unless the
 /// request says otherwise. An edit is a generation of its `image`s, each a
-/// URL or a data URL of its bytes; it takes no mask, which fails
-/// `bad_request` before sending. One it did not finish within its wait,
-/// about four minutes, it answers as a job, which fails. It streams no
+/// URL or a data URL of its bytes; it takes no mask, which is dropped. One
+/// it did not finish within its wait, about four minutes, it answers as a
+/// job, which fails. It streams no
 /// images, so it is not asked to; a client that asked still gets a stream,
 /// framed at the client edge.
 #[derive(Debug, Clone, Copy)]
@@ -87,12 +87,9 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request(
-            "EmpirioLabs AI edits an image with no mask",
-        ));
-    }
     let mut fields = kept(OpenAiImages::NAME, &input.native);
+    // WARN: EmpirioLabs AI edits take no mask; it is dropped.
+    fields.shift_remove("mask");
     fields.entry("sync").or_insert(true.into());
     fields.entry("response_format").or_insert("b64_json".into());
     if !input.images.is_empty() {
@@ -397,8 +394,14 @@ mod tests {
         assert_eq!(fields["response_format"], "url", "a request's own is kept");
 
         let mut masked = edit.clone();
-        masked.mask = Some(edit.images[0].clone());
-        assert!(taken_image(&mut masked).is_err());
+        let mask = json!({ "mask": { "image_url": "https://x.test/m.png" } });
+        masked.native = native_of(
+            OpenAiImages::NAME,
+            mask.as_object().cloned().unwrap_or_default(),
+        );
+        taken_image(&mut masked).expect("taken");
+        let fields = kept(OpenAiImages::NAME, &masked.native);
+        assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 
     fn answer(status: u16, content_type: &str) -> ResponseHead {
