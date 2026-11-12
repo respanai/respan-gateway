@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
-use respan_gateway_conversation::{Effort, MediaSource, Start, Usage};
+use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
@@ -672,29 +672,52 @@ pub(crate) fn parse_effort(name: &str) -> Option<Effort> {
     })
 }
 
-/// The thinking budget Anthropic gives an effort: each the nearest of the
-/// other, for a format that takes only one.
-const EFFORT_BUDGETS: [(Effort, u64); 4] = [
-    (Effort::Low, 1024),
-    (Effort::Medium, 2048),
-    (Effort::High, 4096),
-    (Effort::XHigh, 8192),
+/// The thinking budget an effort buys a Claude that thinks to a budget, and
+/// each the nearest of the other for a format that takes only one.
+pub(crate) const EFFORT_BUDGETS: &[(&str, u64)] = &[
+    ("low", 1024),
+    ("medium", 2048),
+    ("high", 4096),
+    ("xhigh", 8192),
+    ("max", 16384),
 ];
 
-/// The effort nearest a thinking budget of `tokens`, at most `high`, which
+/// The least effort whose budget covers `tokens`, at most `high`, which
 /// every model that takes an effort has.
 pub(crate) fn effort_for(tokens: u64) -> Effort {
     let near = EFFORT_BUDGETS[..3].iter().find(|(_, b)| tokens <= *b);
     match tokens {
         0 => Effort::Off,
-        _ => near.map_or(Effort::High, |(e, _)| *e),
+        _ => near
+            .and_then(|(e, _)| parse_effort(e))
+            .unwrap_or(Effort::High),
     }
 }
 
-/// The thinking budget nearest an `effort` but `Off`.
+/// The thinking budget of an `effort` but `Off`; `minimal`'s is `low`'s.
 pub(crate) fn budget_for(effort: Effort) -> u64 {
-    let near = EFFORT_BUDGETS.iter().find(|(e, _)| *e == effort);
+    let name = effort_name(effort).unwrap_or_default();
+    let near = EFFORT_BUDGETS.iter().find(|(e, _)| *e == name);
     near.map_or(EFFORT_BUDGETS[0].1, |(_, b)| *b)
+}
+
+/// The output limit, temperature and top_p of `o` as Claude takes them: a
+/// temperature at most 1, and beside a thinking `budget` a limit above it,
+/// a temperature of 1 and a top_p of at least 0.95.
+// WARN: a limit at or under the budget is raised by it, a temperature above
+// 1 is 1, and beside a budget another temperature or top_p is dropped.
+pub(crate) fn claude_sampling(
+    o: &GenerationOptions,
+    budget: Option<u64>,
+) -> (Option<u64>, Option<f64>, Option<f64>) {
+    let max = o.max_output_tokens.map(|max| match budget {
+        Some(budget) if max <= budget => budget.saturating_add(max),
+        _ => max,
+    });
+    let temperature = o.temperature.map(|t| t.min(1.0));
+    let temperature = temperature.filter(|t| budget.is_none() || *t == 1.0);
+    let top_p = o.top_p.filter(|p| budget.is_none() || *p >= 0.95);
+    (max, temperature, top_p)
 }
 
 /// The value of the request's native field `key` if `parse` reads all of it,

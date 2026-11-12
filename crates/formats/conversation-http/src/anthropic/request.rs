@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
-    merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool,
+    encode_content, merge_missing, native_fields, only, own_native, read_search, remainder,
+    rest_of, set, take_native, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -429,15 +429,6 @@ pub(crate) fn read_thinking(input: &mut Input) {
         }
     });
 }
-
-/// The thinking budget an effort buys a Claude that thinks to a budget.
-const EFFORT_BUDGETS: &[(&str, u64)] = &[
-    ("low", 1024),
-    ("medium", 2048),
-    ("high", 4096),
-    ("xhigh", 8192),
-    ("max", 16384),
-];
 
 /// How a Claude model thinks.
 enum Thinks {

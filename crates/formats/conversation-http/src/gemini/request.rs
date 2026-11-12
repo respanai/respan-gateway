@@ -268,6 +268,10 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
             }
             parts.push(part);
         }
+        // WARN: a message whose every part was dropped is left out.
+        if parts.is_empty() {
+            continue;
+        }
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());

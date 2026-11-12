@@ -388,6 +388,13 @@ fn what_gemini_cannot_say_is_dropped_or_its_nearest() {
         body(|_| {})
     );
     assert!(refused(|c| c.messages.clear()));
+    // A message of what Gemini drops alone is left out.
+    let withheld = |c: &mut Input| {
+        let mut m = respan_gateway_conversation::Message::new(Role::Assistant, "");
+        m.content = vec![Content::Withheld("w".into())];
+        c.messages.push(m);
+    };
+    assert_eq!(body(withheld), body(|_| {}));
     let late = body(|c| {
         let m = respan_gateway_conversation::Message::new(Role::System, "late");
         c.messages.push(m);

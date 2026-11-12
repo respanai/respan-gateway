@@ -954,6 +954,15 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
             { "role": "user", "content": "and then?" },
         ]))
     );
+    // A message whose every part is dropped is left out.
+    let mut heard = Message::new(Role::User, "");
+    heard.content = vec![Content::Audio(Media::new(
+        "audio/ogg",
+        MediaSource::Url("u".into()),
+    ))];
+    let sent = OpenAiChat.encode_request(&Input::new([heard, Message::new(Role::User, "hi")]));
+    let hi = json!([{ "role": "user", "content": "hi" }]);
+    assert_eq!(sent.ok().map(|v| v["messages"].clone()), Some(hi));
     // OpenAI's tool messages hold text alone: the results' media follows
     // them, in call order, and a result of media alone points to it.
     let image = Content::Image(Media::new(

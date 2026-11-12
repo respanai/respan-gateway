@@ -16,7 +16,8 @@ use super::{AUDIO, BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
 /// writes as a `cachePoint` after it.
 const CACHE_MARKER: &str = "cache_control";
 use crate::schema::{
-    NativeFieldsExt, arguments_object, budget_for, sealed, set, stop_json, untranslatable,
+    NativeFieldsExt, arguments_object, budget_for, claude_sampling, sealed, set, stop_json,
+    untranslatable,
 };
 
 /// The leading system messages as `system` blocks, and the rest, where a
@@ -285,37 +286,35 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         // WARN: JSON without a schema has no field; the prompt asks for it.
         Some(_) => {}
     }
-    let mut config = Map::new();
-    set(
-        &mut config,
-        "maxTokens",
-        o.max_output_tokens.map(Into::into),
-    );
-    set(&mut config, "temperature", o.temperature.map(Into::into));
-    set(&mut config, "topP", o.top_p.map(Into::into));
-    set(&mut config, "stopSequences", stop_json(&o.stop));
-    if !config.is_empty() {
-        v.insert("inferenceConfig".into(), config.into());
-    }
-    // WARN: an ask to withhold the thinking is dropped.
-    if let Some(r) = &o.reasoning {
-        let claude = chat.model.as_deref().is_some_and(|m| m.contains("claude"));
-        let budget = match (r.effort, r.budget_tokens) {
-            (Some(Effort::Off), _) => None,
-            (_, Some(budget)) => Some(budget),
-            // A Claude's thinking budget nearest the effort.
-            // WARN: another model's effort, which it names its own way, is dropped.
-            (Some(effort), None) if claude => Some(budget_for(effort)),
-            _ => return Ok(()),
-        };
-        let thinking = match budget {
-            Some(budget) => json!({ "type": "enabled", "budget_tokens": budget }),
-            None => json!({ "type": "disabled" }),
-        };
+    // Converse's `thinking` is Claude's: another model refuses it.
+    // WARN: another model's reasoning, which it names its own way, is dropped,
+    // as is an ask to withhold the thinking.
+    let claude = chat.model.as_deref().is_some_and(|m| m.contains("claude"));
+    let reasoning = o.reasoning.as_ref().filter(|_| claude);
+    let enabled = |budget: u64| json!({ "type": "enabled", "budget_tokens": budget });
+    let thinking = reasoning.and_then(|r| match (r.effort, r.budget_tokens) {
+        (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
+        // WARN: a budget under Claude's least, 1024, is raised to it.
+        (_, Some(budget)) => Some(enabled(budget.max(1024))),
+        // The thinking budget nearest the effort.
+        (effort, None) => effort.map(budget_for).map(enabled),
+    });
+    let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
+    if let Some(thinking) = thinking {
         v.insert(
             "additionalModelRequestFields".into(),
             json!({ "thinking": thinking }),
         );
+    }
+    // Converse's temperature is at most 1, too.
+    let (max, temperature, top_p) = claude_sampling(o, budget);
+    let mut config = Map::new();
+    set(&mut config, "maxTokens", max.map(Into::into));
+    set(&mut config, "temperature", temperature.map(Into::into));
+    set(&mut config, "topP", top_p.map(Into::into));
+    set(&mut config, "stopSequences", stop_json(&o.stop));
+    if !config.is_empty() {
+        v.insert("inferenceConfig".into(), config.into());
     }
     Ok(())
 }

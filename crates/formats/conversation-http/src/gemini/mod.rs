@@ -377,14 +377,15 @@ impl Schema for GeminiGenerate {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let (system, rest) = split_system(chat)?;
-        if rest.is_empty() {
+        let contents = write_messages(rest)?;
+        if contents.is_empty() {
             return Err(Fault::bad_request(
                 "Gemini needs at least one user or model message",
             ));
         }
         let mut v = Map::new();
         set(&mut v, "systemInstruction", system);
-        v.insert("contents".into(), write_messages(rest)?.into());
+        v.insert("contents".into(), contents.into());
         write_tools(chat, &mut v)?;
         write_config(chat, &mut v)?;
         Ok(v)

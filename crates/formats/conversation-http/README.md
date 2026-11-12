@@ -32,7 +32,7 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 What a format has no form for stays native to it (`NativeFields`,
 `Content::Native`, `Output::Native`), is written only by that format, and is
 dropped by another, silently: what has meaning beyond its format belongs
-in the kind. A call to a
+in the kind. A message whose every part a format drops is left out. A call to a
 provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
@@ -179,20 +179,21 @@ to its own format unchanged, and is dropped by another.
 
 | Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
 | --- | --- | --- | --- | --- | --- |
-| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
+| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | a Claude's `thinking: {type: "disabled"}`, else dropped |
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | a Claude's budget (below), else dropped |
 | `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | a Claude's budget, else dropped |
-| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024) | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
+| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024) | `thinkingBudget: n` | a Claude's `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), else dropped |
 | `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
 
 An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one
-writes the nearest, by Anthropic's budgets per effort (`low` 1024, `medium`
+writes the nearest, by the budgets the gateway gives a Claude's efforts (`low` 1024, `medium`
 2048, `high` 4096, `xhigh` 8192; a budget is at most `high`), Converse for a
 Claude only. Asked for both at once, a format writes the one it takes, the
-effort if it takes either. Beside a budget, Anthropic's temperature but 1 is
-dropped, and a default `max_tokens` exceeds the budget. Gemini levels are
+effort if it takes either. Beside a budget, Anthropic and a Claude on
+Converse drop a temperature but 1 and a `top_p` under 0.95, and their
+`max_tokens` exceeds the budget (a smaller one is raised by it). Gemini levels are
 read in either case and written in lower case.
 
 ## Finish

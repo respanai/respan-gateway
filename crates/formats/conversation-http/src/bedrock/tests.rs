@@ -173,6 +173,8 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
     turn.content.insert(0, Content::Withheld("hidden".into()));
     let mut chat = chat([user("think"), turn, user("more")]);
     chat.options.reasoning = Some(Reasoning::budget(2048));
+    assert!(written(&chat).get("additionalModelRequestFields").is_none());
+    chat.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
     let v = written(&chat);
     assert_eq!(
         v["additionalModelRequestFields"],
@@ -213,6 +215,15 @@ fn what_converse_has_no_field_for_is_dropped_or_its_nearest() {
         written(&c)["additionalModelRequestFields"],
         json!({ "thinking": { "type": "enabled", "budget_tokens": 4096 } })
     );
+    c.options.reasoning = Some(Reasoning::budget(500));
+    c.options.max_output_tokens = Some(800);
+    c.options.temperature = Some(1.5);
+    c.options.top_p = Some(0.9);
+    let v = written(&c);
+    let thinking = &v["additionalModelRequestFields"]["thinking"];
+    assert_eq!(thinking["budget_tokens"], 1024);
+    let config = json!({ "maxTokens": 1824, "temperature": 1.0 });
+    assert_eq!(v["inferenceConfig"], config);
     let c = chat([user("a"), Message::new(Role::System, "late")]);
     assert_eq!(
         written(&c)["messages"],

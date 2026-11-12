@@ -322,9 +322,12 @@ fn a_temperature_above_1_is_1_and_beside_thinking_dropped() {
         Some(json!(1.0))
     );
     chat.options.temperature = Some(0.5);
+    chat.options.top_p = Some(0.9);
+    chat.options.max_output_tokens = Some(800);
     chat.options.reasoning = Some(Reasoning::budget(500));
     let v = sent(&chat).unwrap_or_default();
-    assert!(v.get("temperature").is_none(), "{v}");
+    assert_eq!((v.get("temperature"), v.get("top_p")), (None, None));
+    assert_eq!(v["max_tokens"], 1824);
     assert_eq!(
         v["thinking"],
         json!({ "type": "enabled", "budget_tokens": 1024 })
@@ -333,9 +336,14 @@ fn a_temperature_above_1_is_1_and_beside_thinking_dropped() {
 
 #[test]
 fn an_empty_turn_but_the_last_is_dropped() {
+    use respan_gateway_conversation::{Media, MediaSource};
+    // A turn of audio alone says nothing in Anthropic, too.
+    let mut audio = Message::new(Role::Assistant, "");
+    let wav = Media::new("audio/wav", MediaSource::Bytes(Bytes::from_static(b"RIFF")));
+    audio.content = vec![Content::Audio(wav)];
     let chat = Input::new([
         Message::new(Role::User, "hi"),
-        Message::new(Role::Assistant, ""),
+        audio,
         Message::new(Role::User, "again"),
         Message::new(Role::Assistant, ""),
     ]);

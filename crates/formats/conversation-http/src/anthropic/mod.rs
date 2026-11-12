@@ -36,10 +36,10 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, merge_missing, native_fields, own_fields, says, sealed, set, stop_json,
-    unsupported_fields, unwritable_content, usage_extra,
+    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage,
+    claude_sampling, count, decode_content, decode_message, encode_content, encode_message,
+    merge_details, merge_fields, merge_into, merge_missing, native_fields, own_fields, says,
+    sealed, set, stop_json, unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -315,11 +315,6 @@ impl Schema for AnthropicMessages {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let (system, rest) = split_system(chat);
-        if rest.is_empty() {
-            return Err(Fault::bad_request(
-                "Anthropic needs at least one user or assistant message",
-            ));
-        }
         let thinking = write_thinking(chat);
         // Anthropic's `max_tokens` must exceed the thinking budget.
         let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
@@ -330,8 +325,8 @@ impl Schema for AnthropicMessages {
             _ => DEFAULT_MAX_TOKENS,
         };
         let mut v = Map::new();
-        let max_tokens = chat.options.max_output_tokens.unwrap_or(default);
-        v.insert("max_tokens".into(), max_tokens.into());
+        let (max_tokens, temperature, top_p) = claude_sampling(&chat.options, budget);
+        v.insert("max_tokens".into(), max_tokens.unwrap_or(default).into());
         set(
             &mut v,
             "system",
@@ -348,14 +343,17 @@ impl Schema for AnthropicMessages {
             .enumerate()
             .filter(|(i, m)| *i == last || !is_empty(m));
         let messages = kept.map(|(_, m)| encode_message::<Self>(&m, &ROLES));
-        let messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        let mut messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        // WARN: a message whose every part was dropped is left out.
+        messages.retain(|m| m["content"] != json!([]));
+        if messages.is_empty() {
+            return Err(Fault::bad_request(
+                "Anthropic needs at least one user or assistant message",
+            ));
+        }
         v.insert("messages".into(), messages.into());
-        // WARN: a temperature above Anthropic's most, 1, is 1; one but 1 beside
-        // a thinking budget, which Anthropic refuses, is dropped.
-        let temperature = chat.options.temperature.map(|t| t.min(1.0));
-        let temperature = temperature.filter(|t| budget.is_none() || *t == 1.0);
         set(&mut v, "temperature", temperature.map(Into::into));
-        set(&mut v, "top_p", chat.options.top_p.map(Into::into));
+        set(&mut v, "top_p", top_p.map(Into::into));
         set(&mut v, "stop_sequences", stop_json(&chat.options.stop));
         let mut metadata = Value::Object(Map::new());
         if let Some(user) = &chat.user {

@@ -276,11 +276,15 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
+        // WARN: a message whose every part was dropped is left out.
+        let dropped = v["content"] == json!([]);
         if !calls.is_empty() {
             v["tool_calls"] = openai_calls(&calls).into();
-            if said.content.is_empty() {
+            if said.content.is_empty() || dropped {
                 v["content"] = Value::Null;
             }
+        } else if dropped {
+            return Ok(out);
         }
         out.push(v);
     }

@@ -78,7 +78,7 @@ pub struct GenerationOptions {
 /// A vendor states this as a named effort or as a token budget; the two do
 /// not convert exactly (the same effort buys different thinking from
 /// different models), so a format that has only one writes the nearest of
-/// it, by the budgets Anthropic gives its efforts. Only [`Effort::Off`] is
+/// it, by the budgets the gateway gives a Claude's efforts. Only [`Effort::Off`] is
 /// the same in both. A plugin that wants another policy sets the one the
 /// provider takes, in a filter.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
