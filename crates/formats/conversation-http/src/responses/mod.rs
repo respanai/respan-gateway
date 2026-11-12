@@ -361,6 +361,8 @@ pub(crate) fn status_of(finish: &Finish) -> Result<(&'static str, Option<String>
             fallback: Some(fallback),
             ..
         } => status_of(fallback)?,
+        // WARN: a native reason without a fallback is written as a stop.
+        Finish::Native { .. } => ("completed", None),
         _ => return Err(unwritable_content()),
     })
 }

@@ -23,6 +23,8 @@ pub mod xai;
 
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::content::content_type;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_vendor_kit::{BoxFuture, Models, Vendor, VendorProvider};
 use serde_json::{Map, Value};
 
@@ -64,4 +66,11 @@ fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
     serde_json::to_vec(&call)
         .map(Bytes::from)
         .map_err(unwritten)
+}
+
+/// Whether an answer is a success in JSON, which a dialect may read whole.
+fn json_answer(head: &ResponseHead) -> bool {
+    let essence = content_type(head).and_then(|t| t.split(';').next());
+    head.status.is_success()
+        && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
 }

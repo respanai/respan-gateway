@@ -311,6 +311,30 @@ fn results_of_one_turn_are_one_content_and_name_their_tools() {
         m
     });
     assert!(GeminiGenerate.encode_request(&chat).is_err());
+    // A Responses turn's text drops its fields, and images and documents are `parts`.
+    let annotated = json!([{ "type": "file_citation", "file_id": "f" }]);
+    let text = |t: &str| json!({ "type": "input_text", "text": t, "annotations": annotated });
+    let body = json!({ "model": "m", "input": [
+        { "role": "user", "content": "go" },
+        { "type": "function_call", "call_id": "a", "name": "run", "arguments": "{}" },
+        { "type": "function_call", "call_id": "b", "name": "run", "arguments": "{}" },
+        { "type": "function_call_output", "call_id": "a", "output": [text("a chart"),
+            { "type": "input_image", "image_url": "data:image/png;base64,iVBORw==" },
+            { "type": "input_file", "file_data": "data:application/pdf;base64,JVBERi0=", "filename": "r.pdf" }] },
+        { "type": "function_call_output", "call_id": "b", "output": [text(r#"{"ok":true}"#)] },
+    ] });
+    let chat = crate::responses::OpenAiResponses.decode_json(&body);
+    let written = GeminiGenerate.encode_request(&chat).expect("written");
+    assert_eq!(
+        written["contents"][2]["parts"],
+        json!([
+            { "functionResponse": { "name": "run", "id": "a", "response": { "output": "a chart" }, "parts": [
+                { "inlineData": { "mimeType": "image/png", "data": "iVBORw==" } },
+                { "inlineData": { "mimeType": "application/pdf", "data": "JVBERi0=", "displayName": "r.pdf" } },
+            ] } },
+            { "functionResponse": { "name": "run", "id": "b", "response": { "ok": true } } },
+        ])
+    );
 }
 
 #[test]
@@ -450,6 +474,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     let chunk = json!({ "candidates": [{ "content": { "role": "model", "parts": [
         { "text": "ok" },
         { "functionCall": { "name": "f", "args": { "a": 1 } }, "thoughtSignature": "s" },
+        { "text": "", "thoughtSignature": "t" },
     ] }, "finishReason": "STOP" }], "responseId": "r" });
     let events = decode(std::slice::from_ref(&chunk)).expect("events");
     let call = events.iter().find_map(|e| match e {
@@ -471,8 +496,40 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         fields,
         Some(json!({ "type": "block_fields", "block": 1, "fields": { "thoughtSignature": "s" } }))
     );
-
     assert_eq!(decode_body(&chunk), events);
+
+    // A Chat client has them in `extra_content`: the call's on its entry, the
+    // text's on the message, whole and streamed.
+    let google = |s: &str| json!({ "google": { "thought_signature": s } });
+    let chat = crate::openai::OpenAiChat;
+    let mut whole = Assembled::default();
+    events
+        .iter()
+        .try_for_each(|e| whole.push(e))
+        .expect("events");
+    let message = chat.encode_whole(&whole).expect("a body")["choices"][0]["message"].take();
+    assert_eq!(message["extra_content"], google("t"));
+    assert_eq!(message["tool_calls"][0]["extra_content"], google("s"));
+    let (mut stream, mut frames) = (chat.stream_encoder(Asked::default()), Vec::new());
+    events
+        .iter()
+        .try_for_each(|e| stream.encode(e, &mut frames))
+        .expect("a stream");
+    let text: String = frames.iter().map(|f| String::from_utf8_lossy(f)).collect();
+    let deltas: Vec<Value> = text
+        .split("\n\n")
+        .filter_map(|e| serde_json::from_str(e.strip_prefix("data: ")?).ok())
+        .map(|c: Value| c["choices"][0]["delta"].clone())
+        .collect();
+    assert!(
+        deltas.contains(&json!({ "extra_content": google("t") })),
+        "{text}"
+    );
+    let call = deltas.iter().find(|d| d["tool_calls"][0]["id"].is_string());
+    assert_eq!(
+        call.map(|d| &d["tool_calls"][0]["extra_content"]),
+        Some(&google("s"))
+    );
 }
 
 #[test]

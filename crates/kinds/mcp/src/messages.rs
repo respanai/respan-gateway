@@ -198,37 +198,33 @@ impl From<Message> for Value {
                 method,
                 params,
                 extensions,
-            } => {
-                let mut pairs = vec![("id", id.into()), ("method", method.into())];
-                if let Some(params) = params {
-                    pairs.push(("params", params));
-                }
-                (extensions, pairs)
-            }
+            } => (
+                extensions,
+                vec![
+                    ("id", Some(id.into())),
+                    ("method", Some(method.into())),
+                    ("params", params),
+                ],
+            ),
             Message::Notification {
                 method,
                 params,
                 extensions,
-            } => {
-                let mut pairs = vec![("method", method.into())];
-                if let Some(params) = params {
-                    pairs.push(("params", params));
-                }
-                (extensions, pairs)
-            }
+            } => (
+                extensions,
+                vec![("method", Some(method.into())), ("params", params)],
+            ),
             Message::Response {
                 id,
                 outcome,
                 extensions,
             } => {
                 let pair = match outcome {
-                    Outcome::Success(value) => ("result", value),
-                    Outcome::Error(error) => ("error", json!(error)),
+                    Outcome::Success(value) => ("result", Some(value)),
+                    Outcome::Error(error) => ("error", Some(json!(error))),
                 };
-                (
-                    extensions,
-                    vec![("id", id.map(Value::from).unwrap_or(Value::Null)), pair],
-                )
+                let id = id.map_or(Value::Null, Value::from);
+                (extensions, vec![("id", Some(id)), pair])
             }
         };
         // Extensions cannot override the typed envelope.
@@ -236,7 +232,7 @@ impl From<Message> for Value {
             fields.remove(key);
         }
         fields.insert("jsonrpc".into(), "2.0".into());
-        fields.extend(pairs.into_iter().map(|(k, v)| (k.into(), v)));
+        fields.extend(pairs.into_iter().filter_map(|(k, v)| Some((k.into(), v?))));
         fields.into()
     }
 }

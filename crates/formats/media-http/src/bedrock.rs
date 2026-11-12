@@ -6,8 +6,8 @@
 
 use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::Usage;
-use respan_gateway_conversation_http::fields::{invalid, warn_dropped};
-use respan_gateway_core::{Connection, Fault, Format, NativeFields, Provider};
+use respan_gateway_conversation_http::fields::invalid;
+use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{self, request::Parts as RequestHead};
@@ -17,12 +17,11 @@ use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
 use serde_json::{Value, json};
 
 use crate::edge::{bind_provider, sends};
-use crate::openai::OpenAiEmbeddings;
 
 const NAME: &str = "bedrock-embeddings";
 /// The header Bedrock counts a call's input tokens in.
 const INPUT_TOKENS: &str = "x-amzn-bedrock-input-token-count";
-/// What Cohere embeds a text as unless the client says: a stored document.
+/// What Cohere embeds every text as: a stored document.
 const SEARCH_DOCUMENT: &str = "search_document";
 
 /// Amazon Bedrock's InvokeModel for embeddings, `POST /model/{model}/invoke`:
@@ -30,8 +29,8 @@ const SEARCH_DOCUMENT: &str = "search_document";
 /// (`amazon.titan-embed-text-*`, the texts of `amazon.titan-embed-image-v1`),
 /// an inference profile's id (`us.cohere.embed-v4:0`) as it is.
 ///
-/// Cohere embeds every text in one call, as a `search_document` unless the
-/// client's `input_type` (an [`OpenAiEmbeddings`] field) says otherwise; v4
+/// Cohere embeds every text in one call, as a `search_document`: a client's
+/// `input_type` is another format's native field, so it is dropped; v4
 /// takes `dimensions` as `output_dimension`. Titan embeds one text per call,
 /// so a request of several is refused; v2 and Multimodal take `dimensions`.
 /// Vectors are asked for as floats. Usage is the input tokens Bedrock
@@ -123,14 +122,13 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     if input.user.is_some() {
         return Err(invalid("user", "has no field on Bedrock"));
     }
-    let input_type = input_type(&input.native)?;
     let no_dimensions = || invalid("dimensions", "is not taken by this model");
     let dimensions = input.dimensions;
     let body = match family {
         Family::Cohere { v4 } => {
             let mut v = json!({
                 "texts": texts,
-                "input_type": input_type.unwrap_or(SEARCH_DOCUMENT),
+                "input_type": SEARCH_DOCUMENT,
                 "embedding_types": ["float"],
             });
             match (dimensions, v4) {
@@ -139,9 +137,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
                 (Some(_), false) => return Err(no_dimensions()),
             }
             v
-        }
-        _ if input_type.is_some() => {
-            return Err(invalid("input_type", "is taken by Cohere models only"));
         }
         _ if texts.len() != 1 => {
             return Err(invalid(
@@ -165,23 +160,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     head.headers.insert(CONTENT_TYPE, json);
     let body = serde_json::to_vec(&body).map_err(|e| Fault::internal(e.to_string()))?;
     Ok(sends(body.into()))
-}
-
-/// The client's `input_type`, an OpenAI Embeddings field Cohere reads; its
-/// `encoding_format` is its own edge's. Any other field is dropped.
-fn input_type(native: &Option<NativeFields>) -> Result<Option<&str>, Fault> {
-    let Some(native) = native.as_ref() else {
-        return Ok(None);
-    };
-    let own = &*native.format == OpenAiEmbeddings::NAME;
-    let read = |k: &&str| !own || !["input_type", "encoding_format"].contains(k);
-    let other = native.fields.keys().map(String::as_str).filter(read);
-    warn_dropped(NAME, &native.format, other);
-    match native.fields.get("input_type").filter(|_| own) {
-        None => Ok(None),
-        Some(Value::String(kind)) => Ok(Some(kind)),
-        Some(_) => Err(invalid("input_type", "must be a string")),
-    }
 }
 
 /// The model a call at `uri`, `/model/{model}/invoke`, is of.
@@ -224,6 +202,7 @@ fn read_response(model: Option<String>, tokens: Option<u64>) -> Box<dyn Decoder<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_core::{NativeFields, NativeValue};
 
     fn call(
         model: &str,
@@ -248,24 +227,16 @@ mod tests {
         ))
     }
 
-    fn openai(fields: Value) -> Option<NativeFields> {
-        Some(NativeFields::new(
-            OpenAiEmbeddings::NAME,
-            fields.as_object().cloned().unwrap_or_default(),
-        ))
-    }
-
     #[test]
     fn cohere_embeds_every_text_in_one_call() {
         let (path, body) = call("us.cohere.embed-v4:0", &["a", "b"], |i| {
             i.dimensions = Some(256);
-            i.native = openai(json!({ "input_type": "search_query", "encoding_format": "base64" }));
         })
         .expect("a call");
         assert_eq!(path, "/model/us.cohere.embed-v4%3A0/invoke");
         assert_eq!(
             body,
-            json!({ "texts": ["a", "b"], "input_type": "search_query",
+            json!({ "texts": ["a", "b"], "input_type": SEARCH_DOCUMENT,
                     "embedding_types": ["float"], "output_dimension": 256 })
         );
         let (_, body) = call("cohere.embed-english-v3", &["a"], |_| {}).expect("a call");
@@ -305,14 +276,14 @@ mod tests {
     fn what_bedrock_has_no_field_for_is_refused() {
         assert!(call("amazon.nova-micro-v1:0", &["a"], |_| {}).is_err());
         assert!(call("cohere.embed-v4:0", &["a"], |i| i.user = Some("u".into())).is_err());
+        let parts =
+            |i: &mut Input| i.items = vec![Item::Native(NativeValue::new("x", json!([{}])))];
+        assert!(call("cohere.embed-v4:0", &["a"], parts).is_err());
         let foreign = call("cohere.embed-v4:0", &["a"], |i| {
-            i.native = openai(json!({ "seed": 1 }))
+            let seed = serde_json::Map::from_iter([("seed".into(), 1.into())]);
+            i.native = Some(NativeFields::new("openai-embeddings", seed));
         });
         assert!(foreign.is_ok());
-        let titan = call("amazon.titan-embed-text-v2:0", &["a"], |i| {
-            i.native = openai(json!({ "input_type": "search_query" }))
-        });
-        assert!(titan.is_err());
     }
 
     fn read(model: &str, tokens: Option<u64>, answer: Value) -> Vec<Output> {

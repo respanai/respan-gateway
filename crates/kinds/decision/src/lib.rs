@@ -79,41 +79,23 @@ impl Question {
     }
 }
 
-/// A typed choice value.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChoiceValue {
-    /// A string value.
-    String(String),
-    /// A boolean value.
-    Boolean(bool),
-}
-
 /// What a question asks for.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Ask {
-    /// Yes or no: the probability of yes. Each side may say what it means.
-    Noul {
-        /// What yes means.
-        yes: Option<Value>,
-        /// What no means.
-        no: Option<Value>,
-    },
+    /// Yes or no: the probability of yes.
+    Noul,
     /// One of `options`, each named, in order, with what it means if more
     /// than its name says.
     Choice {
         /// The options.
-        options: Vec<(ChoiceValue, Option<Value>)>,
+        options: Vec<(String, Option<Value>)>,
     },
     /// A level of `levels`, lowest first, each a text or JSON.
     Score {
         /// The levels.
         levels: Vec<Value>,
     },
-    /// A number, such as a count or an amount.
-    Number,
-    /// Where something is in the evidence's image: a [`Verdict::Box`].
-    Box,
     /// A question of a type the kind has no form for, whole, as `format`
     /// has it. Asked only in that format.
     Native(NativeValue),
@@ -196,12 +178,10 @@ pub enum Verdict {
     /// The option chosen, and each option's probability, in order.
     Choice {
         /// The option chosen.
-        choice: ChoiceValue,
+        choice: String,
         /// Each option's probability.
-        probabilities: Vec<(ChoiceValue, f64)>,
+        probabilities: Vec<(String, f64)>,
     },
-    /// The provider declined to answer.
-    Refusal,
     /// The expected level, from 0 for the lowest, and each level's
     /// probability, lowest first.
     Score {
@@ -209,24 +189,5 @@ pub enum Verdict {
         score: f64,
         /// Each level's probability.
         probabilities: Vec<f64>,
-    },
-    /// The number, and the text it was read from, if the provider says.
-    Number {
-        /// The number.
-        number: f64,
-        /// The text it was read from.
-        text: Option<String>,
-    },
-    /// A box's edges, as fractions of the image: `top` and `bottom` of its
-    /// height from the top, `left` and `right` of its width from the left.
-    Box {
-        /// The top edge.
-        top: f64,
-        /// The bottom edge.
-        bottom: f64,
-        /// The left edge.
-        left: f64,
-        /// The right edge.
-        right: f64,
     },
 }

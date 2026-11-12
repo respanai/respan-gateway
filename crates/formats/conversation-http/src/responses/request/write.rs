@@ -3,9 +3,7 @@
 use super::super::RESPONSES;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{
-    FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, untranslatable, warn_reasoning,
-};
+use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, untranslatable};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -263,9 +261,8 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 items.push(v.into());
             }
             // Reasoning is only valid with the id of the item it was.
-            Content::Reasoning { native, .. } if native.format() != Some(RESPONSES) => {
-                warn_reasoning(RESPONSES, native);
-            }
+            // WARN: another format's reasoning is dropped here, silently.
+            Content::Reasoning { native, .. } if native.format() != Some(RESPONSES) => {}
             Content::Reasoning { text, native } => {
                 flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {

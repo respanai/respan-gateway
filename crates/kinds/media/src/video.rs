@@ -175,22 +175,21 @@ pub struct Job {
     /// Where it is.
     pub status: Status,
     /// The model making it.
+    // WARN: openrouter-videos names none.
     pub model: Option<String>,
-    /// How far along, in percent.
-    pub progress: Option<u32>,
-    /// When it was made, in seconds since the Unix epoch.
-    pub created_at: Option<u64>,
-    /// When it finished.
-    pub completed_at: Option<u64>,
-    /// When its content will be gone.
+    /// When its content will be gone, in seconds since the Unix epoch.
+    // WARN: gemini-veo says none.
     pub expires_at: Option<u64>,
     /// The video's length, in seconds.
+    // WARN: openrouter-videos says none.
     pub seconds: Option<u32>,
     /// The video's size, width by height.
+    // WARN: openrouter-videos says none.
     pub size: Option<String>,
     /// Why it failed.
     pub error: Option<JobError>,
     /// Where the provider serves the videos it made, if it names them.
+    // WARN: openai-videos names none: it serves them at `/content`.
     pub videos: Vec<Media>,
     /// Its fields the kind has no place for.
     pub native: Option<NativeFields>,
@@ -203,9 +202,6 @@ impl Job {
             id: id.into(),
             status,
             model: None,
-            progress: None,
-            created_at: None,
-            completed_at: None,
             expires_at: None,
             seconds: None,
             size: None,
@@ -262,6 +258,7 @@ impl Status {
 #[non_exhaustive]
 pub struct JobError {
     /// What failed, as the provider names it.
+    // WARN: openrouter-videos names none.
     pub code: Option<String>,
     /// What the provider says of it.
     pub message: String,
@@ -522,6 +519,7 @@ fn wrap_job(job: &mut Job, provider: &str) {
     let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
     wrap(&mut job.id);
     if let Some(native) = &mut job.native
+        && &*native.format == "openai-videos"
         && let Some(Value::String(source)) = native.fields.get_mut("remixed_from_video_id")
     {
         wrap(source);
@@ -579,21 +577,23 @@ mod tests {
 
     #[test]
     fn a_remix_names_its_source_as_it_was_given_out() {
-        let mut fields = serde_json::Map::new();
-        fields.insert("remixed_from_video_id".into(), "video_1".into());
-        let mut job = Job::new("video_2", Status::Queued);
-        job.native = Some(NativeFields::new("openai-videos", fields));
-        let mut remixed = Output::Job(job);
-        wrap_ids(&mut remixed, "west");
-        let Output::Job(job) = remixed else {
-            panic!("a job");
+        let remixed = |format: &str| {
+            let mut fields = serde_json::Map::new();
+            fields.insert("remixed_from_video_id".into(), "video_1".into());
+            let mut job = Job::new("video_2", Status::Queued);
+            job.native = Some(NativeFields::new(format, fields));
+            let mut remixed = Output::Job(job);
+            wrap_ids(&mut remixed, "west");
+            let Output::Job(job) = remixed else {
+                panic!("a job");
+            };
+            assert_eq!(job.id, "west~video_2");
+            job.native
+                .and_then(|n| n.fields.get("remixed_from_video_id").cloned())
         };
-        assert_eq!(job.id, "west~video_2");
-        let source = job
-            .native
-            .as_ref()
-            .and_then(|n| n.fields.get("remixed_from_video_id"));
-        assert_eq!(source, Some(&Value::from("west~video_1")));
+        assert_eq!(remixed("openai-videos"), Some(Value::from("west~video_1")));
+        // Another format's field of that name is its own, not a remix's.
+        assert_eq!(remixed("another"), Some(Value::from("video_1")));
     }
 
     /// Regression: a page's `after` kept the wrapping its id was given out

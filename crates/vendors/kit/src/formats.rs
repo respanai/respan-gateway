@@ -13,6 +13,7 @@ use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_realtime_ws::{
     GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, PhonicSts, ResponsesWs,
@@ -40,6 +41,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiEmbeddings,
     &OpenAiVideos,
     &GeminiVeo,
+    &OpenRouterVideos,
     &GeminiImages,
     &BedrockEmbeddings,
     &Decisions,

@@ -323,6 +323,17 @@ fn every_server_message_is_written_back_as_it_came() {
     written[13]["serverContent"]["turnComplete"] = true.into();
     written[13]["serverContent"]["turnCompleteReason"] = "MALFORMED_FUNCTION_CALL".into();
     assert_eq!(written, messages);
+    // Another format's calls, started as Phonic's are, end the turn too.
+    let mut foreign = outputs(&applied, &messages[11..12]);
+    foreign[0] = Output::ResponseStart {
+        id: None,
+        native: None,
+    };
+    let ended = json!({"serverContent": {"turnComplete": true}});
+    assert_eq!(
+        heard(&foreign).expect("written"),
+        [messages[11].clone(), ended]
+    );
 }
 
 #[test]
@@ -341,7 +352,6 @@ fn the_setup_written_is_the_session_its_completion_says() {
 fn a_refusal_closes_a_live_client() {
     let error = Output::Error {
         cause: Cause::Invalid,
-        code: None,
         message: "no".into(),
         native: None,
     };
@@ -355,7 +365,6 @@ fn a_refusal_closes_a_live_client() {
 fn a_cancel_that_found_no_response_closes_no_live_client() {
     let error = Output::Error {
         cause: Cause::NothingToCancel,
-        code: None,
         message: "Cancellation failed: no active response found".into(),
         native: None,
     };

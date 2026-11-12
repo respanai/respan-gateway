@@ -2,8 +2,6 @@
 //! questions and their answers as ordered lists.
 
 use super::*;
-use respan_gateway_core::NativeFields;
-use respan_gateway_decision::ChoiceValue;
 use std::borrow::Cow;
 
 const OPENAI: &str = "openai-decisions";
@@ -58,7 +56,7 @@ impl OpenAiDecisions {
     /// An answer as this contract writes it, its name and its score's
     /// labels as `question`, as a client asked it, says them.
     pub fn answer_value(answer: &Answer, question: &Value) -> Result<Value, Fault> {
-        let mut v = kept(OPENAI, &redundant(&answer.native));
+        let mut v = kept(OPENAI, &answer.native);
         v.insert("type".into(), verdict_type(&answer.verdict)?.into());
         if let Some(name) = question.get("name") {
             v.insert("name".into(), name.clone());
@@ -69,10 +67,13 @@ impl OpenAiDecisions {
                 choice,
                 probabilities,
             } => {
-                v.insert("choice".into(), choice_json(choice));
-                let by_value = probabilities
-                    .iter()
-                    .map(|(c, p)| json!({ "value": choice_json(c), "probability": p }));
+                let choices = &question["choices"];
+                // WARN: a choice is typed as the first option of its name, so
+                // of `true` and `"true"` both asked, `"true"` is `true`.
+                v.insert("choice".into(), typed(choice, None, choices));
+                let by_value = probabilities.iter().enumerate().map(
+                    |(i, (c, p))| json!({ "value": typed(c, Some(i), choices), "probability": p }),
+                );
                 v.insert("probabilities".into(), by_value.collect());
             }
             Verdict::Score {
@@ -173,32 +174,23 @@ impl Format<ProviderIo, Output, Input> for OpenAiDecisions {
     }
 }
 
-/// `native`, but for what another format says that this one writes from
-/// its client's request anyway, such as a score's `legend` in `decisions`,
-/// its levels again.
-fn redundant(native: &Option<NativeFields>) -> Option<NativeFields> {
-    let mut native = native.clone();
-    if let Some(n) = native.as_mut().filter(|n| &*n.format == NAME) {
-        n.fields.remove("legend");
-    }
-    native.filter(|n| !n.is_empty())
-}
-
-/// A choice's value, a string or a boolean.
-fn choice_of(v: &Value) -> Option<ChoiceValue> {
+/// A choice's value, a string or a boolean, as the kind's string.
+fn choice_of(v: &Value) -> Option<String> {
     match v {
-        Value::String(s) => Some(ChoiceValue::String(s.clone())),
-        Value::Bool(b) => Some(ChoiceValue::Boolean(*b)),
+        Value::String(s) => Some(s.clone()),
+        Value::Bool(b) => Some(b.to_string()),
         _ => None,
     }
 }
 
-/// A choice's value as JSON.
-fn choice_json(v: &ChoiceValue) -> Value {
-    match v {
-        ChoiceValue::String(s) => s.clone().into(),
-        ChoiceValue::Boolean(b) => (*b).into(),
-    }
+/// Choice `value` as `choices` type it: as the one at `at`, else the first,
+/// of its name there; a string if none is.
+fn typed(value: &str, at: Option<usize>, choices: &Value) -> Value {
+    let choices = choices.as_array().map(Vec::as_slice).unwrap_or_default();
+    let named = |c: &&Value| choice_of(&c["value"]).is_some_and(|v| v == value);
+    let at = at.and_then(|i| choices.get(i)).filter(named);
+    at.or_else(|| choices.iter().find(named))
+        .map_or_else(|| value.into(), |c| c["value"].clone())
 }
 
 /// The type of an answer of `verdict`.
@@ -207,7 +199,6 @@ fn verdict_type(verdict: &Verdict) -> Result<&'static str, Fault> {
         Verdict::Noul(_) => "predicate",
         Verdict::Choice { .. } => "choice",
         Verdict::Score { .. } => "score",
-        Verdict::Refusal => "refusal",
         _ => return Err(Fault::new(format!("{OPENAI} cannot write this answer"))),
     })
 }
@@ -294,20 +285,17 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
         return Err(invalid(&param("instructions"), "must be a text or parts"));
     }
     let ask = match q.remove("type").as_ref().and_then(Value::as_str) {
-        Some("predicate") => Ask::Noul {
-            yes: None,
-            no: None,
-        },
+        Some("predicate") => Ask::Noul,
         Some("choice") => {
             let Some(Value::Array(choices)) = q.remove("choices") else {
                 return Err(invalid(&param("choices"), "must be a list"));
             };
-            let mut options: Vec<(ChoiceValue, Option<Value>)> = Vec::new();
-            for c in choices {
+            let mut options = Vec::new();
+            for (i, c) in choices.iter().enumerate() {
                 let value = choice_of(&c["value"]).ok_or_else(|| {
                     invalid(&param("choices"), "must hold string or boolean values")
                 })?;
-                if options.iter().any(|(v, _)| v == &value) {
+                if choices[..i].iter().any(|d| d["value"] == c["value"]) {
                     return Err(invalid(&param("choices"), "must hold unique values"));
                 }
                 let about = c.get("description").filter(|d| !d.is_null()).cloned();
@@ -318,6 +306,10 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             }
             if !(2..=255).contains(&options.len()) {
                 return Err(invalid(&param("choices"), "must hold 2 to 255 choices"));
+            }
+            // The kind's choices are strings; a boolean's type stays as this format's own.
+            if choices.iter().any(|c| c["value"].is_boolean()) {
+                q.insert("choices".into(), choices.into());
             }
             Ask::Choice { options }
         }
@@ -353,16 +345,15 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
             Fault::bad_request(format!("{OPENAI} cannot ask question '{}': {what}", q.id))
         };
         match &q.ask {
-            Ask::Noul {
-                yes: None,
-                no: None,
-            } => _ = v.insert("type".into(), "predicate".into()),
-            Ask::Noul { .. } => return Err(refused("a predicate has no criteria")),
+            Ask::Noul => _ = v.insert("type".into(), "predicate".into()),
             Ask::Choice { options } => {
                 v.insert("type".into(), "choice".into());
-                let choices = options.iter().map(|(value, about)| {
+                let typed_as = kept(OPENAI, &q.native)
+                    .remove("choices")
+                    .unwrap_or_default();
+                let choices = options.iter().enumerate().map(|(i, (value, about))| {
                     let mut c = Map::new();
-                    c.insert("value".into(), choice_json(value));
+                    c.insert("value".into(), typed(value, Some(i), &typed_as));
                     let about = about.as_ref().map(|a| match a {
                         Value::String(text) => text.clone(),
                         other => other.to_string(),
@@ -381,7 +372,9 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
                 });
                 v.insert("levels".into(), levels.collect::<Result<_, _>>()?);
             }
-            _ => return Err(refused("of a type it has none of")),
+            // WARN: openai-decisions has no form for another format's
+            // question; it is dropped and goes unanswered.
+            _ => continue,
         }
         v.insert("name".into(), q.id.clone().into());
         v.insert(
@@ -390,6 +383,11 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         );
         merge_missing(&mut v, &kept(OPENAI, &q.native));
         questions.push(Value::Object(v));
+    }
+    if questions.is_empty() && !input.questions.is_empty() {
+        return Err(Fault::bad_request(format!(
+            "{OPENAI} has no form for any question asked"
+        )));
     }
     let state = match &input.state {
         evidence if is_evidence(evidence) => evidence.clone(),
@@ -409,8 +407,9 @@ fn probability(v: &Value) -> Option<f64> {
 }
 
 /// The events of a provider's whole answer to the questions `asked`, each
-/// answer the question's at its position, of its type or a refusal, and
-/// naming it as it was sent; another is the provider's fault.
+/// answer the question's at its position, of its type or a refusal (this
+/// format's own), and naming it as it was sent; another is the provider's
+/// fault.
 fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result<(), Fault> {
     let bad = |what: &str| Fault::upstream(format!("the provider's {OPENAI} response {what}"));
     let v: Value = serde_json::from_slice(raw).map_err(|_| bad("is not JSON"))?;
@@ -436,7 +435,10 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
         let p = |v: &Value| probability(&v["probability"]).ok_or_else(unreadable);
         let entries = || a["probabilities"].as_array().ok_or_else(unreadable);
         let (verdict, taken): (_, &[&str]) = match ty {
-            "refusal" => (Verdict::Refusal, &[]),
+            "refusal" => {
+                out.push(Output::native(OPENAI, a.clone()));
+                continue;
+            }
             "predicate" => (Verdict::Noul(p(a)?), &["probability"]),
             "choice" => {
                 let values = q["choices"].as_array().into_iter().flatten();
@@ -498,7 +500,7 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
 fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
     let asked = asked.as_array().map(Vec::as_slice).unwrap_or_default();
     let (mut body, mut usage) = (Map::new(), None);
-    let mut answers: Vec<&Answer> = Vec::new();
+    let (mut answers, mut refusals): (Vec<&Answer>, Vec<&Value>) = (Vec::new(), Vec::new());
     for event in events {
         match event {
             Output::Start(start) => {
@@ -507,15 +509,27 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
             }
             Output::Answer(answer) => answers.push(answer),
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += *u,
+            Output::Native(n) if *n.format == *OPENAI => refusals.push(&n.value),
             _ => {}
         }
     }
     let mut written = Vec::with_capacity(asked.len());
     for (id, q) in ids(asked).iter().zip(asked) {
-        let answer = answers.iter().find(|a| &a.id == id);
-        let answer =
-            answer.ok_or_else(|| Fault::upstream(format!("the provider did not answer '{id}'")))?;
-        written.push(OpenAiDecisions::answer_value(answer, q)?);
+        if let Some(answer) = answers.iter().find(|a| &a.id == id) {
+            written.push(OpenAiDecisions::answer_value(answer, q)?);
+        } else if let Some(Value::Object(refusal)) = refusals.iter().find(|r| r["name"] == **id) {
+            // A refusal names the question as it was sent, by its id.
+            let mut v = refusal.clone();
+            v.shift_remove("name");
+            if let Some(name) = q.get("name") {
+                v.insert("name".into(), name.clone());
+            }
+            written.push(Value::Object(v));
+        } else {
+            return Err(Fault::upstream(format!(
+                "the provider did not answer '{id}'"
+            )));
+        }
     }
     body.insert("answers".into(), written.into());
     if let Some(u) = usage {
@@ -538,6 +552,7 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
 mod tests {
     use super::*;
     use respan_gateway_core::FaultKind;
+    use respan_gateway_core::NativeFields;
 
     fn events_of(raw: &Value, asked: &[Value]) -> Result<Vec<Output>, Fault> {
         let mut events = Vec::new();
@@ -546,18 +561,23 @@ mod tests {
     }
 
     #[test]
-    fn a_question_of_another_formats_own_type_is_refused() {
-        let date = json!({"type": "date", "instructions": "When?"});
-        let ask = Ask::Native(NativeValue::new("decisions", date));
-        let input = Input::new(json!("s"), vec![Question::new("when", ask)]);
-        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
-    }
-
-    /// OpenAI's decisions contract has no number type.
-    #[test]
-    fn a_number_question_is_refused() {
-        let input = Input::new(json!("s"), vec![Question::new("days_late", Ask::Number)]);
-        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+    fn a_question_of_another_formats_own_type_is_dropped() {
+        for own in [
+            json!({"type": "date", "instructions": "When?"}),
+            json!({"type": "number"}),
+        ] {
+            let ask = Ask::Native(NativeValue::new("decisions", own));
+            let foreign = Question::new("q", ask);
+            let input = Input::new(json!("s"), vec![foreign.clone()]);
+            assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+            let kept = Question::new("p", Ask::Noul);
+            let input = Input::new(json!("s"), vec![foreign, kept]);
+            let sent = encode_request(&input).expect("call");
+            assert_eq!(
+                sent["questions"],
+                json!([{"type": "predicate", "name": "p", "instructions": ""}])
+            );
+        }
     }
 
     #[test]
@@ -578,8 +598,9 @@ mod tests {
         });
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
         assert_eq!(input.questions[0].id, "damaged");
+        // The kind's choices are strings; their types stay as the format's own.
         assert!(
-            matches!(&input.questions[1].ask, Ask::Choice { options } if options[0].0 != options[1].0)
+            matches!(&input.questions[1].ask, Ask::Choice { options } if options.iter().all(|(v, _)| v == "true"))
         );
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
     }
@@ -606,6 +627,7 @@ mod tests {
             "questions": {
                 "tone": {"type": "choice", "criteria": {"angry": null, "calm": {"x": 1}}},
                 "urgency": {"type": "score", "criteria": ["Low", {"label": "High"}]},
+                "spam": {"type": "noul", "criteria": {"true": "Unsolicited"}},
             },
         });
         let input = super::super::decode_request(raw.to_string().as_bytes()).expect("input");
@@ -620,6 +642,7 @@ mod tests {
                      "name": "tone", "instructions": ""},
                     {"type": "score", "levels": [{"label": "Low"}, {"label": "High"}],
                      "name": "urgency", "instructions": ""},
+                    {"type": "predicate", "name": "spam", "instructions": ""},
                 ],
             })
         );
@@ -628,6 +651,7 @@ mod tests {
              "probabilities": [{"value": "angry", "probability": 0.3}, {"value": "calm", "probability": 0.7}]},
             {"type": "score", "name": "urgency", "score": 0.9, "confidence": 0.9,
              "probabilities": [{"label": "Low", "value": 0, "probability": 0.1}, {"label": "High", "value": 1, "probability": 0.9}]},
+            {"type": "refusal", "name": "spam"},
         ]});
         let asked = call["questions"].as_array().cloned().unwrap_or_default();
         let events = events_of(&answers, &asked).expect("events");
@@ -638,6 +662,7 @@ mod tests {
             written["answers"]["urgency"]["probabilities"],
             json!({"0": 0.1, "1": 0.9})
         );
+        assert!(written["answers"].get("spam").is_none(), "{written}");
     }
 
     #[test]
@@ -645,6 +670,7 @@ mod tests {
         let asked = json!([
             {"type": "predicate", "name": "spam", "instructions": "Is it spam?"},
             {"type": "score", "instructions": "Urgency?", "levels": [{"label": "low"}, {"label": "high"}]},
+            {"type": "choice", "name": "refund", "instructions": "", "choices": [{"value": true}, {"value": false}]},
         ]);
         let raw = json!({"model": "jev-latest", "input": "Charged twice", "questions": asked});
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
@@ -653,10 +679,15 @@ mod tests {
             call["questions"]["1"]["criteria"],
             json!([{"label": "low"}, {"label": "high"}])
         );
+        assert_eq!(
+            call["questions"]["refund"]["criteria"],
+            json!({"true": null, "false": null})
+        );
         let answers = json!({"model": "jev-1", "answers": {
             "spam": {"type": "noul", "noul": 0.9},
             "1": {"type": "score", "score": 1.0, "confidence": 0.6, "probabilities": {"0": 0.4, "1": 0.6},
                   "legend": {"0": {"label": "low"}, "1": {"label": "high"}}},
+            "refund": {"type": "choice", "choice": "true", "confidence": 0.8, "probabilities": {"true": 0.8, "false": 0.2}},
         }});
         let mut events = Vec::new();
         super::super::decode_response(Bytes::from(answers.to_string()), &mut events)
@@ -669,6 +700,8 @@ mod tests {
                 {"type": "predicate", "name": "spam", "probability": 0.9},
                 {"type": "score", "score": 1.0, "confidence": 0.6, "probabilities": [
                     {"label": "low", "value": 0, "probability": 0.4}, {"label": "high", "value": 1, "probability": 0.6}]},
+                {"type": "choice", "name": "refund", "choice": true, "confidence": 0.8, "probabilities": [
+                    {"value": true, "probability": 0.8}, {"value": false, "probability": 0.2}]},
             ])
         );
     }

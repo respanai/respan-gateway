@@ -421,7 +421,6 @@ fn a_response_of_another_format_is_told_of_as_openai_does() {
 fn an_error_is_written_as_openais() {
     let error = |cause| Output::Error {
         cause,
-        code: Some("another format's code".into()),
         message: "no".into(),
         native: None,
     };

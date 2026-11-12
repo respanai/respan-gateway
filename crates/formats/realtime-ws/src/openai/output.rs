@@ -170,7 +170,6 @@ impl Provider {
                 Output::Error {
                     cause,
                     message: take(v, &["error", "message"], string, text)?,
-                    code: take(v, &["error", "type"], string, text),
                     native: json::native(NAME, rest),
                 }
             }
@@ -458,21 +457,19 @@ impl Client {
             }
             Output::Error {
                 cause,
-                code,
                 message,
                 native,
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
-                // Another format's code is its own: OpenAI's says the cause.
-                let code = match native.as_ref().is_some_and(|n| *n.format == *NAME) {
-                    true => code.clone(),
-                    false => None,
-                };
-                let typed = code.unwrap_or_else(|| match cause {
-                    Cause::Invalid | Cause::NothingToCancel => "invalid_request_error".into(),
-                    _ => "server_error".into(),
-                });
-                v["error"]["type"] = typed.into();
+                // Its own type it kept; otherwise the cause says one.
+                merge(&mut v, own(native));
+                if v["error"]["type"].is_null() {
+                    v["error"]["type"] = match cause {
+                        Cause::Invalid | Cause::NothingToCancel => "invalid_request_error",
+                        _ => "server_error",
+                    }
+                    .into();
+                }
                 if *cause == Cause::NothingToCancel && native.is_none() {
                     v["error"]["code"] = "response_cancel_not_active".into();
                 }

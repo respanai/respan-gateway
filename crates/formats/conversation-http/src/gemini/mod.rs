@@ -20,9 +20,10 @@
 //! answer finds by name, and which is never sent back to Gemini. A
 //! `functionResponse`'s `response` object is the result's text, as JSON;
 //! writing it, an object stays as it is, other text goes under `output`
-//! (`error` for a failed call). `systemInstruction` is a leading system
-//! message; `tools` are the function declarations, their `parameters` (or
-//! `parametersJsonSchema`) JSON Schema; `toolConfig` gives the tool choice;
+//! (`error` for a failed call), and images and documents are its `parts`.
+//! `systemInstruction` is a leading system message; `tools` are the function
+//! declarations, their `parameters` (or `parametersJsonSchema`) JSON Schema;
+//! `toolConfig` gives the tool choice;
 //! `generationConfig` the output limit, `temperature`, `topP`, `topK`, stop
 //! sequences, structured output (`responseMimeType` with a schema) and
 //! `thinkingConfig`: `thinkingLevel` is an effort, `thinkingBudget` a token
@@ -33,7 +34,10 @@
 //! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`.
+//! the kind has no choice for, video parts, and a part's `thoughtSignature`
+//! (which Chat Completions carries both ways in
+//! `extra_content.google.thought_signature`, as Google's does a call's: a
+//! call's on its `tool_calls` entry, a text's on the message).
 //! A request for several candidates, one tool call at a time, or an end
 //! user's id is refused when written.
 //!
@@ -103,7 +107,7 @@ use request::{
 pub use request::{media_part, needs_signatures};
 
 /// This format's name.
-const GEMINI: &str = "gemini-generate";
+pub(crate) const GEMINI: &str = "gemini-generate";
 
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.
@@ -135,8 +139,8 @@ const FINISH: Names<Finish> = Names(
 /// The finish reason of a prompt Gemini blocked, which has no candidate.
 const BLOCKED: &str = "PROMPT_BLOCKED";
 
-/// A reason as a [`Finish`]: those that filter the answer, as the kind has
-/// it, stay Gemini's own for a client of this format.
+/// A reason as a [`Finish`]: Gemini's others stay its own for a client of
+/// this format, and another writes the kind's nearest.
 fn finish_of(reason: &str) -> Finish {
     match reason {
         "RECITATION"
@@ -146,8 +150,17 @@ fn finish_of(reason: &str) -> Finish {
         | "IMAGE_SAFETY"
         | "IMAGE_PROHIBITED_CONTENT"
         | "IMAGE_RECITATION"
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "ESCALATION"
+        | "PUP_LIMITED_DISABLED"
         | "LANGUAGE" => Finish::native_or(GEMINI, reason, Finish::Filtered),
-        _ => FINISH.finish(reason),
+        "CONTINUATION" => Finish::native_or(GEMINI, reason, Finish::Length),
+        "STOP" | "MAX_TOKENS" | "SAFETY" => FINISH.finish(reason),
+        // OTHER, FINISH_REASON_UNSPECIFIED, MALFORMED_FUNCTION_CALL,
+        // UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MALFORMED_RESPONSE,
+        // MISSING_THOUGHT_SIGNATURE, and any Google adds.
+        _ => Finish::native_or(GEMINI, reason, Finish::Stop),
     }
 }
 

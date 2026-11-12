@@ -53,25 +53,14 @@ pub fn native_of(format: &str, fields: Map<String, Value>) -> Option<NativeField
     (!fields.is_empty()).then(|| NativeFields::new(format, fields))
 }
 
-/// Says what of `from`'s, by name alone, `format` goes without.
-pub fn warn_dropped<'a>(format: &str, from: &str, what: impl IntoIterator<Item = &'a str>) {
-    let what: Vec<&str> = what.into_iter().collect();
-    if !what.is_empty() {
-        eprintln!("warning: {format} drops {from}'s {what:?}");
-    }
-}
-
 /// The fields of `native` to write in `format`: all of them if they are its.
 /// A native field means something only to its own format: another format's
-/// are dropped, with a warning.
+/// are dropped.
 pub fn kept(format: &str, native: &Option<NativeFields>) -> Map<String, Value> {
     match native {
         Some(n) if &*n.format == format => n.fields.clone(),
-        Some(n) => {
-            warn_dropped(format, &n.format, n.fields.keys().map(String::as_str));
-            Map::new()
-        }
-        None => Map::new(),
+        // WARN: another format's native fields are dropped here, silently.
+        _ => Map::new(),
     }
 }
 

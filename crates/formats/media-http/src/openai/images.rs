@@ -19,7 +19,7 @@ use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole};
 use respan_gateway_http::{Connect, Upstream};
-use respan_gateway_media::image::{Image, Input, Output, Partial, Start};
+use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-images";
@@ -35,14 +35,19 @@ const EDITS: &str = "/images/edits";
 /// call writes an edit, a request with images, as a form, or as JSON if one
 /// is a URL, which a form cannot hold.
 ///
-/// A whole response decodes into a [`Start`] of its `created` and its other
-/// fields, an [`Image`] per item of `data` (its `b64_json` decoded, or its
-/// `url`), and its usage; an image is of the answer's `output_format`, else
-/// of the type its bytes say, else PNG. A stream decodes into a [`Start`] of its first
-/// event's fields, a [`Partial`] per partial image and an [`Image`] per
-/// completed one, with its usage; a stream that ends before its image fails
-/// `truncated`. Either is written to a client in the framing it asked for;
-/// a whole body has no partial images.
+/// A request's fields but its model, prompt, `n`, `size` and images, such as
+/// its `quality`, `output_format` or `user`, are its native fields.
+///
+/// A whole response decodes into a [`Start`] of its fields, `created` among
+/// them, an [`Image`] per item of `data` (its `b64_json` decoded, or its
+/// `url`, its other fields such as `revised_prompt` native), and its usage;
+/// an image is of the answer's `output_format`, else of the type its bytes
+/// say, else PNG. A stream decodes into a [`Start`] of its first image event's
+/// fields, its `created_at` as `created`, an [`Image`] per completed image,
+/// with its usage, and a partial image as a native event; a stream that ends
+/// before its image fails `truncated`. Either is written to a client in the
+/// framing it asked for, made now if no `created` says when; a whole body
+/// has no partial images.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiImages;
 
@@ -105,9 +110,6 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
     input.model = take_string(&mut map, "model")?;
     input.count = take_count(&mut map, "n")?;
     input.size = take_string(&mut map, "size")?;
-    input.quality = take_string(&mut map, "quality")?;
-    input.output_format = take_string(&mut map, "output_format")?;
-    input.user = take_string(&mut map, "user")?;
     map.remove("stream");
     for (name, media) in files {
         match name.as_str() {
@@ -204,9 +206,6 @@ fn fields(input: &Input, stream: bool) -> Map<String, Value> {
     v.insert("prompt".into(), input.prompt.clone().into());
     set(&mut v, "n", input.count);
     set(&mut v, "size", input.size.clone());
-    set(&mut v, "quality", input.quality.clone());
-    set(&mut v, "output_format", input.output_format.clone());
-    set(&mut v, "user", input.user.clone());
     merge_missing(&mut v, &kept(NAME, &input.native));
     if stream {
         v.insert("stream".into(), true.into());
@@ -250,13 +249,12 @@ impl Decoder<Output> for Streamed {
 fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
     let format = v["output_format"].as_str();
-    let mut start = Start::new(v["created"].as_u64());
-    start.native = native_of(NAME, rest_of(&v, &["created", "data", "usage"]));
+    let mut start = Start::default();
+    start.native = native_of(NAME, rest_of(&v, &["data", "usage"]));
     out.push(Output::Start(start));
     for item in v["data"].as_array().into_iter().flatten() {
         let mut image = Image::new(media_of(item, format)?);
-        image.revised_prompt = item["revised_prompt"].as_str().map(Into::into);
-        image.native = native_of(NAME, rest_of(item, &["b64_json", "url", "revised_prompt"]));
+        image.native = native_of(NAME, rest_of(item, &["b64_json", "url"]));
         out.push(Output::Image(image));
     }
     read_usage_into(&v["usage"], out)
@@ -308,12 +306,11 @@ const EVENT_FIELDS: &[&str] = &[
     "url",
     "created_at",
     "partial_image_index",
-    "revised_prompt",
     "usage",
 ];
 
-/// Reads a stream: its first event's other fields are its [`Start`]'s, and
-/// a later event keeps those it says otherwise.
+/// Reads a stream: its first image event's other fields are its [`Start`]'s,
+/// and a later one keeps those it says otherwise.
 #[derive(Debug, Default)]
 struct Streamed {
     shared: Option<Map<String, Value>>,
@@ -328,36 +325,25 @@ impl Streamed {
         let kind = v["type"].as_str().unwrap_or_default();
         let (_, step) = kind.split_once('.').unwrap_or_default();
         let ours = kind.starts_with("image_generation.") || kind.starts_with("image_edit.");
-        if !ours || !matches!(step, "partial_image" | "completed") {
-            out.push(Output::Native(NativeValue::new(NAME, v)));
-            return Ok(());
-        }
         let mut fields = rest_of(&v, EVENT_FIELDS);
         match &self.shared {
+            _ if !ours || !matches!(step, "partial_image" | "completed") => {}
             None => {
-                let mut start = Start::new(v["created_at"].as_u64());
-                start.native = native_of(NAME, std::mem::take(&mut fields));
-                self.shared = Some(
-                    start
-                        .native
-                        .as_ref()
-                        .map(|n| n.fields.clone())
-                        .unwrap_or_default(),
-                );
+                set(&mut fields, "created", v["created_at"].as_u64());
+                let shared = std::mem::take(&mut fields);
+                let mut start = Start::default();
+                start.native = native_of(NAME, shared.clone());
+                self.shared = Some(shared);
                 out.push(Output::Start(start));
             }
             Some(shared) => fields.retain(|k, value| shared.get(k) != Some(value)),
         }
-        let media = media_of(&v, v["output_format"].as_str())?;
-        if step == "partial_image" {
-            let index = v["partial_image_index"].as_u64().unwrap_or_default();
-            let mut partial = Partial::new(u32::try_from(index).unwrap_or(u32::MAX), media);
-            partial.native = native_of(NAME, fields);
-            out.push(Output::Partial(partial));
+        // A preview, as another event, is OpenAI's alone: written as it is.
+        if !ours || step != "completed" {
+            out.push(Output::Native(NativeValue::new(NAME, v)));
             return Ok(());
         }
-        let mut image = Image::new(media);
-        image.revised_prompt = v["revised_prompt"].as_str().map(Into::into);
+        let mut image = Image::new(media_of(&v, v["output_format"].as_str())?);
         image.native = native_of(NAME, fields);
         out.push(Output::Image(image));
         self.done = true;
@@ -390,7 +376,7 @@ fn response_encoder(
     };
     Box::new(StreamEncoder {
         prefix,
-        created: None,
+        created: unix_now().into(),
         shared: Map::new(),
         pending: None,
         usage: None,
@@ -415,11 +401,8 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     for event in events {
         match event {
             Output::Start(s) => start = Some(s),
-            Output::Partial(_) => {}
             Output::Image(image) => {
-                let mut item = image_fields(&image.media, &image.native);
-                set(&mut item, "revised_prompt", image.revised_prompt.clone());
-                data.push(Value::Object(item));
+                data.push(Value::Object(image_fields(&image.media, &image.native)))
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             // A body has no place for another event.
@@ -431,27 +414,26 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
             _ => {}
         }
     }
+    let mut native = start.map(|s| kept(NAME, &s.native)).unwrap_or_default();
+    let created = native.shift_remove("created").unwrap_or(unix_now().into());
     let mut body = Map::new();
-    let created = start.and_then(|s| s.created).unwrap_or_else(unix_now);
-    body.insert("created".into(), created.into());
+    body.insert("created".into(), created);
     body.insert("data".into(), data.into());
     if let Some(usage) = usage {
         let mut u = write_usage(&usage);
         merge_missing(&mut u, &extras);
         body.insert("usage".into(), u.into());
     }
-    if let Some(start) = start {
-        merge_missing(&mut body, &kept(NAME, &start.native));
-    }
+    merge_missing(&mut body, &native);
     json_bytes(&body)
 }
 
-/// Writes a stream of events in order: a partial image at once, and a
-/// completed one when the next event that is not its usage comes or the
+/// Writes a stream of events in order: a native event at once, and a
+/// completed image when the next event that is not its usage comes or the
 /// stream ends, with the usage reported until then.
 struct StreamEncoder {
     prefix: &'static str,
-    created: Option<u64>,
+    created: Value,
     shared: Map<String, Value>,
     pending: Option<Map<String, Value>>,
     usage: Option<Usage>,
@@ -459,21 +441,6 @@ struct StreamEncoder {
 }
 
 impl StreamEncoder {
-    fn event(
-        &mut self,
-        step: &str,
-        media: &Media,
-        native: &Option<NativeFields>,
-    ) -> Map<String, Value> {
-        let mut v = Map::new();
-        v.insert("type".into(), format!("{}.{step}", self.prefix).into());
-        merge_missing(&mut v, &image_fields(media, native));
-        let created = *self.created.get_or_insert_with(unix_now);
-        v.insert("created_at".into(), created.into());
-        merge_missing(&mut v, &self.shared);
-        v
-    }
-
     fn flush(&mut self, out: &mut BytesMut) {
         let Some(mut v) = self.pending.take() else {
             return;
@@ -491,19 +458,18 @@ impl StreamEncoder {
     fn encode_into(&mut self, event: &Output, out: &mut BytesMut) -> Result<(), Fault> {
         match event {
             Output::Start(start) => {
-                self.created = start.created.or(self.created);
                 self.shared = kept(NAME, &start.native);
-            }
-            Output::Partial(partial) => {
-                self.flush(out);
-                let mut v = self.event("partial_image", &partial.media, &partial.native);
-                v.insert("partial_image_index".into(), partial.index.into());
-                out.extend_from_slice(sse_event(&Value::Object(v)).as_bytes());
+                if let Some(created) = self.shared.shift_remove("created") {
+                    self.created = created;
+                }
             }
             Output::Image(image) => {
                 self.flush(out);
-                let mut v = self.event("completed", &image.media, &image.native);
-                set(&mut v, "revised_prompt", image.revised_prompt.clone());
+                let mut v = Map::new();
+                v.insert("type".into(), format!("{}.completed", self.prefix).into());
+                merge_missing(&mut v, &image_fields(&image.media, &image.native));
+                v.insert("created_at".into(), self.created.clone());
+                merge_missing(&mut v, &self.shared);
                 self.pending = Some(v);
             }
             Output::Usage(u) => *self.usage.get_or_insert_with(Usage::default) += u,
@@ -576,12 +542,14 @@ mod tests {
                 {"image_url": "https://x.test/a.webp?s=1"},
             ],
             "mask": {"image_url": "data:image/png;base64,bWFzaw=="},
+            "quality": "high",
         });
         let input = edit(body.clone()).expect("an edit");
         let first = MediaSource::Bytes(Bytes::from_static(b"\x89PN"));
         assert_eq!(input.images[0].source, first);
         assert_eq!(input.images[1].mime_type, "image/webp");
-        assert_eq!(input.native, None);
+        let native = input.native.clone().map(|n| Value::Object(n.fields));
+        assert_eq!(native, Some(json!({"quality": "high"})));
         let mut head = http::Request::new(()).into_parts().0;
         let encoder = post(&mut head, &input, false).expect("a call");
         assert_eq!(head.uri.path(), EDITS);
@@ -599,21 +567,26 @@ mod tests {
     fn a_stream_of_two_images_is_written_in_order() {
         let image = |data: &'static [u8]| {
             let media = Media::new("image/png", MediaSource::Bytes(Bytes::from_static(data)));
-            (Image::new(media.clone()), Partial::new(0, media))
+            Output::Image(Image::new(media))
         };
-        let ((a, partial_a), (b, partial_b)) = (image(b"a"), image(b"b"));
+        let partial = || {
+            let v = json!({"type": "image_generation.partial_image", "b64_json": "YQ=="});
+            Output::Native(NativeValue::new(NAME, v))
+        };
+        let mut start = Start::default();
+        start.native = native_of(NAME, Map::from_iter([("created".into(), json!(1))]));
         let events = [
-            Output::Start(Start::new(Some(1))),
-            Output::Partial(partial_a),
-            Output::Image(a),
+            Output::Start(start),
+            partial(),
+            image(b"a"),
             Output::Usage(Usage::new(1, 2)),
-            Output::Partial(partial_b),
-            Output::Image(b),
+            partial(),
+            image(b"b"),
             Output::Usage(Usage::new(3, 4)),
         ];
         let encoder = Box::new(StreamEncoder {
             prefix: "image_generation",
-            created: None,
+            created: Value::Null,
             shared: Map::new(),
             pending: None,
             usage: None,
@@ -625,21 +598,22 @@ mod tests {
         }
         .expect("a stream");
         let written = String::from_utf8_lossy(&written);
-        let seen: Vec<(String, u64)> = written
+        let seen: Vec<(String, u64, Value)> = written
             .split("\n\n")
             .filter_map(|e| serde_json::from_str::<Value>(e.strip_prefix("data: ")?).ok())
             .map(|v| {
                 let kind = v["type"].as_str().unwrap_or_default().to_owned();
-                (kind, v["usage"]["input_tokens"].as_u64().unwrap_or(0))
+                let used = v["usage"]["input_tokens"].as_u64().unwrap_or(0);
+                (kind, used, v["created_at"].clone())
             })
             .collect();
         let want = [
-            ("image_generation.partial_image", 0),
-            ("image_generation.completed", 1),
-            ("image_generation.partial_image", 0),
-            ("image_generation.completed", 3),
+            ("image_generation.partial_image", 0, Value::Null),
+            ("image_generation.completed", 1, json!(1)),
+            ("image_generation.partial_image", 0, Value::Null),
+            ("image_generation.completed", 3, json!(1)),
         ];
-        assert_eq!(seen, want.map(|(k, n)| (k.to_owned(), n)));
+        assert_eq!(seen, want.map(|(k, n, at)| (k.to_owned(), n, at)));
     }
 
     #[test]

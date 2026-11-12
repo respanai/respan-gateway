@@ -75,8 +75,9 @@ use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
+use crate::gemini::GEMINI;
 use decode::OpenAiDecoder;
-use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice};
+use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice, signature_of};
 use request::{
     read_openai_message, read_openai_tools, read_response_format, write_openai_message,
     write_openai_tools, write_reasoning, write_response_format,
@@ -353,6 +354,10 @@ impl Schema for OpenAiChat {
                     format: f,
                     value: raw,
                 }) if **f == *OPENAI => call_fields_of(raw),
+                AssembledItem::Native(NativeValue {
+                    format: f,
+                    value: raw,
+                }) if **f == *GEMINI => signature_of(raw),
                 _ => None,
             })
             .collect();
@@ -373,6 +378,12 @@ impl Schema for OpenAiChat {
         let mut message = json!({ "role": "assistant", "content": text });
         if !reasoning.is_empty() {
             message["reasoning_content"] = reasoning.into();
+        }
+        // A text's signature, Gemini's, is the message's.
+        for p in whole.blocks().filter(|p| p.kind == Block::Text) {
+            for (_, entry, _) in fields.iter().filter(|(b, ..)| *b == p.block) {
+                merge_fields(&mut message, entry);
+            }
         }
         if !calls.is_empty() {
             if text.is_empty() {

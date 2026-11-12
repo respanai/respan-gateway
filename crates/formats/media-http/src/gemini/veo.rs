@@ -473,11 +473,6 @@ fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let file = file.ok_or_else(|| unreadable("holds no video"))?;
     let mut job = Job::new(GeminiVeo::job_id(&file), Status::InProgress);
     job.model = v["model"].as_str().map(str::to_owned);
-    let fields = ["id", "usage"]
-        .into_iter()
-        .filter_map(|key| v.get(key).cloned().map(|value| (key.to_owned(), value)))
-        .collect();
-    job.native = Some(NativeFields::new(NAME, fields));
     Ok(job)
 }
 
@@ -603,12 +598,15 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
     }
 }
 
-/// Whether `id` is spelled as a job id the gateway gives out, Veo's or
-/// OpenAI's, perhaps wrapped in its provider's name (`<provider>~<id>`):
-/// none of Google's own files or operations is, so those pass through.
+/// Whether `id` is spelled as a job id the gateway gives out, Veo's,
+/// OpenAI's or OpenRouter's, perhaps wrapped in its provider's name
+/// (`<provider>~<id>`): none of Google's own files or operations is, so
+/// those pass through.
 fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [PREFIX, "video_"].iter().any(|s| inner.starts_with(s))
+    [PREFIX, "video_", "gen-vid-"]
+        .iter()
+        .any(|s| inner.starts_with(s))
 }
 
 /// What a client asks: a creation's body read into the kind's, the rest by
@@ -886,6 +884,13 @@ mod tests {
                 "/v1beta/files/video_1:download".into(),
                 Some(Route::Download("video_1".into())),
             ),
+            (
+                "/v1beta/operations/gen-vid-1".into(),
+                Some(Route::Retrieve {
+                    id: "gen-vid-1".into(),
+                    model: None,
+                }),
+            ),
             ("/v1beta/files/abc123:download".into(), None),
             ("/v1beta/operations/abc123".into(), None),
             ("/v1beta/models/gemini-2.5/operations/abc123".into(), None),
@@ -1018,10 +1023,7 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
-        assert_eq!(
-            job.native.as_ref().and_then(|n| n.fields.get("usage")),
-            Some(&json!({"total_input_tokens": 12}))
-        );
+        assert_eq!(job.native, None);
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;

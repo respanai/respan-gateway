@@ -6,7 +6,7 @@ use respan_gateway_http::{Decoder, Sse};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
 use crate::anthropic::AnthropicMessages;
-use crate::gemini::GeminiGenerate;
+use crate::gemini::{GeminiGenerate, SIGNATURE_PLACEHOLDER};
 use crate::responses::OpenAiResponses;
 use crate::schema::Held;
 use respan_gateway_conversation::{Content, Media, MediaSource, Message, Tool, ToolChoice};
@@ -188,7 +188,8 @@ fn a_native_finish_is_written_as_its_fallback() {
     let body = body_of(&[Output::start("x", "m"), Output::finished(full)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "length");
     let paused = Finish::native("other", "pause_turn");
-    assert!(body_of(&[Output::start("x", "m"), Output::finished(paused)]).is_err());
+    let body = body_of(&[Output::start("x", "m"), Output::finished(paused)]).expect("a body");
+    assert_eq!(body["choices"][0]["finish_reason"], "stop");
 }
 
 #[test]
@@ -1721,16 +1722,18 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
 fn efforts_above_high_are_written_verbatim_or_refused() {
     use crate::gemini::GeminiGenerate;
     use crate::responses::OpenAiResponses;
-    use respan_gateway_conversation::Effort;
+    use respan_gateway_conversation::{Effort, Reasoning};
     for (name, effort) in [("xhigh", Effort::XHigh), ("max", Effort::Max)] {
         let body = json!({ "model": "m", "max_tokens": 64, "reasoning_effort": name,
             "messages": [{ "role": "user", "content": "hi" }] });
-        let chat = OpenAiChat.decode_json(&body);
+        let mut chat = OpenAiChat.decode_json(&body);
         assert_eq!(
             chat.options.reasoning.as_ref().and_then(|r| r.effort),
             Some(effort)
         );
         assert!(chat.native.is_empty(), "{name}");
+        // An ask for a summary too, which only Responses has a field for.
+        chat.options.reasoning.as_mut().expect("an effort").summary = Some(true);
         let chat_sent = OpenAiChat.encode_request(&chat).map(Value::from);
         assert_eq!(
             chat_sent.ok().map(|v| v["reasoning_effort"].clone()),
@@ -1739,7 +1742,7 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
         let responses = OpenAiResponses.encode_request(&chat).map(Value::from);
         assert_eq!(
             responses.ok().map(|v| v["reasoning"].clone()),
-            Some(json!({ "effort": name }))
+            Some(json!({ "effort": name, "summary": "auto" }))
         );
         let anthropic = AnthropicMessages.encode_request(&chat).map(Value::from);
         assert_eq!(
@@ -1748,6 +1751,8 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
         );
         // Gemini has no thinking level above `high`, and does not get one.
         assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
+        chat.options.reasoning = Some(Reasoning::budget(1024));
+        assert!(OpenAiChat.encode_request(&chat).is_err(), "{name}");
     }
 }
 
@@ -1832,21 +1837,41 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
     assert!(AnthropicMessages.encode_request(&chat).is_ok());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
     // Gemini answers both calls of a turn in one content, beside a named
-    // system message.
-    let body = json!({ "model": "m", "messages": [
+    // system message; signatures in `extra_content` are Gemini's own, and a
+    // first call without one takes the placeholder.
+    let google = |s: &str| json!({ "google": { "thought_signature": s } });
+    let body = json!({ "model": "gemini-3-flash-preview", "messages": [
         { "role": "system", "name": "ops", "content": "be brief" },
         { "role": "user", "content": "hi" },
-        { "role": "assistant", "content": null, "tool_calls": [
-            { "id": "t", "type": "function", "function": { "name": "f", "arguments": "{}" } },
+        { "role": "assistant", "content": "ok", "extra_content": google("m"), "tool_calls": [
+            { "id": "t", "type": "function", "function": { "name": "f", "arguments": "{}" },
+              "extra_content": google("s") },
             { "id": "u", "type": "function", "function": { "name": "g", "arguments": "{}" } }] },
         { "role": "tool", "tool_call_id": "t", "name": "f", "content": "1" },
         { "role": "tool", "tool_call_id": "u", "name": "g", "content": "2" },
+        { "role": "assistant", "content": null, "tool_calls": [
+            { "id": "v", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
     ]});
     let chat = OpenAiChat.decode_json(&body);
     let sent = GeminiGenerate.encode_request(&chat).map(Value::from);
     let contents = sent.map(|v| v["contents"].clone()).unwrap_or_default();
-    assert_eq!(contents.as_array().map(Vec::len), Some(3), "{contents}");
+    assert_eq!(contents.as_array().map(Vec::len), Some(4), "{contents}");
     assert_eq!(contents[2]["parts"].as_array().map(Vec::len), Some(2));
+    let signatures = |c: &Value| {
+        c["parts"].as_array().map(|p| {
+            p.iter()
+                .map(|p| p["thoughtSignature"].clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(
+        signatures(&contents[1]),
+        Some(vec![json!("m"), json!("s"), Value::Null])
+    );
+    assert_eq!(
+        signatures(&contents[3]),
+        Some(vec![json!(SIGNATURE_PLACEHOLDER)])
+    );
 }
 
 /// Regression: an OpenAI-shaped reseller of Anthropic models finishes a

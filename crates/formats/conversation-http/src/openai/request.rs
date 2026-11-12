@@ -8,8 +8,7 @@ use crate::fields::media_url;
 use crate::schema::{
     FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_name,
     encode_content, encode_message, merge_missing, native_fields, only, own_native, read_search,
-    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning,
-    write_search,
+    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -259,10 +258,8 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
         let mut said = m.clone();
         said.content = rest.iter().filter(|p| !call(p)).cloned().collect();
         said.content.retain(|p| match p {
-            Content::Reasoning { native, .. } => {
-                warn_reasoning(OPENAI, native);
-                false
-            }
+            // WARN: Chat has no field for a past turn's reasoning; it is dropped silently.
+            Content::Reasoning { .. } => false,
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
@@ -448,22 +445,16 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
 }
 
 /// The request's `reasoning_effort`: the kind's effort, else the request's
-/// own. Chat has no token budget, and no field that returns the thinking.
+/// own. Chat refuses a token budget and drops an ask for a summary.
 pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
-    let Some(r) = reasoning_of(input)? else {
-        return Ok(own_native(input, OPENAI, "reasoning_effort"));
-    };
-    if r.budget_tokens.is_some() {
+    let r = reasoning_of(input)?;
+    if r.is_some_and(|r| r.budget_tokens.is_some()) {
         return Err(Fault::bad_request(
             "OpenAI Chat does not take a reasoning token budget; use a reasoning effort instead",
         ));
     }
-    if r.summary == Some(true) {
-        return Err(Fault::bad_request(
-            "OpenAI Chat cannot be asked to return reasoning; leave the reasoning summary unset",
-        ));
-    }
-    Ok(match r.effort {
+    // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
+    Ok(match r.and_then(|r| r.effort) {
         Some(effort) => Some(effort_name(effort)?.into()),
         None => own_native(input, OPENAI, "reasoning_effort"),
     })

@@ -7,14 +7,14 @@
 //! A request is `{"model", "state", "questions": {id: question}}`, each
 //! question `{"type", "instructions", "criteria"}`: `noul` with criteria
 //! `{"true", "false"}`, `choice` with criteria `{option: description}`,
-//! `score` with criteria a list of levels, `number` with none. A response is
+//! `score` with criteria a list of levels. A response is
 //! `{"model", "answers": {id: answer}, "usage"}`, each answer
 //! `{"type", ..}`: `noul` the probability of yes, `choice` with
 //! `probabilities` and `confidence`, `score` with `probabilities` by level
-//! and `legend`, `number` the number and the `text` it was read from. A
-//! question or an answer of a type the kind has no form for is kept as the
-//! format's own and written back where it was; a format that cannot ask it
-//! refuses it.
+//! and `legend`. A question or an answer of another type, such as `number`
+//! or `box`, is kept whole as the format's own and written back where it
+//! was; a format that cannot ask it drops it, and refuses a request it can
+//! ask none of.
 
 use respan_gateway_conversation_http::fields::{
     invalid, kept, merge_missing, native_of, rest_of, set,
@@ -23,9 +23,7 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
-use respan_gateway_decision::{
-    Answer, Ask, ChoiceValue, Input, Output, Question, Start, Usage, Verdict,
-};
+use respan_gateway_decision::{Answer, Ask, Input, Output, Question, Start, Usage, Verdict};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{self, Method, response::Parts as ResponseHead};
@@ -43,7 +41,7 @@ const PATH: &str = "/decisions";
 /// TypeSafe's name for the endpoint, which its clients call.
 const SYSTEM_ONE_PATH: &str = "/systemone";
 /// The question types the kind has a form for; any other is the format's own.
-const KNOWN_TYPES: [&str; 5] = ["noul", "choice", "score", "number", "box"];
+const KNOWN_TYPES: [&str; 3] = ["noul", "choice", "score"];
 
 /// The decisions contract, as Respan or a compatible vendor serves it: a
 /// client's `POST` to a path ending in `/decisions` or `/systemone`, and a
@@ -162,39 +160,17 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
     }
     let criteria = q.remove("criteria").unwrap_or_default();
     let ask = match q.remove("type").as_ref().and_then(Value::as_str) {
-        Some("noul") => match criteria {
-            Value::Null => Ask::Noul {
-                yes: None,
-                no: None,
-            },
-            Value::Object(mut sides) => {
-                let yes = sides.remove("true").filter(|v| !v.is_null());
-                let no = sides.remove("false").filter(|v| !v.is_null());
-                if !sides.is_empty() {
-                    return Err(invalid(
-                        &param,
-                        "has criteria other than {\"true\", \"false\"}",
-                    ));
-                }
-                Ask::Noul { yes, no }
+        // The kind has no form for a noul's criteria; any sent ride as the format's own.
+        Some("noul") => {
+            if !criteria.is_null() {
+                q.insert("criteria".into(), criteria);
             }
-            _ => {
-                return Err(invalid(
-                    &param,
-                    "has criteria other than {\"true\", \"false\"}",
-                ));
-            }
-        },
+            Ask::Noul
+        }
         Some("choice") => match criteria {
             Value::Object(options) => Ask::Choice {
-                options: options
-                    .into_iter()
-                    .map(|(name, about)| {
-                        (
-                            ChoiceValue::String(name),
-                            Some(about).filter(|v| !v.is_null()),
-                        )
-                    })
+                options: (options.into_iter())
+                    .map(|(name, about)| (name, Some(about).filter(|v| !v.is_null())))
                     .collect(),
             },
             _ => {
@@ -208,13 +184,6 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
             Value::Array(levels) => Ask::Score { levels },
             _ => return Err(invalid(&param, "has criteria other than a list of levels")),
         },
-        // The kind takes no criteria for a number or a box; any sent ride as the format's own.
-        Some(kind @ ("number" | "box")) => {
-            if !criteria.is_null() {
-                q.insert("criteria".into(), criteria);
-            }
-            if kind == "box" { Ask::Box } else { Ask::Number }
-        }
         _ => return Err(invalid(&param, "has no type")),
     };
     let mut question = Question::new(id, ask);
@@ -235,41 +204,30 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         }
         let mut v = Map::new();
         let (kind, criteria) = match &q.ask {
-            Ask::Noul { yes, no } => {
-                let mut sides = Map::new();
-                set(&mut sides, "true", yes.clone());
-                set(&mut sides, "false", no.clone());
-                ("noul", (!sides.is_empty()).then_some(Value::Object(sides)))
-            }
+            Ask::Noul => ("noul", None),
             Ask::Choice { options } => {
+                // WARN: options of one name, such as openai-decisions' `true`
+                // and `"true"` both asked, are one key.
                 let options = options
                     .iter()
-                    .map(|(name, about)| match name {
-                        ChoiceValue::String(name) => {
-                            Ok((name.clone(), about.clone().unwrap_or(Value::Null)))
-                        }
-                        _ => Err(Fault::bad_request(
-                            "boolean choices cannot be encoded as decisions",
-                        )),
-                    })
-                    .collect::<Result<Map<_, _>, _>>()?;
-                ("choice", Some(Value::Object(options)))
+                    .map(|(name, about)| (name.clone(), about.clone().unwrap_or(Value::Null)));
+                ("choice", Some(Value::Object(options.collect())))
             }
             Ask::Score { levels } => ("score", Some(Value::from(levels.clone()))),
-            Ask::Number => ("number", None),
-            Ask::Box => ("box", None),
-            _ => {
-                return Err(Fault::bad_request(format!(
-                    "{NAME} cannot ask question '{}'",
-                    q.id
-                )));
-            }
+            // WARN: decisions has no form for another format's question;
+            // it is dropped and goes unanswered.
+            _ => continue,
         };
         v.insert("type".into(), kind.into());
         set(&mut v, "instructions", q.instructions.clone());
         set(&mut v, "criteria", criteria);
         merge_missing(&mut v, &kept(NAME, &q.native));
         questions.insert(q.id.clone(), v.into());
+    }
+    if questions.is_empty() && !input.questions.is_empty() {
+        return Err(Fault::bad_request(format!(
+            "{NAME} has no form for any question asked"
+        )));
     }
     let mut v = Map::new();
     set(&mut v, "model", input.model.clone());
@@ -322,11 +280,11 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
         "noul" => (Verdict::Noul(number("noul")?), &["noul"]),
         "choice" => (
             Verdict::Choice {
-                choice: ChoiceValue::String(a["choice"].as_str()?.to_owned()),
+                choice: a["choice"].as_str()?.to_owned(),
                 probabilities: a["probabilities"]
                     .as_object()?
                     .iter()
-                    .map(|(name, p)| Some((ChoiceValue::String(name.clone()), p.as_f64()?)))
+                    .map(|(name, p)| Some((name.clone(), p.as_f64()?)))
                     .collect::<Option<_>>()?,
             },
             &["choice", "probabilities"],
@@ -340,25 +298,6 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
                     probabilities: (0..by_level.len()).map(level).collect::<Option<_>>()?,
                 },
                 &["score", "probabilities"],
-            )
-        }
-        "number" => (
-            Verdict::Number {
-                number: number("number")?,
-                text: a["text"].as_str().map(Into::into),
-            },
-            &["number", "text"],
-        ),
-        "box" => {
-            let edge = |key: &str| a["box"][key].as_f64();
-            (
-                Verdict::Box {
-                    top: edge("top")?,
-                    bottom: edge("bottom")?,
-                    left: edge("left")?,
-                    right: edge("right")?,
-                },
-                &["box"],
             )
         }
         _ => return None,
@@ -418,22 +357,9 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
             probabilities,
         } => {
             v.insert("type".into(), "choice".into());
-            let ChoiceValue::String(choice) = choice else {
-                return Err(Fault::bad_request(
-                    "boolean choices cannot be encoded as decisions",
-                ));
-            };
             v.insert("choice".into(), choice.clone().into());
-            let by_option = probabilities
-                .iter()
-                .map(|(o, p)| match o {
-                    ChoiceValue::String(o) => Ok((o.clone(), (*p).into())),
-                    _ => Err(Fault::bad_request(
-                        "boolean choices cannot be encoded as decisions",
-                    )),
-                })
-                .collect::<Result<Map<_, _>, _>>()?;
-            v.insert("probabilities".into(), Value::Object(by_option));
+            let by_option = probabilities.iter().map(|(o, p)| (o.clone(), (*p).into()));
+            v.insert("probabilities".into(), Value::Object(by_option.collect()));
         }
         Verdict::Score {
             score,
@@ -444,21 +370,6 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
             let by_level = probabilities.iter().enumerate();
             let by_level = by_level.map(|(i, p)| (i.to_string(), (*p).into()));
             v.insert("probabilities".into(), Value::Object(by_level.collect()));
-        }
-        Verdict::Number { number, text } => {
-            v.insert("type".into(), "number".into());
-            v.insert("number".into(), (*number).into());
-            set(&mut v, "text", text.clone().map(Value::from));
-        }
-        Verdict::Box {
-            top,
-            bottom,
-            left,
-            right,
-        } => {
-            v.insert("type".into(), "box".into());
-            let edges = json!({"top": top, "bottom": bottom, "left": left, "right": right});
-            v.insert("box".into(), edges);
         }
         _ => {
             return Err(Fault::new(format!(
@@ -511,7 +422,7 @@ mod tests {
             "model": "jev-latest",
             "state": {"subject": "Refund", "body": "Charged twice"},
             "questions": {
-                "spam": {"type": "noul", "instructions": "Is this spam?", "criteria": {"true": "Unsolicited"}},
+                "spam": {"type": "noul", "instructions": "Is this spam?", "criteria": {"true": "Unsolicited", "maybe": "y"}},
                 "tone": {"type": "choice", "criteria": {"angry": null, "calm": {"x": 1}}},
                 "urgency": {"type": "score", "instructions": "Urgency?", "criteria": ["Low", {"label": "High"}]},
             },
@@ -537,51 +448,8 @@ mod tests {
             json!({"state": "s", "questions": {"q": {"instructions": "No type?"}}})
         ));
         assert!(refused(
-            json!({"state": "s", "questions": {"q": {"type": "noul", "criteria": {"true": "x", "maybe": "y"}}}})
-        ));
-        assert!(refused(
             json!({"state": "s", "questions": {"q": {"type": "score", "criteria": {}}}})
         ));
-    }
-
-    #[test]
-    fn a_number_question_is_read_and_written_back_with_its_criteria() {
-        let raw = json!({
-            "model": "span-02",
-            "state": {"order": {"id": 123, "days_late": 4}},
-            "questions": {
-                "days_late": {"type": "number", "instructions": "How many days late?"},
-                "bounded": {"type": "number", "criteria": {"min": 0, "max": 10}},
-            },
-        });
-        let input = decode_request(raw.to_string().as_bytes()).expect("input");
-        assert!(matches!(input.questions[0].ask, Ask::Number));
-        assert!(matches!(input.questions[1].ask, Ask::Number));
-        assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
-    }
-
-    #[test]
-    fn a_box_question_and_its_answer_are_read_and_written_back() {
-        let raw = json!({
-            "model": "jev-preview",
-            "state": "<image>",
-            "questions": {"cat": {"type": "box", "instructions": "The cat"}},
-        });
-        let input = decode_request(raw.to_string().as_bytes()).expect("input");
-        assert!(matches!(input.questions[0].ask, Ask::Box));
-        assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
-        let raw = json!({
-            "model": "jev-preview",
-            "answers": {"cat": {"type": "box", "box": {"top": 0.1, "bottom": 0.6, "left": 0.2, "right": 0.7}, "confidence": 0.9}},
-        });
-        let mut events = Vec::new();
-        decode_response(Bytes::from(raw.to_string()), &mut events).expect("events");
-        assert!(events.iter().any(|e| matches!(e,
-            Output::Answer(Answer { verdict: Verdict::Box { top, right, .. }, .. })
-                if *top == 0.1 && *right == 0.7)));
-        let written: Value =
-            serde_json::from_slice(&encode_response(&events).expect("body")).unwrap_or_default();
-        assert_eq!(written, raw);
     }
 
     #[test]
@@ -591,28 +459,15 @@ mod tests {
             "questions": {
                 "when": {"type": "date", "instructions": "When did it ship?", "range": ["2026-01-01", null]},
                 "spam": {"type": "noul"},
+                "days_late": {"type": "number", "criteria": {"min": 0, "max": 10}},
+                "cat": {"type": "box", "instructions": "The cat"},
             },
         });
         let input = decode_request(raw.to_string().as_bytes()).expect("input");
-        assert!(matches!(&input.questions[0].ask, Ask::Native(n) if &*n.format == NAME));
+        for i in [0, 2, 3] {
+            assert!(matches!(&input.questions[i].ask, Ask::Native(n) if &*n.format == NAME));
+        }
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
-    }
-
-    #[test]
-    fn a_number_answer_is_read_and_written_back() {
-        let raw = json!({
-            "model": "span-02",
-            "answers": {"days_late": {"type": "number", "number": 4.0, "text": "4", "confidence": 0.99}},
-            "usage": {"input_tokens": 207, "output_tokens": 2},
-        });
-        let mut events = Vec::new();
-        decode_response(Bytes::from(raw.to_string()), &mut events).expect("events");
-        assert!(events.iter().any(|e| matches!(e,
-            Output::Answer(Answer { verdict: Verdict::Number { number, text: Some(text) }, .. })
-                if *number == 4.0 && text == "4")));
-        let written: Value =
-            serde_json::from_slice(&encode_response(&events).expect("body")).unwrap_or_default();
-        assert_eq!(written, raw);
     }
 
     #[test]
@@ -624,6 +479,8 @@ mod tests {
                 "tone": {"type": "choice", "choice": "angry", "probabilities": {"angry": 0.8, "calm": 0.2}, "confidence": 0.9},
                 "urgency": {"type": "score", "score": 1.7, "confidence": 0.9, "legend": {"0": "Can wait", "1": "This week", "2": "Today"}, "probabilities": {"0": 0.1, "1": 0.1, "2": 0.8}},
                 "future": {"type": "vibes", "vibe": "immaculate"},
+                "days_late": {"type": "number", "number": 4, "text": null, "confidence": 0.99},
+                "cat": {"type": "box", "box": {"top": 0, "bottom": 0.6, "left": 0.2, "right": 1, "unit": "fraction"}},
             },
             "usage": {"input_tokens": 42, "output_tokens": 0, "cached": 1},
             "request_id": "r",
