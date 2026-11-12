@@ -440,24 +440,13 @@ fn set_job_id(input: &mut Input, inner: &str) {
     }
 }
 
-/// The ids of `output` wrapped in `provider`: a job's, the video it was
-/// remixed from, and a native answer's.
+/// The ids of `output` wrapped in `provider`: a job's, and a native answer's.
+// WARN: a remix's source (openai-videos' own `remixed_from_video_id`) is not
+// wrapped: the kind has no place for it, and its format's fields are its own.
 fn wrap_ids(output: &mut Output, provider: &str) {
     let wrap = |id: &mut String| *id = format!("{provider}{SEPARATOR}{id}");
     match output {
-        Output::Job(job) => {
-            wrap(&mut job.id);
-            // A remix's source is openai-videos' native field, read here
-            // until it has a typed place, as a native answer's ids have.
-            if let Some(native) = job
-                .native
-                .as_mut()
-                .filter(|n| &*n.format == "openai-videos")
-                && let Some(Value::String(source)) = native.fields.get_mut("remixed_from_video_id")
-            {
-                wrap(source);
-            }
-        }
+        Output::Job(job) => wrap(&mut job.id),
         Output::Native { ids, .. } => ids.iter_mut().for_each(wrap),
         Output::Content(_) => {}
     }
@@ -514,27 +503,6 @@ mod tests {
         };
         set_job_id(&mut input, "video_1");
         assert_eq!(input.job_id(), Some("video_1"));
-    }
-
-    #[test]
-    fn a_remix_names_its_source_as_it_was_given_out() {
-        let remixed = |format: &str| {
-            let mut fields = serde_json::Map::new();
-            fields.insert("remixed_from_video_id".into(), "video_1".into());
-            let mut job = Job::new("video_2", Status::Queued);
-            job.native = Some(NativeFields::new(format, fields));
-            let mut remixed = Output::Job(job);
-            wrap_ids(&mut remixed, "west");
-            let Output::Job(job) = remixed else {
-                panic!("a job");
-            };
-            assert_eq!(job.id, "west~video_2");
-            job.native
-                .and_then(|n| n.fields.get("remixed_from_video_id").cloned())
-        };
-        assert_eq!(remixed("openai-videos"), Some(Value::from("west~video_1")));
-        // Another format's field of that name is its own, not a remix's.
-        assert_eq!(remixed("another"), Some(Value::from("video_1")));
     }
 
     /// Regression: a page's `after` kept the wrapping its id was given out
