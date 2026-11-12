@@ -7,7 +7,7 @@ formats over HTTP are
 
 | Module | Kind | `Input` | `Output` events |
 | --- | --- | --- | --- |
-| `image` | Image generation and edits | `prompt`, source `images` and `mask` (an edit has images), `count`, `size`, `quality`, `output_format` | `Start`, `Partial` previews, `Image`, `Usage` |
+| `image` | Image generation and edits | `prompt`, source `images` and `mask` (an edit has images), `count`, `size` | `Start`, `Image`, `Usage` |
 | `transcription` | Speech to text, or to English (`Task`) | `audio`, `task`, `language`, `prompt`, `temperature` | `Delta`, `Transcript`, `Rendered`, `Usage`, `Seconds` |
 | `speech` | Text to speech | `text`, `voice`, `instructions`, `speed`, `audio_format` | `Audio` chunks, `Usage` |
 | `embedding` | Embeddings of texts, images and videos | `items` (`Text`, `Tokens` or `Parts`), `dimensions`, `user` | `Start`, `Embedding` vectors, `Usage` |

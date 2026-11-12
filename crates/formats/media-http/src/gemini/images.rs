@@ -31,8 +31,7 @@ const NAME: &str = "gemini-images";
 /// `candidateCount`, which Gemini's image models refuse above 1; its `size`
 /// an `imageConfig` of the nearest `aspectRatio` Gemini draws (within 5%,
 /// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. A mask
-/// is refused, 400, as Gemini edits by prompt alone; quality, file format and
-/// user are dropped. Its native fields go in the body, `generationConfig`
+/// is refused, 400, as Gemini edits by prompt alone. Its native fields go in the body, `generationConfig`
 /// merged with what it says. An answer's images are its parts' `inlineData`
 /// (or `fileData`), not its thoughts', its usage `usageMetadata`'s; its text
 /// is dropped. An answer with no image is refused, 400 `no_image`, saying why.
@@ -215,7 +214,7 @@ fn size_of(aspect: &str, size: Option<&str>) -> Option<String> {
 fn read_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = serde_json::from_slice::<Value>(&raw)
         .map_err(|_| Fault::upstream(format!("the provider's {NAME} response is not JSON")))?;
-    out.push(Output::Start(Start::new(None)));
+    out.push(Output::Start(Start::default()));
     let (mut images, mut said, mut why) = (0, Vec::new(), None);
     for candidate in v["candidates"].as_array().into_iter().flatten() {
         let parts = candidate["content"]["parts"].as_array();
@@ -578,7 +577,7 @@ mod tests {
         let mut usage = Usage::new(3, 7);
         usage.reasoning_tokens = 2;
         let want = [
-            Output::Start(Start::new(None)),
+            Output::Start(Start::default()),
             Output::Image(Image::new(jpeg)),
             Output::Usage(usage),
         ];
@@ -610,7 +609,7 @@ mod tests {
     #[test]
     fn a_response_is_written_in_the_framing_asked() {
         let events = [
-            Output::Start(Start::new(Some(1))),
+            Output::Start(Start::default()),
             Output::Image(Image::new(png(b"a"))),
             Output::Usage(Usage::new(3, 5)),
         ];
