@@ -13,7 +13,7 @@
 //!
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; another drops it with a warning. A request that asks
+//! only by that format; another drops it. A request that asks
 //! for several OpenAI Chat choices (`n > 1`) is refused on input, before
 //! translation can drop the choice count.
 
@@ -39,7 +39,7 @@ pub(crate) use values::{
     encode_message, ended, fits, merge_fields, merge_into, merge_missing, native_fields, only,
     own_fields, own_shapes, read_search, remainder, set, source_url, stop_json, take_strict,
     take_text, tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra,
-    warn_reasoning, write_search,
+    write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
