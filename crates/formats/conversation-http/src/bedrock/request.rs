@@ -1,7 +1,7 @@
 //! A request in Converse's terms: the `system` blocks, `messages` and their
 //! content blocks, `toolConfig`, `inferenceConfig` and the reasoning of
 //! `additionalModelRequestFields`. What the kind has but Converse has no
-//! field for, such as `top_k`, an end user's id or an effort, is refused.
+//! field for, such as `top_k` or an effort, is refused.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -299,9 +299,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     if o.top_k.is_some() {
         return Err(untranslatable("top_k, which Bedrock takes per model"));
     }
-    if chat.user.is_some() {
-        return Err(untranslatable("an end user's id"));
-    }
+    // WARN: an end user's id has no field in Converse; dropped silently.
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}
         Some(ResponseFormat::JsonSchema {
