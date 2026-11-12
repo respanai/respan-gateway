@@ -316,9 +316,9 @@ fn put_back(input: &mut Input, earlier: impl Fn(&str) -> Option<Vec<Content>>) {
     }
 }
 
-/// `message` without what `format` cannot write: reasoning or a native part
-/// of another format, which only its own provider reads back, and the
-/// signatures that seal it.
+/// `message` without what `format` cannot write: reasoning of another
+/// format, which only its own provider reads back, and the signatures that
+/// seal it. Another format's native parts its writer drops.
 fn writable(mut message: Message, format: &str) -> Message {
     let mut is_dropped = false;
     message.content.retain(|part| {
@@ -326,7 +326,6 @@ fn writable(mut message: Message, format: &str) -> Message {
             Content::Reasoning { native, .. } => {
                 !native.as_ref().is_some_and(|n| &*n.format == format)
             }
-            Content::Native(native) => &*native.format != format,
             Content::Signature(_) => is_dropped,
             _ => false,
         };
