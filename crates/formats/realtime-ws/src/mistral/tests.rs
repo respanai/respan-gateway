@@ -355,10 +355,7 @@ fn a_client_is_told_the_transcript_with_its_usage_and_not_an_answer() {
     let frames = told(&[
         Output::Opened(session),
         transcript("Hel", false),
-        Output::ResponseStart {
-            id: None,
-            native: None,
-        },
+        Output::ResponseStart { native: None },
         Output::Usage(usage),
         transcript("Hello", true),
         Output::Error {

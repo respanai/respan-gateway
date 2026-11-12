@@ -79,7 +79,6 @@ impl Provider {
         if self.decode(&mut shared.lock(), &mut v, &mut events) {
             // Its own, as its client's writer tells a response of another's.
             said.push(Output::ResponseStart {
-                id: None,
                 native: Some(NativeFields::new(NAME, Map::new())),
             });
         }

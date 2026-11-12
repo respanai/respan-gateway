@@ -161,13 +161,13 @@ fn a_session_of_nothing_but_its_model_is_no_frame() {
     let respond = Input::Respond { native: None };
     // A session a plugin opens with says something: it is written, typed.
     let mut capped = Session::default();
-    capped.max_output_tokens = Some(100);
+    capped.instructions = Some("Be brief.".into());
     let written = sent(&[Input::Session(capped), session, respond]).expect("written");
     assert_eq!(
         written,
         [
             json!({"type": "session.update", "session": {"type": "realtime",
-                "max_output_tokens": 100}}),
+                "instructions": "Be brief."}}),
             json!({"type": "response.create"})
         ]
     );
@@ -290,7 +290,7 @@ fn every_server_event_is_written_back_as_it_came() {
         json!({"type": "response.done", "response": {"status": "failed",
             "status_details": {"type": "failed", "error": {"code": "x"}}}}),
         json!({"type": "response.done", "response": {"status": "incomplete",
-            "status_details": {"type": "incomplete", "reason": "something_new"}}}),
+            "status_details": {"type": "incomplete", "reason": "max_output_tokens"}}}),
         json!({"type": "error", "event_id": "s3", "error": {"type": "invalid_request_error",
             "code": "invalid_value", "message": "no", "param": null, "event_id": "e9"}}),
         json!({"type": "rate_limits.updated", "rate_limits": []}),
@@ -307,7 +307,10 @@ fn every_server_event_is_written_back_as_it_came() {
         statuses[..3],
         [&Status::Completed, &Status::Interrupted, &Status::Failed]
     );
-    assert!(matches!(statuses[3], Status::Native { reason, .. } if reason == "incomplete"));
+    assert!(
+        matches!(statuses[3], Status::Native { reason, fallback, .. }
+        if reason == "incomplete" && **fallback == Status::Completed)
+    );
     let Output::Usage(used) = &events[12] else {
         panic!("{events:?}")
     };
@@ -353,10 +356,7 @@ fn usage_a_filter_edits_is_written_in_the_response_done() {
 #[test]
 fn a_response_of_another_format_is_told_of_as_openai_does() {
     let response = [
-        Output::ResponseStart {
-            id: None,
-            native: None,
-        },
+        Output::ResponseStart { native: None },
         Output::Audio {
             audio: respan_gateway_realtime::Audio {
                 data: Bytes::from_static(&[0; 4]),

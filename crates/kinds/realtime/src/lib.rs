@@ -26,7 +26,7 @@ use bytes::Bytes;
 use respan_gateway_core::{Fault, FormatId, NativeFields, NativeValue};
 use serde_json::Value;
 
-pub use respan_gateway_conversation::{Message, Tool, ToolChoice};
+pub use respan_gateway_conversation::{Message, Tool};
 
 /// One event the client sends the provider.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +52,7 @@ pub enum Input {
     },
     /// A whole message added to the conversation, such as the user's typed
     /// text.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     Message {
         /// The message: its role and content.
         message: Message,
@@ -60,15 +61,19 @@ pub enum Input {
         native: Option<NativeFields>,
     },
     /// What a tool answered the model's call `id`.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     ToolResult(ToolResult),
     /// Answer now. Some specs imply it instead, by a complete turn, the
     /// end of an activity, or a tool's answer.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     Respond {
         /// Fields the kind has no place for, such as a response's own
         /// instructions or an out-of-band response.
         native: Option<NativeFields>,
     },
     /// Stop the response being made.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none; gemini-live
+    // emulates it.
     Cancel {
         /// The event's fields the kind has no place for.
         native: Option<NativeFields>,
@@ -118,32 +123,39 @@ pub fn set_model(
 #[non_exhaustive]
 pub struct Session {
     /// What the session is for: a conversation unless it says.
+    // WARN: openai-live and phonic-sts cannot transcribe alone, nor
+    // mistral-realtime converse.
     pub purpose: Option<Purpose>,
     /// The model, as its provider names it, without any path prefix a spec adds.
     pub model: Option<String>,
     /// Instructions for the model.
+    // WARN: mistral-realtime has none.
     pub instructions: Option<String>,
     /// What the model answers in.
+    // WARN: mistral-realtime has none, and openai-live and phonic-sts
+    // answer in audio alone.
     pub output: Option<Modality>,
     /// The voice, as the provider names it.
+    // WARN: mistral-realtime has none.
     pub voice: Option<String>,
     /// The format of the user's audio, where the spec declares it per
     /// session; each [`Audio`] says its own.
     pub input_audio: Option<AudioFormat>,
     /// The format of the model's audio.
+    // WARN: mistral-realtime has none.
     pub output_audio: Option<AudioFormat>,
     /// Who decides when the user's turn ends.
     pub turns: Option<Turns>,
     /// Whether the user's audio is transcribed ([`Output::InputTranscript`]).
+    // WARN: only openai-realtime and gemini-live can turn it off.
     pub input_transcription: Option<bool>,
     /// Whether the model's audio is transcribed ([`Output::Transcript`]).
+    // WARN: only gemini-live can turn it off, and mistral-realtime has no
+    // audio of the model's.
     pub output_transcription: Option<bool>,
     /// The tools the model may call; `Some(vec![])` takes them all away.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     pub tools: Option<Vec<Tool>>,
-    /// Whether, or which, tool the model must call.
-    pub tool_choice: Option<ToolChoice>,
-    /// Most tokens in one response.
-    pub max_output_tokens: Option<u64>,
     /// The fields the kind has no place for, such as noise
     /// reduction or context window compression.
     pub native: Option<NativeFields>,
@@ -185,13 +197,11 @@ pub enum Turns {
 #[non_exhaustive]
 pub struct Vad {
     /// Silence that ends a turn, in milliseconds.
+    // WARN: openai-live and phonic-sts have none.
     pub silence_ms: Option<u32>,
     /// Audio kept from before speech was detected, in milliseconds.
+    // WARN: openai-live and phonic-sts have none.
     pub prefix_ms: Option<u32>,
-    /// Whether a turn's end makes the model answer.
-    pub respond: Option<bool>,
-    /// Whether the user's speech stops the model's response (barge-in).
-    pub interrupt: Option<bool>,
     /// Tuning the kind has no place for, such as thresholds, detector types
     /// and sensitivities.
     pub native: Option<NativeFields>,
@@ -300,15 +310,19 @@ pub enum Output {
     /// A configuration took effect.
     Updated(Session),
     /// The user began speaking: a client stops playing the model's audio.
+    // WARN: mistral-realtime and openai-live have none.
     SpeechStarted {
         /// Where in the user's audio, in milliseconds, if the provider says.
+        // WARN: phonic-sts has none.
         at_ms: Option<u64>,
         /// The event's fields the kind has no place for.
         native: Option<NativeFields>,
     },
     /// The user stopped speaking.
+    // WARN: mistral-realtime and openai-live have none.
     SpeechStopped {
         /// Where in the user's audio, in milliseconds, if the provider says.
+        // WARN: phonic-sts has none.
         at_ms: Option<u64>,
         /// The event's fields the kind has no place for.
         native: Option<NativeFields>,
@@ -323,13 +337,13 @@ pub enum Output {
         native: Option<NativeFields>,
     },
     /// A response begins.
+    // WARN: mistral-realtime and openai-live have none.
     ResponseStart {
-        /// Its id, if the provider gives one.
-        id: Option<String>,
-        /// The event's fields the kind has no place for.
+        /// The event's fields the kind has no place for, such as its id.
         native: Option<NativeFields>,
     },
     /// The next chunk of the model's audio.
+    // WARN: mistral-realtime has none.
     Audio {
         /// The audio.
         audio: Audio,
@@ -337,6 +351,7 @@ pub enum Output {
         native: Option<NativeFields>,
     },
     /// The next text of the model's answer, in [`Modality::Text`].
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     Text {
         /// The text.
         text: String,
@@ -344,6 +359,7 @@ pub enum Output {
         native: Option<NativeFields>,
     },
     /// The next text of the model's audio, transcribed.
+    // WARN: mistral-realtime has none.
     Transcript {
         /// The text.
         text: String,
@@ -352,6 +368,7 @@ pub enum Output {
     },
     /// The model calls tool `name`; its answer is an [`Input::ToolResult`]
     /// naming `id`.
+    // WARN: mistral-realtime, openai-live and phonic-sts have none.
     ToolCall {
         /// The call's id.
         id: String,
@@ -363,11 +380,15 @@ pub enum Output {
         native: Option<NativeFields>,
     },
     /// Usage the provider reports for a response, as an increment.
+    // WARN: openai-live and phonic-sts bill by duration instead.
     Usage(Usage),
     /// Seconds of the session the provider bills, as an increment, where it
     /// bills by duration rather than by token.
+    // WARN: openai-realtime, gemini-live and mistral-realtime bill by token
+    // instead.
     Seconds(f64),
     /// The response ended.
+    // WARN: mistral-realtime and openai-live have none.
     ResponseDone {
         /// How.
         status: Status,
@@ -418,14 +439,15 @@ pub enum Status {
     /// It was complete, tool calls included.
     Completed,
     /// The client cancelled it ([`Input::Cancel`]).
+    // WARN: phonic-sts has none.
     Cancelled,
     /// The user spoke over it.
     Interrupted,
-    /// The token limit.
-    Length,
     /// A safety filter.
+    // WARN: phonic-sts has none.
     Filtered,
     /// The provider failed.
+    // WARN: phonic-sts has none.
     Failed,
     /// A reason the kind has no form for, as `format` names it; another
     /// format writes `fallback`.
