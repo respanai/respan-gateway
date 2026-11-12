@@ -1,6 +1,6 @@
 //! A Phonic `config` as the kind's [`Session`], both ways.
 
-use respan_gateway_realtime::{AudioFormat, Encoding, Session};
+use respan_gateway_realtime::{AudioFormat, Encoding, Session, Tool, Turns};
 use serde_json::{Value, json};
 
 use super::NAME;
@@ -11,6 +11,8 @@ const INSTRUCTIONS: &[&str] = &["system_prompt"];
 const VOICE: &[&str] = &["voice_id"];
 const INPUT_FORMAT: &[&str] = &["input_format"];
 const OUTPUT_FORMAT: &[&str] = &["output_format"];
+const MANUAL: &[&str] = &["push_to_talk"];
+const TOOLS: &[&str] = &["tools"];
 
 /// What `v`, a `config` less its type, says of the session; what is left of
 /// `v`, such as its agent, tools and turn taking, is the session's native.
@@ -29,7 +31,8 @@ pub(super) fn decode(mut v: Value) -> Session {
 }
 
 /// The `config` of `s`, its audio formats those Phonic takes, but its
-/// native, which is its event's.
+/// native, which is its event's: turns the client ends are its push to
+/// talk, and each tool one its client runs, defined for the conversation.
 pub(super) fn encode(s: &Session) -> Value {
     let mut v = json!({"type": "config"});
     let mut put = |path: &[&str], value: Option<Value>| {
@@ -42,7 +45,25 @@ pub(super) fn encode(s: &Session) -> Value {
     put(VOICE, s.voice.as_ref().and_then(text));
     put(INPUT_FORMAT, s.input_audio.and_then(format_json));
     put(OUTPUT_FORMAT, s.output_audio.and_then(format_json));
+    put(
+        MANUAL,
+        (s.turns == Some(Turns::Manual)).then(|| true.into()),
+    );
+    let tools = s.tools.as_ref().filter(|tools| !tools.is_empty());
+    put(TOOLS, tools.map(|tools| tools.iter().map(tool).collect()));
     v
+}
+
+/// A tool the client runs, as Phonic defines one in a `config`: its
+/// arguments always match the schema, as Phonic takes no other.
+fn tool(tool: &Tool) -> Value {
+    let function = json!({
+        "name": tool.name,
+        "description": tool.description.as_deref().unwrap_or_default(),
+        "parameters": tool.parameters,
+        "strict": true,
+    });
+    json!({"type": "custom_websocket", "tool_schema": {"type": "function", "function": function}})
 }
 
 /// Whether Phonic takes audio in `format`: 16-bit PCM at 8, 16, 24 or

@@ -66,7 +66,8 @@ is `Seconds` beyond the last, beside the event, which stays native, as
 delegation and the rest do. It is full duplex: no turns or responses.
 
 `PhonicSts` does the same for Phonic's speech-to-speech: its `config` (its
-model, system prompt, voice and both audio formats), audio both ways, the
+model, system prompt, voice and both audio formats), audio both ways, its
+tools' calls (`tool_call`) and answers (`tool_call_output`), the
 user's turns (`user_started_speaking`, `user_finished_speaking`) and
 transcript (`input_text`, a word at a time, spaced as it is told), the
 model's turns
@@ -74,7 +75,11 @@ model's turns
 `interrupted_response`) and the transcript each audio chunk carries, and
 errors. It bills a conversation by its minutes and says no usage, so the
 seconds since its `conversation_created` are `Seconds` at each frame but
-its audio, and at its end. Tools, `say`, `generate_reply` and the rest stay native.
+its audio, and at its end. A tool's call ends the response it is made in,
+and the audio after it begins another, so a response's start or end that
+Phonic did not say is made up, and not written to its own client. A
+`config`'s own tools and push to talk, `say`, `generate_reply` and the rest
+stay native.
 
 `OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
 too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
@@ -142,14 +147,22 @@ What one spec has and the other has not is emulated, dropped or refused:
   client's if it takes it, else 44.1 kHz PCM; a later session that changes
   anything closes it 1008. Audio is sent in chunks of at most 40 ms, the
   longest it takes. A voice is kept only from a Phonic client, as another
-  format's names another vendor's. Voice detection and transcription
-  settings are dropped; anything else it has none of, such as tools, text
-  output, commits, messages and responses, is refused.
+  format's names another vendor's. Each tool is one its client runs,
+  defined for the conversation, its arguments always matching its schema;
+  a tool's answer is written as it comes, and the response asked for after
+  it dropped, as Phonic answers it itself. Turns the client ends are its
+  push to talk: the user's first audio of a turn unmutes it, and its commit
+  mutes it, with a second of silence, which Phonic waits for before it
+  answers. It hears audio only as fast as it plays, so audio sent faster is
+  cut at its commit. Voice detection and transcription settings are
+  dropped; anything else it has none of, such as text output, a tool choice
+  but `auto`, a commit under its voice detection, messages, cancels and a
+  response to nothing it answers, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
   audio chunk, or with an empty one at its turn's end, the user's a word at a time, another format's parts of a
   word joined, not whole, and usage is not written;
-  text and tools' calls are refused.
+  text, and a tool's call whose arguments are not JSON, are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a
