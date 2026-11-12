@@ -214,8 +214,8 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
         assert!(matches!(acknowledged, Output::Updated(s)
             if s.model.as_deref() == Some("m") && s.instructions.is_none()));
     }
-    // An OpenAI client's commit under voice detection is dropped, and a
-    // message but the user's text, or a response to nothing, is a turn.
+    // An OpenAI client's commit and a response to nothing under voice
+    // detection are dropped, and a message but the user's text is a turn.
     let system = Input::Message {
         message: Message::new(Role::System, "Be brief."),
         native: None,
@@ -233,12 +233,11 @@ fn a_session_is_set_up_first_and_then_only_acknowledged() {
         .iter()
         .map(|f| serde_json::from_slice(f).unwrap_or_default())
         .collect();
-    assert_eq!(turns.len(), 2);
+    assert_eq!(turns.len(), 1);
     assert_eq!(
         turns[0]["clientContent"]["turns"][0]["parts"][0]["text"],
         "Be brief."
     );
-    assert_eq!(turns[1], json!({"clientContent": {"turnComplete": true}}));
 }
 
 #[test]

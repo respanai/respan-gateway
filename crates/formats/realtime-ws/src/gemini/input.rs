@@ -187,7 +187,9 @@ fn message(turn: &Value) -> Option<Message> {
     Some(message)
 }
 
-fn message_json(m: &Message) -> Value {
+/// A message as a turn; `None` for one with no part Gemini takes, as it
+/// refuses a turn of no parts.
+fn message_json(m: &Message) -> Option<Value> {
     // WARN: Gemini Live's turns are the user's or the model's, so a message
     // of another role, such as a system message, is the user's.
     let role = if m.role == Role::Assistant {
@@ -195,7 +197,8 @@ fn message_json(m: &Message) -> Value {
     } else {
         "user"
     };
-    // WARN: a part but text, such as an image, is dropped.
+    // WARN: a part but text, such as an image or a tool call, is dropped,
+    // and a message of no other part with it.
     let part = |c: &Content| match c {
         Content::Text { text, native, .. } if native.is_none() => Some(json!({"text": text})),
         Content::Native(NativeValue { format, value }) if **format == *NAME => {
@@ -204,9 +207,12 @@ fn message_json(m: &Message) -> Value {
         _ => None,
     };
     let parts: Vec<Value> = m.content.iter().filter_map(part).collect();
+    if parts.is_empty() {
+        return None;
+    }
     let mut v = json!({"role": role, "parts": parts});
     merge(&mut v, own(&m.native));
-    v
+    Some(v)
 }
 
 /// A function's answer: its response, as JSON text, and its other fields,
@@ -322,6 +328,10 @@ impl Provider {
                     "a Gemini Live session begins with its setup",
                 ));
             }
+            Input::Message { message, .. } if message_json(message).is_none() => {
+                self.answered = answered;
+                return Ok(());
+            }
             Input::Message { native, .. } => {
                 match &mut self.held {
                     Some(Held::Messages(held)) => held.push(event.clone()),
@@ -353,7 +363,14 @@ impl Provider {
                 }
                 return Ok(());
             }
-            Input::Respond { .. } if answered && self.held.is_none() => return Ok(()),
+            // WARN: under its voice detection Gemini answers each turn
+            // itself, so another format's response to nothing held is
+            // dropped.
+            Input::Respond { native }
+                if self.held.is_none() && (answered || (!shaped(native) && !self.manual())) =>
+            {
+                return Ok(());
+            }
             Input::Respond { native } => (self.respond(native), native),
             _ => {
                 self.flush(out);
@@ -375,7 +392,10 @@ impl Provider {
                     }
                     // WARN: the provider's voice detection ends the user's
                     // turns, so a commit under it is dropped.
-                    Input::Commit { .. } if !manual => return Ok(()),
+                    Input::Commit { .. } if !manual => {
+                        self.answered = true;
+                        return Ok(());
+                    }
                     Input::Commit { native } => {
                         (self.activity, self.answered) = (false, true);
                         (json!({"realtimeInput": {"activityEnd": {}}}), native)
@@ -515,7 +535,7 @@ fn messages_json(messages: &[Input]) -> Value {
     let mut kept = Map::new();
     for event in messages {
         if let Input::Message { message, native } = event {
-            turns.push(message_json(message));
+            turns.extend(message_json(message));
             if let Some(fields) = own(native) {
                 kept.extend(fields.clone());
             }
