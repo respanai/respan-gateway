@@ -319,15 +319,11 @@ impl Schema for AnthropicMessages {
         let thinking = write_thinking(chat);
         // Anthropic's `max_tokens` must exceed the thinking budget.
         let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
-        let default = match budget {
-            Some(budget) if budget >= DEFAULT_MAX_TOKENS => {
-                budget.saturating_add(DEFAULT_MAX_TOKENS)
-            }
-            _ => DEFAULT_MAX_TOKENS,
-        };
         let mut v = Map::new();
-        let (max_tokens, temperature, top_p) = claude_sampling(&chat.options, budget);
-        v.insert("max_tokens".into(), max_tokens.unwrap_or(default).into());
+        let o = &chat.options;
+        let max = o.max_output_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+        let (max_tokens, temperature, top_p) = claude_sampling(o, Some(max), budget);
+        v.insert("max_tokens".into(), max_tokens.unwrap_or(max).into());
         set(
             &mut v,
             "system",

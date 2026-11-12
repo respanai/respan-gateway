@@ -250,7 +250,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         );
     }
     // Converse's temperature is at most 1, too.
-    let (max, temperature, top_p) = claude_sampling(o, budget);
+    let (max, temperature, top_p) = claude_sampling(o, o.max_output_tokens, budget);
     let mut config = Map::new();
     set(&mut config, "maxTokens", max.map(Into::into));
     set(&mut config, "temperature", temperature.map(Into::into));

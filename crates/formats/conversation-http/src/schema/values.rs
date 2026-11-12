@@ -671,15 +671,14 @@ pub(crate) const EFFORT_BUDGETS: &[(&str, u64)] = &[
     ("max", 16384),
 ];
 
-/// The least effort whose budget covers `tokens`, at most `high`, which
-/// every model that takes an effort has.
+/// The least effort whose budget ([`EFFORT_BUDGETS`]) covers `tokens`, at
+/// most `high`, which every model that takes an effort has.
 pub(crate) fn effort_for(tokens: u64) -> Effort {
-    let near = EFFORT_BUDGETS[..3].iter().find(|(_, b)| tokens <= *b);
     match tokens {
         0 => Effort::Off,
-        _ => near
-            .and_then(|(e, _)| parse_effort(e))
-            .unwrap_or(Effort::High),
+        1..=1024 => Effort::Low,
+        1025..=2048 => Effort::Medium,
+        _ => Effort::High,
     }
 }
 
@@ -690,16 +689,16 @@ pub(crate) fn budget_for(effort: Effort) -> u64 {
     near.map_or(EFFORT_BUDGETS[0].1, |(_, b)| *b)
 }
 
-/// The output limit, temperature and top_p of `o` as Claude takes them: a
-/// temperature at most 1, and beside a thinking `budget` a limit above it,
-/// a temperature of 1 and a top_p of at least 0.95.
+/// The output limit `max`, temperature and top_p of `o` as Claude takes
+/// them beside a thinking `budget`.
 // WARN: a limit at or under the budget is raised by it, a temperature above
 // 1 is 1, and beside a budget another temperature or top_p is dropped.
 pub(crate) fn claude_sampling(
     o: &GenerationOptions,
+    max: Option<u64>,
     budget: Option<u64>,
 ) -> (Option<u64>, Option<f64>, Option<f64>) {
-    let max = o.max_output_tokens.map(|max| match budget {
+    let max = max.map(|max| match budget {
         Some(budget) if max <= budget => budget.saturating_add(max),
         _ => max,
     });

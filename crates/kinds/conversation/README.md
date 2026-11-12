@@ -73,7 +73,7 @@ budget, and the two do not convert exactly: an effort buys different
 thinking from different models. So an effort travels between formats that
 have efforts, a budget between formats that have budgets, only `Off` is both,
 and a format that has only one writes the nearest of the other, by the
-budgets Anthropic gives its efforts (a plugin that wants another policy sets
+budgets the gateway gives a Claude's efforts (a plugin that wants another policy sets
 the one the provider takes, in a filter). A vendor's value the kind has no
 name for (such as an effort `max`) stays native to its format.
 `Content` includes text, reasoning, tool calls/results, images, audio, documents,

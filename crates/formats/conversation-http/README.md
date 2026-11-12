@@ -32,8 +32,8 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 What a format has no form for stays native to it (`NativeFields`,
 `Content::Native`, `Output::Native`), is written only by that format, and is
 dropped by another, silently: what has meaning beyond its format belongs
-in the kind. A message whose every part a format drops is left out. A call to a
-provider of the client's own format carries the client's spec headers and
+in the kind. A message whose every part a format drops is left out. A call
+to a provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
 
@@ -188,13 +188,13 @@ to its own format unchanged, and is dropped by another.
 
 An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one
-writes the nearest, by the budgets the gateway gives a Claude's efforts (`low` 1024, `medium`
-2048, `high` 4096, `xhigh` 8192; a budget is at most `high`), Converse for a
-Claude only. Asked for both at once, a format writes the one it takes, the
-effort if it takes either. Beside a budget, Anthropic and a Claude on
-Converse drop a temperature but 1 and a `top_p` under 0.95, and their
-`max_tokens` exceeds the budget (a smaller one is raised by it). Gemini levels are
-read in either case and written in lower case.
+writes the nearest, by the budgets the gateway gives a Claude's efforts
+(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192; a budget is at most
+`high`), Converse for a Claude only. Asked for both at once, a format writes
+the one it takes, the effort if it takes either. Beside a budget, Anthropic
+and a Claude on Converse drop a temperature but 1 and a `top_p` under 0.95,
+and their `max_tokens` exceeds the budget (a smaller one is raised by it).
+Gemini levels are read in either case and written in lower case.
 
 ## Finish
 
