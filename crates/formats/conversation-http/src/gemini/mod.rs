@@ -85,17 +85,18 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, merge_details,
-    merge_fields, native_of, set, unwritable_content, usage_extra,
+    Asked, Names, Schema, UsageFields, check_usage, count, merge_details, merge_fields, set,
+    unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode, request::Parts as RequestHead};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use serde_json::{Map, Value, json};
+use std::marker::PhantomData;
 
 use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
@@ -123,19 +124,19 @@ const ROLES: Names<respan_gateway_conversation::Role> = Names(
         ("user", respan_gateway_conversation::Role::User),
         ("model", respan_gateway_conversation::Role::Assistant),
     ],
-    GEMINI,
+    PhantomData,
 );
 
 /// The reasons the kind has; `STOP` is also a tool use, which a response
 /// that made calls says so.
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, GeminiGenerate> = Names(
     &[
         ("STOP", Finish::Stop),
         ("MAX_TOKENS", Finish::Length),
         ("STOP", Finish::ToolUse),
         ("SAFETY", Finish::Filtered),
     ],
-    GEMINI,
+    PhantomData,
 );
 
 /// The finish reason of a prompt Gemini blocked, which has no candidate.
@@ -156,13 +157,13 @@ fn finish_of(reason: &str) -> Finish {
         | "NO_IMAGE"
         | "ESCALATION"
         | "PUP_LIMITED_DISABLED"
-        | "LANGUAGE" => Finish::native_or(GEMINI, reason, Finish::Filtered),
-        "CONTINUATION" => Finish::native_or(GEMINI, reason, Finish::Length),
+        | "LANGUAGE" => Finish::native(GeminiGenerate::native(reason), Some(Finish::Filtered)),
+        "CONTINUATION" => Finish::native(GeminiGenerate::native(reason), Some(Finish::Length)),
         "STOP" | "MAX_TOKENS" | "SAFETY" => FINISH.finish(reason),
         // OTHER, FINISH_REASON_UNSPECIFIED, MALFORMED_FUNCTION_CALL,
         // UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MALFORMED_RESPONSE,
         // MISSING_THOUGHT_SIGNATURE, and any Google adds.
-        _ => Finish::native_or(GEMINI, reason, Finish::Stop),
+        _ => Finish::native(GeminiGenerate::native(reason), Some(Finish::Stop)),
     }
 }
 
@@ -303,8 +304,8 @@ impl Schema for GeminiGenerate {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let chat = &*crate::schema::own_shapes(chat, GEMINI);
-        let mut native = chat.native.fields_for(GEMINI);
+        let chat = &*crate::schema::own_shapes::<Self>(chat);
+        let mut native = GeminiGenerate::fields(&chat.native).clone();
         native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = self.encode_json(chat)?;
         v.extend(native);
@@ -367,11 +368,12 @@ impl Schema for GeminiGenerate {
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
-        chat.native = native_of(GEMINI, rest);
+        chat.native = GeminiGenerate::native(rest);
         read_messages(v, &mut chat);
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat.native = native_of(GEMINI, std::mem::take(chat.native.own_mut(GEMINI)));
+        chat.native =
+            GeminiGenerate::native(std::mem::take(GeminiGenerate::fields_mut(&mut chat.native)));
         chat
     }
 
@@ -426,12 +428,11 @@ impl Schema for GeminiGenerate {
                 }
                 // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
                 AssembledItem::Signature { .. } => {}
-                AssembledItem::BlockFields { block, native } if *native.format == *GEMINI => {
-                    fields.push((*block, native.fields.clone()));
+                AssembledItem::BlockFields { block, native } if Self::value(native).is_some() => {
+                    fields.push((*block, Self::fields(native).clone()));
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if **format == *GEMINI =>
-                {
+                AssembledItem::Native(n) if Self::value(n).is_some() => {
+                    let raw = Self::value(n).unwrap_or_default();
                     match raw["type"].as_str() {
                         Some("part") => parts.push(raw["part"].clone()),
                         _ if body.add(raw) => {}
@@ -447,7 +448,7 @@ impl Schema for GeminiGenerate {
     }
 
     /// A client of another format names its reasoning by an effort: Gemini
-    /// thinks as its model does for it ([`effort_thinking`]).
+    /// thinks as its model does for it (`effort_thinking`).
     fn translated(input: &Input, v: &mut Map<String, Value>) {
         effort_thinking(input.model.as_deref().unwrap_or_default(), v);
     }

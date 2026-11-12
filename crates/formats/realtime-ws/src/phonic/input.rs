@@ -1,17 +1,17 @@
 //! What the client says: Phonic's client messages as the kind's [`Input`],
 //! read at the client's edge and written at the provider's.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
 use serde_json::{Value, json};
 
-use super::{Applied, Asked, DEFAULT_FORMAT, NAME, session};
+use super::{Applied, Asked, DEFAULT_FORMAT, Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, string, take, text, untranslatable_input};
 use crate::session::Say;
 
 /// The longest audio chunk Phonic takes, in milliseconds.
@@ -52,12 +52,12 @@ impl Client {
                         data,
                         format: self.input,
                     },
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 })
             }
             _ => None,
         };
-        out.push(event.unwrap_or_else(|| Input::native(NAME, v)));
+        out.push(event.unwrap_or_else(|| Input::Native(Native::json::<Key>(v))));
         Ok(())
     }
 }
@@ -94,7 +94,7 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::admit(NAME, event) else {
+        let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
         for v in self.encode(&event)? {
@@ -119,14 +119,15 @@ impl Provider {
                 };
                 let chunks = data.chunks(chunk_bytes(self.input)).map(|chunk| {
                     let mut v = json!({"type": "audio_chunk", "audio": json::base64(chunk)});
-                    merge(&mut v, own(native));
+                    merge(&mut v, native.fields::<Key>());
                     v
                 });
                 Ok(chunks.collect())
             }
-            Input::Native(NativeValue { format, value }) if **format == *NAME => {
-                Ok(vec![Value::clone(value)])
-            }
+            Input::Native(native) => match native.value::<Key>() {
+                Some(value) => Ok(vec![value.clone()]),
+                None => refuse("this event"),
+            },
             // Commits, messages, tools' answers, responses and cancels: it
             // has none of them as the kind has them.
             _ => refuse("this event"),
@@ -157,7 +158,7 @@ impl Provider {
         s.output_audio = s.output_audio.filter(|f| session::takes(*f));
         self.input = s.input_audio.unwrap_or(DEFAULT_FORMAT);
         let mut v = session::encode(&s);
-        merge(&mut v, own(&s.native));
+        merge(&mut v, s.native.fields::<Key>());
         s.input_audio = Some(self.input);
         s.output_audio = Some(s.output_audio.unwrap_or(DEFAULT_FORMAT));
         *self.applied.lock() = Some(s);

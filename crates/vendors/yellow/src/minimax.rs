@@ -1,7 +1,7 @@
 //! MiniMax's OpenAI-compatible chat and H3 image API.
 
 use respan_gateway_conversation::MediaSource;
-use respan_gateway_conversation_http::fields::{kept, media_url};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
@@ -62,7 +62,7 @@ fn validate(input: &mut image::Input) -> Result<(), Fault> {
             "MiniMax edits accept at most 16 reference images",
         ));
     }
-    let fields = kept(OpenAiImages::NAME, &input.native);
+    let fields = OpenAiImages::fields(&input.native);
     if fields.get("background").and_then(Value::as_str) == Some("transparent") {
         return Err(Fault::bad_request(
             "MiniMax images do not support transparent backgrounds",
@@ -112,7 +112,7 @@ mod tests {
     use super::*;
     use respan_gateway_conversation::Media;
     use respan_gateway_core::{
-        ClientContext, Gateway, NativeFields, Plugin, Provider, Response, Result, async_trait,
+        ClientContext, Gateway, Native, Plugin, Provider, Response, Result, async_trait,
     };
     use respan_gateway_http::{
         Body,
@@ -414,17 +414,12 @@ mod tests {
     #[test]
     fn validation_respects_native_identity_and_converts_file_references() {
         let mut input = image::Input::new("fox");
-        input.native = Some(NativeFields::new(
-            "another-format",
-            json!({"background":"transparent"})
-                .as_object()
-                .expect("object")
-                .clone(),
-        ));
+        let transparent = json!({"background": "transparent"});
+        input.native = Native::json::<()>(transparent.clone());
         validate(&mut input).expect("foreign native fields ignored");
-        input.native.as_mut().expect("native").format = OpenAiImages::NAME.into();
+        input.native = OpenAiImages::native(transparent);
         assert!(validate(&mut input).is_err());
-        input.native = None;
+        input.native = Native::default();
         for (count, accepted) in [(0, false), (1, true), (10, true), (11, false)] {
             input.count = Some(count);
             assert_eq!(validate(&mut input).is_ok(), accepted);

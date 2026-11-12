@@ -1,14 +1,16 @@
 //! Events as Responses, whole or streamed: the encoders.
 
 use super::decode::SEALED;
-use super::{RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of};
+use super::{RESPONSE_FIELDS, USAGE, USAGE_FIELDS, response_body, status_of};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
 use crate::schema::{
     Gate, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
 };
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Encoder, raw::RawReply};
 use respan_gateway_sse::event;
@@ -98,13 +100,16 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
     let (mut usage_more, mut changed) = (Map::new(), Map::new());
     for item in whole.items() {
         match item {
-            AssembledItem::BlockFields { block, native } if *native.format == *RESPONSES => {
-                fields.push((*block, native.fields.clone()));
+            AssembledItem::BlockFields { block, native }
+                if OpenAiResponses::value(native).is_some() =>
+            {
+                fields.push((*block, OpenAiResponses::fields(native).clone()));
             }
-            AssembledItem::BlockNative { block, native } if *native.format == *RESPONSES => {
-                annotations.push((*block, Value::clone(&native.value)));
+            AssembledItem::BlockNative { block, native } => {
+                annotations.extend(OpenAiResponses::value(native).map(|v| (*block, v.clone())));
             }
-            AssembledItem::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
+            AssembledItem::Native(n) => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
                 if let Some(more) = fields_only(raw, USAGE_FIELDS) {
                     merge_into(&mut usage_more, more);
                 } else if let Some(more) = fields_only(raw, RESPONSE_FIELDS) {
@@ -156,7 +161,8 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
             }
             // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
             AssembledItem::Signature { .. } => {}
-            AssembledItem::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
+            AssembledItem::Native(n) if OpenAiResponses::value(n).is_some() => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
                 match raw["type"].as_str() {
                     Some("response.output_item.done") => output.push(raw["item"].clone()),
                     // The rest of an item is in its done event, or in a block.
@@ -625,23 +631,26 @@ impl Events {
                     slot.fields.insert(SEALED.into(), data.as_str().into());
                 }
             }
-            Output::BlockFields { block, native } if *native.format == *RESPONSES => {
+            Output::BlockFields { block, native } if OpenAiResponses::value(native).is_some() => {
                 // Fields of a block that is open join its item: they are the
                 // done item's.
+                let native = OpenAiResponses::fields(native);
                 match self.blocks.iter_mut().find(|b| b.block == *block) {
-                    Some(slot) => merge_into(&mut slot.fields, &native.fields),
-                    None => self.fields.push((*block, native.fields.clone())),
+                    Some(slot) => merge_into(&mut slot.fields, native),
+                    None => self.fields.push((*block, native.clone())),
                 }
             }
-            Output::BlockNative { block, native } if *native.format == *RESPONSES => {
-                self.annotate(*block, &native.value, out)?;
+            Output::BlockNative { block, native } if OpenAiResponses::value(native).is_some() => {
+                let raw = OpenAiResponses::value(native).unwrap_or_default();
+                self.annotate(*block, raw, out)?;
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
+            Output::Native(n) if OpenAiResponses::value(n).is_some() => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
                 if let Some(fields) = fields_only(raw, USAGE_FIELDS) {
                     merge_into(&mut self.usage_more, fields);
                 } else if let Some(fields) = fields_only(raw, RESPONSE_FIELDS) {
                     merge_into(&mut self.changed, fields);
-                } else if let Value::String(data) = &**raw {
+                } else if let Value::String(data) = raw {
                     // An event that could not be read, as it came.
                     out.extend_from_slice(event(None, data).as_bytes());
                 } else {

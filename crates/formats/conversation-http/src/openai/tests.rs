@@ -1,5 +1,8 @@
 use super::*;
+use crate::Schema;
+use crate::openai::OpenAiChat;
 use respan_gateway_core::Fault;
+use respan_gateway_core::Native;
 
 use respan_gateway_http::{Decoder, Sse};
 
@@ -10,7 +13,6 @@ use crate::gemini::{GeminiGenerate, SIGNATURE_PLACEHOLDER};
 use crate::responses::OpenAiResponses;
 use crate::schema::Held;
 use respan_gateway_conversation::{Content, Media, MediaSource, Message, Tool, ToolChoice};
-use respan_gateway_core::NativeFields;
 use respan_gateway_core::{Details, ErrorCode};
 
 use respan_gateway_http::http::StatusCode;
@@ -164,7 +166,7 @@ fn real_openai_chunks_decode_to_text_and_tool_calls() {
     if let Output::Start(s) = &mut start {
         let fields = json!({ "created": 1, "system_fingerprint": "fp" });
         let fields = fields.as_object().cloned().unwrap_or_default();
-        s.native = Some(NativeFields::new(OPENAI, fields));
+        s.native = OpenAiChat::native(fields);
     }
     assert_eq!(
         out,
@@ -184,10 +186,10 @@ fn real_openai_chunks_decode_to_text_and_tool_calls() {
 
 #[test]
 fn a_native_finish_is_written_as_its_fallback() {
-    let full = Finish::native_or("other", "context_full", Finish::Length);
+    let full = Finish::native(Native::json::<()>("context_full"), Some(Finish::Length));
     let body = body_of(&[Output::start("x", "m"), Output::finished(full)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "length");
-    let paused = Finish::native("other", "pause_turn");
+    let paused = Finish::native(Native::json::<()>("pause_turn"), None);
     let body = body_of(&[Output::start("x", "m"), Output::finished(paused)]).expect("a body");
     assert_eq!(body["choices"][0]["finish_reason"], "stop");
 }
@@ -252,7 +254,7 @@ fn a_choice_with_logprobs_is_other_content() {
     assert_eq!(
         out[1..],
         [
-            Output::native(OPENAI, rest),
+            Output::Native(OpenAiChat::native(rest)),
             Output::block_start(0, Block::Text),
             Output::text(0, "Hi"),
         ]
@@ -266,7 +268,10 @@ fn a_choices_unknown_field_stays_native_and_goes_back_as_it_came() {
     let rest = json!({ "choices": [{ "index": 0, "x_vendor": "stop" }] });
     assert_eq!(
         out[1..],
-        [Output::native(OPENAI, rest), Output::finished(Finish::Stop)]
+        [
+            Output::Native(OpenAiChat::native(rest)),
+            Output::finished(Finish::Stop)
+        ]
     );
     let stream = stream_of(&out, false).expect("a stream");
     assert!(stream.contains("\"x_vendor\":\"stop\""), "{stream}");
@@ -294,7 +299,7 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
         panic!("{out:?}");
     };
     assert_eq!(
-        start.native.own(OPENAI)["x_vendor"],
+        OpenAiChat::fields(&start.native)["x_vendor"],
         json!({ "usage": { "prompt_tokens": 3 } })
     );
     assert_eq!(
@@ -316,7 +321,7 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let chat = OpenAiChat.decode_json(&body);
     assert_eq!(chat.messages[0].content, [Content::from("ok")]);
     assert_eq!(
-        chat.messages[0].native.own(OPENAI).get("reasoning_content"),
+        OpenAiChat::fields(&chat.messages[0].native).get("reasoning_content"),
         Some(&json!("hm"))
     );
     assert_eq!(
@@ -359,9 +364,7 @@ fn only_the_first_choice_finishes_the_response() {
     ]);
     assert!(!out.iter().any(|r| matches!(r, Output::Finish(_))));
     // The other choice is kept, in this format's words.
-    assert!(
-        matches!(&out[1..], [Output::Native(NativeValue { format, .. })] if &**format == OPENAI)
-    );
+    assert!(matches!(&out[1..], [Output::Native(n)] if OpenAiChat::value(n).is_some()));
 }
 
 #[test]
@@ -370,7 +373,7 @@ fn content_the_kind_cannot_hold_is_other() {
         "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"refusal\":\"no\"}}]}\n\n",
     ]);
     let refusal = json!({ "choices": [{ "index": 0, "delta": { "refusal": "no" } }] });
-    assert_eq!(out[1..], [Output::native(OPENAI, refusal)]);
+    assert_eq!(out[1..], [Output::Native(OpenAiChat::native(refusal))]);
 }
 
 #[test]
@@ -514,7 +517,9 @@ fn a_tool_call_a_filter_replaces_with_text_is_gone() {
     assert!(stream.contains("\"content\":\"[removed]\""), "{stream}");
     assert!(!stream.contains("tool_calls"), "{stream}");
     // Another format's event is dropped.
-    let foreign = [Output::native("anthropic-messages", json!({ "type": "x" }))];
+    let foreign = [Output::Native(AnthropicMessages::native(
+        json!({ "type": "x" }),
+    ))];
     let body = body_of(&foreign).expect("a body");
     assert!(!body.to_string().contains("\"x\""), "{body}");
 }
@@ -532,10 +537,7 @@ fn a_whole_response_decodes_into_events() {
     let mut start = Output::start("c1", "gpt");
     if let Output::Start(s) = &mut start {
         let fields = json!({ "created": 7 });
-        s.native = Some(NativeFields::new(
-            OPENAI,
-            fields.as_object().cloned().unwrap_or_default(),
-        ));
+        s.native = OpenAiChat::native(fields.as_object().cloned().unwrap_or_default());
     }
     let mut totals = Output::usage(Usage {
         input_tokens: 2,
@@ -563,13 +565,13 @@ fn a_whole_response_decodes_into_events() {
         "message": { "role": "assistant", "content": "ok" } }] });
     assert!(matches!(
         decode_body(&logprobs).first(),
-        Some(Output::Native(NativeValue { .. }))
+        Some(Output::Native(_))
     ));
     let parts = json!({ "choices": [{ "index": 0,
         "message": { "role": "assistant", "content": [{ "type": "text", "text": "ok" }] } }] });
     assert!(matches!(
         decode_body(&parts).first(),
-        Some(Output::Native(NativeValue { .. }))
+        Some(Output::Native(_))
     ));
     // A whole body collects what the events say, and keeps its other fields.
     let again = body_of(&decode_body(&v)).expect("a body");
@@ -628,13 +630,16 @@ fn what_a_later_chunk_changes_of_the_response_is_native_after_its_usage() {
     let Some(Output::Start(start)) = out.first() else {
         panic!("{out:?}");
     };
-    assert_eq!(start.native.own(OPENAI)["x_vendor"], json!({ "id": "r" }));
+    assert_eq!(
+        OpenAiChat::fields(&start.native)["x_vendor"],
+        json!({ "id": "r" })
+    );
     // Fields said again as they were are no news.
     let changed =
         json!({ "response": { "x_vendor": { "id": "r", "usage": { "prompt_tokens": 1 } } } });
     let at = out
         .iter()
-        .position(|r| *r == Output::native(OPENAI, changed.clone()));
+        .position(|r| *r == Output::Native(OpenAiChat::native(changed.clone())));
     let usage = out.iter().position(|r| matches!(r, Output::Usage(_)));
     assert!(usage < at && at.is_some(), "{out:?}");
     assert_eq!(
@@ -925,7 +930,7 @@ fn an_edited_tool_call_and_result_are_written_into_the_request() {
     );
     assert_eq!(chat.options.tool_choice, Some(ToolChoice::Required));
     assert_eq!(chat.tools[0].strict, Some(true));
-    assert!(chat.tools[0].native.is_none());
+    assert!(chat.tools[0].native.is_empty());
     assert!(chat.native.is_empty());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body.clone()));
     let mut expected = body.clone();
@@ -1011,12 +1016,15 @@ fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
         { "role": "user", "name": "alice", "content": "hi" },
     ], "tools": [{ "type": "function", "function": { "name": "f" } }], "seed": 7 });
     let chat = OpenAiChat.decode_json(&body);
-    assert_eq!(chat.native.own(OPENAI).get("seed"), Some(&json!(7)));
+    assert_eq!(
+        OpenAiChat::fields(&chat.native).get("seed"),
+        Some(&json!(7))
+    );
     // A function tool is the kind's.
     assert_eq!(chat.tools, [Tool::new("f", Value::Null)]);
     assert_eq!(chat.messages[0].text(), "hi");
     assert_eq!(
-        chat.messages[0].native.own(OPENAI).get("name"),
+        OpenAiChat::fields(&chat.messages[0].native).get("name"),
         Some(&json!("alice"))
     );
     // Another format drops its `seed`; OpenAI keeps it.
@@ -1043,7 +1051,7 @@ fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
 fn several_choices_are_refused_as_a_bad_request() {
     let body = json!({ "model": "m", "messages": [], "n": 2 });
     let chat = OpenAiChat.decode_json(&body);
-    assert_eq!(chat.native.own(OPENAI).get("n"), Some(&json!(2)));
+    assert_eq!(OpenAiChat::fields(&chat.native).get("n"), Some(&json!(2)));
     let refused = OpenAiChat.encode_request(&chat).err();
     assert!(refused.is_some_and(|f| f.is(respan_gateway_core::FaultKind::Client)));
     // One choice is the default, and says nothing.
@@ -1079,7 +1087,7 @@ fn the_user_field_is_read_redacted_and_translated() {
     // A user that is not a string is not the kind's: it stays in `native`.
     let odd = OpenAiChat.decode_json(&json!({ "user": 7, "messages": [] }));
     assert_eq!(
-        (odd.user, odd.native.own(OPENAI).get("user")),
+        (odd.user, OpenAiChat::fields(&odd.native).get("user")),
         (None, Some(&json!(7)))
     );
 }
@@ -1088,8 +1096,8 @@ fn the_user_field_is_read_redacted_and_translated() {
 fn a_plugin_that_removes_tools_sends_the_request_without_them() {
     let body = json!({ "model": "m", "messages": [], "tools": [{ "type": "function" }] });
     let edited = written(body, |c| {
-        c.native.own_mut(OPENAI).shift_remove("tools");
-        c.native.own_mut(OPENAI).insert("seed".into(), 7.into());
+        OpenAiChat::fields_mut(&mut c.native).shift_remove("tools");
+        OpenAiChat::fields_mut(&mut c.native).insert("seed".into(), 7.into());
     });
     assert_eq!(
         edited.ok(),
@@ -1370,7 +1378,7 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
         Some(json!("read"))
     );
     // One rewritten into Anthropic's does, as it is.
-    chat.messages[0].content[1] = Content::native("anthropic-messages", pdf.clone());
+    chat.messages[0].content[1] = Content::Native(AnthropicMessages::native(pdf.clone()));
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
         sent.map(|v| v["messages"][0]["content"][1].clone()).ok(),
@@ -1379,10 +1387,10 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
     // The same holds for the fields of a request.
     let thinking = json!({ "thinking": { "type": "enabled" } });
     let fields = thinking.as_object().cloned().unwrap_or_default();
-    chat.native = Some(NativeFields::new(OPENAI, fields.clone()));
+    chat.native = OpenAiChat::native(fields.clone());
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert!(sent.expect("written").get("thinking").is_none());
-    chat.native = Some(NativeFields::new("anthropic-messages", fields));
+    chat.native = AnthropicMessages::native(fields);
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
         sent.map(|v| v["thinking"].clone()).ok(),
@@ -1400,13 +1408,13 @@ fn fields_in_another_format_are_not_written_into_a_request() {
     let thinking = json!({ "thinking": { "type": "enabled" } });
     let fields = thinking.as_object().cloned().unwrap_or_default();
     let mut foreign = chat.clone();
-    foreign.native = Some(NativeFields::new("anthropic-messages", fields.clone()));
+    foreign.native = AnthropicMessages::native(fields.clone());
     let mut message = chat.clone();
-    message.messages[0].native = Some(NativeFields::new("anthropic-messages", fields.clone()));
+    message.messages[0].native = AnthropicMessages::native(fields.clone());
     let mut tool = chat.clone();
-    tool.tools[0].native = Some(NativeFields::new("anthropic-messages", fields.clone()));
+    tool.tools[0].native = AnthropicMessages::native(fields.clone());
     let mut role = chat.clone();
-    role.messages[0].role = Role::native("anthropic-messages", "critic");
+    role.messages[0].role = Role::Native(AnthropicMessages::native("critic"));
     for chat in [foreign, message, tool, role] {
         let sent = OpenAiChat.encode_request(&chat).map(Value::from);
         let sent = sent.expect("written").to_string();
@@ -1417,7 +1425,7 @@ fn fields_in_another_format_are_not_written_into_a_request() {
     }
     // Tagged for this format, the same is written.
     let mut own = chat;
-    own.native = Some(NativeFields::new(OPENAI, fields));
+    own.native = OpenAiChat::native(fields);
     let sent = OpenAiChat.encode_request(&own).map(Value::from);
     assert_eq!(
         sent.map(|v| v["thinking"].clone()).ok(),
@@ -1439,7 +1447,7 @@ fn another_formats_events_are_dropped() {
     // What only a client of that format could read, a block's start or a
     // keep-alive alike.
     for kind in ["content_block_start", "ping"] {
-        let other = Output::native("anthropic-messages", json!({ "type": kind }));
+        let other = Output::Native(AnthropicMessages::native(json!({ "type": kind })));
         let stream = stream_of(&[other], false).expect("a stream");
         assert!(!stream.contains(kind), "{stream}");
     }
@@ -1518,7 +1526,7 @@ fn reasoning_in_a_request_is_dropped_but_anthropics_thinking() {
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: None,
+            native: Native::default(),
         },
     );
     // OpenAI Chat has no field for it; Anthropic, which refuses thinking it
@@ -1729,12 +1737,11 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
     let replayed = whole.replay();
     assert_eq!(replayed[1], Content::Signature("s".into()));
     let native = replayed.iter().find_map(|part| match part {
-        Content::ToolCall { native, .. } => native.clone(),
+        Content::ToolCall { native, .. } => OpenAiChat::value(native),
         _ => None,
     });
     let native = native.expect("the call's fields");
-    assert_eq!(&*native.format, OPENAI);
-    assert_eq!(native.fields["extra_content"], json!({ "other": 1 }));
+    assert_eq!(native["extra_content"], json!({ "other": 1 }));
     // Written again for this format, the call carries them.
     let mut message = Message::new(respan_gateway_conversation::Role::Assistant, "");
     message.content = replayed;
@@ -1853,7 +1860,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
         { "role": "user", "content": "hi", "cache_control": { "type": "ephemeral" } },
     ]});
     let chat = OpenAiChat.decode_json(&body);
-    let fields = chat.messages[0].native.own(OPENAI);
+    let fields = OpenAiChat::fields(&chat.messages[0].native);
     assert_eq!(
         fields.get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))

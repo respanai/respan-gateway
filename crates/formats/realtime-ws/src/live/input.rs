@@ -1,17 +1,17 @@
 //! What the client says: the Live API's client events as the kind's
 //! [`Input`], read at the client's edge and written at the provider's.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Turns,
 };
 use serde_json::{Value, json};
 
-use super::{NAME, session};
+use super::{Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, string, take, text, untranslatable_input};
 use crate::session::Say;
 
 /// A session's audio format until it says another.
@@ -48,12 +48,12 @@ impl Client {
                         data,
                         format: self.input,
                     },
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 })
             }
             _ => None,
         };
-        out.push(event.unwrap_or_else(|| Input::native(NAME, v)));
+        out.push(event.unwrap_or_else(|| Input::Native(Native::json::<Key>(v))));
         Ok(())
     }
 }
@@ -84,7 +84,7 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::admit(NAME, event) else {
+        let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
         if let Some(v) = self.encode(&event)? {
@@ -107,12 +107,13 @@ impl Provider {
                 };
                 let mut v =
                     json!({"type": "session.input_audio.append", "audio": json::base64(&data)});
-                merge(&mut v, own(native));
+                merge(&mut v, native.fields::<Key>());
                 Ok(Some(v))
             }
-            Input::Native(NativeValue { format, value }) if **format == *NAME => {
-                Ok(Some(Value::clone(value)))
-            }
+            Input::Native(native) => match native.value::<Key>() {
+                Some(value) => Ok(Some(value.clone())),
+                None => refuse("this event"),
+            },
             // Commits, messages, tools' answers and responses: it has none.
             _ => refuse("this event"),
         }
@@ -142,7 +143,7 @@ impl Provider {
             .find(|f| session::takes(*f));
         self.input = format.unwrap_or(DEFAULT_FORMAT);
         let mut v = json!({"type": "session.start", "session": session::encode(&s, format)});
-        merge(&mut v, own(&s.native));
+        merge(&mut v, s.native.fields::<Key>());
         self.started = Some(s);
         Ok(v)
     }
@@ -150,9 +151,9 @@ impl Provider {
     /// A later session: the Live client's own update, as it came; else
     /// acknowledged with the session as it was started.
     fn update(&mut self, s: &Session) -> Result<Option<Value>, Fault> {
-        if let Some(native) = &s.native {
+        if s.native.value::<Key>().is_some() {
             let mut v = json!({"type": "session.update"});
-            merge(&mut v, Some(&native.fields));
+            merge(&mut v, s.native.fields::<Key>());
             return Ok(Some(v));
         }
         // WARN: OpenAI Live fixes a session at its start, so what a later

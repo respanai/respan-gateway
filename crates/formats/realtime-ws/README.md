@@ -78,8 +78,8 @@ its audio, and at its end. Tools, `say`, `generate_reply` and the rest stay nati
 
 `OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
 too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
-kind's `Input::Native` or `Output::Native`, tagged with its name, and
-writes no other format's.
+kind's `Input::Native` or `Output::Native`, its own, and writes no other
+format's.
 
 Plugins filter events with `cx.filter(|e: &mut Output| ..)` (client edge)
 or `px.filter(..)` (provider edge), and drop one with a `Filter` that does
@@ -189,8 +189,11 @@ with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
 A refused input is `bad_request`, closing the client 1008; a refused
 output `upstream`. Another format's natives, fields and events alike, are
-dropped by a writer, with a warning at the provider's: what has meaning
-beyond its format belongs in the kind. An error says its
+dropped by a writer, which cannot read them, with a warning at the
+provider's of its events and parts: what has meaning beyond its format
+belongs in the kind. `OpenAiRealtime`, `GeminiLive` and `ResponsesWs`
+open their own natives to code that speaks them alone (`value`,
+`fields_mut`), such as a plugin of their sessions. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 

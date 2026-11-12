@@ -9,16 +9,16 @@
 
 use std::sync::atomic::Ordering;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Purpose, Status, Usage};
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
 
-use super::{Answering, NAME, Shared, State};
+use super::{Answering, Key, NAME, Shared, State};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, at, count, merge, own, set, string, take, text, untranslatable_output};
+use crate::json::{self, at, count, merge, set, string, take, text, untranslatable_output};
 
 /// What a turn the client cancelled says that is dropped: its content, and
 /// its end, as its response already ended.
@@ -67,7 +67,7 @@ impl Provider {
         let mut v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("a provider's message is not JSON"))?;
         if !v.is_object() {
-            out.push(Output::native(NAME, v));
+            out.push(Output::Native(Native::json::<Key>(v)));
             return Ok(());
         }
         // A model that only transcribes ends its generation, never a turn.
@@ -78,9 +78,9 @@ impl Provider {
         let mut said = Vec::new();
         if self.decode(&mut shared.lock(), &mut v, &mut events) {
             // Its own, as its client's writer tells a response of another's.
-            said.push(Output::ResponseStart {
-                native: Some(NativeFields::new(NAME, Map::new())),
-            });
+            let mut native = Native::default();
+            native.fields_mut::<Key>();
+            said.push(Output::ResponseStart { native });
         }
         said.extend(used.map(Output::Usage));
         let rest = v.as_object().filter(|rest| !rest.is_empty());
@@ -89,7 +89,9 @@ impl Provider {
             .find(|e| !matches!(e, Output::ToolCall { .. }))
         {
             Some(first) => keep(first, rest),
-            None => events.extend(rest.map(|rest| Output::native(NAME, rest.clone()))),
+            None => {
+                events.extend(rest.map(|rest| Output::Native(Native::json::<Key>(rest.clone()))))
+            }
         }
         said.extend(events);
         let purpose = shared.lock().applied.as_ref().and_then(|s| s.purpose);
@@ -144,7 +146,7 @@ impl Provider {
         (!self.heard.is_empty()).then(|| Output::InputTranscript {
             text: std::mem::take(&mut self.heard),
             complete: true,
-            native: None,
+            native: Native::default(),
         })
     }
 
@@ -173,8 +175,8 @@ impl Provider {
             json::remove(v, &["setupComplete"]);
             let mut session = state.applied.clone().unwrap_or_default();
             session.native = match complete.is_empty() {
-                true => None,
-                false => json::native(NAME, json!({"setupComplete": complete})),
+                true => Native::default(),
+                false => Native::json::<Key>(json!({"setupComplete": complete})),
             };
             events.push(Output::Updated(session));
         }
@@ -182,7 +184,7 @@ impl Provider {
         let activity = activity.map(str::to_owned);
         let activity_event = |v: &mut Value| {
             let at_ms = take(v, &["voiceActivity", "audioOffset"], millis, offset);
-            let native = json::native(NAME, json!({"voiceActivity": v["voiceActivity"]}));
+            let native = Native::json::<Key>(json!({"voiceActivity": v["voiceActivity"]}));
             json::remove(v, &["voiceActivity"]);
             (at_ms, native)
         };
@@ -207,13 +209,13 @@ impl Provider {
                 self.told = true;
                 events.push(Output::SpeechStarted {
                     at_ms: None,
-                    native: None,
+                    native: Native::default(),
                 });
             }
             if state.open {
                 events.push(Output::ResponseDone {
                     status: Status::Interrupted,
-                    native: None,
+                    native: Native::default(),
                 });
                 (state.open, self.ended) = (false, true);
             }
@@ -227,7 +229,7 @@ impl Provider {
             events.push(Output::InputTranscript {
                 text: heard,
                 complete: false,
-                native: None,
+                native: Native::default(),
             });
         }
         let path = ["serverContent", "modelTurn", "parts"];
@@ -243,7 +245,7 @@ impl Provider {
             start(&mut state.open, &mut self.ended);
             events.push(Output::Transcript {
                 text: said,
-                native: None,
+                native: Native::default(),
             });
         }
         let path = ["toolCall", "functionCalls"];
@@ -258,7 +260,7 @@ impl Provider {
             events.extend(calls);
             events.push(Output::ResponseDone {
                 status: Status::Completed,
-                native: None,
+                native: Native::default(),
             });
             json::remove(v, &path);
             (state.open, self.ended) = (false, true);
@@ -271,7 +273,7 @@ impl Provider {
             let reason = take(v, &["serverContent", "turnCompleteReason"], string, text);
             events.push(Output::ResponseDone {
                 status: reason.map_or(Status::Completed, status),
-                native: None,
+                native: Native::default(),
             });
             state.open = false;
         } else if at(v, &["serverContent", "turnComplete"]).is_some() {
@@ -300,11 +302,9 @@ fn keep(event: &mut Output, rest: Option<&Map<String, Value>>) {
         | Output::Error { native, .. } => native,
         _ => return,
     };
-    let fields = &mut native
-        .get_or_insert_with(|| NativeFields::new(NAME, Map::new()))
-        .fields;
+    let fields = native.fields_mut::<Key>();
     let mut all = Value::Object(std::mem::take(fields));
-    merge(&mut all, Some(rest));
+    merge(&mut all, rest);
     if let Value::Object(all) = all {
         *fields = all;
     }
@@ -320,7 +320,7 @@ fn part(p: &Value) -> Option<Output> {
     match field.as_str() {
         "text" => Some(Output::Text {
             text: value.as_str()?.to_owned(),
-            native: None,
+            native: Native::default(),
         }),
         "inlineData" if value.as_object()?.len() == 2 => {
             let rate = value["mimeType"]
@@ -331,7 +331,7 @@ fn part(p: &Value) -> Option<Output> {
                     data: json::unbase64(&value["data"])?,
                     format: AudioFormat::pcm16(rate.parse().ok()?),
                 },
-                native: None,
+                native: Native::default(),
             })
         }
         _ => None,
@@ -352,7 +352,7 @@ fn call(c: &Value) -> Option<Output> {
         id,
         name,
         arguments,
-        native: json::native(NAME, Value::Object(rest)),
+        native: Native::json::<Key>(Value::Object(rest)),
     })
 }
 
@@ -381,8 +381,7 @@ fn status(reason: String) -> Status {
     match reason.as_str() {
         "MALFORMED_FUNCTION_CALL" => Status::Failed,
         _ => Status::Native {
-            format: NAME.into(),
-            reason,
+            native: Native::json::<Key>(reason),
             fallback: Box::new(Status::Filtered),
         },
     }
@@ -392,8 +391,9 @@ fn status(reason: String) -> Status {
 fn reason(status: &Status) -> Option<&str> {
     match status {
         Status::Failed => Some("MALFORMED_FUNCTION_CALL"),
-        Status::Native { format, reason, .. } if **format == *NAME => Some(reason),
-        Status::Native { fallback, .. } => self::reason(fallback),
+        Status::Native { native, fallback } => {
+            (native.value::<Key>().and_then(Value::as_str)).or_else(|| self::reason(fallback))
+        }
         _ => None,
     }
 }
@@ -521,7 +521,7 @@ impl Client {
     }
 
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event) else {
+        let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
         match &event {
@@ -559,7 +559,9 @@ impl Client {
                 self.interrupted = true;
                 (interrupted, native)
             }
-            Output::SpeechStarted { native: None, .. } => return Ok(Vec::new()),
+            Output::SpeechStarted { native, .. } if native.fields::<Key>().is_empty() => {
+                return Ok(Vec::new());
+            }
             Output::SpeechStarted { native, .. } => (json!({}), native),
             Output::SpeechStopped { at_ms, native } => (activity("ACTIVITY_END", at_ms), native),
             Output::InputTranscript { complete: true, .. } if std::mem::take(&mut self.heard) => {
@@ -575,7 +577,7 @@ impl Client {
             }
             Output::ResponseStart { native, .. } => {
                 self.interrupted = false;
-                self.foreign = native.is_none();
+                self.foreign = native.value::<Key>().is_none();
                 return Ok(Vec::new());
             }
             Output::Audio { audio, native } => {
@@ -611,7 +613,7 @@ impl Client {
                         Fault::upstream("a tool call's arguments are not a JSON object")
                     })?;
                 let mut call = json!({"id": id, "name": name, "args": args});
-                merge(&mut call, own(native));
+                merge(&mut call, native.fields::<Key>());
                 self.calls.push(call);
                 return Ok(Vec::new());
             }
@@ -644,7 +646,7 @@ impl Client {
                     }
                 };
                 let mut v = v;
-                merge(&mut v, own(native));
+                merge(&mut v, native.fields::<Key>());
                 let mut messages = vec![v];
                 if then && self.foreign {
                     messages.push(content("turnComplete", true.into()));
@@ -665,13 +667,14 @@ impl Client {
                     _ => Err(Fault::upstream(message.clone())),
                 };
             }
-            Output::Native(NativeValue { format, value }) if **format == *NAME => {
-                (Value::clone(value), &None)
-            }
+            Output::Native(native) => match native.value::<Key>() {
+                Some(value) => (value.clone(), native),
+                None => return Err(refuse("another format's event")),
+            },
             _ => return Err(refuse("another format's event")),
         };
         let mut v = v;
-        merge(&mut v, own(native));
+        merge(&mut v, native.fields::<Key>());
         if let Some(used) = self.usage.take() {
             put_usage(&mut v, &used);
         }
@@ -689,8 +692,6 @@ fn activity(kind: &str, at_ms: &Option<u64>) -> Value {
 }
 
 /// Whether `native` is this format's and holds `key`.
-fn says(native: &Option<NativeFields>, key: &str) -> bool {
-    native
-        .as_ref()
-        .is_some_and(|n| *n.format == *NAME && n.fields.contains_key(key))
+fn says(native: &Native, key: &str) -> bool {
+    native.fields::<Key>().contains_key(key)
 }

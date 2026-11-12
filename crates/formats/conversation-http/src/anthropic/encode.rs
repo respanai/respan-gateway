@@ -4,13 +4,13 @@ use crate::schema::{
     Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{ANTHROPIC, AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
+use super::{AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
 
 /// Writes events as Anthropic's stream: `message_start` at the first need,
 /// each block's events, and at the end `message_delta` and `message_stop`.
@@ -65,7 +65,7 @@ impl EventStream {
         message.insert("type".into(), "message".into());
         message.insert("role".into(), "assistant".into());
         message.insert("model".into(), model.into());
-        message.extend(own_fields(self.start.as_ref(), ANTHROPIC));
+        message.extend(own_fields::<AnthropicMessages>(self.start.as_ref()));
         message.insert("content".into(), json!([]));
         message.insert("stop_reason".into(), Value::Null);
         message.insert("stop_sequence".into(), Value::Null);
@@ -318,16 +318,20 @@ impl EventStream {
                 data,
             } => self.signature(*block, data, out),
             Output::Signature { block: None, data } => self.withheld(data, out),
-            Output::BlockFields { block, native } if *native.format == *ANTHROPIC => {
-                self.fields.push((*block, native.fields.clone()));
+            Output::BlockFields { block, native } if AnthropicMessages::value(native).is_some() => {
+                self.fields
+                    .push((*block, AnthropicMessages::fields(native).clone()));
             }
-            Output::BlockNative { block, native } if *native.format == *ANTHROPIC => {
+            Output::BlockNative { block, native } if AnthropicMessages::value(native).is_some() => {
                 self.begin(out);
-                let mut raw = Value::clone(&native.value);
+                let mut raw = AnthropicMessages::value(native)
+                    .cloned()
+                    .unwrap_or_default();
                 raw["index"] = self.native_index(*block).into();
                 emit(out, raw);
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *ANTHROPIC => {
+            Output::Native(n) if AnthropicMessages::value(n).is_some() => {
+                let raw = AnthropicMessages::value(n).unwrap_or_default();
                 self.begin(out);
                 match raw["type"].as_str() {
                     // Beside the terminal `message_delta`, which carries them.

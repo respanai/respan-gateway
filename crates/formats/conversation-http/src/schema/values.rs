@@ -2,17 +2,18 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields::{self, native_of};
+use crate::fields;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
-use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
+use respan_gateway_core::{ErrorCode, Fault, Native};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use super::Schema;
 use super::errors::says;
@@ -49,33 +50,32 @@ pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
 }
 
-/// Whether `format` writes `part`: another format's shape it cannot.
-fn own_part(format: &str, part: &mut Content) -> bool {
+/// Whether `C` writes `part`: another format's shape it cannot.
+fn own_part<C: Schema>(part: &mut Content) -> bool {
     if let Content::ToolResult { content, .. } = part {
-        content.retain_mut(|c| own_part(format, c));
+        content.retain_mut(own_part::<C>);
     }
     match part {
         // WARN: a part in another format's shape is dropped here, silently.
-        Content::Native(n) if *n.format != *format => false,
+        Content::Native(n) => C::value(n).is_some(),
         _ => true,
     }
 }
 
 /// Whether a part, or one in a tool result, is in another format's shape.
-fn holds_foreign(format: &str, part: &Content) -> bool {
+fn holds_foreign<C: Schema>(part: &Content) -> bool {
     match part {
-        Content::Native(n) => *n.format != *format,
-        Content::ToolResult { content, .. } => content.iter().any(|c| holds_foreign(format, c)),
+        Content::Native(n) => C::value(n).is_none(),
+        Content::ToolResult { content, .. } => content.iter().any(holds_foreign::<C>),
         _ => false,
     }
 }
 
 /// `chat` without the parts in another format's shape and the messages in
 /// another format's role, each dropped.
-pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
-    let foreign_role =
-        |m: &Message| matches!(&m.role, Role::Native { format: f, .. } if **f != *format);
-    let holds = |m: &Message| foreign_role(m) || m.content.iter().any(|c| holds_foreign(format, c));
+pub(crate) fn own_shapes<C: Schema>(chat: &Input) -> Cow<'_, Input> {
+    let foreign_role = |m: &Message| matches!(&m.role, Role::Native(n) if C::value(n).is_none());
+    let holds = |m: &Message| foreign_role(m) || m.content.iter().any(holds_foreign::<C>);
     if !chat.messages.iter().any(holds) {
         return Cow::Borrowed(chat);
     }
@@ -86,7 +86,7 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
             return false;
         }
         let said = !m.content.is_empty();
-        m.content.retain_mut(|c| own_part(format, c));
+        m.content.retain_mut(own_part::<C>);
         !said || !m.content.is_empty()
     });
     Cow::Owned(chat)
@@ -115,11 +115,10 @@ pub(crate) fn merge_into(into: &mut Map<String, Value>, fields: &Map<String, Val
     }
 }
 
-/// The fields of the native a response's start carries, if it is of
-/// `format`.
-pub(crate) fn own_fields(start: Option<&Start>, format: &str) -> Map<String, Value> {
+/// The fields of the native a response's start carries, if they are `C`'s.
+pub(crate) fn own_fields<C: Schema>(start: Option<&Start>) -> Map<String, Value> {
     start
-        .map(|s| s.native.fields_for(format))
+        .map(|s| C::fields(&s.native).clone())
         .unwrap_or_default()
 }
 
@@ -274,7 +273,7 @@ pub(crate) fn shows(reply: &Output) -> bool {
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
-        [Content::Text { text, native, .. }] if native.fields_for(C::NAME).is_empty() => {
+        [Content::Text { text, native, .. }] if C::fields(native).is_empty() => {
             text.as_str().into()
         }
         parts => parts
@@ -291,7 +290,7 @@ pub(crate) fn decode_content<C: Schema>(v: &Value) -> Vec<Content> {
         Value::String(text) => vec![Content::from(text.as_str())],
         Value::Array(parts) => parts.iter().map(decode_any_part::<C>).collect(),
         Value::Null => Vec::new(),
-        other => vec![Content::native(C::NAME, other.clone())],
+        other => vec![Content::Native(C::native(other.clone()))],
     }
 }
 
@@ -303,12 +302,10 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
             let mut part = Map::new();
             part.insert("type".into(), "text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(native.fields_for(C::NAME));
+            part.extend(C::fields(native).clone());
             Ok(part.into())
         }
-        Content::Native(NativeValue { format, value, .. }) if **format == *C::NAME => {
-            Ok(Value::clone(value))
-        }
+        Content::Native(n) => Ok(C::value(n).cloned().unwrap_or_default()),
         other => C::encode_part(other),
     }
 }
@@ -324,14 +321,14 @@ fn decode_any_part<C: Schema>(p: &Value) -> Content {
         (Some("text"), Some(text)) => {
             let fields = p.as_object().into_iter().flatten();
             let fields = fields.filter(|(k, v)| *k != "type" && *k != "text" && says(v));
-            let fields = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
+            let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
             let mut part = Content::from(text);
             if let Content::Text { native, .. } = &mut part {
-                *native = native_of(C::NAME, fields);
+                *native = C::native(fields);
             }
             part
         }
-        _ => Content::native(C::NAME, p.clone()),
+        _ => Content::Native(C::native(p.clone())),
     }
 }
 
@@ -341,40 +338,36 @@ pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Messa
     let name = m["role"].as_str().unwrap_or_default();
     let role = roles
         .value(name)
-        .unwrap_or_else(|| Role::native(C::NAME, name));
+        .unwrap_or_else(|| Role::Native(C::native(name)));
     let fields = m.as_object().into_iter().flatten();
     let fields = fields.filter(|(k, v)| *k != "role" && *k != "content" && says(v));
     let mut message = Message::new(role, "");
     message.content = decode_content::<C>(&m["content"]);
-    message.native = native_of(
-        C::NAME,
-        fields.map(|(k, v)| (k.clone(), v.clone())).collect(),
-    );
+    let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
+    message.native = C::native(fields);
     message
 }
 
 /// Leave a message no `native` if it says nothing the kind has no form for.
-pub(crate) fn tidy(message: &mut Message) {
-    if message.native.is_empty() {
-        message.native = None;
+pub(crate) fn tidy<C: Schema>(message: &mut Message) {
+    if C::fields(&message.native).is_empty() {
+        message.native = Native::default();
     }
 }
 
 /// A message of format `C` written anew: role, content and its other fields.
 pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let mut v = Map::new();
-    v.insert("role".into(), role_of(C::NAME, m, roles));
+    v.insert("role".into(), role_of::<C>(m, roles));
     v.insert("content".into(), encode_content::<C>(&m.content)?);
-    v.extend(m.native.fields_for(C::NAME));
+    v.extend(C::fields(&m.native).clone());
     Ok(v.into())
 }
 
 /// The role to write: a user's for one this format lacks.
-fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Value {
+fn role_of<C: Schema>(m: &Message, roles: &Names<Role>) -> Value {
     let role = match &m.role {
-        Role::Native {
-            format: f, name, ..
-        } if **f == *format => Some(name.as_str()),
+        Role::Native(n) => C::value(n).and_then(Value::as_str),
         role => roles.name(role),
     };
     // WARN: a role this format lacks, such as a system message after the
@@ -390,7 +383,7 @@ type ReadTools = (Vec<Tool>, Vec<ProviderTool>, bool);
 /// that a format's request says in a form the kind has, taking its field,
 /// named in `keys` (none for a format that says it inside another), out of
 /// `chat.native`.
-pub(crate) fn decode_tools(
+pub(crate) fn decode_tools<C: Schema>(
     chat: &mut Input,
     tools: Option<ReadTools>,
     choice: Option<Option<ToolChoice>>,
@@ -401,22 +394,18 @@ pub(crate) fn decode_tools(
         chat.tools = tools;
         chat.provider_tools = provided;
         // Else its format writes the list whole, another what the kind can say.
-        if all && let Some(native) = &mut chat.native {
-            native.fields.shift_remove(keys[0]);
+        if all {
+            take_native::<C, _>(&mut chat.native, keys[0], |_| Some(()));
         }
     }
     if let Some(choice) = choice {
         chat.options.tool_choice = choice;
-        if let Some(native) = &mut chat.native {
-            native.fields.shift_remove(keys[1]);
-        }
+        take_native::<C, _>(&mut chat.native, keys[1], |_| Some(()));
     }
     if let Some(parallel) = parallel {
         chat.options.parallel_tool_calls = parallel;
-        if !keys[2].is_empty()
-            && let Some(native) = &mut chat.native
-        {
-            native.fields.shift_remove(keys[2]);
+        if !keys[2].is_empty() {
+            take_native::<C, _>(&mut chat.native, keys[2], |_| Some(()));
         }
     }
 }
@@ -439,45 +428,36 @@ pub(crate) fn each_tool(
     (v.is_null() || v.is_array()).then_some(out)
 }
 
-/// A web search of `format`, `fields` its native.
-pub(crate) fn read_search(format: &str, fields: Map<String, Value>) -> ProviderTool {
+/// A web search of `C`, `fields` its native.
+pub(crate) fn read_search<C: Schema>(fields: Map<String, Value>) -> ProviderTool {
     ProviderTool::WebSearch {
-        native: native_of(format, fields),
+        native: C::native(fields),
     }
 }
 
-/// The fields of a provider tool to write in `format`: a web search's own,
+/// The fields of a provider tool to write in `C`: a web search's own,
 /// its hints among them.
-pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
+pub(crate) fn write_search<C: Schema>(tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
     let ProviderTool::WebSearch { native } = tool else {
         return Err(untranslatable(
             "a provider tool this format has no form for",
         ));
     };
-    Ok(native.fields_for(format))
+    Ok(C::fields(native).clone())
 }
 
 /// `key` of `input`'s `native`, out of it if it is a string; one of another
 /// type stays there.
-pub(crate) fn take_text(input: &mut Input, key: &str) -> Option<String> {
-    let native = input.native.as_mut()?;
-    native.fields.get(key)?.as_str()?;
-    let text = native.fields.shift_remove(key)?.as_str().map(str::to_owned);
-    input.native.take_if(|n| n.is_empty());
-    text
+pub(crate) fn take_text<C: Schema>(input: &mut Input, key: &str) -> Option<String> {
+    take_native::<C, _>(&mut input.native, key, |v| v.as_str().map(str::to_owned))
 }
 
 /// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
 /// out of its `native`; one that is no boolean stays there.
-pub(crate) fn take_strict(tool: &mut Tool) {
-    let Some(fields) = tool.native.as_mut().map(|n| &mut n.fields) else {
-        return;
-    };
-    if let Some(strict) = fields.get("strict").and_then(Value::as_bool) {
-        fields.shift_remove("strict");
+pub(crate) fn take_strict<C: Schema>(tool: &mut Tool) {
+    if let Some(strict) = take_native::<C, _>(&mut tool.native, "strict", Value::as_bool) {
         tool.strict = Some(strict);
     }
-    tool.native.take_if(|n| n.is_empty());
 }
 
 /// Turns a provider's running usage totals into increments.
@@ -501,9 +481,9 @@ pub(crate) fn stop_json(stop: &[String]) -> Option<Value> {
 /// A format's names, under its own name, for a conversation type's values;
 /// the first of several is written.
 #[derive(Debug)]
-pub(crate) struct Names<T: 'static>(pub &'static [(&'static str, T)], pub &'static str);
+pub(crate) struct Names<T: 'static, C = ()>(pub &'static [(&'static str, T)], pub PhantomData<C>);
 
-impl<T: PartialEq + Clone> Names<T> {
+impl<T: PartialEq + Clone, C> Names<T, C> {
     /// The value `name` means, if it is one of these.
     pub fn value(&self, name: &str) -> Option<T> {
         self.0
@@ -518,25 +498,26 @@ impl<T: PartialEq + Clone> Names<T> {
     }
 }
 
-impl Names<Finish> {
+impl<C: Schema> Names<Finish, C> {
     /// A provider's reason, as a [`Finish`].
     pub fn finish(&self, reason: &str) -> Finish {
         self.value(reason)
-            .unwrap_or_else(|| Finish::native(self.1, reason))
+            .unwrap_or_else(|| Finish::native(C::native(reason), None))
     }
 
     /// The reason to write: a native one in its own format, else its
     /// fallback, else a stop.
     pub fn reason<'a>(&self, finish: &'a Finish) -> Result<&'a str, Fault> {
         match finish {
-            Finish::Native { format, reason, .. } if **format == *self.1 => Ok(reason),
             Finish::Native {
-                fallback: Some(fallback),
-                ..
-            } => self.reason(fallback),
-            // WARN: a native reason without a fallback, such as an
-            // OpenAI-compatible vendor's own, is written as a stop.
-            Finish::Native { .. } => self.reason(&Finish::Stop),
+                native, fallback, ..
+            } => match (C::value(native), fallback) {
+                (Some(reason), _) => Ok(reason.as_str().unwrap_or_default()),
+                (None, Some(fallback)) => self.reason(fallback),
+                // WARN: a native reason without a fallback, such as an
+                // OpenAI-compatible vendor's own, is written as a stop.
+                (None, None) => self.reason(&Finish::Stop),
+            },
             _ => self.name(finish).ok_or_else(unwritable_content),
         }
     }
@@ -598,39 +579,6 @@ pub(crate) fn set(v: &mut Map<String, Value>, key: &str, value: Option<Value>) {
         Some(value) => v.insert(key.into(), value),
         None => v.shift_remove(key),
     };
-}
-
-/// Conveniences for optional format-tagged fields. A format reads only its
-/// own: there is no accessor for another's.
-pub(crate) trait NativeFieldsExt {
-    /// The fields if they are of `format`, else none.
-    fn own(&self, format: &str) -> &Map<String, Value>;
-    /// The fields of `format` to edit ([`fields::own_mut`]).
-    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value>;
-    /// The fields to write in `format` ([`fields::kept`]).
-    fn fields_for(&self, format: &str) -> Map<String, Value>;
-    /// Whether there are no fields.
-    fn is_empty(&self) -> bool;
-}
-
-impl NativeFieldsExt for Option<NativeFields> {
-    fn own(&self, format: &str) -> &Map<String, Value> {
-        static EMPTY: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
-        match self {
-            Some(n) if *n.format == *format => &n.fields,
-            // WARN: another format's native fields are not read here, silently.
-            _ => EMPTY.get_or_init(Map::new),
-        }
-    }
-    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value> {
-        fields::own_mut(self, format)
-    }
-    fn fields_for(&self, format: &str) -> Map<String, Value> {
-        fields::kept(format, self)
-    }
-    fn is_empty(&self) -> bool {
-        self.as_ref().is_none_or(NativeFields::is_empty)
-    }
 }
 
 /// An effort as vendors name it: `none` (thinking off) to `xhigh`, refused
@@ -710,18 +658,28 @@ pub(crate) fn claude_sampling(
 
 /// The value of the request's native field `key` if `parse` reads all of it,
 /// which then leaves the native.
-pub(crate) fn take_native<T>(
-    input: &mut Input,
+pub(crate) fn take_native<C: Schema, T>(
+    native: &mut Native,
     key: &str,
     parse: impl FnOnce(&Value) -> Option<T>,
 ) -> Option<T> {
-    let native = input.native.as_mut()?;
-    let parsed = parse(native.fields.get(key)?)?;
-    native.fields.shift_remove(key);
-    if native.is_empty() {
-        input.native = None;
-    }
+    let parsed = parse(C::fields(native).get(key)?)?;
+    edit_native::<C, _>(native, |fields| fields.shift_remove(key));
     Some(parsed)
+}
+
+/// `edit` of `C`'s fields in `native`, which it leaves none if they end
+/// empty; another format's it replaces.
+pub(crate) fn edit_native<C: Schema, T>(
+    native: &mut Native,
+    edit: impl FnOnce(&mut Map<String, Value>) -> T,
+) -> T {
+    let fields = C::fields_mut(native);
+    let edited = edit(fields);
+    if fields.is_empty() {
+        *native = Native::default();
+    }
+    edited
 }
 
 #[cfg(test)]

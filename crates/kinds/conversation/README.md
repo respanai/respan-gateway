@@ -49,10 +49,11 @@ Tools are typed too: a request's `Tool`s and `ToolChoice`, an assistant's
 content; `Message::is_plain` checks for a known role, text parts and no message
 native fields. Text-part native fields are allowed.
 
-What the kind has no form for stays as the format that decoded it has it, in optional
-`NativeFields` (a mandatory format ID and its fields) on an `Input`, `Message`, `Tool`
-or `Start`, or in a `Content::Native(NativeValue)` or `Output::Native(NativeValue)`; only that format writes
-it, and another format drops it: what has meaning across formats belongs here.
+What the kind has no form for stays as the format that decoded it has it, in a
+`Native` on an `Input`, `Message`, `Tool` or `Start`, or a `Content::Native`,
+`Output::Native`, `Role::Native` or `Finish::Native`; it is opaque to every
+other format, so only that format reads or writes it, and another drops it:
+what has meaning across formats belongs here.
 
 Input values are plain data: they keep nothing of the bytes they were
 decoded from, and compare by what they say. A request is always written

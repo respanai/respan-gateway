@@ -6,10 +6,9 @@ use crate::edge::{bind_provider, content, sends};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -24,6 +23,9 @@ use std::sync::{Arc, OnceLock};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
+
+/// What only this format reads of a value ([`Native`]).
+enum Key {}
 /// What starts the id of a job of Veo's.
 const PREFIX: &str = "veo_";
 
@@ -76,7 +78,7 @@ const PREFIX: &str = "veo_";
 pub struct GeminiVeo;
 
 impl GeminiVeo {
-    /// The format's name, `gemini-veo`, which tags its native fields.
+    /// The format's name, `gemini-veo`.
     pub const NAME: &'static str = NAME;
 
     /// The job id of the operation `name`.
@@ -146,11 +148,11 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
     }
 }
 
-/// An operation Veo has no form for, refused, named by its format.
+/// An operation Veo has no form for, refused.
 fn unsupported(input: &Input) -> Fault {
     let what = match input {
-        Input::Native { native, .. } => format!("{} operation", native.format),
-        _ => "operation of this kind".to_owned(),
+        Input::Native { .. } => "operation of another format",
+        _ => "operation of this kind",
     };
     Fault::bad_request(format!("Veo has no video {what}")).with(ErrorCode("unsupported".into()))
 }
@@ -246,7 +248,7 @@ fn create_body(create: &Create) -> Result<(Bytes, Value), Fault> {
     if let Some(seconds) = create.seconds {
         parameters.insert("durationSeconds".into(), seconds.into());
     }
-    for (key, value) in kept(NAME, &create.native) {
+    for (key, value) in create.native.fields::<Key>().clone() {
         parameters.entry(key).or_insert(value);
     }
     let parameters = Value::Object(parameters);
@@ -289,7 +291,7 @@ fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
         format["aspect_ratio"] = aspect.into();
         format["resolution"] = resolution.into();
     }
-    let native = kept(NAME, &create.native);
+    let native = create.native.fields::<Key>();
     for (key, said) in [
         ("aspect_ratio", "aspectRatio"),
         ("resolution", "resolution"),
@@ -680,9 +682,7 @@ fn read_create(model: String, raw: &[u8]) -> Result<Create, Fault> {
                 .ok_or_else(|| invalid("`parameters.durationSeconds` must be a whole number"))?,
         ),
     };
-    if !parameters.is_empty() {
-        create.native = Some(NativeFields::new(NAME, parameters));
-    }
+    create.native = Native::json::<Key>(parameters);
     Ok(create)
 }
 
@@ -988,7 +988,7 @@ mod tests {
             ("aspectRatio".to_owned(), json!("9:16")),
             ("resolution".to_owned(), json!("4k")),
         ]);
-        create.native = Some(NativeFields::new(NAME, veo));
+        create.native = Native::json::<Key>(veo);
         let mut head = http::Request::new(()).into_parts().0;
         let input = Input::Create(create);
         let (encoder, asked) = call(&mut head, &input).unwrap_or_else(|e| panic!("{e}"));
@@ -1017,7 +1017,7 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
-        assert_eq!(job.native, None);
+        assert!(job.native.is_empty());
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;

@@ -30,12 +30,14 @@ protocols and adapters all depend on it directly.
   typed extensions (`fault.with(..)`, `fault.get::<T>()`) any protocol can
   render: `RetryAfter`, `ErrorCode` and `Details`. `Fault::upstream(..)`
   and the like make one.
-- `NativeFields { format, fields }` preserves unsupported fields on a typed
-  value; `NativeValue { format, value }` an entire unsupported value. The
-  format ID names the wire schema, not a provider deployment: only that
-  format reads them, and another drops them. Neither carries transport state.
-  With the `serde` feature both are `Serialize` and `Deserialize`, for a
-  host that keeps them.
+- `Native`: what a value holds that the kind has no place for, opaque to
+  every format but its own. A format keeps it as JSON under a key type
+  private to it (`Native::json::<K>`, `value::<K>`, `fields::<K>`,
+  `fields_mut::<K>`), which no other format can name, so another's reads as
+  none and is replaced when a format writes its own: that is the drop. A format may give its vendors' dialects a door
+  to its own (`Schema::fields_mut` and the like). With the `serde` feature a
+  `Native` is written as `null` and read back as none: only its format
+  keeps it.
 
 Core defines no request/event kinds or `Format` implementations. Each kind
 names its pair `Input` / `Output`, in the crate that owns it:

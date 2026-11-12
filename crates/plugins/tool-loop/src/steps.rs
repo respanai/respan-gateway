@@ -10,7 +10,7 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::futures::StreamExt;
 use respan_gateway_core::futures::stream::BoxStream;
-use respan_gateway_core::{Call, ErrorCode, Fault, NativeFields};
+use respan_gateway_core::{Call, ErrorCode, Fault, Native};
 use respan_gateway_http_faults::Status;
 use tokio::time::{Instant, timeout_at};
 
@@ -62,7 +62,7 @@ pub(super) struct Reading {
     /// The number the next block the client sees gets.
     pub(super) next: u32,
     /// The fields of a block said before it opens, until it does.
-    pub(super) pending: HashMap<u32, Vec<NativeFields>>,
+    pub(super) pending: HashMap<u32, Vec<Native>>,
     pub(super) finish: Option<Finish>,
     pub(super) usage: Usage,
     pub(super) started: Instant,

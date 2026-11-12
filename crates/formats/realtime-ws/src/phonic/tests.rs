@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
@@ -73,7 +73,7 @@ fn words(text: &str, complete: bool) -> Output {
     Output::InputTranscript {
         text: text.into(),
         complete,
-        native: None,
+        native: Native::default(),
     }
 }
 
@@ -171,7 +171,7 @@ fn audio_goes_in_chunks_of_at_most_40_ms() {
     // 100 ms of 44.1 kHz PCM, Phonic's own: 40 ms is 3,528 bytes.
     let chunk = Input::Audio {
         audio: audio(DEFAULT_FORMAT, 8_820),
-        native: None,
+        native: Native::default(),
     };
     let written = sent(None, &[session(|_| {}), chunk]).expect("written");
     let sizes: Vec<usize> = written[1..]
@@ -187,7 +187,12 @@ fn what_phonic_has_none_of_is_refused() {
     for events in [
         vec![session(|s| s.purpose = Some(Purpose::Transcription))],
         vec![session(|s| s.output = Some(Modality::Text))],
-        vec![start, Input::Commit { native: None }],
+        vec![
+            start,
+            Input::Commit {
+                native: Native::default(),
+            },
+        ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
         assert_eq!(
@@ -214,7 +219,7 @@ fn what_phonic_has_none_of_is_refused() {
 fn another_formats_session_is_told_as_phonic_tells_it() {
     let transcript = |text: &str| Output::Transcript {
         text: text.into(),
-        native: None,
+        native: Native::default(),
     };
     let events = [
         Output::Opened(Session::default()),
@@ -226,14 +231,14 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
         transcript("lo"),
         Output::Audio {
             audio: audio(DEFAULT_FORMAT, 2),
-            native: None,
+            native: Native::default(),
         },
         Output::Seconds(1.0),
         // Told after its last audio: with an empty chunk at its turn's end.
         transcript(" there."),
         Output::ResponseDone {
             status: Status::Cancelled,
-            native: None,
+            native: Native::default(),
         },
     ];
     let written = heard(&events).expect("written");
@@ -254,7 +259,7 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
     assert!(
         heard(&[Output::Text {
             text: "x".into(),
-            native: None
+            native: Native::default()
         }])
         .is_err()
     );

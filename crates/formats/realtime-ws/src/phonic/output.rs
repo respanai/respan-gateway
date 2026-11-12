@@ -3,16 +3,16 @@
 
 use std::time::Instant;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, Cause, Output, Status};
 use serde_json::{Value, json};
 
-use super::{Applied, Asked, Clock, DEFAULT_FORMAT, NAME};
+use super::{Applied, Asked, Clock, DEFAULT_FORMAT, Key, NAME};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_output};
+use crate::json::{self, merge, string, take, text, untranslatable_output};
 
 /// A provider's frames as events, and the session's seconds.
 pub(super) struct Provider {
@@ -57,7 +57,7 @@ impl Provider {
             // Its readiness answers the client's `config`.
             "ready_to_start_conversation" => {
                 let mut s = self.applied.lock().clone().unwrap_or_default();
-                s.native = json::native(NAME, rest);
+                s.native = Native::json::<Key>(rest);
                 Output::Updated(s)
             }
             // Each chunk of its audio carries the text it speaks.
@@ -69,7 +69,7 @@ impl Provider {
                 if !said.is_empty() {
                     out.push(Output::Transcript {
                         text: said,
-                        native: None,
+                        native: Native::default(),
                     });
                 }
                 let format = self.applied.lock().as_ref().and_then(|s| s.output_audio);
@@ -78,7 +78,7 @@ impl Provider {
                         data,
                         format: format.unwrap_or(DEFAULT_FORMAT),
                     },
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             // The user's transcript, a word at a time, which a space
@@ -95,31 +95,31 @@ impl Provider {
                 Output::InputTranscript {
                     text: format!("{space}{word}"),
                     complete: false,
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             "user_started_speaking" => {
                 self.heard = false;
                 Output::SpeechStarted {
                     at_ms: None,
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             "user_finished_speaking" => Output::SpeechStopped {
                 at_ms: None,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "assistant_started_speaking" => Output::ResponseStart {
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "assistant_finished_speaking" => Output::ResponseDone {
                 status: Status::Completed,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             // What it said before the user spoke over it stays native.
             "interrupted_response" => Output::ResponseDone {
                 status: Status::Interrupted,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "error" => {
                 let Some(message) = take(v, &["error", "message"], string, text) else {
@@ -128,7 +128,7 @@ impl Provider {
                 Output::Error {
                     cause: Cause::Provider,
                     message,
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             _ => return false,
@@ -153,7 +153,7 @@ impl Decoder<Output> for Provider {
             self.bill(out);
         }
         if !self.events(&kind, rest, out) {
-            out.push(Output::native(NAME, v));
+            out.push(Output::Native(Native::json::<Key>(v)));
         }
         Ok(())
     }
@@ -181,7 +181,7 @@ pub(super) struct Client {
     said: String,
     /// The user's word heard so far, and its part's native, written once
     /// the next word or another event begins.
-    word: Option<(String, Option<NativeFields>)>,
+    word: Option<(String, Native)>,
 }
 
 impl Client {
@@ -196,7 +196,7 @@ impl Client {
     }
 
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event) else {
+        let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
         if let Output::InputTranscript {
@@ -219,12 +219,7 @@ impl Client {
 
     /// A part of the user's transcript: another format's may be a part of
     /// a word, which a space begins.
-    fn hear(
-        &mut self,
-        text: &str,
-        native: &Option<NativeFields>,
-        out: &mut Vec<Bytes>,
-    ) -> Result<(), Fault> {
+    fn hear(&mut self, text: &str, native: &Native, out: &mut Vec<Bytes>) -> Result<(), Fault> {
         if text.starts_with(char::is_whitespace) {
             self.spoken(out)?;
         }
@@ -241,7 +236,7 @@ impl Client {
             return Ok(());
         };
         let mut v = json!({"type": "input_text", "text": word});
-        merge(&mut v, own(&native));
+        merge(&mut v, native.fields::<Key>());
         out.push(json::frame(&v)?);
         Ok(())
     }
@@ -296,12 +291,10 @@ impl Client {
             ),
             Output::Text { .. } => return refuse("text"),
             Output::ToolCall { .. } => return refuse("a tool's call"),
-            Output::Native(NativeValue { format, value }) if **format == *NAME => {
-                return Ok(Some(Value::clone(value)));
-            }
+            Output::Native(native) => return Ok(native.value::<Key>().cloned()),
             _ => return Ok(None),
         };
-        merge(&mut v, own(native));
+        merge(&mut v, native.fields::<Key>());
         Ok(Some(v))
     }
 }

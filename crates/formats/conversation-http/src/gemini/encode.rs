@@ -5,14 +5,14 @@ use crate::schema::{
     unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 
 use super::request::is_synthetic;
-use super::{BLOCKED, FINISH, GEMINI, GeminiGenerate, SIGNATURE, USAGE, usage_body};
+use super::{BLOCKED, FINISH, GeminiGenerate, SIGNATURE, USAGE, usage_body};
 
 /// Writes the SSE frames of `inner` as the elements of one JSON array, which
 /// is how Gemini streams without `alt=sse`.
@@ -133,7 +133,7 @@ impl ResponseFields {
     ) -> Result<Value, Fault> {
         let reason = reason_of(finish)?;
         let mut body = Map::new();
-        body.extend(own_fields(start, GEMINI));
+        body.extend(own_fields::<GeminiGenerate>(start));
         let blocked = reason == BLOCKED;
         let mut candidates = Vec::new();
         if !blocked {
@@ -168,7 +168,7 @@ impl ResponseFields {
 /// The reason to write for `finish`.
 pub(super) fn reason_of(finish: &Finish) -> Result<&str, Fault> {
     match finish {
-        Finish::Native { format, reason, .. } if **format == *GEMINI && reason == BLOCKED => {
+        Finish::Native { native, .. } if GeminiGenerate::value(native) == Some(&BLOCKED.into()) => {
             Ok(BLOCKED)
         }
         finish => FINISH.reason(finish),
@@ -213,7 +213,7 @@ impl EventStream {
         let first = !std::mem::replace(&mut self.began, true);
         let mut v = Map::new();
         if first {
-            v.extend(own_fields(self.start.as_ref(), GEMINI));
+            v.extend(own_fields::<GeminiGenerate>(self.start.as_ref()));
         }
         let mut candidate = Map::new();
         if !parts.is_empty() || last.is_none() {
@@ -394,14 +394,15 @@ impl EventStream {
             }
             // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
             Output::Signature { block: None, .. } => {}
-            Output::BlockFields { block, native } if *native.format == *GEMINI => {
-                let fields = native.fields.clone();
+            Output::BlockFields { block, native } if GeminiGenerate::value(native).is_some() => {
+                let fields = GeminiGenerate::fields(native).clone();
                 match self.blocks.iter_mut().find(|b| b.block == *block) {
                     Some(slot) => slot.fields = Some(fields),
                     None => self.pending.push((*block, fields)),
                 }
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *GEMINI => {
+            Output::Native(n) if GeminiGenerate::value(n).is_some() => {
+                let raw = GeminiGenerate::value(n).unwrap_or_default();
                 match raw["type"].as_str() {
                     Some("part") => self.emit(vec![raw["part"].clone()], out)?,
                     _ if self.fields.add(raw) => {}

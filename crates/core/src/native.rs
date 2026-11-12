@@ -1,55 +1,77 @@
-//! Explicitly format-specific data carried through the gateway.
+//! Format-specific data, opaque to every format but its own.
 
-use std::sync::Arc;
+use std::any::TypeId;
 
 use serde_json::{Map, Value};
 
-/// Identity of a wire format, rather than a provider or deployment.
-pub type FormatId = Arc<str>;
+/// What a value holds that only its own format reads: fields the kind has no
+/// place for, or a whole event or part it has no form for, as that format's
+/// JSON.
+///
+/// It is keyed by a type `K` the format keeps private, which no other format
+/// can name: another's reads as none, and is replaced when a format writes
+/// its own. That is the drop: what has meaning across formats belongs in the
+/// kind. One value per slot.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Native(Option<(TypeId, Value)>);
 
-/// Additional semantic fields understood only by their originating format.
-/// A foreign encoder drops them: a field whose meaning other formats share
-/// belongs in the kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeFields {
-    /// The wire format that defines these fields.
-    pub format: FormatId,
-    /// Provider-format fields, excluding transport and decoder bookkeeping.
-    pub fields: Map<String, Value>,
-}
-
-impl NativeFields {
-    /// Fields belonging to a known wire format.
-    pub fn new(format: impl Into<FormatId>, fields: Map<String, Value>) -> Self {
-        Self {
-            format: format.into(),
-            fields,
+impl Native {
+    /// JSON `value` as the native of the format that `K`, a type private to
+    /// it, names: none if it says nothing (null, or an empty object).
+    pub fn json<K: 'static>(value: impl Into<Value>) -> Self {
+        match value.into() {
+            Value::Null => Native::default(),
+            Value::Object(fields) if fields.is_empty() => Native::default(),
+            value => Native(Some((TypeId::of::<K>(), value))),
         }
     }
 
-    /// Whether no native fields remain.
+    /// Whether it holds nothing, of any format.
     pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+        self.0.is_none()
+    }
+
+    /// The JSON value of the format `K` names, if it holds one.
+    pub fn value<K: 'static>(&self) -> Option<&Value> {
+        match &self.0 {
+            Some((key, value)) if *key == TypeId::of::<K>() => Some(value),
+            _ => None,
+        }
+    }
+
+    /// The fields of the format `K` names: none if it holds none.
+    pub fn fields<K: 'static>(&self) -> &Map<String, Value> {
+        static NONE: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
+        let fields = self.value::<K>().and_then(Value::as_object);
+        fields.unwrap_or_else(|| NONE.get_or_init(Map::new))
+    }
+
+    /// The fields of the format `K` names, to edit, in place of what it
+    /// holds of another.
+    pub fn fields_mut<K: 'static>(&mut self) -> &mut Map<String, Value> {
+        if self.value::<K>().is_none_or(|v| !v.is_object()) {
+            // WARN: another format's native is dropped here, silently.
+            self.0 = Some((TypeId::of::<K>(), Value::Object(Map::new())));
+        }
+        let value = self.0.as_mut().and_then(|(_, v)| v.as_object_mut());
+        value.expect("an object was just put in")
     }
 }
 
-/// An entire value whose meaning belongs to one wire format.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct NativeValue {
-    /// The wire format that understands the value.
-    pub format: FormatId,
-    /// The value, shared when requests or events are cloned.
-    pub value: Arc<Value>,
+/// A native is kept by its format alone: it is written as nothing, and read
+/// back as none.
+#[cfg(feature = "serde")]
+impl serde::Serialize for Native {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        // WARN: a native is not kept, and is dropped here, silently.
+        s.serialize_none()
+    }
 }
 
-impl NativeValue {
-    /// Preserve a value together with the identity needed to encode it safely.
-    pub fn new(format: impl Into<FormatId>, value: impl Into<Value>) -> Self {
-        Self {
-            format: format.into(),
-            value: Arc::new(value.into()),
-        }
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Native {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(d)?;
+        Ok(Native::default())
     }
 }

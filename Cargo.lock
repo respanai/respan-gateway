@@ -1809,7 +1809,6 @@ dependencies = [
  "bytes",
  "respan-gateway-conversation",
  "respan-gateway-core",
- "serde_json",
 ]
 
 [[package]]

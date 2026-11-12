@@ -20,7 +20,8 @@ use std::sync::Arc;
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::{FutureExt, Stream, StreamExt, future, stream};
 use respan_gateway_core::{
-    ClientContext, EventStream, Fault, Filter, Gateway, Plugin, Provider, Response, async_trait,
+    ClientContext, EventStream, Fault, Filter, Gateway, Native, Plugin, Provider, Response,
+    async_trait,
 };
 use respan_gateway_realtime::{Input, Output, ToolResult};
 use respan_gateway_realtime_ws::{GeminiLive, OpenAiRealtime};
@@ -122,7 +123,9 @@ impl Filter<Output> for Refuse {
             Output::ResponseDone { .. } => {
                 let called = std::mem::take(&mut self.called);
                 if std::mem::take(&mut self.refused) && !called {
-                    let _ = self.tell.unbounded_send(Input::Respond { native: None });
+                    let _ = self.tell.unbounded_send(Input::Respond {
+                        native: Native::default(),
+                    });
                 }
             }
             _ => {}

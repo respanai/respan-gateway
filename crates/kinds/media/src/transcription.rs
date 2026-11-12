@@ -8,8 +8,7 @@
 //! and [`Output::Native`] come among them.
 
 use respan_gateway_conversation::{Media, Usage};
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_core::Native;
 
 /// What a request asks of the audio.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -40,7 +39,7 @@ pub struct Input {
     pub temperature: Option<f64>,
     /// The request's fields the kind has no place for, such as how the
     /// transcript is rendered.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -53,7 +52,7 @@ impl Input {
             language: None,
             prompt: None,
             temperature: None,
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -83,9 +82,9 @@ pub enum Output {
     Usage(Usage),
     /// Seconds of audio the provider bills, as an increment.
     Seconds(f64),
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
+    Native(Native),
 }
 
 impl Output {
@@ -93,13 +92,8 @@ impl Output {
     pub fn delta(text: impl Into<String>) -> Self {
         Output::Delta(Delta {
             text: text.into(),
-            native: None,
+            native: Native::default(),
         })
-    }
-
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
     }
 }
 
@@ -110,7 +104,7 @@ pub struct Delta {
     /// The text.
     pub text: String,
     /// Its fields the kind has no place for, such as log probabilities.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Delta {
@@ -118,7 +112,7 @@ impl Delta {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -138,7 +132,7 @@ pub struct Transcript {
     /// Its words, timed, if the client asked for them.
     pub words: Vec<Word>,
     /// Its fields the kind has no place for, such as log probabilities.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Transcript {
@@ -164,7 +158,7 @@ pub struct Segment {
     /// Who spoke it, if the provider told speakers apart.
     pub speaker: Option<String>,
     /// Its fields the kind has no place for, such as its tokens.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Segment {
@@ -190,7 +184,7 @@ pub struct Word {
     /// Where it ends, in seconds.
     pub end: f64,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Word {
@@ -200,7 +194,7 @@ impl Word {
             word: word.into(),
             start,
             end,
-            native: None,
+            native: Native::default(),
         }
     }
 }

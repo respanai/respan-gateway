@@ -21,8 +21,9 @@
 //! response makes ([`Block::ToolCall`]), whose arguments stream as JSON text.
 //!
 //! What the kind has no form for stays as the format that decoded it has it
-//! ([`NativeFields`], [`Content::Native`], [`Output::Native`]); it is sent only in that
-//! format, and another drops it: what has meaning across formats belongs here.
+//! ([`Native`], as in [`Content::Native`] and [`Output::Native`]): only that
+//! format reads it, and another drops it: what has meaning across formats
+//! belongs here.
 //!
 //! Values are plain data: they say what they hold and compare by it. They
 //! keep nothing of the bytes they were decoded from.
@@ -35,10 +36,10 @@
 
 use respan_gateway_core::Fault;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
+use respan_gateway_core::Native;
 
 mod media;
 mod usage;
@@ -169,7 +170,7 @@ pub struct Input {
     /// The tools the provider runs itself while it answers.
     pub provider_tools: Vec<ProviderTool>,
     /// The request's fields the kind has no place for, such as a seed.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -212,9 +213,8 @@ pub struct Message {
     pub role: Role,
     /// What it says, part by part.
     pub content: Vec<Content>,
-    /// The message's fields the kind has no place for, such as a name. A
-    /// [`Role::Native`] is in the format of `native`.
-    pub native: Option<NativeFields>,
+    /// The message's fields the kind has no place for, such as a name.
+    pub native: Native,
 }
 
 impl Message {
@@ -223,7 +223,7 @@ impl Message {
         Self {
             role,
             content: vec![content.into()],
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -244,14 +244,14 @@ impl Message {
     /// a cache marker, do not change what they say).
     pub fn is_plain(&self) -> bool {
         let text = |c: &Content| matches!(c, Content::Text { .. });
-        !matches!(self.role, Role::Native { .. })
-            && self.native.as_ref().is_none_or(NativeFields::is_empty)
+        !matches!(self.role, Role::Native(_))
+            && self.native.is_empty()
             && self.content.iter().all(text)
     }
 }
 
 /// Who wrote a message.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Role {
@@ -266,25 +266,9 @@ pub enum Role {
     User,
     /// The model.
     Assistant,
-    /// A role the kind has no form for, as `format` names it; only a call
+    /// A role the kind has no form for, as its format names it; only a call
     /// in that format can send it.
-    #[non_exhaustive]
-    Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The role, as that format names it.
-        name: String,
-    },
-}
-
-impl Role {
-    /// The role `name` of `format`, which the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, name: impl Into<String>) -> Self {
-        Role::Native {
-            format: format.into(),
-            name: name.into(),
-        }
-    }
+    Native(Native),
 }
 
 /// A part of a message; a plugin that must see all of it refuses variants
@@ -300,14 +284,14 @@ pub enum Content {
         text: String,
         /// The part's fields the kind has no place for, such as a cache
         /// marker.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// Reasoning retained in conversation history.
     Reasoning {
         /// Reasoning text.
         text: String,
         /// The part's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// A provider's opaque signature over the part right before it, carried
     /// back untouched.
@@ -336,7 +320,7 @@ pub enum Content {
         /// Its arguments, as JSON text.
         arguments: String,
         /// The part's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// What a tool answered a call.
     #[non_exhaustive]
@@ -348,11 +332,11 @@ pub enum Content {
         /// Whether the call failed.
         is_error: bool,
         /// The part's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// A part the kind has no form for, such as a provider-run tool's
     /// block, as its format has it; only a call in that format can send it.
-    Native(NativeValue),
+    Native(Native),
 }
 
 impl Content {
@@ -366,7 +350,7 @@ impl Content {
             id: id.into(),
             name: name.into(),
             arguments: arguments.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -376,13 +360,8 @@ impl Content {
             id: id.into(),
             content,
             is_error,
-            native: None,
+            native: Native::default(),
         }
-    }
-
-    /// A part of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Content::Native(NativeValue::new(format, raw))
     }
 }
 
@@ -400,7 +379,7 @@ pub struct Tool {
     /// format's default, which only a format with a default of its own says.
     pub strict: Option<bool>,
     /// Its fields the kind has no place for, such as a cache marker.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Tool {
@@ -411,7 +390,7 @@ impl Tool {
             description: None,
             parameters,
             strict: Some(false),
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -424,7 +403,7 @@ pub enum ProviderTool {
     /// format's `native`, which only that format sends.
     WebSearch {
         /// Its fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
 }
 
@@ -446,14 +425,17 @@ impl From<&str> for Content {
     fn from(text: &str) -> Self {
         Content::Text {
             text: text.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
 
 impl From<String> for Content {
     fn from(text: String) -> Self {
-        Content::Text { text, native: None }
+        Content::Text {
+            text,
+            native: Native::default(),
+        }
     }
 }
 
@@ -511,7 +493,7 @@ pub enum Output {
         /// The block they are of.
         block: u32,
         /// The fields.
-        native: NativeFields,
+        native: Native,
     },
     /// An event about block `block` the kind has no form for, as its format
     /// has it (a block of a tool the provider runs, an annotation): sent
@@ -520,11 +502,11 @@ pub enum Output {
         /// The block it is about, which only such events may carry.
         block: u32,
         /// The event.
-        native: NativeValue,
+        native: Native,
     },
-    /// An event the kind has no form for, as `format` has it (pings,
+    /// An event the kind has no form for, as its format has it (pings,
     /// provider-specific events). Sent only in that format.
-    Native(NativeValue),
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -537,7 +519,7 @@ pub struct Start {
     pub model: String,
     /// The response's fields the kind has no place for, such as a
     /// fingerprint.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 /// What a content block holds.
@@ -592,7 +574,7 @@ impl Start {
         Self {
             id: id.into(),
             model: model.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -655,28 +637,6 @@ impl Output {
         Output::Finish(finish)
     }
 
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
-
-    /// Fields of block `block` the kind has no place for, as `format` has
-    /// them ([`Output::BlockFields`]).
-    pub fn block_fields(
-        format: impl Into<FormatId>,
-        block: u32,
-        fields: Map<String, Value>,
-    ) -> Self {
-        let native = NativeFields::new(format, fields);
-        Output::BlockFields { block, native }
-    }
-
-    /// An event of `format` about block `block` ([`Output::BlockNative`]).
-    pub fn block_native(format: impl Into<FormatId>, block: u32, raw: impl Into<Value>) -> Self {
-        let native = NativeValue::new(format, raw);
-        Output::BlockNative { block, native }
-    }
-
     /// Whether it is content: a start, a block event or a finish. Usage and
     /// natives are not.
     pub fn is_content(&self) -> bool {
@@ -702,42 +662,24 @@ pub enum Finish {
     ToolUse,
     /// A safety filter.
     Filtered,
-    /// A reason the kind has no form for, as `format` names it; only a
+    /// A reason the kind has no form for, as its format names it; only a
     /// response in that format can say it, and another writes its
     /// `fallback`, if it has one.
     #[non_exhaustive]
     Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The reason, as that format names it.
-        reason: String,
+        /// The reason, as its format names it.
+        native: Native,
         /// The kind's reason nearest to it, which another format writes.
         fallback: Option<Box<Finish>>,
     },
 }
 
 impl Finish {
-    /// The reason `reason` of `format`, which the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, reason: impl Into<String>) -> Self {
-        Finish::Native {
-            format: format.into(),
-            reason: reason.into(),
-            fallback: None,
-        }
-    }
-
-    /// The reason `reason` of `format`, which another format writes as
-    /// `fallback`.
-    pub fn native_or(
-        format: impl Into<FormatId>,
-        reason: impl Into<String>,
-        fallback: Finish,
-    ) -> Self {
-        Finish::Native {
-            format: format.into(),
-            reason: reason.into(),
-            fallback: Some(Box::new(fallback)),
-        }
+    /// A reason the kind has no form for, which another format writes as
+    /// `fallback`, if any.
+    pub fn native(native: Native, fallback: Option<Finish>) -> Self {
+        let fallback = fallback.map(Box::new);
+        Finish::Native { native, fallback }
     }
 }
 
@@ -772,17 +714,17 @@ pub enum AssembledItem {
         /// The block they are of.
         block: u32,
         /// The fields.
-        native: NativeFields,
+        native: Native,
     },
     /// A format-specific event about a block ([`Output::BlockNative`]).
     BlockNative {
         /// The block it is about.
         block: u32,
         /// The event.
-        native: NativeValue,
+        native: Native,
     },
     /// A format-specific event, kept without interpretation.
-    Native(NativeValue),
+    Native(Native),
 }
 
 /// Response events collected for inspection or whole-body encoding.
@@ -839,17 +781,14 @@ impl Assembled {
     /// reasoning and tool calls in order, each with the fields its format kept
     /// beside it and its signatures after it.
     pub fn replay(&self) -> Vec<Content> {
-        let mut kept: HashMap<u32, NativeFields> = HashMap::new();
+        // A block's latest fields are what its format last said of it.
+        let mut kept: HashMap<u32, &Native> = HashMap::new();
         for item in self.items() {
-            let AssembledItem::BlockFields { block, native } = item else {
-                continue;
-            };
-            let entry = kept
-                .entry(*block)
-                .or_insert_with(|| NativeFields::new(native.format.clone(), Map::new()));
-            entry.fields.extend(native.fields.clone());
+            if let AssembledItem::BlockFields { block, native } = item {
+                kept.insert(*block, native);
+            }
         }
-        let native_of = |block: u32| kept.get(&block).filter(|n| !n.is_empty()).cloned();
+        let native_of = |block: u32| kept.get(&block).map(|n| (*n).clone()).unwrap_or_default();
         let mut parts = Vec::new();
         for item in self.items() {
             match item {
@@ -865,7 +804,7 @@ impl Assembled {
                             }
                             parts.push(part);
                         }
-                        Block::Reasoning if !b.text.is_empty() || native.is_some() || signed => {
+                        Block::Reasoning if !b.text.is_empty() || !native.is_empty() || signed => {
                             parts.push(Content::Reasoning {
                                 text: b.text.clone(),
                                 native,
@@ -986,19 +925,12 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn a_message_is_read_back_as_it_was_kept() {
-        let native = NativeFields::new(
-            "f",
-            json!({"cache": "x"})
-                .as_object()
-                .cloned()
-                .expect("an object"),
-        );
-        let mut message = Message::new(Role::native("f", "tool"), "hi");
-        message.native = Some(native.clone());
+        let native = Native::json::<()>(json!({"cache": "x"}));
+        let mut message = Message::new(Role::User, "hi");
         message.content.extend([
             Content::Reasoning {
                 text: "why".into(),
-                native: Some(native),
+                native: Native::default(),
             },
             Content::Signature("s".into()),
             Content::tool_call("c1", "lookup", "{}"),
@@ -1011,9 +943,14 @@ mod tests {
                 "application/pdf",
                 MediaSource::Url("https://x.test/a.pdf".into()),
             )),
-            Content::native("f", json!({"type": "web_search_call"})),
         ]);
-        let kept = serde_json::to_vec(&message).expect("kept");
+        let mut natives = message.clone();
+        natives.native = native.clone();
+        if let Content::Reasoning { native: n, .. } = &mut natives.content[1] {
+            *n = native;
+        }
+        // Only its format reads a native: it is not kept.
+        let kept = serde_json::to_vec(&natives).expect("kept");
         assert_eq!(
             serde_json::from_slice::<Message>(&kept).expect("read back"),
             message
@@ -1025,50 +962,44 @@ mod tests {
         let a = Message::new(Role::User, "hi");
         let mut b = a.clone();
         assert_eq!(a, b);
-        b.native = Some(NativeFields::new(
-            "chat",
-            json!({"name": "x"})
-                .as_object()
-                .cloned()
-                .unwrap_or_default(),
-        ));
+        b.native = Native::json::<()>(json!({"name": "x"}));
         assert_ne!(a, b);
         assert!(a.is_plain() && !b.is_plain());
-        let tagged = Message::new(Role::native("chat", "tool"), "x");
+        let tagged = Message::new(Role::Native(Native::json::<()>("tool")), "x");
         assert!(!tagged.is_plain());
     }
 
     #[test]
     fn parts_roles_and_finishes_carry_their_format_and_extra() {
-        let marker = NativeFields::new(
-            "chat",
-            json!({"cache_control": 1})
-                .as_object()
-                .cloned()
-                .unwrap_or_default(),
-        );
         let mut cached = Message::new(Role::User, "hi");
         if let Content::Text { native, .. } = &mut cached.content[0] {
-            *native = Some(marker);
+            *native = Native::json::<()>(json!({"cache_control": 1}));
         }
         // A part's native does not change what it says.
         assert!(cached.is_plain());
         assert_ne!(cached, Message::new(Role::User, "hi"));
-        assert_eq!(
-            Role::native("chat", "critic"),
-            Role::native("chat", "critic")
-        );
+        let role = |native| Role::Native(native);
+        let critic = || Native::json::<()>("critic");
+        assert_eq!(role(critic()), role(critic()));
+        assert_ne!(role(critic()), role(Native::json::<u8>("critic")));
         assert_ne!(
-            Role::native("chat", "critic"),
-            Role::native("other", "critic")
+            Finish::native(Native::json::<()>("x"), None),
+            Finish::native(Native::json::<u8>("x"), None)
         );
-        assert_ne!(Finish::native("a", "x"), Finish::native("b", "x"));
+        // Only the format a native is of reads it; another's it replaces.
+        let mut native = critic();
+        assert_eq!(native.value::<u8>(), None);
+        assert!(native.fields::<u8>().is_empty());
+        native.fields_mut::<u8>().insert("a".into(), 1.into());
+        assert_eq!(native.value::<()>(), None);
+        assert_eq!(native.value::<u8>(), Some(&json!({"a": 1})));
+        assert!(Native::json::<u8>(json!({})).is_empty());
     }
 
     #[test]
     fn events_fold_into_the_whole_answer() {
         let usage = Usage::new(3, 0);
-        let fields = json!({"index": 0}).as_object().cloned().unwrap_or_default();
+        let fields = Native::json::<()>(json!({"index": 0}));
         let all = fold(&[
             Output::start("r1", "m"),
             Output::block_start(0, Block::Reasoning),
@@ -1080,7 +1011,10 @@ mod tests {
             Output::text(1, "Hel"),
             Output::text(1, "lo"),
             Output::block_end(1),
-            Output::block_fields("chat", 2, fields.clone()),
+            Output::BlockFields {
+                block: 2,
+                native: fields.clone(),
+            },
             Output::block_start(
                 2,
                 Block::ToolCall {
@@ -1092,7 +1026,7 @@ mod tests {
             Output::arguments(2, "1}"),
             Output::signature(Some(2), "call"),
             Output::block_end(2),
-            Output::native("chat", json!({"type": "ping"})),
+            Output::Native(Native::json::<()>(json!({"type": "ping"}))),
             Output::usage(usage),
             Output::usage(usage),
             Output::finished(Finish::ToolUse),
@@ -1118,11 +1052,11 @@ mod tests {
         // Each signature follows the part it seals; reasoning withheld stays in place.
         let mut call = Content::tool_call("t", "f", "{\"a\":1}");
         if let Content::ToolCall { native, .. } = &mut call {
-            *native = Some(NativeFields::new("chat", fields));
+            *native = fields;
         }
         let reasoning = Content::Reasoning {
             text: "hm".into(),
-            native: None,
+            native: Native::default(),
         };
         assert_eq!(
             all.replay(),
@@ -1137,10 +1071,8 @@ mod tests {
         );
         assert_eq!(all.finish, Some(Finish::ToolUse));
         assert_eq!(all.usage.input_tokens, 6);
-        assert!(
-            matches!(all.items().last(), Some(AssembledItem::Native(respan_gateway_core::NativeValue { format: f, value: raw }))
-            if &**f == "chat" && **raw == json!({"type": "ping"}))
-        );
+        assert!(matches!(all.items().last(), Some(AssembledItem::Native(n))
+            if n.value::<()>() == Some(&json!({"type": "ping"}))));
     }
 
     #[test]
@@ -1174,7 +1106,7 @@ mod tests {
         let mut all = fold(&[
             Output::block_start(9, Block::Reasoning),
             Output::reasoning(9, "think"),
-            Output::native("native", signature.clone()),
+            Output::Native(Native::json::<()>(signature.clone())),
             Output::block_start(2, Block::Text),
             Output::text(2, "ans"),
             Output::reasoning(9, "ing"),
@@ -1184,10 +1116,8 @@ mod tests {
         .expect("interleaved response");
         assert!(matches!(&all.items()[0], AssembledItem::Block(p)
             if p.block == 9 && p.kind == Block::Reasoning && p.text == "thinking"));
-        assert!(
-            matches!(&all.items()[1], AssembledItem::Native(respan_gateway_core::NativeValue { format: f, value: raw })
-            if &**f == "native" && **raw == signature)
-        );
+        assert!(matches!(&all.items()[1], AssembledItem::Native(n)
+            if n.value::<()>() == Some(&signature)));
         assert!(matches!(&all.items()[2], AssembledItem::Block(p)
             if p.block == 2 && p.kind == Block::Text && p.text == "answer"));
         assert_eq!(all.text(), "answer");
@@ -1230,6 +1160,6 @@ mod tests {
         assert!(Output::text(0, "x").is_content());
         assert!(Output::finished(Finish::Stop).is_content());
         assert!(!Output::usage(Usage::default()).is_content());
-        assert!(!Output::native("f", json!(1)).is_content());
+        assert!(!Output::Native(Native::json::<()>(1)).is_content());
     }
 }

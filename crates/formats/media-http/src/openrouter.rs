@@ -3,8 +3,8 @@
 
 use crate::edge::{bind_provider, content, sends};
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{kept, media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Provider};
+use respan_gateway_conversation_http::fields::{media_url, merge_missing};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{Method, request::Parts as RequestHead};
@@ -14,6 +14,9 @@ use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
+
+/// What only this format reads of a value ([`Native`]).
+enum Key {}
 /// What ends the path of a download, after its job's escaped id.
 const CONTENT: &str = "/content";
 
@@ -40,7 +43,7 @@ const CONTENT: &str = "/content";
 pub struct OpenRouterVideos;
 
 impl OpenRouterVideos {
-    /// The format's name, `openrouter-videos`, which tags its native fields.
+    /// The format's name, `openrouter-videos`.
     pub const NAME: &'static str = NAME;
 }
 
@@ -70,11 +73,11 @@ impl Format<ProviderIo, Output, Input> for OpenRouterVideos {
     }
 }
 
-/// An operation OpenRouter has no form for, refused, named by its format.
+/// An operation OpenRouter has no form for, refused.
 fn unsupported(input: &Input) -> Fault {
     let what = match input {
-        Input::Native { native, .. } => format!("{} operation", native.format),
-        _ => "operation of this kind".to_owned(),
+        Input::Native { .. } => "operation of another format",
+        _ => "operation of this kind",
     };
     Fault::bad_request(format!("OpenRouter has no video {what}"))
         .with(ErrorCode("unsupported".into()))
@@ -122,7 +125,7 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
             "image_url": { "url": media_url(reference) } });
         v.insert("frame_images".into(), vec![frame].into());
     }
-    merge_missing(&mut v, &kept(NAME, &create.native));
+    merge_missing(&mut v, create.native.fields::<Key>());
     serde_json::to_vec(&v)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("a body could not be written").with_source(e))
@@ -145,7 +148,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
             error = error.or(Some(ended));
             Status::Failed
         }
-        Some(other) => Status::native(NAME, other),
+        Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable("has no status")),
     };
     let mut job = Job::new(id, status);
@@ -218,7 +221,7 @@ mod tests {
         // Another format's operation, such as OpenAI's remix, is refused before a call.
         let remix = Input::Native {
             id: Some("gen-vid-1".into()),
-            native: respan_gateway_core::NativeValue::new("openai-videos", json!({})),
+            native: Native::json::<()>(json!({"method": "POST"})),
         };
         let refused = call(&mut head, &remix).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
@@ -243,7 +246,7 @@ mod tests {
         );
         let at = "https://o.example/videos/gen-vid-1/content?index=0";
         assert_eq!(job.video_url(), Some(at));
-        assert_eq!(job.native, None);
+        assert!(job.native.is_empty());
 
         let failed = json!({ "id": "gen-vid-1", "status": "failed", "error": "content policy" });
         let [Output::Job(job)] = &jobs(failed)[..] else {

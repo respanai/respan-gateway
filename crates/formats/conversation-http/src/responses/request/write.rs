@@ -1,12 +1,14 @@
 //! Writing a conversation as a Responses request's input items.
 
-use super::super::RESPONSES;
 use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
+use crate::Schema;
 use crate::fields::media_url;
-use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, sealed};
+use crate::responses::OpenAiResponses;
+use crate::schema::{FAILED_RESULT_PREFIX, merge_missing, sealed};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::Fault;
+use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
 
 /// The key in a request's native that says its leading system message was
@@ -22,17 +24,14 @@ pub(in crate::responses) fn write_input(
     chat: &Input,
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let instructed = chat.native.own(RESPONSES).contains_key(INSTRUCTIONS);
+    let instructed = OpenAiResponses::fields(&chat.native).contains_key(INSTRUCTIONS);
     let mut rest = &chat.messages[..];
     if instructed
         && let Some((first, after)) = rest.split_first()
         && first.role == Role::System
         && first.native.is_empty()
-        && let [
-            Content::Text {
-                text, native: None, ..
-            },
-        ] = &first.content[..]
+        && let [Content::Text { text, native, .. }] = &first.content[..]
+        && native.is_empty()
         && !text.is_empty()
     {
         v.insert("instructions".into(), text.as_str().into());
@@ -48,12 +47,14 @@ pub(in crate::responses) fn write_input(
 
 fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     let role = match &m.role {
-        Role::Native { format, name, .. } if **format == *RESPONSES && name == ITEM_ROLE => {
-            write_opaque(m, items);
-            return Ok(());
-        }
-        Role::Native { format, name, .. } if **format == *RESPONSES => name.as_str(),
-        // WARN: a role Responses lacks is a user's.
+        Role::Native(n) => match OpenAiResponses::value(n).and_then(Value::as_str) {
+            Some(ITEM_ROLE) => {
+                write_opaque(m, items);
+                return Ok(());
+            }
+            // WARN: a role Responses lacks is a user's.
+            name => name.unwrap_or("user"),
+        },
         role => ROLES.name(role).unwrap_or("user"),
     };
     match m.role {
@@ -66,9 +67,9 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) {
     for part in &m.content {
         // WARN: what else a plugin put among the items is dropped.
         if let Content::Native(n) = part
-            && *n.format == *RESPONSES
+            && let Some(item) = OpenAiResponses::value(n)
         {
-            items.push(n.value.as_ref().clone());
+            items.push(item.clone());
         }
     }
 }
@@ -77,7 +78,7 @@ fn write_opaque(m: &Message, items: &mut Vec<Value>) {
 /// message item, each result an output item of its own.
 fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fault> {
     let before = items.len();
-    let mut extras = m.native.fields_for(RESPONSES);
+    let mut extras = OpenAiResponses::fields(&m.native).clone();
     let mut parts: Vec<Value> = Vec::new();
     for c in &m.content {
         match c {
@@ -148,11 +149,11 @@ fn write_input_part(c: &Content) -> Option<Value> {
             let mut part = Map::new();
             part.insert("type".into(), "input_text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(native.fields_for(RESPONSES));
+            part.extend(OpenAiResponses::fields(native).clone());
             Some(part.into())
         }
         Content::Image(media) | Content::Document(media) => Some(write_media(c, media)),
-        Content::Native(n) if *n.format == *RESPONSES => Some(n.value.as_ref().clone()),
+        Content::Native(n) => OpenAiResponses::value(n).cloned(),
         // WARN: audio and other parts have no form in an input; dropped.
         _ => None,
     }
@@ -161,7 +162,7 @@ fn write_input_part(c: &Content) -> Option<Value> {
 /// An image or a file; an image has no display name, which is dropped.
 pub(super) fn write_media(c: &Content, media: &Media) -> Value {
     let image = matches!(c, Content::Image(_));
-    let native = media.native.fields_for(RESPONSES);
+    let native = OpenAiResponses::fields(&media.native).clone();
     let url = || media_url(media);
     let mut v = match (image, &media.source) {
         (true, _) => json!({ "type": "input_image", "image_url": url() }),
@@ -178,16 +179,11 @@ pub(super) fn write_media(c: &Content, media: &Media) -> Value {
     v
 }
 
-fn write_result(
-    id: &str,
-    content: &[Content],
-    is_error: bool,
-    native: &Option<NativeFields>,
-) -> Value {
+fn write_result(id: &str, content: &[Content], is_error: bool, native: &Native) -> Value {
     // A function call output cannot say that the call failed: its text does.
     let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
     let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
-    let plain = |c: &Content| matches!(c, Content::Text { native: None, .. });
+    let plain = |c: &Content| matches!(c, Content::Text { native, .. } if native.is_empty());
     let output: Value = match content.iter().all(plain) {
         true => content
             .iter()
@@ -204,7 +200,7 @@ fn write_result(
     v.insert("type".into(), "function_call_output".into());
     v.insert("call_id".into(), id.into());
     v.insert("output".into(), output);
-    v.extend(native.fields_for(RESPONSES));
+    v.extend(OpenAiResponses::fields(native).clone());
     v.into()
 }
 
@@ -232,12 +228,12 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
         match c {
             Content::Text { native, .. } => {
                 // A text that carries its item's fields starts that item.
-                if !run.is_empty() && native.own(RESPONSES).contains_key(MESSAGE) {
+                if !run.is_empty() && OpenAiResponses::fields(native).contains_key(MESSAGE) {
                     flush_assistant(&mut run, items);
                 }
                 run.push(c);
             }
-            Content::Native(n) if *n.format == *RESPONSES => run.push(c),
+            Content::Native(n) if OpenAiResponses::value(n).is_some() => run.push(c),
             Content::ToolCall {
                 id,
                 name,
@@ -255,12 +251,12 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 v.insert("call_id".into(), id.as_str().into());
                 v.insert("name".into(), name.as_str().into());
                 v.insert("arguments".into(), arguments.into());
-                v.extend(native.fields_for(RESPONSES));
+                v.extend(OpenAiResponses::fields(native).clone());
                 items.push(v.into());
             }
             // Reasoning is only valid with the id of the item it was.
             // WARN: another format's reasoning is dropped here, silently.
-            Content::Reasoning { native, .. } if native.own(RESPONSES).is_empty() => {}
+            Content::Reasoning { native, .. } if OpenAiResponses::fields(native).is_empty() => {}
             Content::Reasoning { text, native } => {
                 flush_assistant(&mut run, items);
                 let summary = match text.is_empty() {
@@ -270,7 +266,7 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 let mut v = Map::new();
                 v.insert("type".into(), "reasoning".into());
                 v.insert("summary".into(), summary);
-                v.extend(native.fields_for(RESPONSES));
+                v.extend(OpenAiResponses::fields(native).clone());
                 if let Some(s) = signature {
                     v.insert(SEALED.into(), s.into());
                 }
@@ -302,7 +298,7 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) {
     for (i, c) in parts.iter().enumerate() {
         match c {
             Content::Text { text, native, .. } => {
-                let mut fields = native.fields_for(RESPONSES);
+                let mut fields = OpenAiResponses::fields(native).clone();
                 if i == 0
                     && let Some(Value::Object(more)) = fields.shift_remove(MESSAGE)
                 {
@@ -319,7 +315,7 @@ fn flush_assistant(run: &mut Vec<&Content>, items: &mut Vec<Value>) {
             }
             Content::Native(n) => {
                 plain = false;
-                written_parts.push(n.value.as_ref().clone());
+                written_parts.extend(OpenAiResponses::value(n).cloned());
             }
             _ => {}
         }

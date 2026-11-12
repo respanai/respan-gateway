@@ -17,11 +17,7 @@
 use bytes::Bytes;
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_core::futures::StreamExt;
-use respan_gateway_core::{
-    ClientContext, ErrorCode, Fault, FormatId, NativeFields, NativeValue, Plugin, Response,
-    async_trait,
-};
-use serde_json::Value;
+use respan_gateway_core::{ClientContext, ErrorCode, Fault, Native, Plugin, Response, async_trait};
 
 /// The kind's input: one operation on a video job.
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +48,7 @@ pub enum Input {
         /// The job it is on, or a page starts after, if any.
         id: Option<String>,
         /// The operation.
-        native: NativeValue,
+        native: Native,
     },
 }
 
@@ -99,7 +95,7 @@ pub struct Create {
     /// An image to start from.
     pub reference: Option<Media>,
     /// The request's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Create {
@@ -130,18 +126,8 @@ pub enum Output {
         /// them back in that order.
         ids: Vec<String>,
         /// The answer.
-        native: NativeValue,
+        native: Native,
     },
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for, naming no job.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native {
-            ids: Vec::new(),
-            native: NativeValue::new(format, raw),
-        }
-    }
 }
 
 /// A video job's state.
@@ -170,7 +156,7 @@ pub struct Job {
     // WARN: openai-videos names none: it serves them at `/content`.
     pub videos: Vec<Media>,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Job {
@@ -185,7 +171,7 @@ impl Job {
             size: None,
             error: None,
             videos: Vec::new(),
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -210,25 +196,9 @@ pub enum Status {
     Completed,
     /// Given up ([`Job::error`]).
     Failed,
-    /// A state the kind has no form for, as `format` names it; only a
+    /// A state the kind has no form for, as its format names it; only a
     /// response in that format can say it.
-    #[non_exhaustive]
-    Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The state, as that format names it.
-        status: String,
-    },
-}
-
-impl Status {
-    /// The state `status` of `format`, which the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, status: impl Into<String>) -> Self {
-        Status::Native {
-            format: format.into(),
-            status: status.into(),
-        }
-    }
+    Native(Native),
 }
 
 /// Why a job failed.
@@ -493,7 +463,7 @@ mod tests {
     fn ids_are_wrapped_in_their_provider() {
         let page = |ids: &[&str]| Output::Native {
             ids: ids.iter().map(|id| id.to_string()).collect(),
-            native: NativeValue::new("openai-videos", Value::Null),
+            native: Native::default(),
         };
         let mut listed = page(&["video_1", "video_2"]);
         wrap_ids(&mut listed, "east");
@@ -511,7 +481,7 @@ mod tests {
     fn a_page_after_a_wrapped_job_goes_to_its_maker_unwrapped() {
         let list = |after: Option<&str>| Input::Native {
             id: after.map(str::to_owned),
-            native: NativeValue::new("openai-videos", Value::Null),
+            native: Native::default(),
         };
         let mut input = list(Some("west~video_1"));
         let found = input

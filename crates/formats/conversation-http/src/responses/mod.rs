@@ -76,8 +76,8 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_of,
-    own_fields, parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
+    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -176,7 +176,7 @@ impl Schema for OpenAiResponses {
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
     /// The structured output requirement is in `text`; whether the request
-    /// had `instructions` is said by [`request::write_input`].
+    /// had `instructions` is said by `request::write_input`.
     const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     type Decoding = ResponsesDecoder;
 
@@ -207,21 +207,19 @@ impl Schema for OpenAiResponses {
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_of(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
+        chat.native = OpenAiResponses::native(unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
-            chat.native.own_mut(RESPONSES).shift_remove("user");
+            OpenAiResponses::fields_mut(&mut chat.native).shift_remove("user");
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
-            chat.native
-                .own_mut(RESPONSES)
-                .insert(request::INSTRUCTIONS.into(), true.into());
+            Self::fields_mut(&mut chat.native).insert(request::INSTRUCTIONS.into(), true.into());
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
-        chat.native.take_if(|n| n.is_empty());
+        edit_native::<Self, _>(&mut chat.native, |_| {});
         request::read_format(v, &mut chat);
-        chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
+        chat.options.service_tier = crate::schema::take_text::<Self>(&mut chat, "service_tier");
         request::read_reasoning(&mut chat);
         chat
     }
@@ -345,16 +343,20 @@ pub(crate) fn status_of(finish: &Finish) -> Result<(&'static str, Option<String>
         Finish::Stop | Finish::ToolUse => ("completed", None),
         Finish::Length => ("incomplete", Some("max_output_tokens".into())),
         Finish::Filtered => ("incomplete", Some("content_filter".into())),
-        Finish::Native { format, reason, .. } if **format == *RESPONSES => (
-            "incomplete",
-            Some(reason.clone()).filter(|r| r != "incomplete"),
-        ),
         Finish::Native {
-            fallback: Some(fallback),
-            ..
-        } => status_of(fallback)?,
-        // WARN: a native reason without a fallback is written as a stop.
-        Finish::Native { .. } => ("completed", None),
+            native, fallback, ..
+        } => match (OpenAiResponses::value(native), fallback) {
+            (Some(reason), _) => (
+                "incomplete",
+                reason
+                    .as_str()
+                    .filter(|r| *r != "incomplete")
+                    .map(Into::into),
+            ),
+            (None, Some(fallback)) => status_of(fallback)?,
+            // WARN: a native reason without a fallback is written as a stop.
+            (None, None) => ("completed", None),
+        },
         _ => return Err(unwritable_content()),
     })
 }
@@ -387,7 +389,7 @@ pub(crate) fn response_body(
     ];
     let mut body = Map::new();
     body.extend(defaults.map(|(k, v)| (k.to_owned(), v)));
-    let mut fields = Value::Object(own_fields(start, RESPONSES));
+    let mut fields = Value::Object(own_fields::<OpenAiResponses>(start));
     merge_fields(&mut fields, changed);
     if let Value::Object(fields) = fields {
         body.extend(fields);

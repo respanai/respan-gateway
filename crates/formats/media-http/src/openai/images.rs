@@ -5,14 +5,14 @@
 use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, b64, bind_client, bind_provider, bytes_of, event_json,
-    file_name, invalid, is_true, json_bytes, kept, merge_missing, mime_of, missing, native_of,
-    post_to, read_usage, rest_of, sends, set, sniff, sse_event, streams, take_count, take_string,
-    unb64, unix_now, unreadable, usage_extras, whole_json, write_field, write_usage,
+    file_name, invalid, is_true, json_bytes, merge_missing, mime_of, missing, post_to, read_usage,
+    rest_of, sends, set, sniff, sse_event, streams, take_count, take_string, unb64, unix_now,
+    unreadable, usage_extras, whole_json, write_field, write_usage,
 };
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeFields, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
@@ -23,6 +23,9 @@ use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-images";
+
+/// What only this format reads of a value ([`Native`]).
+enum Key {}
 const GENERATIONS: &str = "/images/generations";
 const EDITS: &str = "/images/edits";
 
@@ -53,8 +56,32 @@ const EDITS: &str = "/images/edits";
 pub struct OpenAiImages;
 
 impl OpenAiImages {
-    /// The format's name, `openai-images`, which tags its native fields.
+    /// The format's name, `openai-images`.
     pub const NAME: &'static str = NAME;
+
+    /// The fields of this format's own in `native`, if it holds them: the
+    /// door for this format's dialects.
+    pub fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key>()
+    }
+
+    /// The fields of this format's own in `native`, to edit, in place of
+    /// another format's: the door for this format's dialects.
+    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
+        native.fields_mut::<Key>()
+    }
+
+    /// This format's own event or fields in `native`, if it holds them: the
+    /// door for this format's dialects.
+    pub fn value(native: &Native) -> Option<&Value> {
+        native.value::<Key>()
+    }
+
+    /// `value` as this format's own native: the door for this format's
+    /// dialects.
+    pub fn native(value: impl Into<Value>) -> Native {
+        Native::json::<Key>(value)
+    }
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiImages {
@@ -134,7 +161,7 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
             return Err(missing("image"));
         }
     }
-    input.native = native_of(NAME, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
@@ -211,7 +238,7 @@ fn fields(input: &Input, stream: bool) -> Map<String, Value> {
     v.insert("prompt".into(), input.prompt.clone().into());
     set(&mut v, "n", input.count);
     set(&mut v, "size", input.size.clone());
-    merge_missing(&mut v, &kept(NAME, &input.native));
+    merge_missing(&mut v, input.native.fields::<Key>());
     if stream {
         v.insert("stream".into(), true.into());
     }
@@ -243,11 +270,11 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
     let format = v["output_format"].as_str();
     let mut start = Start::default();
-    start.native = native_of(NAME, rest_of(&v, &["data", "usage"]));
+    start.native = Native::json::<Key>(rest_of(&v, &["data", "usage"]));
     out.push(Output::Start(start));
     for item in v["data"].as_array().into_iter().flatten() {
         let mut image = Image::new(media_of(item, format)?);
-        image.native = native_of(NAME, rest_of(item, &["b64_json", "url"]));
+        image.native = Native::json::<Key>(rest_of(item, &["b64_json", "url"]));
         out.push(Output::Image(image));
     }
     read_usage_into(&v["usage"], out)
@@ -258,7 +285,7 @@ fn read_usage_into(u: &Value, out: &mut Vec<Output>) -> Result<(), Fault> {
     if u.is_object() {
         let (usage, extras) = read_usage(u, &[])?;
         out.push(Output::Usage(usage));
-        out.extend(usage_extras(NAME, extras).map(Output::Native));
+        out.extend(usage_extras::<Key>(extras).map(Output::Native));
     }
     Ok(())
 }
@@ -325,7 +352,7 @@ impl Streamed {
                 set(&mut fields, "created", v["created_at"].as_u64());
                 let shared = std::mem::take(&mut fields);
                 let mut start = Start::default();
-                start.native = native_of(NAME, shared.clone());
+                start.native = Native::json::<Key>(shared.clone());
                 self.shared = Some(shared);
                 out.push(Output::Start(start));
             }
@@ -333,11 +360,11 @@ impl Streamed {
         }
         // A preview, as another event, is OpenAI's alone: written as it is.
         if !ours || step != "completed" {
-            out.push(Output::Native(NativeValue::new(NAME, v)));
+            out.push(Output::Native(Native::json::<Key>(v)));
             return Ok(());
         }
         let mut image = Image::new(media_of(&v, v["output_format"].as_str())?);
-        image.native = native_of(NAME, fields);
+        image.native = Native::json::<Key>(fields);
         out.push(Output::Image(image));
         self.done = true;
         read_usage_into(&v["usage"], out)
@@ -378,13 +405,13 @@ fn response_encoder(
 }
 
 /// An image's data item or event fields: its bytes, or its URL.
-fn image_fields(media: &Media, native: &Option<NativeFields>) -> Map<String, Value> {
+fn image_fields(media: &Media, native: &Native) -> Map<String, Value> {
     let mut v = Map::new();
     match &media.source {
         MediaSource::Bytes(bytes) => v.insert("b64_json".into(), b64(bytes).into()),
         MediaSource::Url(url) => v.insert("url".into(), url.clone().into()),
     };
-    merge_missing(&mut v, &kept(NAME, native));
+    merge_missing(&mut v, native.fields::<Key>());
     v
 }
 
@@ -399,15 +426,17 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             // A body has no place for another event.
-            Output::Native(n) if &*n.format == NAME => {
-                if let Some(more) = as_usage_extras(&n.value) {
+            Output::Native(n) => {
+                if let Some(more) = n.value::<Key>().and_then(as_usage_extras) {
                     merge_missing(&mut extras, more);
                 }
             }
             _ => {}
         }
     }
-    let mut native = start.map(|s| kept(NAME, &s.native)).unwrap_or_default();
+    let mut native = start
+        .map(|s| s.native.fields::<Key>().clone())
+        .unwrap_or_default();
     let created = native.shift_remove("created").unwrap_or(unix_now().into());
     let mut body = Map::new();
     body.insert("created".into(), created);
@@ -451,7 +480,7 @@ impl StreamEncoder {
     fn encode_into(&mut self, event: &Output, out: &mut BytesMut) -> Result<(), Fault> {
         match event {
             Output::Start(start) => {
-                self.shared = kept(NAME, &start.native);
+                self.shared = start.native.fields::<Key>().clone();
                 if let Some(created) = self.shared.shift_remove("created") {
                     self.created = created;
                 }
@@ -466,13 +495,17 @@ impl StreamEncoder {
                 self.pending = Some(v);
             }
             Output::Usage(u) => *self.usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format == NAME => match as_usage_extras(&n.value) {
-                Some(more) => merge_missing(&mut self.extras, more),
-                None => {
-                    self.flush(out);
-                    out.extend_from_slice(sse_event(&n.value).as_bytes());
+            Output::Native(n) => {
+                if let Some(v) = n.value::<Key>() {
+                    match as_usage_extras(v) {
+                        Some(more) => merge_missing(&mut self.extras, more),
+                        None => {
+                            self.flush(out);
+                            out.extend_from_slice(sse_event(v).as_bytes());
+                        }
+                    }
                 }
-            },
+            }
             _ => {}
         }
         Ok(())
@@ -541,10 +574,10 @@ mod tests {
         let first = MediaSource::Bytes(Bytes::from_static(b"\x89PN"));
         assert_eq!(input.images[0].source, first);
         assert_eq!(input.images[1].mime_type, "image/webp");
-        let native = input.native.clone().map(|n| Value::Object(n.fields));
+        let native = input.native.fields::<Key>().clone();
         assert_eq!(
-            native,
-            Some(json!({"mask": body["mask"], "quality": "high"}))
+            Value::Object(native),
+            json!({"mask": body["mask"], "quality": "high"})
         );
         let mut head = http::Request::new(()).into_parts().0;
         let encoder = post(&mut head, &input, false).expect("a call");
@@ -578,10 +611,10 @@ mod tests {
         };
         let partial = || {
             let v = json!({"type": "image_generation.partial_image", "b64_json": "YQ=="});
-            Output::Native(NativeValue::new(NAME, v))
+            Output::Native(Native::json::<Key>(v))
         };
         let mut start = Start::default();
-        start.native = native_of(NAME, Map::from_iter([("created".into(), json!(1))]));
+        start.native = Native::json::<Key>(Map::from_iter([("created".into(), json!(1))]));
         let events = [
             Output::Start(start),
             partial(),

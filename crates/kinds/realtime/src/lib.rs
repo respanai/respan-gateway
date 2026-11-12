@@ -13,8 +13,8 @@
 //! [`Output::Seconds`] instead. A user who speaks over the model barges in:
 //! [`Output::SpeechStarted`], and the response ends [`Status::Interrupted`].
 //!
-//! What the kind has no form for stays as its format has it ([`NativeFields`],
-//! [`Input::Native`], [`Output::Native`]). It is sent only in that format.
+//! What the kind has no form for stays as its format has it ([`Native`],
+//! [`Input::Native`], [`Output::Native`]). Only that format reads or sends it.
 //! Crossing to another format, it is dropped.
 //!
 //! The crate is the kind's types alone, with no I/O; its formats over
@@ -23,8 +23,7 @@
 use std::time::Duration;
 
 use bytes::Bytes;
-use respan_gateway_core::{Fault, FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_core::{Fault, Native};
 
 pub use respan_gateway_conversation::{Message, Tool};
 
@@ -42,13 +41,13 @@ pub enum Input {
         /// The audio.
         audio: Audio,
         /// The event's fields the kind has no place for, such as an event id.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The user's audio so far is a turn, an explicit end of the user's activity. Only
     /// meaningful with [`Turns::Manual`].
     Commit {
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// A whole message added to the conversation, such as the user's typed
     /// text.
@@ -58,7 +57,7 @@ pub enum Input {
         message: Message,
         /// The event's fields the kind has no place for, such as an item id
         /// or where it goes in the history.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// What a tool answered the model's call `id`.
     // WARN: mistral-realtime, openai-live and phonic-sts have none.
@@ -69,18 +68,18 @@ pub enum Input {
     Respond {
         /// Fields the kind has no place for, such as a response's own
         /// instructions or an out-of-band response.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// Stop the response being made.
     // WARN: mistral-realtime, openai-live and phonic-sts have none; gemini-live
     // emulates it.
     Cancel {
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
-    /// An event the kind has no form for, as `format` has it, such as
+    /// An event the kind has no form for, as its format has it, such as
     /// a spec's own history edit. Sent only in that format.
-    Native(NativeValue),
+    Native(Native),
 }
 
 impl Input {
@@ -98,11 +97,6 @@ impl Input {
         if let Input::Session(session) = self {
             session.model = Some(model);
         }
-    }
-
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Input::Native(NativeValue::new(format, raw))
     }
 }
 
@@ -158,7 +152,7 @@ pub struct Session {
     pub tools: Option<Vec<Tool>>,
     /// The fields the kind has no place for, such as noise
     /// reduction or context window compression.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 /// What a session is for.
@@ -204,7 +198,7 @@ pub struct Vad {
     pub prefix_ms: Option<u32>,
     /// Tuning the kind has no place for, such as thresholds, detector types
     /// and sensitivities.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 /// Audio: bytes in a format.
@@ -287,7 +281,7 @@ pub struct ToolResult {
     /// What the tool said: JSON text, or plain text.
     pub output: String,
     /// The fields the kind has no place for, such as when the model should act on it.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl ToolResult {
@@ -296,7 +290,7 @@ impl ToolResult {
         Self {
             id: id.into(),
             output: output.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -316,7 +310,7 @@ pub enum Output {
         // WARN: phonic-sts has none.
         at_ms: Option<u64>,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The user stopped speaking.
     // WARN: mistral-realtime and openai-live have none.
@@ -325,7 +319,7 @@ pub enum Output {
         // WARN: phonic-sts has none.
         at_ms: Option<u64>,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// What the user said, as the provider transcribes it.
     InputTranscript {
@@ -334,13 +328,13 @@ pub enum Output {
         /// Whether `text` is the whole transcript of the user's turn.
         complete: bool,
         /// The event's fields the kind has no place for, such as its item.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// A response begins.
     // WARN: mistral-realtime and openai-live have none.
     ResponseStart {
         /// The event's fields the kind has no place for, such as its id.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The next chunk of the model's audio.
     // WARN: mistral-realtime has none.
@@ -348,7 +342,7 @@ pub enum Output {
         /// The audio.
         audio: Audio,
         /// The event's fields the kind has no place for, such as its item.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The next text of the model's answer, in [`Modality::Text`].
     // WARN: mistral-realtime, openai-live and phonic-sts have none.
@@ -356,7 +350,7 @@ pub enum Output {
         /// The text.
         text: String,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The next text of the model's audio, transcribed.
     // WARN: mistral-realtime has none.
@@ -364,7 +358,7 @@ pub enum Output {
         /// The text.
         text: String,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The model calls tool `name`; its answer is an [`Input::ToolResult`]
     /// naming `id`.
@@ -377,7 +371,7 @@ pub enum Output {
         /// Its arguments, as JSON text, whole.
         arguments: String,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// Usage the provider reports for a response, as an increment.
     // WARN: openai-live and phonic-sts bill by duration instead.
@@ -393,7 +387,7 @@ pub enum Output {
         /// How.
         status: Status,
         /// The event's fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
     /// The provider refused something the client sent; the session goes on
     /// where the format allows it.
@@ -404,18 +398,11 @@ pub enum Output {
         message: String,
         /// The event's fields the kind has no place for, such as the
         /// provider's own code and the id of the event it refuses.
-        native: Option<NativeFields>,
+        native: Native,
     },
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    Native(Native),
 }
 
 /// Why a provider answered an [`Output::Error`].
@@ -449,13 +436,11 @@ pub enum Status {
     /// The provider failed.
     // WARN: phonic-sts has none.
     Failed,
-    /// A reason the kind has no form for, as `format` names it; another
+    /// A reason the kind has no form for, as its format names it; another
     /// format writes `fallback`.
     Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The reason, as that format names it.
-        reason: String,
+        /// The reason, as its format names it.
+        native: Native,
         /// What another format writes.
         fallback: Box<Status>,
     },
@@ -519,11 +504,18 @@ mod tests {
         set_model("model-a")(&mut session).expect("set");
         assert_eq!(session.model(), Some("model-a"));
 
-        let mut commit = Input::Commit { native: None };
+        let mut commit = Input::Commit {
+            native: Native::default(),
+        };
         commit.set_model("model-a".into());
-        assert_eq!(commit, Input::Commit { native: None });
+        assert_eq!(
+            commit,
+            Input::Commit {
+                native: Native::default()
+            }
+        );
         assert_eq!(commit.model(), None);
-        let native = Input::native("realtime-x", serde_json::json!({"type": "x"}));
+        let native = Input::Native(Native::json::<()>(serde_json::json!({"type": "x"})));
         assert_eq!(native.model(), None);
     }
 }

@@ -19,9 +19,9 @@ event each. Its formats, over WebSocket, are
 - `Audio` is decoded bytes in an `AudioFormat` (16-bit PCM at a rate, or
   G.711 μ-law or A-law), never base64; `duration()` says how long it plays.
 
-What the kind has no form for stays as its format has it: `NativeFields` on
-an event, or a whole `Input::Native` / `Output::Native` event, sent only in
-that format; crossing to another, it is dropped. Messages, tools and token usage are the
+What the kind has no form for stays as its format has it: a `Native` on
+an event, or a whole `Input::Native` / `Output::Native` event, which only
+that format reads or sends; crossing to another, it is dropped. Messages, tools and token usage are the
 conversation kind's.
 
 Formats translate through these events, OpenAI Realtime and Gemini Live

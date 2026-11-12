@@ -5,13 +5,12 @@
 
 use super::multipart::{self, Writer};
 use super::{
-    Fields, Form, bind_client, bytes_of, file_name, invalid, json_bytes, kept, merge_missing,
-    missing, native_of, rest_of, sends, set, take_count, take_string, unreadable, whole_json,
-    write_field,
+    Fields, Form, bind_client, bytes_of, file_name, invalid, json_bytes, merge_missing, missing,
+    rest_of, sends, set, take_count, take_string, unreadable, whole_json, write_field,
 };
 use crate::edge::{bind_provider, content};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -24,6 +23,9 @@ use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-videos";
+
+/// What only this format reads of a value ([`Native`]).
+enum Key {}
 
 /// OpenAI Videos, as OpenAI or a compatible vendor serves it: a request to
 /// a path ending in `/videos`, `/videos/{id}`, `/videos/{id}/content` or
@@ -40,8 +42,14 @@ const NAME: &str = "openai-videos";
 pub struct OpenAiVideos;
 
 impl OpenAiVideos {
-    /// The format's name, `openai-videos`, which tags its native fields.
+    /// The format's name, `openai-videos`.
     pub const NAME: &'static str = NAME;
+
+    /// The fields of this format's own in `native`, to edit, in place of
+    /// another format's: the door for this format's dialects.
+    pub fn fields_mut(native: &mut Native) -> &mut Map<String, Value> {
+        native.fields_mut::<Key>()
+    }
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiVideos {
@@ -149,7 +157,7 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
         let query = query(&head.uri).into_iter().filter(|(k, _)| k != "after");
         let query: Map<String, Value> = query.map(|(k, v)| (k, v.into())).collect();
         let v = json!({"method": head.method.as_str(), "path": rest, "query": query, "body": body});
-        let native = NativeValue::new(NAME, v);
+        let native = Native::json::<Key>(v);
         Input::Native { id, native }
     };
     let video = matches!(param(&head.uri, "variant").as_deref(), None | Some("video"));
@@ -184,7 +192,7 @@ fn decode_create(form: &Form) -> Result<Create, Fault> {
             _ => return Err(invalid(&name, "is not a file this endpoint takes")),
         }
     }
-    create.native = native_of(NAME, map);
+    create.native = Native::json::<Key>(map);
     Ok(create)
 }
 
@@ -199,8 +207,11 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         ),
         Input::Retrieve { id } => (Method::GET, path(id, ""), None),
         Input::Content { id, .. } => (Method::GET, path(id, "/content"), None),
-        Input::Native { id, native } if &*native.format == NAME => {
-            let v = &*native.value;
+        Input::Native { id, native } => {
+            let Some(v) = native.value::<Key>() else {
+                let what = "OpenAI has no video operation of another format";
+                return Err(Fault::bad_request(what));
+            };
             let mut query = form_urlencoded::Serializer::new(String::new());
             let rest = v["path"].as_str();
             if let (None, Some(after)) = (rest, id) {
@@ -222,10 +233,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let body = v["body"].as_object().map(json_bytes).transpose()?;
             let body = body.map(|b| (b, "application/json".to_owned()));
             (method, uri, body)
-        }
-        Input::Native { native, .. } => {
-            let what = format!("OpenAI has no video {} operation", native.format);
-            return Err(Fault::bad_request(what));
         }
         _ => {
             return Err(Fault::bad_request(
@@ -254,7 +261,7 @@ fn create_body(create: &Create) -> Result<(Bytes, String), Fault> {
     v.insert("prompt".into(), create.prompt.clone().into());
     set(&mut v, "seconds", create.seconds.map(|s| s.to_string()));
     set(&mut v, "size", create.size.clone());
-    merge_missing(&mut v, &kept(NAME, &create.native));
+    merge_missing(&mut v, create.native.fields::<Key>());
     let Some(reference) = &create.reference else {
         return Ok((json_bytes(&v)?, "application/json".to_owned()));
     };
@@ -300,7 +307,7 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         false => {
             let mut ids = Vec::new();
             each_id(&mut v, &mut |id| ids.push(id.clone()));
-            let native = NativeValue::new(NAME, v);
+            let native = Native::json::<Key>(v);
             Output::Native { ids, native }
         }
     });
@@ -335,7 +342,7 @@ fn job_of(v: &Value) -> Result<Job, Fault> {
         Some("in_progress") => Status::InProgress,
         Some("completed") => Status::Completed,
         Some("failed") => Status::Failed,
-        Some(other) => Status::native(NAME, other),
+        Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable(NAME, "names no video status")),
     };
     let mut job = Job::new(id_of(v)?, status);
@@ -365,7 +372,7 @@ fn job_of(v: &Value) -> Result<Job, Fault> {
         .filter(|(key, typed)| *typed || v[*key].is_null());
     let mut taken = vec!["id", "object", "status"];
     taken.extend(read.map(|(key, _)| *key));
-    job.native = native_of(NAME, rest_of(v, &taken));
+    job.native = Native::json::<Key>(rest_of(v, &taken));
     Ok(job)
 }
 
@@ -406,8 +413,11 @@ fn encode_whole(events: &[Output]) -> Result<Bytes, Fault> {
     for event in events {
         match event {
             Output::Job(job) => body = Some(job_json(job)?),
-            Output::Native { ids, native } if &*native.format == NAME => {
-                let (mut v, mut ids) = ((*native.value).clone(), ids.iter());
+            Output::Native { ids, native } => {
+                let Some(v) = native.value::<Key>() else {
+                    continue;
+                };
+                let (mut v, mut ids) = (v.clone(), ids.iter());
                 each_id(&mut v, &mut |id| {
                     if let Some(given) = ids.next() {
                         id.clone_from(given);
@@ -429,9 +439,11 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         Status::InProgress => "in_progress",
         Status::Completed => "completed",
         Status::Failed => "failed",
-        Status::Native { format, status, .. } if &**format == NAME => status,
         // WARN: another format's state has no form here: it is written as
         // `in_progress`, so the client polls on.
+        Status::Native(native) => {
+            (native.value::<Key>().and_then(Value::as_str)).unwrap_or("in_progress")
+        }
         _ => "in_progress",
     };
     let error = job
@@ -449,7 +461,7 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         "error": error,
     });
     let mut v = v.as_object().cloned().unwrap_or_default();
-    merge_missing(&mut v, &kept(NAME, &job.native));
+    merge_missing(&mut v, job.native.fields::<Key>());
     for key in [
         "created_at",
         "progress",

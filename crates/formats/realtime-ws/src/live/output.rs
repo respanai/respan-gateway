@@ -1,16 +1,16 @@
 //! What the model says: the Live API's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output};
 use serde_json::{Value, json};
 
 use super::input::DEFAULT_FORMAT;
-use super::{NAME, session};
+use super::{Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, at, merge, own, string, take, text, untranslatable_output};
+use crate::json::{self, at, merge, string, take, text, untranslatable_output};
 
 /// A provider's frames as events.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl Provider {
             out.push(Output::Seconds(seconds - self.billed));
             self.billed = seconds;
         }
-        out.push(Output::native(NAME, v));
+        out.push(Output::Native(Native::json::<Key>(v)));
         Ok(())
     }
 
@@ -65,16 +65,16 @@ impl Provider {
                     data: json::take_audio(v, &["delta"])?,
                     format: self.output,
                 },
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "session.input_transcript.delta" => Output::InputTranscript {
                 text: delta(v)?,
                 complete: false,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "session.output_transcript.delta" => Output::Transcript {
                 text: delta(v)?,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "error" => Output::Error {
                 cause: match v["error"]["type"].as_str() {
@@ -82,7 +82,7 @@ impl Provider {
                     _ => Cause::Provider,
                 },
                 message: take(v, &["error", "message"], string, text)?,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             _ => return None,
         })
@@ -112,7 +112,7 @@ impl Client {
     }
 
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event) else {
+        let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
         if let Some(v) = self.encode(&event)? {
@@ -165,7 +165,7 @@ impl Client {
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
                 // Its own error keeps its fields; another's cause is its type.
-                if native.is_none() {
+                if native.fields::<Key>().is_empty() {
                     let invalid = matches!(cause, Cause::Invalid | Cause::NothingToCancel);
                     v["error"]["type"] = if invalid {
                         "invalid_request_error"
@@ -178,12 +178,10 @@ impl Client {
             }
             Output::Text { .. } => return refuse("text"),
             Output::ToolCall { .. } => return refuse("a tool's call"),
-            Output::Native(NativeValue { format, value }) if **format == *NAME => {
-                return Ok(Some(Value::clone(value)));
-            }
+            Output::Native(native) => return Ok(native.value::<Key>().cloned()),
             _ => return Ok(None),
         };
-        merge(&mut v, own(native));
+        merge(&mut v, native.fields::<Key>());
         Ok(Some(v))
     }
 }

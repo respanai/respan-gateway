@@ -1,18 +1,14 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
-use crate::schema::{
-    Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
-};
+use crate::schema::{Gate, Schema, check_usage, fits, merge_into, unix_now, unwritable_content};
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{
-    FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, sign, usage_body, usage_fields,
-};
+use super::{FINISH, Fields, OpenAiChat, USAGE, response_of, sign, usage_body, usage_fields};
 
 /// Put a tool call's block fields into the call `call`: the entry's, and
 /// its function's under `function`.
@@ -36,7 +32,7 @@ pub(super) fn envelope(start: Option<&Start>, object: &str, now: u64) -> Map<Str
     let (id, model) = start
         .map(|s| (s.id.as_str(), s.model.as_str()))
         .unwrap_or_default();
-    let fields = start.map(|s| s.native.own(OPENAI));
+    let fields = start.map(|s| OpenAiChat::fields(&s.native));
     let created = fields.and_then(|f| f.get("created")).cloned();
     let mut v = Map::new();
     v.insert("id".into(), id.into());
@@ -362,11 +358,12 @@ impl Chunks {
                 self.finish = Some(finish.clone());
                 self.begin(out);
             }
-            Output::BlockFields { block, native } if *native.format == *OPENAI => {
-                self.call_fields.push((*block, native.fields.clone()));
+            Output::BlockFields { block, native } if OpenAiChat::value(native).is_some() => {
+                self.call_fields
+                    .push((*block, OpenAiChat::fields(native).clone()));
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
-                self.write_native(raw, out);
+            Output::Native(n) if OpenAiChat::value(n).is_some() => {
+                self.write_native(OpenAiChat::value(n).unwrap_or_default(), out);
             }
             // WARN: Chat has no place for a signature over reasoning, or alone, or one that comes after its call opened; it is dropped here, silently.
             Output::Signature { block, data } => {

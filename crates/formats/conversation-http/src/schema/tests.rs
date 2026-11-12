@@ -12,7 +12,7 @@ use crate::gemini::GeminiGenerate;
 use crate::openai::OpenAiChat;
 use crate::responses::OpenAiResponses;
 use crate::schema::errors::answer;
-use crate::schema::{NativeFieldsExt, decode_content, encode_content};
+use crate::schema::{decode_content, encode_content};
 
 #[test]
 fn a_cache_marker_stays_with_its_own_part_among_equal_text() {

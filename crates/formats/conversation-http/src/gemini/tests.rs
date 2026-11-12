@@ -1,4 +1,8 @@
 use super::*;
+use crate::Schema;
+use crate::anthropic::AnthropicMessages;
+use crate::gemini::GeminiGenerate;
+use crate::openai::OpenAiChat;
 use respan_gateway_core::Fault;
 
 use super::encode::reason_of;
@@ -154,7 +158,7 @@ fn a_request_reads_as_the_conversation_it_says_and_writes_back() {
     assert!(is_synthetic(id));
     assert_eq!(name, "weather");
     assert_eq!(arguments, r#"{"city":"Paris"}"#);
-    assert!(native.is_none());
+    assert!(native.is_empty());
     // Its signature is the part after it.
     assert_eq!(
         chat.messages[2].content[2],
@@ -236,7 +240,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
         "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });
     let chat = GeminiGenerate.decode_json(&body);
-    let native = chat.native.own(GEMINI);
+    let native = GeminiGenerate::fields(&chat.native);
     for key in ["safetySettings", "tools", "toolConfig", "generationConfig"] {
         assert!(native.contains_key(key), "{key}");
     }
@@ -406,9 +410,7 @@ fn what_gemini_cannot_say_is_dropped_or_its_nearest() {
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
-        c.native
-            .own_mut("openai-chat")
-            .insert("seed".into(), 1.into());
+        OpenAiChat::fields_mut(&mut c.native).insert("seed".into(), 1.into());
     }));
 }
 
@@ -682,15 +684,14 @@ fn a_stream_is_written_a_response_per_delta_and_a_last_with_the_finish() {
 
 #[test]
 fn what_another_format_says_is_dropped_and_what_none_can_is_refused() {
-    let alien = Output::native("anthropic-messages", json!({ "type": "x" }));
+    let alien = Output::Native(AnthropicMessages::native(json!({ "type": "x" })));
     let stream = stream_of(std::slice::from_ref(&alien)).expect("a stream");
     assert!(!stream.contains("\"x\""), "{stream}");
     let body = body_of(&[alien]).expect("a body");
     assert!(!body.to_string().contains("\"x\""), "{body}");
-    let video = Output::native(
-        GEMINI,
+    let video = Output::Native(GeminiGenerate::native(
         json!({ "type": "part", "part": { "executableCode": {} } }),
-    );
+    ));
     assert!(stream_of(std::slice::from_ref(&video)).is_ok());
     // A cache write cannot be said.
     let mut usage = Usage::new(5, 1);

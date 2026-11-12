@@ -3,7 +3,7 @@
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_core::{Details, Fault, NativeFields};
+use respan_gateway_core::{Details, Fault};
 use serde_json::{Map, Value};
 
 /// `media` as a URL: its own, or a data URL of its bytes.
@@ -45,35 +45,6 @@ pub fn merge_missing(base: &mut Map<String, Value>, more: &Map<String, Value>) {
 pub fn set(map: &mut Map<String, Value>, key: &str, value: Option<impl Into<Value>>) {
     if let Some(value) = value {
         map.insert(key.into(), value.into());
-    }
-}
-
-/// `fields` as the native of a value of `format`: none if empty.
-pub fn native_of(format: &str, fields: Map<String, Value>) -> Option<NativeFields> {
-    (!fields.is_empty()).then(|| NativeFields::new(format, fields))
-}
-
-/// The fields of `native` for `format` to edit, made of `format` if there
-/// are none: another format's are dropped for them, as its writer drops them.
-pub fn own_mut<'a>(
-    native: &'a mut Option<NativeFields>,
-    format: &str,
-) -> &'a mut Map<String, Value> {
-    // WARN: another format's native fields are dropped here, silently.
-    native.take_if(|n| &*n.format != format);
-    &mut native
-        .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-        .fields
-}
-
-/// The fields of `native` to write in `format`: all of them if they are its.
-/// A native field means something only to its own format: another format's
-/// are dropped.
-pub fn kept(format: &str, native: &Option<NativeFields>) -> Map<String, Value> {
-    match native {
-        Some(n) if &*n.format == format => n.fields.clone(),
-        // WARN: another format's native fields are dropped here, silently.
-        _ => Map::new(),
     }
 }
 

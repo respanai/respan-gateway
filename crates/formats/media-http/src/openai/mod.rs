@@ -36,12 +36,10 @@ use crate::edge::{bind_provider, sends};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::{
-    self, kept, merge_missing, native_of, rest_of, set, unix_now,
-};
+use respan_gateway_conversation_http::fields::{self, merge_missing, rest_of, set, unix_now};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
-use respan_gateway_core::{Connection, ErrorCode, Fault, NativeValue};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -295,10 +293,10 @@ fn write_usage(usage: &Usage) -> Map<String, Value> {
 }
 
 /// The fields of a usage object the kind has no place for, as an event of
-/// `format`, `{"usage": {..}}`, which its encoders write into the usage they
-/// write; none if there are none.
-fn usage_extras(format: &str, extras: Map<String, Value>) -> Option<NativeValue> {
-    (!extras.is_empty()).then(|| NativeValue::new(format, json!({ "usage": extras })))
+/// the format `K` names, `{"usage": {..}}`, which its encoders write into
+/// the usage they write; none if there are none.
+fn usage_extras<K: 'static>(extras: Map<String, Value>) -> Option<Native> {
+    (!extras.is_empty()).then(|| Native::json::<K>(json!({ "usage": extras })))
 }
 
 /// The usage fields of an event [`usage_extras`] made.

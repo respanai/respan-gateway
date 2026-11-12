@@ -64,7 +64,10 @@ Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 
 A vendor's departures from one of these formats are its dialect of it,
 laid over the format (`respan_gateway_http::dialect::Dialected`), so a
-client of the spec is still relayed to it.
+client of the spec is still relayed to it. A dialect reaches its format's
+native only through the format's own door: `OpenAiImages::fields`,
+`fields_mut`, `value` and `native`, and `OpenAiSpeech::fields_mut` and
+`OpenAiVideos::fields_mut`.
 
 `gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
 such as Nano Banana, through `generateContent`, to clients and providers,

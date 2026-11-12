@@ -117,8 +117,11 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
     let Input::Native(native) = event else {
         return Ok(());
     };
-    let json = Arc::make_mut(&mut native.value);
-    if json["type"] != "response.create" {
+    if ResponsesWs::value(native).is_none() {
+        return Ok(());
+    }
+    let json = ResponsesWs::fields_mut(native);
+    if json.get("type").and_then(Value::as_str) != Some("response.create") {
         return Ok(());
     }
     if json.get("model").is_some_and(|v| v.as_str() != Some(model)) {
@@ -126,23 +129,29 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
             "model is outside the configured budget policy",
         ));
     }
-    json["model"] = model.into();
-    if json["generate"] == false {
+    json.insert("model".into(), model.into());
+    if json.get("generate") == Some(&Value::Bool(false)) {
         return Ok(());
     }
-    let cap = &mut json["max_output_tokens"];
+    let cap = json.entry("max_output_tokens").or_insert(Value::Null);
     if cap.as_i64().is_none_or(|n| !(1..=OUTPUT).contains(&n)) {
         *cap = OUTPUT.into();
     }
-    budget.begin(json["stream_id"].as_str().unwrap_or("default"))
+    budget.begin(
+        json.get("stream_id")
+            .and_then(Value::as_str)
+            .unwrap_or("default"),
+    )
 }
 
 /// At a response's end, settle its lane's turn at the usage it reports.
 fn settle(budget: &Budget, event: &Output) {
-    let Output::Native(native) = event else {
+    let Some(json) = (match event {
+        Output::Native(native) => ResponsesWs::value(native),
+        _ => None,
+    }) else {
         return;
     };
-    let json = &native.value;
     let kind = json["type"].as_str().unwrap_or_default();
     if !matches!(
         kind,

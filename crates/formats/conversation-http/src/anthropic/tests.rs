@@ -1,10 +1,11 @@
 use super::*;
+use crate::Schema;
+use crate::anthropic::AnthropicMessages;
 
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
 use crate::openai::OpenAiChat;
 use respan_gateway_conversation::ToolChoice;
-use respan_gateway_core::NativeFields;
 use respan_gateway_http::http::{HeaderValue, header::CONTENT_TYPE};
 
 /// The events of `events`, each decoded in turn.
@@ -126,7 +127,7 @@ fn an_edited_tool_call_and_result_keep_their_blocks() {
     ]});
     let chat = AnthropicMessages.decode_json(&body);
     assert_eq!(
-        chat.tools[0].native.own(ANTHROPIC).get("cache_control"),
+        AnthropicMessages::fields(&chat.tools[0].native).get("cache_control"),
         Some(&marker)
     );
     assert_eq!(
@@ -266,9 +267,11 @@ fn an_event_it_cannot_read_is_content_filters_see() {
     assert_eq!(
         out,
         [
-            Output::native(ANTHROPIC, json!({ "type": "future", "text": "secret" })),
-            Output::native(ANTHROPIC, "not json"),
-            Output::native(ANTHROPIC, json!({ "type": "ping" })),
+            Output::Native(AnthropicMessages::native(
+                json!({ "type": "future", "text": "secret" })
+            )),
+            Output::Native(AnthropicMessages::native("not json")),
+            Output::Native(AnthropicMessages::native(json!({ "type": "ping" }))),
         ]
     );
     assert!(out.iter().all(|r| !r.is_content()));
@@ -382,7 +385,7 @@ fn a_system_prompt_with_cache_markers_is_written_as_it_is() {
     };
     assert_eq!(text, "the repo");
     assert_eq!(
-        native.own(ANTHROPIC).get("cache_control"),
+        AnthropicMessages::fields(native).get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))
     );
     assert_eq!(chat.messages[0].content[1], Content::from("be brief"));
@@ -464,7 +467,10 @@ fn a_whole_response_decodes_into_events_per_block() {
             Output::arguments(3, "{\"a\":1}"),
             Output::block_end(3),
             // What the kind has no place for comes before the block opens.
-            Output::block_fields(ANTHROPIC, 4, cited),
+            Output::BlockFields {
+                block: 4,
+                native: AnthropicMessages::native(cited)
+            },
             Output::block_start(4, Block::Text),
             Output::text(4, "cited"),
             Output::block_end(4),
@@ -721,10 +727,9 @@ fn a_text_block_with_citations_is_text_with_its_fields_and_events() {
 fn an_event_of_another_format_is_dropped() {
     // Even one that carries content: only a client of that format could
     // read it.
-    let foreign = Output::native(
-        "openai-chat",
+    let foreign = Output::Native(OpenAiChat::native(
         json!({ "choices": [{ "index": 1, "delta": { "content": "B" } }] }),
-    );
+    ));
     let stream = stream_of(std::slice::from_ref(&foreign)).expect("a stream");
     assert!(!stream.contains("\"B\""), "{stream}");
     let body = body_of(&[foreign]).expect("a body");
@@ -913,13 +918,12 @@ fn extra_fields_of_the_message_survive_in_the_same_format() {
     };
     assert_eq!(
         start.native,
-        Some(NativeFields::new(
-            ANTHROPIC,
+        AnthropicMessages::native(
             json!({ "container": { "id": "k" } })
                 .as_object()
                 .cloned()
                 .unwrap_or_default()
-        ))
+        )
     );
     assert_eq!(
         body_of(&events).expect("a body")["container"],

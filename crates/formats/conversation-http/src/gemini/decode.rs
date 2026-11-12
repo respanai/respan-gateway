@@ -1,16 +1,15 @@
 //! Gemini generateContent, streamed or whole, as events: the decoder.
 
-use crate::schema::{
-    Totals, error_event, native_of, remainder, says, says_error, unreadable_event,
-};
+use crate::Schema;
+use crate::gemini::GeminiGenerate;
+use crate::schema::{Totals, error_event, remainder, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
-use super::{BLOCKED, GEMINI, SIGNATURE, SYNTHETIC, extra_usage, finish_of, usage_of};
+use super::{BLOCKED, SIGNATURE, SYNTHETIC, extra_usage, finish_of, usage_of};
 
 /// A block of text or reasoning that is open, and may take more.
 #[derive(Debug, Clone, Copy)]
@@ -23,7 +22,6 @@ pub(super) struct Open {
 /// module says.
 #[derive(Debug)]
 pub struct GeminiDecoder {
-    name: Arc<str>,
     totals: Totals,
     started: bool,
     done: bool,
@@ -42,7 +40,6 @@ pub struct GeminiDecoder {
 impl Default for GeminiDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(GEMINI),
             totals: Totals::default(),
             started: false,
             done: false,
@@ -59,7 +56,7 @@ impl Default for GeminiDecoder {
 
 impl GeminiDecoder {
     fn other(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        out.push(Output::Native(GeminiGenerate::native(v)));
     }
 
     /// Says `fields` as a `kind` event, if they changed.
@@ -86,7 +83,10 @@ impl GeminiDecoder {
         let block = self.next;
         self.next += 1;
         if !fields.is_empty() {
-            out.push(Output::block_fields(GEMINI, block, fields));
+            out.push(Output::BlockFields {
+                block,
+                native: GeminiGenerate::native(fields),
+            });
         }
         block
     }
@@ -188,7 +188,7 @@ impl GeminiDecoder {
             self.id = v["responseId"].as_str().unwrap_or_default().to_owned();
             let model = v["modelVersion"].as_str().unwrap_or_default();
             let mut start = Start::new(self.id.clone(), model);
-            start.native = native_of(GEMINI, top.clone());
+            start.native = GeminiGenerate::native(top.clone());
             self.response = top;
             out.push(Output::Start(start));
         } else {
@@ -221,7 +221,7 @@ impl GeminiDecoder {
             }
         }
         if candidates.is_empty() && says(&v["promptFeedback"]["blockReason"]) {
-            let filtered = Finish::native_or(GEMINI, BLOCKED, Finish::Filtered);
+            let filtered = Finish::native(GeminiGenerate::native(BLOCKED), Some(Finish::Filtered));
             out.push(Output::finished(filtered));
             self.done = true;
         }
@@ -243,7 +243,7 @@ impl GeminiDecoder {
     /// The events of one stream event, `raw`.
     pub(crate) fn event(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         let Some(v) = event_json(&raw) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<GeminiGenerate>(&raw, out);
             return Ok(());
         };
         if says_error(&v) {

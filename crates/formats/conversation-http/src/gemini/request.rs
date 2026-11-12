@@ -4,18 +4,21 @@
 //! runs or a sampling field, stays in the `native` of the request, the
 //! message or the part.
 
+use crate::Schema;
+use crate::gemini::GeminiGenerate;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
     Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::Fault;
+use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
 
-use super::{GEMINI, ROLES, SIGNATURE, SYNTHETIC};
+use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    NativeFieldsExt, arguments_object, effort_name, merge_fields, merge_missing, native_of,
-    parse_effort, remainder, sealed, set, untranslatable, write_search,
+    arguments_object, effort_name, merge_fields, merge_missing, parse_effort, remainder, sealed,
+    set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -62,7 +65,7 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
             system => {
                 message.content = read_parts(&system["parts"], 0, &mut calls);
                 let rest = remainder(system, &["parts", "role"]);
-                message.native = native_of(GEMINI, rest);
+                message.native = GeminiGenerate::native(rest);
             }
         }
         chat.messages.push(message);
@@ -72,10 +75,10 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
         let name = m["role"].as_str().unwrap_or("user");
         let role = ROLES
             .value(name)
-            .unwrap_or_else(|| Role::native(GEMINI, name));
+            .unwrap_or_else(|| Role::Native(GeminiGenerate::native(name)));
         let mut message = Message::new(role, "");
         message.content = read_parts(&m["parts"], at, &mut calls);
-        message.native = native_of(GEMINI, remainder(m, &["role", "parts"]));
+        message.native = GeminiGenerate::native(remainder(m, &["role", "parts"]));
         chat.messages.push(message);
     }
 }
@@ -98,7 +101,7 @@ fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Vec<Content> 
 /// A part as the kind's, or, if the kind has no form for all of it, as
 /// this format's own.
 fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content {
-    let own = || Content::native(GEMINI, p.clone());
+    let own = || Content::Native(GeminiGenerate::native(p.clone()));
     let payloads = [
         "text",
         "inlineData",
@@ -112,7 +115,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
         .filter(|k| p.get(*k).is_some())
         .collect();
     let [which] = which[..] else { return own() };
-    let part_fields = |known: &[&str]| native_of(GEMINI, remainder(p, known));
+    let part_fields = |known: &[&str]| GeminiGenerate::native(remainder(p, known));
     match which {
         "text" => {
             let Some(text) = p["text"].as_str() else {
@@ -207,7 +210,7 @@ fn read_media(p: &Value, which: &str) -> Option<Content> {
         fields.insert(which.into(), nested.into());
     }
     let mut media = Media::new(mime, source);
-    media.native = native_of(GEMINI, fields);
+    media.native = GeminiGenerate::native(fields);
     match mime.split('/').next()? {
         "image" => Some(Content::Image(media)),
         "audio" => Some(Content::Audio(media)),
@@ -239,7 +242,7 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
 /// Whether a message's fields are none Gemini writes: none, or another
 /// format's it drops.
 fn unsaid(m: &Message) -> bool {
-    m.native.own(GEMINI).is_empty()
+    GeminiGenerate::fields(&m.native).is_empty()
 }
 
 /// The messages as `contents`: the results of one turn's calls are one user
@@ -249,10 +252,11 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
     let mut contents: Vec<(Map<String, Value>, bool)> = Vec::new();
     for m in messages {
         let role = match &m.role {
-            Role::Native { format, name, .. } if **format == *GEMINI => name.as_str(),
-            // WARN: a role Gemini lacks, such as a later system message's, is a user's.
-            role => ROLES.name(role).unwrap_or("user"),
+            Role::Native(n) => GeminiGenerate::value(n).and_then(Value::as_str),
+            role => ROLES.name(role),
         };
+        // WARN: a role Gemini lacks, such as a later system message's, is a user's.
+        let role = role.unwrap_or("user");
         let mut parts: Vec<Value> = Vec::new();
         for (c, signature) in sealed(&m.content) {
             // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
@@ -275,7 +279,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         let mut content = Map::new();
         content.insert("role".into(), role.into());
         content.insert("parts".into(), parts.into());
-        content.extend(m.native.fields_for(GEMINI));
+        content.extend(GeminiGenerate::fields(&m.native).clone());
         let answers = !m.content.is_empty()
             && unsaid(m)
             && m.content
@@ -325,7 +329,7 @@ pub(super) fn sign_calls(v: &mut Map<String, Value>) {
 /// `names` has the calls made so far, by id, for the results that answer
 /// them.
 fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, Fault> {
-    let fields = |native: &Option<NativeFields>| native.fields_for(GEMINI);
+    let fields = |native: &Native| GeminiGenerate::fields(native).clone();
     match c {
         Content::Text { text, native, .. } => {
             let mut part = Map::new();
@@ -379,7 +383,7 @@ fn write_part(c: &Content, names: &mut Vec<(String, String)>) -> Result<Value, F
             merge_missing(&mut part, fields(native));
             Ok(part)
         }
-        Content::Native(raw) if *raw.format == *GEMINI => Ok(Value::clone(&raw.value)),
+        Content::Native(raw) => Ok(GeminiGenerate::value(raw).cloned().unwrap_or_default()),
         _ => Ok(Value::Null),
     }
 }
@@ -432,7 +436,7 @@ fn write_media(media: &Media, in_result: bool) -> Value {
     if let (Some(name), Some(Value::Object(data)), true) = (&media.name, data, in_result) {
         data.insert("displayName".into(), name.as_str().into());
     }
-    merge_fields(&mut part, &media.native.fields_for(GEMINI));
+    merge_fields(&mut part, &GeminiGenerate::fields(&media.native).clone());
     part
 }
 
@@ -477,7 +481,9 @@ fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
     let mut provided = Vec::new();
     for tool in tools.as_array()? {
         if *tool == json!({ "googleSearch": {} }) {
-            provided.push(ProviderTool::WebSearch { native: None });
+            provided.push(ProviderTool::WebSearch {
+                native: Native::default(),
+            });
             continue;
         }
         let clean = tool
@@ -508,7 +514,7 @@ fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
                 Value::Null => None,
                 text => Some(text.as_str()?.to_owned()),
             };
-            tool.native = native_of(GEMINI, rest);
+            tool.native = GeminiGenerate::native(rest);
             out.push(tool);
         }
     }
@@ -547,9 +553,7 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
         chat.tools = tools;
         chat.provider_tools = provided;
     } else if says(&v["tools"]) {
-        chat.native
-            .own_mut(GEMINI)
-            .insert("tools".into(), v["tools"].clone());
+        GeminiGenerate::fields_mut(&mut chat.native).insert("tools".into(), v["tools"].clone());
     }
     let config = &v["toolConfig"];
     if !config.is_object() || config.as_object().is_some_and(Map::is_empty) {
@@ -567,9 +571,7 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
         }
     }
     if !rest.is_empty() {
-        chat.native
-            .own_mut(GEMINI)
-            .insert("toolConfig".into(), rest.into());
+        GeminiGenerate::fields_mut(&mut chat.native).insert("toolConfig".into(), rest.into());
     }
 }
 
@@ -580,7 +582,7 @@ fn says(v: &Value) -> bool {
 /// The request's tools and choice as Gemini's `tools` and `toolConfig`,
 /// beside any the request's own `native` holds.
 pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let native = |key: &str| chat.native.own(GEMINI).get(key).cloned();
+    let native = |key: &str| GeminiGenerate::fields(&chat.native).get(key).cloned();
     let mut declarations = Vec::new();
     for t in &chat.tools {
         let mut d = Map::new();
@@ -591,7 +593,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         if t.parameters.is_object() {
             d.insert("parametersJsonSchema".into(), t.parameters.clone());
         }
-        d.extend(t.native.fields_for(GEMINI));
+        d.extend(GeminiGenerate::fields(&t.native).clone());
         declarations.push(Value::Object(d));
     }
     let mut tools = Vec::new();
@@ -599,7 +601,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         tools.push(json!({ "functionDeclarations": declarations }));
     }
     for provided in &chat.provider_tools {
-        write_search(GEMINI, provided)?;
+        write_search::<GeminiGenerate>(provided)?;
         tools.push(json!({ "googleSearch": {} }));
     }
     let tools = (!tools.is_empty())
@@ -687,15 +689,15 @@ pub(super) fn read_config(v: &Value, chat: &mut Input) {
     chat.options.response_format = read_format(&mut rest);
     rest.retain(|_, v| says(v) || v.is_boolean() || v.is_number());
     if !rest.is_empty() {
-        chat.native
-            .own_mut(GEMINI)
-            .insert("generationConfig".into(), rest.into());
+        GeminiGenerate::fields_mut(&mut chat.native).insert("generationConfig".into(), rest.into());
     }
 }
 
 /// `generationConfig`: the request's own fields beside the kind's.
 pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(), Fault> {
-    let own = chat.native.own(GEMINI).get("generationConfig").cloned();
+    let own = GeminiGenerate::fields(&chat.native)
+        .get("generationConfig")
+        .cloned();
     let mut config = own.unwrap_or_else(|| json!({}));
     let o = &chat.options;
     let mut set_field = |key: &str, value: Option<Value>| {

@@ -1,7 +1,7 @@
 //! Typed media used in conversation content.
 
 use bytes::Bytes;
-use respan_gateway_core::NativeFields;
+use respan_gateway_core::Native;
 
 /// Media content with its representation separated from its meaning.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,7 +14,7 @@ pub struct Media {
     /// Optional display name or filename.
     pub name: Option<String>,
     /// Provider-specific semantic fields, such as image detail or cache hints.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Media {
@@ -24,7 +24,7 @@ impl Media {
             mime_type: mime_type.into(),
             source,
             name: None,
-            native: None,
+            native: Native::default(),
         }
     }
 }

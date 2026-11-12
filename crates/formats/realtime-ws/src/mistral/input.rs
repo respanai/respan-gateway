@@ -1,16 +1,16 @@
 //! What the client says: Mistral's client events as the kind's [`Input`],
 //! read at the client's edge, and the kind's written to Mistral's session.
 
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Input, Purpose, Session, Turns};
 use serde_json::{Value, json};
 
-use super::{NAME, session};
+use super::{Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{self, merge, own, string, take, text, untranslatable_input};
+use crate::json::{self, merge, string, take, text, untranslatable_input};
 
 /// The most audio one append carries, in bytes.
 const APPEND: usize = 262_144;
@@ -76,17 +76,17 @@ impl Client {
                         data,
                         format: self.input,
                     },
-                    native: json::native(NAME, std::mem::take(rest)),
+                    native: Native::json::<Key>(std::mem::take(rest)),
                 }
             }
             // The end of its audio makes the transcript whole, as a flush
             // does.
             "input_audio.flush" | "input_audio.end" => Input::Commit {
-                native: json::native(NAME, std::mem::take(rest)),
+                native: Native::json::<Key>(std::mem::take(rest)),
             },
             _ => {
                 rest["type"] = kind.into();
-                return Ok(Input::native(NAME, v));
+                return Ok(Input::Native(Native::json::<Key>(v)));
             }
         };
         Ok(event)
@@ -129,7 +129,7 @@ impl Provider {
     }
 
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::admit(NAME, event) else {
+        let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
         for v in self.frames(&event)? {
@@ -145,23 +145,26 @@ impl Provider {
             Input::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.input);
                 let data = data.ok_or_else(|| refuse("audio of this format"))?;
-                let mut native = own(native).cloned();
+                let mut native = Some(native.fields::<Key>());
                 let mut frames = Vec::new();
                 for chunk in data.chunks(APPEND) {
                     let mut v = json!({"type": "input_audio.append", "audio": json::base64(chunk)});
-                    merge(&mut v, native.take().as_ref());
+                    if let Some(native) = native.take() {
+                        merge(&mut v, native);
+                    }
                     frames.push(v);
                 }
                 frames
             }
             Input::Commit { native } => {
                 let mut v = json!({"type": "input_audio.flush"});
-                merge(&mut v, own(native));
+                merge(&mut v, native.fields::<Key>());
                 vec![v]
             }
-            Input::Native(NativeValue { format, value }) if **format == *NAME => {
-                vec![Value::clone(value)]
-            }
+            Input::Native(native) => match native.value::<Key>() {
+                Some(value) => vec![value.clone()],
+                None => return Err(refuse("this event")),
+            },
             _ => return Err(refuse("this event")),
         };
         Ok(frames)
@@ -187,7 +190,7 @@ impl Provider {
         s.input_transcription = s.input_transcription.filter(|on| !on);
         let session = session::encode(&s, refuse)?;
         let mut v = json!({"type": "session.update", "session": session});
-        merge(&mut v, own(&s.native));
+        merge(&mut v, s.native.fields::<Key>());
         if let Some(format) = s.input_audio {
             self.input = format;
         }

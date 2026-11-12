@@ -60,15 +60,14 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{
-    Asked, Framing, Names, NativeFieldsExt, Schema, native_of, rest_of, unwritable_content,
-};
+use crate::schema::{Asked, Framing, Names, Schema, rest_of, unwritable_content};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
 use serde_json::{Map, Value, json};
+use std::marker::PhantomData;
 
 use decode::ConverseDecoder;
 use request::{split_system, write_config, write_messages, write_tools};
@@ -78,10 +77,10 @@ const BEDROCK: &str = "bedrock-converse";
 
 const ROLES: Names<Role> = Names(
     &[("user", Role::User), ("assistant", Role::Assistant)],
-    BEDROCK,
+    PhantomData,
 );
 
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, BedrockConverse> = Names(
     &[
         ("end_turn", Finish::Stop),
         ("stop_sequence", Finish::Stop),
@@ -89,15 +88,19 @@ const FINISH: Names<Finish> = Names(
         ("tool_use", Finish::ToolUse),
         ("content_filtered", Finish::Filtered),
     ],
-    BEDROCK,
+    PhantomData,
 );
 
 /// A reason as a [`Finish`]: a guardrail's intervention filters the answer, a
 /// full context window is the token limit.
 fn finish_of(reason: &str) -> Finish {
     match reason {
-        "guardrail_intervened" => Finish::native_or(BEDROCK, reason, Finish::Filtered),
-        "model_context_window_exceeded" => Finish::native_or(BEDROCK, reason, Finish::Length),
+        "guardrail_intervened" => {
+            Finish::native(BedrockConverse::native(reason), Some(Finish::Filtered))
+        }
+        "model_context_window_exceeded" => {
+            Finish::native(BedrockConverse::native(reason), Some(Finish::Length))
+        }
         _ => FINISH.finish(reason),
     }
 }
@@ -212,8 +215,8 @@ impl Schema for BedrockConverse {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let chat = &*crate::schema::own_shapes(chat, BEDROCK);
-        let mut native = chat.native.fields_for(BEDROCK);
+        let chat = &*crate::schema::own_shapes::<Self>(chat);
+        let mut native = BedrockConverse::fields(&chat.native).clone();
         let mut v = self.encode_json(chat)?;
         // The model's own fields beside the reasoning written from the kind.
         let fields = "additionalModelRequestFields";
@@ -262,7 +265,7 @@ impl Schema for BedrockConverse {
     /// Not read: the request stays native, so only Bedrock is sent it.
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
-        chat.native = native_of(BEDROCK, rest_of(v, &[]));
+        chat.native = BedrockConverse::native(rest_of(v, &[]));
         chat
     }
 

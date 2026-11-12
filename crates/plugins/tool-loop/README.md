@@ -42,8 +42,10 @@ A live session (the realtime kind) gets the same tools: they are added to
 each configuration of the session that sets tools, and a call of one is run
 while the session goes on, its answer sent back and the model asked to
 respond. The client sees neither the call, nor its answer, nor a response
-that said nothing else; what a format says of the call only in its own
-events (OpenAI's items and argument deltas) is left out with it, as is any
-object naming one of the gateway's tools or carrying one of its calls' ids.
+that said nothing else. What a format says only in its own natives, which
+the loop cannot read, may be of the call (OpenAI's items and argument
+deltas): the client gets none of a format's own events, and a response's
+start and end without their format's fields, which its format then writes
+as it would another format's.
 Its `when` predicate sees no model (`None`): a host reads a session's from its
 extensions.

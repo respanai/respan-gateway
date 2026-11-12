@@ -4,7 +4,7 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, NativeValue};
+use respan_gateway_core::{Connection, EventStream, Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -230,41 +230,41 @@ fn offer_beside_the_clients(
     Ok(())
 }
 
-/// A client's session of `name`'s native events alone: each frame one
-/// `Input::Native`, and only `Output::Native` of `name` written. A frame that
-/// is not JSON is the client's fault, `bad_request`.
-pub(crate) fn native_client(name: &'static str) -> (Read<Input>, Box<dyn Encoder<Output>>) {
+/// A client's session of native events alone, of the format of key `K`:
+/// each frame one `Input::Native`, and only its own `Output::Native` written.
+/// A frame that is not JSON is the client's fault, `bad_request`.
+pub(crate) fn native_client<K: 'static>() -> (Read<Input>, Box<dyn Encoder<Output>>) {
     let read = move |raw: Bytes, out: &mut Vec<Input>| {
         let json: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
-        out.push(Input::native(name, json));
+        out.push(Input::Native(Native::json::<K>(json)));
         Ok(())
     };
     let write = move |event: &Output, out: &mut Vec<Bytes>| {
         out.push(match event {
-            Output::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
+            Output::Native(native) => written(native.value::<K>())?,
+            _ => written(None)?,
         });
         Ok(())
     };
     (Box::new(read), Box::new(write))
 }
 
-/// A provider's session of `name`'s native events alone: only
-/// `Input::Native` of `name` written, and each frame one `Output::Native`. A
-/// frame that is not JSON is the provider's fault, `upstream`.
-pub(crate) fn native_provider(name: &'static str) -> (Box<dyn Encoder<Input>>, Read<Output>) {
+/// A provider's session of native events alone, of the format of key `K`:
+/// only its own `Input::Native` written, and each frame one `Output::Native`.
+/// A frame that is not JSON is the provider's fault, `upstream`.
+pub(crate) fn native_provider<K: 'static>() -> (Box<dyn Encoder<Input>>, Read<Output>) {
     let write = move |event: &Input, out: &mut Vec<Bytes>| {
         out.push(match event {
-            Input::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
+            Input::Native(native) => written(native.value::<K>())?,
+            _ => written(None)?,
         });
         Ok(())
     };
     let read = move |raw: Bytes, out: &mut Vec<Output>| {
         let json: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
-        out.push(Output::native(name, json));
+        out.push(Output::Native(Native::json::<K>(json)));
         Ok(())
     };
     (Box::new(write), Box::new(read))
@@ -273,13 +273,13 @@ pub(crate) fn native_provider(name: &'static str) -> (Box<dyn Encoder<Input>>, R
 /// A native event's JSON as its frame. An event of another format, or one
 /// the kind has a form for, which this format does not translate, is
 /// the gateway's misconfiguration or a plugin's, not the client's: `config`.
-fn written(format: &str, event: Option<&NativeValue>) -> Result<Bytes, Fault> {
-    let Some(event) = event.filter(|event| event.format.as_ref() == format) else {
+fn written(event: Option<&Value>) -> Result<Bytes, Fault> {
+    let Some(event) = event else {
         return Err(Fault::config(
             "a realtime event requires explicit translation to another format",
         ));
     };
-    serde_json::to_vec(&*event.value)
+    serde_json::to_vec(event)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("an event could not be written").with_source(e))
 }
@@ -290,12 +290,12 @@ mod tests {
 
     #[test]
     fn only_native_events_of_the_format_are_written() {
-        let event = NativeValue::new("one", serde_json::json!({"text":"edited"}));
+        let event = Native::json::<()>(serde_json::json!({"text":"edited"}));
         assert_eq!(
-            written("one", Some(&event)).expect("same format"),
+            written(event.value::<()>()).expect("same format"),
             Bytes::from_static(br#"{"text":"edited"}"#)
         );
-        for refused in [written("two", Some(&event)), written("one", None)] {
+        for refused in [written(event.value::<u8>()), written(None)] {
             let refused = refused.expect_err("foreign event");
             assert!(refused.code() == "config");
         }
