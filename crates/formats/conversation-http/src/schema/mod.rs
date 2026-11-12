@@ -14,7 +14,8 @@
 //! What a format has no form for stays in its own terms (optional
 //! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
 //! only by that format; another drops it with a warning. A request that asks
-//! for several choices (`n > 1`) cannot be written and is refused.
+//! for several OpenAI Chat choices (`n > 1`) is refused on input, before
+//! translation can drop the choice count.
 
 mod errors;
 mod exchange;
@@ -33,12 +34,12 @@ pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event}
 pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
-    Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message, ended,
-    fits, merge_fields, merge_into, merge_missing, native_fields, only, own_fields, own_shapes,
-    read_search, remainder, set, source_url, stop_json, take_strict, take_text, tidy,
-    unsupported_fields, untranslatable, unwritable_content, usage_extra, warn_reasoning,
-    write_search,
+    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, Totals, UsageFields, arguments_object,
+    check_usage, count, decode_content, decode_message, decode_tools, each_tool, encode_content,
+    encode_message, ended, fits, merge_fields, merge_into, merge_missing, native_fields, only,
+    own_fields, own_shapes, read_search, remainder, set, source_url, stop_json, take_strict,
+    take_text, tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra,
+    warn_reasoning, write_search,
 };
 pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
 
@@ -110,6 +111,10 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn decoder(&self) -> Self::Decoding;
     /// The events of one whole response body `v`.
     fn decode_body(&self, v: &Value, out: &mut Vec<Output>) -> Result<(), Fault>;
+    /// Refuse a client request the conversation kind cannot represent.
+    fn validate_request_json(&self, _v: &Value) -> Result<(), Fault> {
+        Ok(())
+    }
     /// A JSON request as a conversation, noting what it has no place for.
     fn decode_json(&self, v: &Value) -> Input;
     /// A conversation as a request, but for its own `native` fields and the
@@ -177,6 +182,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
             Ok(v) if v.is_object() => v,
             _ => return Err(values::not_an_object()),
         };
+        self.validate_request_json(&v)?;
         let mut chat = self.decode_json(&v);
         chat.model = v["model"].as_str().map(Into::into);
         Ok(chat)

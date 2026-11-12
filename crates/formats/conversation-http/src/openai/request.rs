@@ -6,9 +6,10 @@
 
 use crate::fields::media_url;
 use crate::schema::{
-    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_name,
+    encode_content, encode_message, merge_missing, native_fields, only, own_native, read_search,
+    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, warn_reasoning,
+    write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -201,34 +202,26 @@ fn openai_result(
     content: &[Content],
     is_error: bool,
 ) -> Result<Map<String, Value>, Fault> {
-    // OpenAI's tool messages cannot say the call failed.
-    if is_error {
-        return Err(untranslatable("a tool result that is an error"));
-    }
-    let media = |c: &Content| {
-        matches!(
-            c,
-            Content::Image(_) | Content::Audio(_) | Content::Document(_)
-        )
-    };
-    if content.iter().any(media) {
-        return Err(untranslatable("media in an OpenAI tool message"));
-    }
+    // OpenAI's tool messages cannot say the call failed: their text does.
+    let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
+    let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
     v.insert("tool_call_id".into(), id.into());
-    v.insert("content".into(), encode_content::<OpenAiChat>(content)?);
+    v.insert("content".into(), encode_content::<OpenAiChat>(&content)?);
     Ok(v)
 }
 
 /// A message as OpenAI's: each result a tool message of its own, then, if
-/// it says more, the message and its calls in `tool_calls`. It has no field
-/// for reasoning, which is dropped.
+/// it says more, the message and its calls in `tool_calls`. A tool message
+/// holds text alone, so the results' media leads that message. It has no
+/// field for reasoning, which is dropped.
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
     let results: Vec<&Content> = m.content.iter().filter(|p| is(p, true)).collect();
     let rest: Vec<&Content> = m.content.iter().filter(|p| is(p, false)).collect();
     let mut out = Vec::new();
+    let mut shown = Vec::new();
     for result in &results {
         if let Content::ToolResult {
             id,
@@ -237,9 +230,23 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             ..
         } = result
         {
-            out.push(openai_result(id, content, *is_error)?);
+            let (media, mut text): (Vec<_>, Vec<_>) = content.iter().cloned().partition(|c| {
+                matches!(
+                    c,
+                    Content::Image(_) | Content::Audio(_) | Content::Document(_)
+                )
+            });
+            if !media.is_empty() {
+                if text.is_empty() {
+                    text.push("The result is in the next message.".into());
+                }
+                shown.push(format!("Media returned by tool call {id}:").into());
+                shown.extend(media);
+            }
+            out.push(openai_result(id, &text, *is_error)?);
         }
     }
+    let rest: Vec<Content> = shown.into_iter().chain(rest.into_iter().cloned()).collect();
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
         only.extend(m.native.fields_for(OPENAI));
@@ -248,9 +255,9 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
     if !rest.is_empty() || results.is_empty() || !m.native.is_empty() {
         let call = |p: &&Content| matches!(p, Content::ToolCall { .. });
-        let calls: Vec<&Content> = rest.iter().copied().filter(call).collect();
+        let calls: Vec<&Content> = rest.iter().filter(call).collect();
         let mut said = m.clone();
-        said.content = rest.into_iter().filter(|p| !call(p)).cloned().collect();
+        said.content = rest.iter().filter(|p| !call(p)).cloned().collect();
         said.content.retain(|p| match p {
             Content::Reasoning { native, .. } => {
                 warn_reasoning(OPENAI, native);

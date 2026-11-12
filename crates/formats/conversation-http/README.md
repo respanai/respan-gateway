@@ -41,6 +41,8 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 
 `openai::OpenAiChat`: a `POST` to a path ending in `/chat/completions`; its
 provider base URL includes the version, such as `https://api.openai.com/v1`.
+A Chat Completions request with `n > 1` is refused before the provider
+is called, including when the selected provider speaks another format.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
@@ -103,8 +105,10 @@ them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 code interpreter, MCP) and the items they make, refusals, and annotations. A
 relay in this format sends them back. A function tool's `strict` is the kind's:
 a tool that does not say it keeps the Responses default, and a tool another
-format sent is written with `strict: false`. Stop sequences and a failed tool result have no form in a
-request, and log probabilities are not carried. The module docs say it all.
+format sent is written with `strict: false`. Stop sequences have no form in a
+request, and log probabilities are not carried. A failed tool result, which
+neither Responses nor Chat Completions can flag, is written as its output led
+by `Error: `. The module docs say it all.
 
 ## Google Gemini
 

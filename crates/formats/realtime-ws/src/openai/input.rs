@@ -232,6 +232,10 @@ impl Provider {
                 if opening || s.model.as_ref() == Some(&self.model) {
                     s.model = None;
                 }
+                // A format it does not take is left out, and the audio
+                // converted to the one it has.
+                s.input_audio = s.input_audio.filter(|f| session::takes(*f));
+                s.output_audio = s.output_audio.filter(|f| session::takes(*f));
                 // A transcription names its model in its first session.
                 if s == Session::default() && !(opening && self.transcribing) {
                     return Ok(None);

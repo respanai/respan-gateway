@@ -5,15 +5,18 @@
 //! - [`OpenAiRealtime`]: OpenAI Realtime, `openai-realtime`.
 //! - [`GeminiLive`]: Gemini Live, `gemini-live`.
 //! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
+//! - [`OpenAiLive`]: OpenAI's Live API, `openai-live`, full duplex.
+//! - [`PhonicSts`]: Phonic's speech-to-speech, `phonic-sts`, full duplex.
 //! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
 //!   which is not realtime: it streams Responses over a socket, and uses the
 //!   kind's types only as native events.
 //!
-//! [`OpenAiRealtime`] and [`GeminiLive`] decode each frame into the kind's
-//! events, keeping what the kind has no place for as their own (an event's
-//! `native`, or a native event), and write them back: a relay to the same
+//! [`OpenAiRealtime`], [`GeminiLive`], [`OpenAiLive`] and [`PhonicSts`]
+//! decode each frame into the kind's events, keeping what the kind has no
+//! place for as their own (an event's `native`, or a native event), and
+//! write them back: a relay to the same
 //! format keeps what each event says, not its exact bytes. Each writes the
-//! other's events too. Audio is converted where a spec cannot carry it, and
+//! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
 //! cannot change the answer, or refused: an input `bad_request`, closing
 //! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
@@ -30,14 +33,18 @@ mod audio;
 mod foreign;
 mod gemini;
 mod json;
+mod live;
 mod mistral;
 mod openai;
+mod phonic;
 mod responses;
 mod session;
 
 pub use gemini::GeminiLive;
+pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;
 pub use openai::OpenAiRealtime;
+pub use phonic::PhonicSts;
 pub use responses::ResponsesWs;
 
 use respan_gateway_http::raw::Original;

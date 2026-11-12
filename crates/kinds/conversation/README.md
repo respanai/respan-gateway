@@ -14,7 +14,10 @@ use respan_gateway_core::{ClientContext, Fault, Plugin, Response};
 
 The crate exports conversation types and helpers directly from its root. It
 is the kind's types alone, depending only on `respan-gateway-core`,
-`serde_json` and `bytes`, for plugins that need no I/O.
+`serde_json` and `bytes`, for plugins that need no I/O. With the `serde`
+feature a conversation's messages (`Message`, `Role`, `Content`, `Media`)
+are `Serialize` and `Deserialize`, for a host that keeps them, such as a
+shared store of the responses plugin.
 
 `Usage` is the token counts a provider reports: input, output, and the
 cached, cache-write and reasoning counts that are parts of them. A count

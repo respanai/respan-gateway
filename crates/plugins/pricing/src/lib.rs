@@ -144,7 +144,8 @@ impl Plugin for Pricing {
 pub enum Used {
     /// Tokens, as any kind reports them.
     Usage(Usage),
-    /// Seconds of audio, as a transcription's provider may bill.
+    /// Seconds of audio, as a transcription's or a live session's provider
+    /// may bill.
     Seconds(f64),
 }
 
@@ -210,6 +211,7 @@ pub fn on_usage(edge: &mut impl Edge, into: Arc<dyn Fn(Used) + Send + Sync>) -> 
     })?;
     watch(edge, &into, |o: &realtime::Output| match o {
         realtime::Output::Usage(u) => used(&u.tokens),
+        realtime::Output::Seconds(seconds) => Some(Used::Seconds(*seconds)),
         _ => None,
     })?;
     watch(edge, &into, |o: &decision::Output| match o {

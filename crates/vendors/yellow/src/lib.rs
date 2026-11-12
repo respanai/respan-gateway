@@ -11,16 +11,18 @@ pub mod deepseek;
 pub mod empiriolabs;
 pub mod fireworks;
 pub mod groq;
+pub mod minimax;
 pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
+pub mod phonic;
 pub mod together;
 pub mod vllm;
 pub mod xai;
 
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_vendor_kit::Vendor;
+use respan_gateway_vendor_kit::{BoxFuture, Models, Vendor, VendorProvider};
 use serde_json::{Map, Value};
 
 /// Every yellow vendor.
@@ -31,6 +33,7 @@ pub const ALL: &[&Vendor] = &[
     &openrouter::VENDOR,
     &xai::VENDOR,
     &mistral::VENDOR,
+    &minimax::VENDOR,
     &together::VENDOR,
     &fireworks::VENDOR,
     &azure::VENDOR,
@@ -40,7 +43,14 @@ pub const ALL: &[&Vendor] = &[
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
+    &phonic::VENDOR,
 ];
+
+/// No models, for a vendor that lists none: Bedrock's are its account's,
+/// and Phonic has no list of its own.
+fn no_models(_: &VendorProvider) -> BoxFuture<'_, Models> {
+    Box::pin(async { Ok(Vec::new()) })
+}
 
 /// A call's JSON without its field `key`.
 fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {

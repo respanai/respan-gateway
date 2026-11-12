@@ -550,6 +550,10 @@ pub(crate) fn unwritable_usage() -> Fault {
     Fault::config("a plugin's change cannot be made: this format cannot represent the usage")
 }
 
+/// The text a failed tool result leads with in a format that cannot flag it,
+/// as Anthropic's `is_error` and Gemini's `error` do.
+pub(crate) const FAILED_RESULT_PREFIX: &str = "Error: ";
+
 /// A request carrying `what` cannot be sent in another format.
 pub(crate) fn untranslatable(what: &str) -> Fault {
     Fault::bad_request(format!("{what} cannot be translated to another format yet"))

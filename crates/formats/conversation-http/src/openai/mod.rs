@@ -162,6 +162,16 @@ impl Format<ProviderIo, Output, Input> for OpenAiChat {
     }
 }
 
+/// Several choices cannot be represented as conversation events.
+fn check_choice_count(n: &Value) -> Result<(), Fault> {
+    if n.as_f64().is_some_and(|n| n > 1.0 && n.fract() == 0.0) {
+        return Err(Fault::bad_request(
+            "several choices (n > 1) cannot be represented",
+        ));
+    }
+    Ok(())
+}
+
 const KNOWN: &[&str] = &[
     "model",
     "messages",
@@ -223,6 +233,10 @@ impl Schema for OpenAiChat {
         self.decoder().body(v, out)
     }
 
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        check_choice_count(&v["n"])
+    }
+
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
         // The larger of both spellings, so the limit read bounds what any
@@ -263,14 +277,10 @@ impl Schema for OpenAiChat {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        // Several choices cannot be represented as events.
-        let several = |n: &Value| n.as_u64().is_some_and(|n| n > 1);
         if chat.native.format() == Some(OPENAI)
-            && chat.native.fields().get("n").is_some_and(several)
+            && let Some(n) = chat.native.fields().get("n")
         {
-            return Err(Fault::bad_request(
-                "several choices (n > 1) cannot be represented",
-            ));
+            check_choice_count(n)?;
         }
         let mut v = Map::new();
         set(
