@@ -2,7 +2,6 @@
 //! questions and their answers as ordered lists.
 
 use super::*;
-use respan_gateway_core::NativeFields;
 use respan_gateway_decision::ChoiceValue;
 use std::borrow::Cow;
 
@@ -58,7 +57,7 @@ impl OpenAiDecisions {
     /// An answer as this contract writes it, its name and its score's
     /// labels as `question`, as a client asked it, says them.
     pub fn answer_value(answer: &Answer, question: &Value) -> Result<Value, Fault> {
-        let mut v = kept(OPENAI, &redundant(&answer.native));
+        let mut v = kept(OPENAI, &answer.native);
         v.insert("type".into(), verdict_type(&answer.verdict)?.into());
         if let Some(name) = question.get("name") {
             v.insert("name".into(), name.clone());
@@ -171,17 +170,6 @@ impl Format<ProviderIo, Output, Input> for OpenAiDecisions {
             },
         ))
     }
-}
-
-/// `native`, but for what another format says that this one writes from
-/// its client's request anyway, such as a score's `legend` in `decisions`,
-/// its levels again.
-fn redundant(native: &Option<NativeFields>) -> Option<NativeFields> {
-    let mut native = native.clone();
-    if let Some(n) = native.as_mut().filter(|n| &*n.format == NAME) {
-        n.fields.remove("legend");
-    }
-    native.filter(|n| !n.is_empty())
 }
 
 /// A choice's value, a string or a boolean.
@@ -538,6 +526,7 @@ fn encode_response(events: &[Output], asked: &Value) -> Result<Bytes, Fault> {
 mod tests {
     use super::*;
     use respan_gateway_core::FaultKind;
+    use respan_gateway_core::NativeFields;
 
     fn events_of(raw: &Value, asked: &[Value]) -> Result<Vec<Output>, Fault> {
         let mut events = Vec::new();
