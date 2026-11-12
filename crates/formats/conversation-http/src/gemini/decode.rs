@@ -83,10 +83,7 @@ impl GeminiDecoder {
         let block = self.next;
         self.next += 1;
         if !fields.is_empty() {
-            out.push(Output::BlockFields {
-                block,
-                native: GeminiGenerate::native(fields),
-            });
+            out.push(Output::block_fields(block, GeminiGenerate::native(fields)));
         }
         block
     }

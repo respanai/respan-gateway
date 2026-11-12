@@ -58,10 +58,7 @@ impl AnthropicDecoder {
     fn other(&self, v: Value, out: &mut Vec<Output>) {
         let block = v["index"].as_u64().and_then(|i| u32::try_from(i).ok());
         out.push(match block {
-            Some(block) => Output::BlockNative {
-                block,
-                native: AnthropicMessages::native(v),
-            },
+            Some(block) => Output::block_native(block, AnthropicMessages::native(v)),
             None => Output::Native(AnthropicMessages::native(v)),
         });
     }
@@ -160,10 +157,7 @@ impl AnthropicDecoder {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if !rest.is_empty() {
-            out.push(Output::BlockFields {
-                block,
-                native: AnthropicMessages::native(rest),
-            });
+            out.push(Output::block_fields(block, AnthropicMessages::native(rest)));
         }
     }
 

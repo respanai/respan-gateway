@@ -56,6 +56,8 @@ impl GeminiImages {
     /// The format's name, `gemini-images`.
     pub const NAME: &'static str = NAME;
 
+    respan_gateway_core::native_doors!(Key);
+
     /// The model a client's call at `uri` names, if it is one of this
     /// format's.
     pub fn model(uri: &Uri) -> Option<String> {

@@ -51,9 +51,8 @@ native fields. Text-part native fields are allowed.
 
 What the kind has no form for stays as the format that decoded it has it, in a
 `Native` on an `Input`, `Message`, `Tool` or `Start`, or a `Content::Native`,
-`Output::Native`, `Role::Native` or `Finish::Native`; it is opaque to every
-other format, so only that format reads or writes it, and another drops it:
-what has meaning across formats belongs here.
+`Output::Native`, `Role::Native` or `Finish::Native`, opaque to every other
+format: what has meaning across formats belongs here.
 
 Input values are plain data: they keep nothing of the bytes they were
 decoded from, and compare by what they say. A request is always written

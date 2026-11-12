@@ -637,6 +637,18 @@ impl Output {
         Output::Finish(finish)
     }
 
+    /// Fields of block `block` the kind has no place for
+    /// ([`Output::BlockFields`]).
+    pub fn block_fields(block: u32, native: Native) -> Self {
+        Output::BlockFields { block, native }
+    }
+
+    /// An event about block `block` the kind has no form for
+    /// ([`Output::BlockNative`]).
+    pub fn block_native(block: u32, native: Native) -> Self {
+        Output::BlockNative { block, native }
+    }
+
     /// Whether it is content: a start, a block event or a finish. Usage and
     /// natives are not.
     pub fn is_content(&self) -> bool {
@@ -781,13 +793,14 @@ impl Assembled {
     /// reasoning and tool calls in order, each with the fields its format kept
     /// beside it and its signatures after it.
     pub fn replay(&self) -> Vec<Content> {
-        let mut kept: HashMap<u32, Native> = HashMap::new();
+        // A block's latest fields are what its format last said of it.
+        let mut kept: HashMap<u32, &Native> = HashMap::new();
         for item in self.items() {
             if let AssembledItem::BlockFields { block, native } = item {
-                kept.entry(*block).or_default().extend(native.clone());
+                kept.insert(*block, native);
             }
         }
-        let native_of = |block: u32| kept.get(&block).cloned().unwrap_or_default();
+        let native_of = |block: u32| kept.get(&block).map(|n| (*n).clone()).unwrap_or_default();
         let mut parts = Vec::new();
         for item in self.items() {
             match item {
@@ -969,10 +982,7 @@ mod tests {
 
     #[test]
     fn parts_roles_and_finishes_carry_their_format_and_extra() {
-        enum Other {}
-        impl respan_gateway_core::Key for Other {
-            const NAME: &'static str = "other";
-        }
+        respan_gateway_core::native_key!(Other = "other");
         let mut cached = Message::new(Role::User, "hi");
         if let Content::Text { native, .. } = &mut cached.content[0] {
             *native = Native::json::<()>(json!({"cache_control": 1}));
@@ -1013,10 +1023,7 @@ mod tests {
             Output::text(1, "Hel"),
             Output::text(1, "lo"),
             Output::block_end(1),
-            Output::BlockFields {
-                block: 2,
-                native: fields.clone(),
-            },
+            Output::block_fields(2, fields.clone()),
             Output::block_start(
                 2,
                 Block::ToolCall {

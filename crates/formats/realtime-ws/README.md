@@ -189,13 +189,10 @@ with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
 A refused input is `bad_request`, closing the client 1008; a refused
 output `upstream`. Another format's natives, fields and events alike, are
-dropped by a writer, which cannot read them, with a warning at the
-provider's of its events and parts: what has meaning beyond its format
-belongs in the kind. `OpenAiRealtime`, `GeminiLive` and `ResponsesWs`
-open their own natives to code that speaks them alone (`value`,
-`fields_mut` and the like), such as a plugin of their sessions; `Calls`
-leaves some tools' calls out of what a format says of them only in its
-own events, for a plugin that runs those tools itself. An error says its
+dropped by a writer, with a warning at the provider's: what has meaning
+beyond its format belongs in the kind. Each format but Mistral's and
+Phonic's opens its own to code that names it (`value`, `fields_mut`, ..),
+and `Calls` leaves some tools' calls out of them. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 

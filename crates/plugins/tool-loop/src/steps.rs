@@ -141,10 +141,7 @@ impl Reading {
                 let number = self.number(block);
                 let mut out: Vec<Output> = pending
                     .into_iter()
-                    .map(|native| Output::BlockFields {
-                        block: number,
-                        native,
-                    })
+                    .map(|native| Output::block_fields(number, native))
                     .collect();
                 out.push(Output::block_start(number, kind));
                 out
@@ -182,17 +179,11 @@ impl Reading {
                 Vec::new()
             }
             Output::BlockFields { block, native } => {
-                vec![Output::BlockFields {
-                    block: self.number(block),
-                    native,
-                }]
+                vec![Output::block_fields(self.number(block), native)]
             }
             // Of a block that is open, or one only such events carry.
             Output::BlockNative { block, native } => {
-                vec![Output::BlockNative {
-                    block: self.number(block),
-                    native,
-                }]
+                vec![Output::block_native(self.number(block), native)]
             }
             Output::Native(native) if first => vec![Output::Native(native)],
             Output::Native(_) => Vec::new(),

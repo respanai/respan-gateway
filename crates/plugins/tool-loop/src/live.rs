@@ -47,8 +47,7 @@ struct State {
     /// The runner's tools, by the name the model has, but those the client
     /// names too.
     offered: Vec<Tool>,
-    /// What a format says of their calls only in its own events is left
-    /// out of those.
+    /// Their names, and the ids of their calls.
     calls: Calls,
     /// Calls being run.
     running: usize,

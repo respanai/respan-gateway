@@ -258,10 +258,7 @@ impl ConverseDecoder {
                 self.reasoning(block, &b["reasoningContent"], out);
             } else {
                 let v = json!({ "type": "content_block", "block": b });
-                out.push(Output::BlockNative {
-                    block,
-                    native: BedrockConverse::native(v),
-                });
+                out.push(Output::block_native(block, BedrockConverse::native(v)));
                 continue;
             }
             self.close(block, out);

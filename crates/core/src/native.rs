@@ -12,8 +12,7 @@ pub trait Key: 'static {
     const NAME: &'static str;
 }
 
-/// No format's: what a native of another format is to one that reads it,
-/// such as a test's.
+/// No format's: another format's, as a test has one.
 impl Key for () {
     const NAME: &'static str = "";
 }
@@ -84,43 +83,28 @@ impl Native {
     /// a bound for what keeps or meters a native it cannot read.
     pub fn len(&self) -> usize {
         struct Count(usize);
-        impl std::io::Write for Count {
-            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0 += bytes.len();
-                Ok(bytes.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
+        impl std::fmt::Write for Count {
+            fn write_str(&mut self, s: &str) -> std::fmt::Result {
+                self.0 += s.len();
                 Ok(())
             }
         }
         let mut count = Count(0);
         if let Some((_, value)) = &self.0 {
-            let _ = serde_json::to_writer(&mut count, value);
+            let _ = std::fmt::Write::write_fmt(&mut count, format_args!("{value}"));
         }
         count.0
-    }
-
-    /// `later`'s fields over these, if both are fields of one format;
-    /// otherwise `later` in place of these.
-    pub fn extend(&mut self, later: Native) {
-        match (&mut self.0, later.0) {
-            (Some((name, Value::Object(fields))), Some((later_name, Value::Object(more))))
-                if *name == later_name =>
-            {
-                fields.extend(more);
-            }
-            (_, later) => self.0 = later.or(self.0.take()),
-        }
     }
 }
 
 /// How a native is kept: its format's name and its value, as
-/// `{"format", "value"}`; a native kept as `{"format", "fields"}` reads too.
+/// `{"format", "value"}`; one kept as `{"format", "fields"}`, or a role as
+/// `{"format", "name"}`, reads too.
 #[cfg(feature = "serde")]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Kept<'a> {
     format: Cow<'a, str>,
-    #[serde(alias = "fields")]
+    #[serde(alias = "fields", alias = "name")]
     value: Cow<'a, Value>,
 }
 

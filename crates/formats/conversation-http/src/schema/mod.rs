@@ -106,9 +106,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// [`Schema::CARRIED`] is.
     const CARRIED_QUERY: &'static [&'static str] = &[];
     /// The fields of this format's own in `native`, none if it holds
-    /// another's: with [`Schema::fields_mut`], [`Schema::native`] and
-    /// [`Schema::value`], the door through which only code that names this
-    /// format, such as a vendor's dialect of it, reaches what it keeps.
+    /// another's: with `fields_mut`, `native` and `value`, the door through
+    /// which only code that names this format, such as a vendor's dialect,
+    /// reaches its own.
     fn fields(native: &Native) -> &Map<String, Value> {
         native.fields::<Key<Self>>()
     }

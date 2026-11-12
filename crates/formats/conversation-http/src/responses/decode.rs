@@ -146,10 +146,7 @@ impl ResponsesDecoder {
             None => self.fields_said.push((block, fields.clone())),
         }
         if !fields.is_empty() {
-            out.push(Output::BlockFields {
-                block,
-                native: OpenAiResponses::native(fields),
-            });
+            out.push(Output::block_fields(block, OpenAiResponses::native(fields)));
         }
     }
 
@@ -158,10 +155,10 @@ impl ResponsesDecoder {
         let all = part["annotations"].as_array().into_iter().flatten();
         let mut count = seen;
         for annotation in all.skip(seen) {
-            out.push(Output::BlockNative {
+            out.push(Output::block_native(
                 block,
-                native: OpenAiResponses::native(annotation.clone()),
-            });
+                OpenAiResponses::native(annotation.clone()),
+            ));
             count += 1;
         }
         count
@@ -602,10 +599,10 @@ impl ResponsesDecoder {
             Some(part) => {
                 part.annotations += 1;
                 let block = part.block;
-                out.push(Output::BlockNative {
+                out.push(Output::block_native(
                     block,
-                    native: OpenAiResponses::native(v["annotation"].clone()),
-                });
+                    OpenAiResponses::native(v["annotation"].clone()),
+                ));
             }
             None => self.native(v.clone(), out),
         }

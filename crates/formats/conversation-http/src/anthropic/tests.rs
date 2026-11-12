@@ -467,10 +467,7 @@ fn a_whole_response_decodes_into_events_per_block() {
             Output::arguments(3, "{\"a\":1}"),
             Output::block_end(3),
             // What the kind has no place for comes before the block opens.
-            Output::BlockFields {
-                block: 4,
-                native: AnthropicMessages::native(cited)
-            },
+            Output::block_fields(4, AnthropicMessages::native(cited)),
             Output::block_start(4, Block::Text),
             Output::text(4, "cited"),
             Output::block_end(4),

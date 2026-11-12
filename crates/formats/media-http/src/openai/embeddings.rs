@@ -37,6 +37,8 @@ pub struct OpenAiEmbeddings;
 impl OpenAiEmbeddings {
     /// The format's name, `openai-embeddings`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiEmbeddings {

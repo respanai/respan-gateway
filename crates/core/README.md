@@ -30,17 +30,12 @@ protocols and adapters all depend on it directly.
   typed extensions (`fault.with(..)`, `fault.get::<T>()`) any protocol can
   render: `RetryAfter`, `ErrorCode` and `Details`. `Fault::upstream(..)`
   and the like make one.
-- `Native`: what a value holds that the kind has no place for, opaque to
-  every format but its own. A format keeps it as JSON under a key type
-  private to it (`native_key!`, a `Key` with a stable `NAME`), read and
-  written with that key (`Native::json::<K>`, `value::<K>`, `fields::<K>`,
-  `fields_mut::<K>`), which no other format can name, so another's reads as
-  none and is replaced when a format writes its own: that is the drop. A
-  format may give its vendors' dialects and hosts doors to its own
-  (`native_doors!`, `Schema::fields_mut` and the like). With the `serde`
-  feature a `Native` is kept as `{"format", "value"}` under its key's name
-  (`null` if empty) and read back as it was, so a store shared through serde
-  keeps it.
+- `Native`: what a value holds that the kind has no place for, as JSON
+  under a key type private to its format (`native_key!`, a `Key` with a
+  stable `NAME`), which no other format can name: another's reads as none
+  and is replaced when a format writes its own, the drop. A format's doors
+  (`native_doors!`, `Schema::fields`) open it to code that names the format.
+  With the `serde` feature it is kept as `{"format", "value"}`, or `null`.
 
 Core defines no request/event kinds or `Format` implementations. Each kind
 names its pair `Input` / `Output`, in the crate that owns it:

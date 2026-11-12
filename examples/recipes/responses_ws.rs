@@ -114,14 +114,13 @@ impl Plugin for Sessions {
 /// Pin a `response.create` to `model`, cap its output and reserve its lane's
 /// turn. One with `generate: false` only warms the cache, and costs nothing.
 fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
-    let Input::Native(native) = event else {
+    let Some(json) = (match event {
+        Input::Native(native) => ResponsesWs::value_mut(native),
+        _ => None,
+    }) else {
         return Ok(());
     };
-    if ResponsesWs::value(native).is_none() {
-        return Ok(());
-    }
-    let json = ResponsesWs::fields_mut(native);
-    if json.get("type").and_then(Value::as_str) != Some("response.create") {
+    if json["type"] != "response.create" {
         return Ok(());
     }
     if json.get("model").is_some_and(|v| v.as_str() != Some(model)) {
@@ -129,19 +128,15 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
             "model is outside the configured budget policy",
         ));
     }
-    json.insert("model".into(), model.into());
-    if json.get("generate") == Some(&Value::Bool(false)) {
+    json["model"] = model.into();
+    if json["generate"] == false {
         return Ok(());
     }
-    let cap = json.entry("max_output_tokens").or_insert(Value::Null);
+    let cap = &mut json["max_output_tokens"];
     if cap.as_i64().is_none_or(|n| !(1..=OUTPUT).contains(&n)) {
         *cap = OUTPUT.into();
     }
-    budget.begin(
-        json.get("stream_id")
-            .and_then(Value::as_str)
-            .unwrap_or("default"),
-    )
+    budget.begin(json["stream_id"].as_str().unwrap_or("default"))
 }
 
 /// At a response's end, settle its lane's turn at the usage it reports.

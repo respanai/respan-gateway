@@ -471,10 +471,10 @@ fn a_stream_decodes_to_the_kinds_events() {
         Some(&json!(5))
     );
     let rest = [
-        Output::BlockFields {
-            block: 0,
-            native: OpenAiResponses::native(rest_of(&json!({ "id": "msg_1" }), &[])),
-        },
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_1" }), &[])),
+        ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hello"),
         Output::text(0, " world"),
@@ -551,10 +551,10 @@ fn function_calls_and_reasoning_are_blocks() {
         ]
     );
     assert_eq!(all.finish, Some(Finish::ToolUse));
-    assert!(out.contains(&Output::BlockFields {
-        block: 0,
-        native: OpenAiResponses::native(rest_of(&json!({ "id": "rs_1" }), &[]))
-    }));
+    assert!(out.contains(&Output::block_fields(
+        0,
+        OpenAiResponses::native(rest_of(&json!({ "id": "rs_1" }), &[]))
+    )));
 }
 
 #[test]
@@ -806,10 +806,10 @@ fn blocks_that_interleave_are_written_one_at_a_time() {
 fn a_body_is_written_from_the_events() {
     let replies = [
         Output::start("resp_9", "gpt-x"),
-        Output::BlockFields {
-            block: 0,
-            native: OpenAiResponses::native(rest_of(&json!({ "id": "msg_real" }), &[])),
-        },
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_real" }), &[])),
+        ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hi"),
         Output::block_end(0),

@@ -98,10 +98,7 @@ fn call_fields(block: u32, entry: &Fields, function: &Fields) -> Option<Output> 
     if !function.is_empty() {
         fields.insert("function".into(), Value::Object(function.clone()));
     }
-    Some(Output::BlockFields {
-        block,
-        native: OpenAiChat::native(fields),
-    })
+    Some(Output::block_fields(block, OpenAiChat::native(fields)))
 }
 
 impl OpenAiDecoder {

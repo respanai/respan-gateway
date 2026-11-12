@@ -1,5 +1,4 @@
-//! What this crate's formats say of tools' calls only in their own natives,
-//! left out for a plugin that runs those tools itself.
+//! Tools' calls, left out of what this crate's formats say only natively.
 
 use std::collections::HashSet;
 
@@ -8,12 +7,12 @@ use serde_json::{Map, Value};
 
 use crate::{gemini, openai};
 
-/// The calls of some tools, which a session's client is not to see: what
-/// a format of this crate says of them only in its own natives (OpenAI's
-/// items of a call, its argument deltas, the call in `response.done`) is
-/// left out of those, for a plugin that cannot read them, such as the tool
-/// loop. Any object that names one of the tools, or carries the id of one
-/// of their calls, is of one. Another crate's native is left as it is.
+/// The calls of some tools a session's client is not to see, left out of
+/// what a format of this crate says of them only in its own natives
+/// (OpenAI's items of a call, its argument deltas, the call in
+/// `response.done`), for a plugin that cannot read those, such as the tool
+/// loop: any object that names one of the tools, or carries the id of one
+/// of their calls.
 #[derive(Debug, Default)]
 pub struct Calls {
     /// The tools' names.
@@ -33,8 +32,8 @@ impl Calls {
             let held = std::iter::once(fields).chain(fields.values().filter_map(Value::as_object));
             let ours: Vec<&Map<String, Value>> = held.filter(|o| self.is_ours(o)).collect();
             if !ours.is_empty() {
-                let ids: Vec<String> = ours.into_iter().flat_map(ids_of).collect();
-                self.ids.extend(ids);
+                self.ids
+                    .extend(ours.into_iter().flat_map(ids_of).collect::<Vec<_>>());
                 return true;
             }
         }

@@ -51,6 +51,8 @@ pub struct OpenAiTranscriptions;
 impl OpenAiTranscriptions {
     /// The format's name, `openai-transcriptions`.
     pub const NAME: &'static str = NAME;
+
+    respan_gateway_core::native_doors!(Key);
 }
 
 impl Format<ClientIo, Input, Output> for OpenAiTranscriptions {

@@ -442,12 +442,12 @@ fn a_whole_body_is_the_same_events() {
             Output::block_start(2, call),
             Output::arguments(2, "{\"id\":7}"),
             Output::block_end(2),
-            Output::BlockNative {
-                block: 3,
-                native: BedrockConverse::native(
+            Output::block_native(
+                3,
+                BedrockConverse::native(
                     json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } })
                 )
-            },
+            ),
             Output::finished(Finish::ToolUse),
             native(
                 json!({ "type": "stop_fields", "fields": { "additionalModelResponseFields": { "x": 1 } } })

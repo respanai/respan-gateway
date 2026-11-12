@@ -253,7 +253,7 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     for (id, a) in answers {
         match decode_answer(id, a) {
             Some(answer) => out.push(Output::Answer(answer)),
-            None => out.push(Output::Native(Native::json::<Key>(
+            None => out.push(Output::Native(Decisions::native(
                 json!({ "answers": { id: a } }),
             ))),
         }
@@ -271,7 +271,7 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         )));
         let extras = rest_of(&v["usage"], &["input_tokens", "output_tokens"]);
         if !extras.is_empty() {
-            out.push(Output::Native(Native::json::<Key>(
+            out.push(Output::Native(Decisions::native(
                 json!({ "usage": extras }),
             )));
         }
