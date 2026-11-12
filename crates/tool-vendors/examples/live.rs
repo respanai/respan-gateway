@@ -201,6 +201,13 @@ fn steps(vendor: &str) -> Vec<Step> {
                 json!({"document_url": PDF, "sections": [{"name": "body", "description": "The document's text"}]}),
             ),
         ],
+        "specstream" => vec![
+            step(
+                "search",
+                json!({"q": "Rust 1.0 release date", "num": 1, "speed": "fast"}),
+            ),
+            step("extract", json!({"urls": ["https://example.com"]})),
+        ],
         "tavily" => vec![
             step(
                 "search",

@@ -38,6 +38,8 @@
 //! - [`reducto`]: Reducto's document parsing, field extraction and
 //!   section splitting (`parse_document`, `extract_fields`,
 //!   `split_document`), its key from `REDUCTO_API_KEY`.
+//! - [`specstream`]: SpecStream's web search and page text (`search`,
+//!   `extract`), its key from `SPECSTREAM_API_KEY`.
 //! - [`tavily`]: Tavily's web search, page extraction, site crawls and site
 //!   maps (`search`, `extract`, `crawl`, `map_site`), its key from
 //!   `TAVILY_API_KEY`.
@@ -53,7 +55,7 @@ pub use respan_gateway_tool_vendor_kit::*;
 pub use respan_gateway_tool_vendors_green::{
     apify, browserbase, cloudinary, context7, daytona, linkup, reducto, tavily, tinyfish, zep,
 };
-pub use respan_gateway_tool_vendors_yellow::{e2b, elevenlabs, exa, firecrawl};
+pub use respan_gateway_tool_vendors_yellow::{e2b, elevenlabs, exa, firecrawl, specstream};
 
 /// The green tool vendors: maintained, and verified end to end.
 pub const GREEN: &[&ToolVendor] = respan_gateway_tool_vendors_green::ALL;
@@ -74,6 +76,7 @@ pub const ALL: &[&ToolVendor] = &[
     &firecrawl::VENDOR,
     &linkup::VENDOR,
     &reducto::VENDOR,
+    &specstream::VENDOR,
     &tavily::VENDOR,
     &tinyfish::VENDOR,
     &zep::VENDOR,
