@@ -41,9 +41,15 @@ impl ResponsesWs {
     pub fn fields(native: &Native) -> &Map<String, Value> {
         native.fields::<Key>()
     }
-    /// Its own fields in `native`, edited by `edit`: another format's dropped.
+    /// Its own fields in `native`, edited by `edit`: another format's dropped,
+    /// and its own still if no field is left, as its writer tells events.
     pub fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
-        native.with_fields::<Key>(edit)
+        let edited = native.with_fields::<Key>(edit);
+        if edited.is_empty() {
+            Native::own::<Key>()
+        } else {
+            edited
+        }
     }
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
