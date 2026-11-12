@@ -210,8 +210,10 @@ fn timed(raw: Bytes) -> Result<Bytes, Fault> {
 
 /// OpenRouter's speech, as it departs from OpenAI's: asked for no
 /// `response_format` it answers `pcm`, so it is asked for `mp3`, which
-/// OpenAI answers then. It answers `mp3` and `pcm` alone: any other fails
-/// `bad_request` before sending.
+/// OpenAI answers then. A model that speaks `pcm` alone, as Gemini's and
+/// HeyGen's do, refuses that itself, and is to be asked for `pcm`. Its
+/// `pcm` is 16-bit as OpenAI's, at 24 kHz or, from some models, such as
+/// Fish Audio's and HeyGen's, 44.1 kHz.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenRouterSpeech;
 
@@ -224,19 +226,10 @@ impl Dialect for OpenRouterSpeech {
     }
 }
 
-/// `input` asking for `mp3`, unless it asks for a format, which is `mp3`
-/// or `pcm`.
+/// `input` asking for `mp3`, unless it asks for a format.
 fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
-    match input
-        .audio_format
-        .get_or_insert_with(|| "mp3".into())
-        .as_str()
-    {
-        "mp3" | "pcm" => Ok(()),
-        _ => Err(Fault::bad_request(
-            "OpenRouter speaks in 'mp3' or 'pcm' alone",
-        )),
-    }
+    input.audio_format.get_or_insert_with(|| "mp3".into());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -379,7 +372,5 @@ mod tests {
         input.audio_format = Some("pcm".into());
         in_mp3(&mut input).expect("taken");
         assert_eq!(input.audio_format.as_deref(), Some("pcm"));
-        input.audio_format = Some("wav".into());
-        assert!(in_mp3(&mut input).is_err());
     }
 }
