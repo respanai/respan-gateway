@@ -31,10 +31,11 @@ const NAME: &str = "gemini-images";
 /// `candidateCount`, which Gemini's image models refuse above 1; its `size`
 /// an `imageConfig` of the nearest `aspectRatio` Gemini draws (within 5%,
 /// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. As
-/// Gemini edits by prompt alone, a mask is dropped. Its native fields go in the body, `generationConfig`
-/// merged with what it says. An answer's images are its parts' `inlineData`
-/// (or `fileData`), not its thoughts', its usage `usageMetadata`'s; its text
-/// is dropped. An answer with no image is refused, 400 `no_image`, saying why.
+/// Gemini edits by prompt alone, a mask is dropped. Its native fields go in
+/// the body, `generationConfig` merged with what it says. An answer's images
+/// are its parts' `inlineData` (or `fileData`), not its thoughts', its usage
+/// `usageMetadata`'s; its text is dropped. An answer with no image is
+/// refused, 400 `no_image`, saying why.
 ///
 /// A client speaks it too, of any provider of the kind: a `POST` to
 /// `.../models/{model}:generateContent` or `:streamGenerateContent` with
