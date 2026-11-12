@@ -445,22 +445,16 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
 }
 
 /// The request's `reasoning_effort`: the kind's effort, else the request's
-/// own. Chat has no token budget, and no field that returns the thinking.
+/// own. Chat refuses a token budget and drops an ask for a summary.
 pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
-    let Some(r) = reasoning_of(input)? else {
-        return Ok(own_native(input, OPENAI, "reasoning_effort"));
-    };
-    if r.budget_tokens.is_some() {
+    let r = reasoning_of(input)?;
+    if r.is_some_and(|r| r.budget_tokens.is_some()) {
         return Err(Fault::bad_request(
             "OpenAI Chat does not take a reasoning token budget; use a reasoning effort instead",
         ));
     }
-    if r.summary == Some(true) {
-        return Err(Fault::bad_request(
-            "OpenAI Chat cannot be asked to return reasoning; leave the reasoning summary unset",
-        ));
-    }
-    Ok(match r.effort {
+    // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
+    Ok(match r.and_then(|r| r.effort) {
         Some(effort) => Some(effort_name(effort)?.into()),
         None => own_native(input, OPENAI, "reasoning_effort"),
     })
