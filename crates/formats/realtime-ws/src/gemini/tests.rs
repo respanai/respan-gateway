@@ -323,6 +323,17 @@ fn every_server_message_is_written_back_as_it_came() {
     written[13]["serverContent"]["turnComplete"] = true.into();
     written[13]["serverContent"]["turnCompleteReason"] = "MALFORMED_FUNCTION_CALL".into();
     assert_eq!(written, messages);
+    // Another format's calls, started as Phonic's are, end the turn too.
+    let mut foreign = outputs(&applied, &messages[11..12]);
+    foreign[0] = Output::ResponseStart {
+        id: None,
+        native: None,
+    };
+    let ended = json!({"serverContent": {"turnComplete": true}});
+    assert_eq!(
+        heard(&foreign).expect("written"),
+        [messages[11].clone(), ended]
+    );
 }
 
 #[test]
