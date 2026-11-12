@@ -4,10 +4,10 @@
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Filter, NativeValue};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -17,9 +17,9 @@ use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own};
 
 /// Where its API is.
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -69,19 +69,14 @@ impl Dialect for OpenRouter {
     }
 }
 
-/// `input` with a thinking budget as its `reasoning.max_tokens`, unless
-/// another format's fields leave no room for its own.
+/// `input` with a thinking budget as its `reasoning.max_tokens`.
 fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
-    let budget = input
+    let Some(budget) = input
         .options
         .reasoning
         .as_ref()
-        .and_then(|r| r.budget_tokens);
-    let own = input
-        .native
-        .as_ref()
-        .is_none_or(|n| n.is_empty() || &*n.format == OpenAiChat::NAME);
-    let (Some(budget), true) = (budget, own) else {
+        .and_then(|r| r.budget_tokens)
+    else {
         return Ok(());
     };
     let withheld = input.options.reasoning.take().and_then(|r| r.summary) == Some(false);
@@ -89,11 +84,9 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
     if withheld {
         reasoning["exclude"] = true.into();
     }
-    let native = input
-        .native
-        .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()));
-    native.format = OpenAiChat::NAME.into();
-    native.fields.entry("reasoning").or_insert(reasoning);
+    own(&mut input.native, OpenAiChat::NAME)
+        .entry("reasoning")
+        .or_insert(reasoning);
     Ok(())
 }
 
@@ -125,7 +118,7 @@ impl Dialect for OpenRouterImages {
 
 /// `input` with its images in `input_references`, and no mask.
 fn referenced(input: &mut image::Input) -> Result<(), Fault> {
-    let mut fields = kept(OpenAiImages::NAME, &input.native);
+    let fields = own(&mut input.native, OpenAiImages::NAME);
     // WARN: OpenRouter takes no mask; it is dropped.
     fields.shift_remove("mask");
     if !input.images.is_empty() {
@@ -138,7 +131,6 @@ fn referenced(input: &mut image::Input) -> Result<(), Fault> {
             references.collect::<Vec<Value>>().into(),
         );
     }
-    input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
 }
 
@@ -236,6 +228,7 @@ fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_conversation_http::fields::{kept, native_of};
 
     #[test]
     fn an_edits_images_are_its_input_references() {
@@ -325,6 +318,7 @@ mod tests {
             "max_tokens": 9000,
             "messages": [{ "role": "user", "content": "hi" }],
             "thinking": { "type": "enabled", "budget_tokens": 2048 },
+            "context_management": { "edits": [] },
         }));
         reasoning_limit(&mut messages).expect("taken");
         assert!(messages.options.reasoning.is_none());
