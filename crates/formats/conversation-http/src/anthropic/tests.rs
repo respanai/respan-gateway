@@ -1131,6 +1131,7 @@ fn a_chats_effort_thinks_as_its_claude_does() {
             .expect("chat");
         let mut v = AnthropicMessages.encode_request(&chat).expect("written");
         AnthropicMessages::translated(&chat, &mut v);
+        AnthropicMessages::prepare_call(&mut v);
         Value::Object(v)
     };
     // Adaptive, beside the effort, from Claude 4.6.
@@ -1166,6 +1167,50 @@ fn a_chats_effort_thinks_as_its_claude_does() {
         AnthropicMessages::translated(&Input::default(), call);
     }
     assert_eq!(v, written);
+    // Sent, a call has only the thinking its Claude takes, however it was set.
+    let fit = |model: &str, extra: Value| {
+        let mut v = json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        if let (Some(call), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
+            call.extend(extra.clone());
+            AnthropicMessages::prepare_call(call);
+        }
+        v
+    };
+    let budget = |n: u64| json!({ "type": "enabled", "budget_tokens": n });
+    let v = fit("claude-opus-4-7", json!({ "thinking": budget(2048) }));
+    assert_eq!(v["thinking"], json!({ "type": "adaptive" }));
+    assert_eq!(v["output_config"], json!({ "effort": "medium" }));
+    let named = json!({ "thinking": budget(9000), "output_config": { "effort": "xhigh" } });
+    let v = fit("claude-fable-5-2", named);
+    assert_eq!(v["output_config"], json!({ "effort": "xhigh" }));
+    let v = fit(
+        "claude-sonnet-5-5",
+        json!({ "thinking": { "type": "disabled" } }),
+    );
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["output_config"], json!({ "effort": "low" }));
+    let off = json!({ "thinking": { "type": "disabled" } });
+    assert_eq!(
+        fit("claude-opus-4-7", off.clone())["thinking"],
+        off["thinking"]
+    );
+    // A tool loop's turn without its thinking, or a forced tool, drops it.
+    let call = json!({ "type": "tool_use", "id": "c1", "name": "f", "input": {} });
+    let result = json!({ "type": "tool_result", "tool_use_id": "c1", "content": "ok" });
+    let looped = json!({ "thinking": budget(2048), "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": [call] },
+        { "role": "user", "content": [result] },
+    ] });
+    assert!(fit("claude-sonnet-4-5", looped).get("thinking").is_none());
+    let forced = json!({ "thinking": budget(2048), "tool_choice": { "type": "any" } });
+    let v = fit("claude-sonnet-4-5", forced.clone());
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["tool_choice"], json!({ "type": "any" }));
+    // A Claude that refuses to force a tool chooses `auto`, and thinks.
+    let v = fit("claude-opus-5-5", forced);
+    assert_eq!(v["tool_choice"], json!({ "type": "auto" }));
+    assert_eq!(v["thinking"], json!({ "type": "adaptive" }));
     let v = sent("kimi-k2", json!({}));
     assert!(v.get("thinking").is_none());
     assert_eq!(v["output_config"], json!({ "effort": "high" }));
@@ -1198,6 +1243,7 @@ fn claude_call(model: &str, body: Value) -> Value {
         .expect("chat");
     let mut v = AnthropicMessages.encode_request(&chat).expect("written");
     AnthropicMessages::translated(&chat, &mut v);
+    AnthropicMessages::prepare_call(&mut v);
     Value::Object(v)
 }
 

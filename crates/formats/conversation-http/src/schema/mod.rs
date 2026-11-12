@@ -33,7 +33,7 @@ pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
-    EFFORT_BUDGETS, budget_for, claude_sampling, effort_for, effort_name, parse_effort, take_native,
+    EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
     FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, check_usage, count,

@@ -225,6 +225,24 @@ fn what_converse_has_no_field_for_is_dropped_or_its_nearest() {
     assert_eq!(thinking["budget_tokens"], 1024);
     let config = json!({ "maxTokens": 1824, "temperature": 1.0 });
     assert_eq!(v["inferenceConfig"], config);
+    // A Claude that thinks adaptively takes the nearest effort for a budget,
+    // and chooses `auto` where it refuses to force a tool.
+    c.model = Some("global.anthropic.claude-opus-5-5".into());
+    c.tools = vec![Tool::new("f", json!({ "type": "object" }))];
+    c.options.tool_choice = Some(ToolChoice::Required);
+    let v = written(&c);
+    let fields =
+        json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } });
+    assert_eq!(v["additionalModelRequestFields"], fields);
+    assert_eq!(
+        (v["toolConfig"].get("toolChoice"), &v["inferenceConfig"]),
+        (None, &config)
+    );
+    // Where forcing a tool is allowed, it takes the thinking's place.
+    c.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
+    let v = written(&c);
+    assert!(v.get("additionalModelRequestFields").is_none());
+    assert_eq!(v["toolConfig"]["toolChoice"], json!({ "any": {} }));
     let c = chat([user("a"), Message::new(Role::System, "late")]);
     assert_eq!(
         written(&c)["messages"],

@@ -179,10 +179,10 @@ to its own format unchanged, and is dropped by another.
 
 | Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
 | --- | --- | --- | --- | --- | --- |
-| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | a Claude's `thinking: {type: "disabled"}`, else dropped |
-| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | a Claude's budget (below), else dropped |
-| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | a Claude's budget, else dropped |
-| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024) | `thinkingBudget: n` | a Claude's `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), else dropped |
+| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}`, the least effort where refused (below) | `thinkingBudget: 0` | as Anthropic's for a Claude, else dropped |
+| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | as Anthropic's for a Claude, else dropped |
+| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
+| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), on Claude 4.6+ adaptive at the nearest effort | `thinkingBudget: n` | as Anthropic's for a Claude, else dropped |
 | `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
 
@@ -190,10 +190,21 @@ An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one
 writes the nearest, by the budgets the gateway gives a Claude's efforts
 (`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192; a budget is at most
-`high`), Converse for a Claude only. Asked for both at once, a format writes
-the one it takes, the effort if it takes either. Beside a budget, Anthropic
-and a Claude on Converse drop a temperature but 1 and a `top_p` under 0.95,
-and their `max_tokens` exceeds the budget (a smaller one is raised by it).
+`high`). Asked for both at once, a format writes the one it takes, the
+effort if it takes either. A Claude on Converse is written as Anthropic
+writes it, in `additionalModelRequestFields`. Claude 4.6 and later think
+adaptively to an effort (`thinking: {type: "adaptive"}`) and 3.7 to 4.5 to a
+budget, so a translated effort is the one its model takes. Beside a budget,
+Anthropic drops a temperature but 1 and a `top_p` under 0.95, and its
+`max_tokens` exceeds the budget (a smaller one is raised by it); a Claude
+on Converse thinks to its effort before that, and drops them beside adaptive
+thinking too. Claude is sent no thinking it refuses: none beside a forced
+tool, and, to a budget, none beside another temperature or `top_p`, a
+`top_k`, an assistant's last turn, or a tool loop's assistant turn that does
+not open with its thinking. Opus and Sonnet 5.5, Fable and Mythos refuse
+`disabled`: it is the least effort there. Opus and Sonnet 5.5, and Fable and
+Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
+`auto`.
 Gemini levels are read in either case and written in lower case.
 
 ## Finish

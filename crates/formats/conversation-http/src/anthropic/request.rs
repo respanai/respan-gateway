@@ -5,8 +5,8 @@
 
 use crate::schema::{
     EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
-    encode_content, merge_missing, only, read_search, remainder, rest_of, set, take_native,
-    untranslatable, write_search,
+    effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of, set,
+    take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -365,7 +365,7 @@ pub(crate) fn read_effort(input: &mut Input) {
 
 /// Anthropic's name of a named `effort`: its `output_config.effort`. `Off`
 /// is `thinking`'s, not an effort.
-fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
+pub(crate) fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
     Ok(match effort {
         Effort::Off => None,
         Effort::Minimal | Effort::Low => Some("low"),
@@ -457,14 +457,65 @@ fn thinks(model: &str) -> Thinks {
     }
 }
 
+/// Whether Claude `model` is of a `family` at `from` or later, as
+/// `claude-opus-5-5` is Opus 5.5; a dated model is of its major's `.0`.
+fn at_least(model: &str, (family, from): &(&str, (u32, u32))) -> bool {
+    fn number(s: &str) -> Option<(u32, &str)> {
+        let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+        let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
+        Some((n, &s[digits..]))
+    }
+    let Some((major, rest)) = model
+        .split_once(&format!("{family}-"))
+        .and_then(|(_, r)| number(r))
+    else {
+        return false;
+    };
+    let minor = rest.strip_prefix(['-', '.']).and_then(number);
+    (major, minor.map_or(0, |(minor, _)| minor)) >= *from
+}
+
+/// Whether Claude `model` takes a forced tool choice: Opus and Sonnet 5.5,
+/// and Fable and Mythos 5.1, and later refuse one.
+fn forces_tools(model: &str) -> bool {
+    let refusing = [
+        ("opus", (5, 5)),
+        ("sonnet", (5, 5)),
+        ("fable", (5, 1)),
+        ("mythos", (5, 1)),
+    ];
+    !refusing.iter().any(|f| at_least(model, f))
+}
+
+/// Whether Claude `model` takes `thinking: {type: "disabled"}`: Opus and
+/// Sonnet 5.5, Fable and Mythos, and later refuse it.
+fn disables_thinking(model: &str) -> bool {
+    let refusing = [
+        ("opus", (5, 5)),
+        ("sonnet", (5, 5)),
+        ("fable", (5, 0)),
+        ("mythos", (5, 0)),
+    ];
+    !refusing.iter().any(|f| at_least(model, f))
+}
+
+/// The kind of a block or tool choice in Anthropic's terms (`type`) or
+/// Converse's (its one key).
+fn kind(b: &Value) -> Option<&str> {
+    let mut keys = b.as_object()?.keys();
+    b["type"]
+        .as_str()
+        .or_else(|| keys.next().map(String::as_str))
+}
+
 /// Whether the call `v` can think: Anthropic refuses thinking beside a
 /// temperature but 1, a `top_k`, a `top_p` under 0.95, a forced tool
 /// (`any` or `tool`), a last turn of the assistant's to continue, and a
 /// tool loop's turn of the assistant's that does not open with its thinking.
+/// Its messages may be Anthropic's or Converse's.
 fn can_think(v: &Map<String, Value>) -> bool {
     let number = |key: &str| v.get(key).and_then(Value::as_f64);
-    let forced = v.get("tool_choice").and_then(|c| c["type"].as_str());
-    let forced = matches!(forced, Some("any" | "tool"));
+    let forced = matches!(v.get("tool_choice").and_then(kind), Some("any" | "tool"));
     if number("temperature").is_some_and(|t| t != 1.0)
         || number("top_p").is_some_and(|p| p < 0.95)
         || v.contains_key("top_k")
@@ -475,17 +526,17 @@ fn can_think(v: &Map<String, Value>) -> bool {
     let messages = v.get("messages").and_then(Value::as_array);
     let messages = messages.map(Vec::as_slice).unwrap_or_default();
     let blocks = |m: &Value| m["content"].as_array().cloned().unwrap_or_default();
+    let result = |b: &Value| matches!(kind(b), Some("tool_result" | "toolResult"));
     // The turn in progress: what follows the user's last message of its own.
-    let of_user =
-        |m: &Value| m["role"] == "user" && blocks(m).iter().all(|b| b["type"] != "tool_result");
+    let of_user = |m: &Value| m["role"] == "user" && !blocks(m).iter().any(result);
     let turn = messages.iter().rposition(of_user).map_or(0, |at| at + 1);
     let turn = &messages[turn..];
     let assistant = |m: &&Value| m["role"] == "assistant";
     let opens_with_thinking = |m: &Value| {
-        let first = blocks(m).first().map(|b| b["type"].clone());
+        let first = blocks(m).first().cloned().unwrap_or_default();
         matches!(
-            first.as_ref().and_then(Value::as_str),
-            Some("thinking" | "redacted_thinking")
+            kind(&first),
+            Some("thinking" | "redacted_thinking" | "reasoningContent")
         )
     };
     turn.last().is_none_or(|last| last["role"] != "assistant")
@@ -538,9 +589,68 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
     }
 }
 
+/// The Claude call `v` with only the thinking and tool choice its model
+/// takes, however they were set. Claude 4.6 and later think adaptively, to
+/// an effort: a budget there is adaptive thinking at the nearest effort
+/// ([`effort_for`]), unless the call names one, and `disabled`, where the
+/// model refuses it, no `thinking` at the least effort. A model that refuses
+/// to force a tool chooses `auto`. Beside a forced tool, on a model that
+/// thinks to a budget in a call that cannot think ([`can_think`]), and on a
+/// model that never thinks, there is no `thinking`. Another model's call
+/// stays as written.
+pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
+    let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
+    let model = model.to_ascii_lowercase();
+    if !model.contains("claude") {
+        return;
+    }
+    let choice = v.get_mut("tool_choice").and_then(Value::as_object_mut);
+    let forced = choice.filter(|c| matches!(c["type"].as_str(), Some("any" | "tool")));
+    let forced = match forced {
+        Some(choice) if !forces_tools(&model) => {
+            // WARN: a forced tool choice this Claude refuses is `auto`.
+            choice.insert("type".into(), "auto".into());
+            choice.remove("name");
+            false
+        }
+        forced => forced.is_some(),
+    };
+    let thinks = thinks(&model);
+    let thinking = v.get("thinking").cloned().unwrap_or_default();
+    // WARN: a thinking budget, and `disabled` where it is refused, are the
+    // nearest effort on Claude 4.6 and later, thinking adaptively for a budget.
+    let nearest = match (&thinks, thinking["type"].as_str()) {
+        (Thinks::Adaptively, Some("enabled")) => {
+            v.insert("thinking".into(), json!({ "type": "adaptive" }));
+            Some(effort_for(thinking["budget_tokens"].as_u64().unwrap_or(0)))
+        }
+        (Thinks::Adaptively, Some("disabled")) if !disables_thinking(&model) => {
+            v.remove("thinking");
+            Some(Effort::Low)
+        }
+        _ => None,
+    };
+    if let Some(effort) = nearest.and_then(|e| effort_name(e).ok().flatten()) {
+        let config = v.entry("output_config").or_insert_with(|| json!({}));
+        if let Some(config) = config.as_object_mut() {
+            config.entry("effort").or_insert(effort.into());
+        }
+    }
+    let refused = match thinks {
+        Thinks::Adaptively => forced,
+        Thinks::ToBudget => !can_think(v),
+        Thinks::Never => true,
+    };
+    if refused && v.get("thinking").is_some_and(|t| t["type"] != "disabled") {
+        // WARN: thinking Claude refuses in this call is dropped.
+        v.remove("thinking");
+    }
+}
+
 /// The request's `thinking`: the kind's reasoning, else the request's own.
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s
-/// ([`write_output`]), and it returns its thinking whenever it thinks.
+/// ([`write_output`]), and it returns its thinking whenever it thinks; what
+/// a model refuses of it [`fit_thinking`] fits.
 pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
     let own = || {
         AnthropicMessages::fields(&input.native)
