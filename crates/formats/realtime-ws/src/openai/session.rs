@@ -2,7 +2,7 @@
 
 use respan_gateway_core::Fault;
 use respan_gateway_realtime::{
-    AudioFormat, Encoding, Modality, Purpose, Session, Tool, ToolChoice, Turns, Vad,
+    AudioFormat, Encoding, Modality, Purpose, Session, Tool, Turns, Vad,
 };
 use serde_json::{Map, Value, json};
 
@@ -19,8 +19,6 @@ const OUTPUT_FORMAT: &[&str] = &["session", "audio", "output", "format"];
 const TURN_DETECTION: &[&str] = &["session", "audio", "input", "turn_detection"];
 const TRANSCRIPTION: &[&str] = &["session", "audio", "input", "transcription"];
 const TOOLS: &[&str] = &["session", "tools"];
-const TOOL_CHOICE: &[&str] = &["session", "tool_choice"];
-const MAX_OUTPUT_TOKENS: &[&str] = &["session", "max_output_tokens"];
 
 /// What `v`, an event less its type, says of its `session`; what is left of
 /// `v` is the session's native. OpenAI always transcribes the model's
@@ -46,8 +44,6 @@ pub(super) fn decode(mut v: Value) -> Session {
     .or_else(|| at(v, TRANSCRIPTION)?.is_object().then_some(true));
     s.output_transcription = Some(true);
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.tool_choice = take(v, TOOL_CHOICE, tool_choice, tool_choice_json);
-    s.max_output_tokens = take(v, MAX_OUTPUT_TOKENS, Value::as_u64, number);
     s.native = json::native(NAME, std::mem::take(v));
     s
 }
@@ -89,14 +85,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }),
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
-    put(
-        TOOL_CHOICE,
-        s.tool_choice.as_ref().and_then(tool_choice_json),
-    );
-    put(
-        MAX_OUTPUT_TOKENS,
-        s.max_output_tokens.as_ref().and_then(number),
-    );
     Ok(v)
 }
 
@@ -191,13 +179,9 @@ fn turns(v: &Value) -> Option<Turns> {
     let mut rest = v.clone();
     let rest = &mut rest;
     let mut vad = Vad::default();
-    let flag = |v: &Value| v.as_bool();
-    let bool_json = |b: &bool| Some(Value::Bool(*b));
     let millis_json = |n: &u32| Some(Value::from(*n));
     vad.silence_ms = take(rest, &["silence_duration_ms"], millis, millis_json);
     vad.prefix_ms = take(rest, &["prefix_padding_ms"], millis, millis_json);
-    vad.respond = take(rest, &["create_response"], flag, bool_json);
-    vad.interrupt = take(rest, &["interrupt_response"], flag, bool_json);
     vad.native = json::native(NAME, std::mem::take(rest));
     Some(Turns::Server(vad))
 }
@@ -218,8 +202,6 @@ fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     };
     put("silence_duration_ms", vad.silence_ms.map(Value::from));
     put("prefix_padding_ms", vad.prefix_ms.map(Value::from));
-    put("create_response", vad.respond.map(Value::from));
-    put("interrupt_response", vad.interrupt.map(Value::from));
     let mut v = Value::Object(v);
     merge(&mut v, own(&vad.native));
     if v.get("type").is_none() {
@@ -305,26 +287,5 @@ fn lowercase_types(schema: &mut Value) {
             }
             _ => {}
         }
-    }
-}
-
-fn tool_choice(v: &Value) -> Option<ToolChoice> {
-    match v.as_str() {
-        Some("auto") => Some(ToolChoice::Auto),
-        Some("none") => Some(ToolChoice::None),
-        Some("required") => Some(ToolChoice::Required),
-        Some(_) => None,
-        None if v["type"] == "function" => Some(ToolChoice::Tool(string(&v["name"])?)),
-        None => None,
-    }
-}
-
-fn tool_choice_json(c: &ToolChoice) -> Option<Value> {
-    match c {
-        ToolChoice::Auto => Some("auto".into()),
-        ToolChoice::None => Some("none".into()),
-        ToolChoice::Required => Some("required".into()),
-        ToolChoice::Tool(name) => Some(json!({"type": "function", "name": name})),
-        _ => None,
     }
 }

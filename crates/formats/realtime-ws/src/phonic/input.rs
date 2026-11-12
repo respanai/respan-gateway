@@ -149,7 +149,6 @@ impl Provider {
             (s.output == Some(Modality::Text), "text output"),
             (s.turns == Some(Turns::Manual), "turns the client ends"),
             (s.tools.as_ref().is_some_and(|t| !t.is_empty()), "tools"),
-            (s.max_output_tokens.is_some(), "a limit on output tokens"),
         ];
         if let Some((_, what)) = unsupported.iter().find(|(refused, _)| *refused) {
             return Err(untranslatable_input(NAME, what));

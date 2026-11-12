@@ -105,13 +105,13 @@ What one spec has and the other has not is emulated, dropped or refused:
   interruption, which Gemini reports after, at its turn's end, is in the
   next `response.done`. `conversation.item.truncate` is dropped, as Gemini
   keeps only what it sent; so are ids, tracing, noise reduction,
-  transcription settings and VAD tuning, as are a commit and a
+  transcription settings, VAD tuning and OpenAI's own tool choice, output
+  limit and `create_response`/`interrupt_response`, as are a commit and a
   `response.create` to nothing under server VAD (Gemini answers each turn
   itself). The user's text alone is answered at once; any other message,
   such as history, is a `clientContent` turn, a system message the user's,
   its parts but text dropped, and a message with no text dropped whole.
-  Item edits, response overrides, a tool choice other than `auto` and
-  `create_response: false` are refused.
+  Item edits and response overrides are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
   its answers dropped: the user's transcript streams, and is whole at an

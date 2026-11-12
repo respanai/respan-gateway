@@ -110,7 +110,6 @@ impl Provider {
                 native: json::native(NAME, rest),
             },
             "assistant_started_speaking" => Output::ResponseStart {
-                id: None,
                 native: json::native(NAME, rest),
             },
             "assistant_finished_speaking" => Output::ResponseDone {

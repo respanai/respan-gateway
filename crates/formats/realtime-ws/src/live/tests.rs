@@ -132,7 +132,6 @@ fn what_the_live_api_has_none_of_is_refused() {
         vec![session(|s| s.purpose = Some(Purpose::Transcription))],
         vec![session(|s| s.output = Some(Modality::Text))],
         vec![session(|s| s.turns = Some(Turns::Manual))],
-        vec![session(|s| s.max_output_tokens = Some(1))],
         vec![session(|s| s.model = None)],
         vec![start.clone(), Input::Commit { native: None }],
         vec![start.clone(), Input::Respond { native: None }],
@@ -160,10 +159,7 @@ fn another_formats_session_is_told_as_the_live_api_tells_it() {
     let events = [
         Output::Opened(opened.clone()),
         Output::Updated(opened),
-        Output::ResponseStart {
-            id: None,
-            native: None,
-        },
+        Output::ResponseStart { native: None },
         Output::InputTranscript {
             text: "Hi".into(),
             complete: false,

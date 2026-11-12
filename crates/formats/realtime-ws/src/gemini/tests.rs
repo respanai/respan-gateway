@@ -121,12 +121,11 @@ fn every_client_message_is_written_back_as_it_came() {
     assert_eq!(session.output, Some(Modality::Audio));
     assert_eq!(session.voice.as_deref(), Some("Kore"));
     assert_eq!(session.instructions.as_deref(), Some("Be brief."));
-    assert_eq!(session.max_output_tokens, Some(900));
     assert_eq!(session.tools.as_ref().map(Vec::len), Some(1));
     let Some(Turns::Server(vad)) = &session.turns else {
         panic!("{session:?}")
     };
-    assert_eq!((vad.silence_ms, vad.interrupt), (Some(500), Some(false)));
+    assert_eq!(vad.silence_ms, Some(500));
     assert_eq!(
         (session.input_transcription, session.output_transcription),
         (Some(true), Some(true))
@@ -340,10 +339,7 @@ fn every_server_message_is_written_back_as_it_came() {
     assert_eq!(written, messages);
     // Another format's calls, started as Phonic's are, end the turn too.
     let mut foreign = outputs(&applied, &messages[11..12]);
-    foreign[0] = Output::ResponseStart {
-        id: None,
-        native: None,
-    };
+    foreign[0] = Output::ResponseStart { native: None };
     let ended = json!({"serverContent": {"turnComplete": true}});
     assert_eq!(
         heard(&foreign).expect("written"),
