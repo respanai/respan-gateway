@@ -4,7 +4,7 @@ use super::super::RESPONSES;
 use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::fields::media_url;
-use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, sealed, untranslatable};
+use crate::schema::{FAILED_RESULT_PREFIX, NativeFieldsExt, merge_missing, sealed};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::{Fault, NativeFields};
 use serde_json::{Map, Value, json};
@@ -47,13 +47,14 @@ pub(in crate::responses) fn write_input(
 }
 
 fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    let no_role = || untranslatable("a role this format has no place for");
     let role = match &m.role {
         Role::Native { format, name, .. } if **format == *RESPONSES && name == ITEM_ROLE => {
-            return write_opaque(m, items);
+            write_opaque(m, items);
+            return Ok(());
         }
         Role::Native { format, name, .. } if **format == *RESPONSES => name.as_str(),
-        role => ROLES.name(role).ok_or_else(no_role)?,
+        // WARN: a role Responses lacks is a user's.
+        role => ROLES.name(role).unwrap_or("user"),
     };
     match m.role {
         Role::Assistant => write_assistant(m, items),
@@ -61,14 +62,15 @@ fn write_message(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
     }
 }
 
-fn write_opaque(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
+fn write_opaque(m: &Message, items: &mut Vec<Value>) {
     for part in &m.content {
-        match part {
-            Content::Native(n) if *n.format == *RESPONSES => items.push(n.value.as_ref().clone()),
-            _ => return Err(untranslatable("an item in another shape")),
+        // WARN: what else a plugin put among the items is dropped.
+        if let Content::Native(n) = part
+            && *n.format == *RESPONSES
+        {
+            items.push(n.value.as_ref().clone());
         }
     }
-    Ok(())
 }
 
 /// A user's, system's or developer's message: its text and media are one
@@ -87,24 +89,22 @@ fn write_other(m: &Message, role: &str, items: &mut Vec<Value>) -> Result<(), Fa
                 ..
             } => {
                 flush_other(role, &mut parts, &mut extras, items);
-                items.push(write_result(id, content, *is_error, native)?);
+                items.push(write_result(id, content, *is_error, native));
             }
-            Content::Reasoning { .. } | Content::ToolCall { .. } => {
-                return Err(untranslatable("an assistant's content in another role"));
-            }
-            // WARN: a signature has no place in another role; it is dropped here, silently.
-            Content::Signature(_) | Content::Withheld(_) => {}
-            part => parts.push(write_input_part(part)?),
+            // WARN: an assistant's content, or a signature, in another role is dropped.
+            Content::Reasoning { .. }
+            | Content::ToolCall { .. }
+            | Content::Signature(_)
+            | Content::Withheld(_) => {}
+            part => parts.extend(write_input_part(part)),
         }
     }
     flush_other(role, &mut parts, &mut extras, items);
     if items.len() == before {
         items.push(json!({ "role": role, "content": "" }));
     }
-    match extras.is_empty() {
-        true => Ok(()),
-        false => Err(untranslatable("a message's fields beside its results")),
-    }
+    // WARN: a message's fields beside its results alone have no item; dropped.
+    Ok(())
 }
 
 /// The message item of `parts`, if there are any.
@@ -141,28 +141,26 @@ fn only_keys(v: &Value, keys: &[&str]) -> bool {
         .is_some_and(|o| o.len() == keys.len() && keys.iter().all(|k| o.contains_key(*k)))
 }
 
-/// A part of an input message or of a result's output.
-fn write_input_part(c: &Content) -> Result<Value, Fault> {
+/// A part of an input message or of a result's output, if Responses has one.
+fn write_input_part(c: &Content) -> Option<Value> {
     match c {
         Content::Text { text, native, .. } => {
             let mut part = Map::new();
             part.insert("type".into(), "input_text".into());
             part.insert("text".into(), text.as_str().into());
             part.extend(native.fields_for(RESPONSES));
-            Ok(part.into())
+            Some(part.into())
         }
-        Content::Image(media) | Content::Document(media) => write_media(c, media),
-        Content::Native(n) if *n.format == *RESPONSES => Ok(n.value.as_ref().clone()),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Image(media) | Content::Document(media) => Some(write_media(c, media)),
+        Content::Native(n) if *n.format == *RESPONSES => Some(n.value.as_ref().clone()),
+        // WARN: audio and other parts have no form in an input; dropped.
+        _ => None,
     }
 }
 
-pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
+/// An image or a file; an image has no display name, which is dropped.
+pub(super) fn write_media(c: &Content, media: &Media) -> Value {
     let image = matches!(c, Content::Image(_));
-    if image && media.name.is_some() {
-        return Err(untranslatable("a display name on image content"));
-    }
     let native = media.native.fields_for(RESPONSES);
     let url = || media_url(media);
     let mut v = match (image, &media.source) {
@@ -170,14 +168,14 @@ pub(super) fn write_media(c: &Content, media: &Media) -> Result<Value, Fault> {
         (false, MediaSource::Url(url)) => json!({ "type": "input_file", "file_url": url }),
         (false, MediaSource::Bytes(_)) => json!({ "type": "input_file", "file_data": url() }),
     };
-    if let Some(name) = &media.name {
+    if let Some(name) = media.name.as_ref().filter(|_| !image) {
         v["filename"] = name.as_str().into();
     }
     merge_missing(&mut v, native);
     if image && v.get("detail").is_none() {
         v["detail"] = "auto".into();
     }
-    Ok(v)
+    v
 }
 
 fn write_result(
@@ -185,7 +183,7 @@ fn write_result(
     content: &[Content],
     is_error: bool,
     native: &Option<NativeFields>,
-) -> Result<Value, Fault> {
+) -> Value {
     // A function call output cannot say that the call failed: its text does.
     let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
     let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
@@ -198,8 +196,8 @@ fn write_result(
             .into(),
         false => content
             .iter()
-            .map(write_input_part)
-            .collect::<Result<Vec<_>, _>>()?
+            .filter_map(write_input_part)
+            .collect::<Vec<_>>()
             .into(),
     };
     let mut v = Map::new();
@@ -207,7 +205,7 @@ fn write_result(
     v.insert("call_id".into(), id.into());
     v.insert("output".into(), output);
     v.extend(native.fields_for(RESPONSES));
-    Ok(v.into())
+    v.into()
 }
 
 /// The text of a plain text part; others have none.
@@ -226,10 +224,8 @@ impl AsText for Content {
 
 /// An assistant message: its text runs are message items, its calls and
 /// reasoning items of their own.
+// WARN: an assistant message's own fields have no item of their own; dropped.
 fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
-    if !m.native.fields_for(RESPONSES).is_empty() {
-        return Err(untranslatable("an assistant message's fields"));
-    }
     let before = items.len();
     let mut run: Vec<&Content> = Vec::new();
     for (c, signature) in sealed(&m.content) {
@@ -281,8 +277,8 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 items.push(v.into());
             }
             // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
-            Content::Signature(_) | Content::Withheld(_) => {}
-            _ => return Err(untranslatable("an unsupported kind of part")),
+            // WARN: media and other parts have no form in an assistant's item; dropped.
+            _ => {}
         }
     }
     flush_assistant(&mut run, items);

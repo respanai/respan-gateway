@@ -33,13 +33,15 @@ pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
+    EFFORT_BUDGETS, budget_for, claude_sampling, effort_for, effort_name, parse_effort, take_native,
+};
+pub(crate) use values::{
     FAILED_RESULT_PREFIX, Names, NativeFieldsExt, Totals, UsageFields, arguments_object,
     check_usage, count, decode_content, decode_message, decode_tools, each_tool, encode_content,
     encode_message, ended, fits, merge_fields, merge_into, merge_missing, only, own_fields,
     own_shapes, read_search, remainder, sealed, set, source_url, stop_json, take_strict, take_text,
     tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
 };
-pub(crate) use values::{effort_name, parse_effort, reasoning_of, take_native};
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};
 use respan_gateway_core::{Connection, EventSink, Fault};
@@ -122,7 +124,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// a tool block; `None` keeps the part this format's own.
     fn decode_part(p: &Value) -> Option<Content>;
     /// A part beyond text and this format's own parts, as it writes it, or
-    /// refused.
+    /// `Value::Null` for one it drops.
     fn encode_part(c: &Content) -> Result<Value, Fault>;
     /// Whether a successful body is a whole response of this format.
     fn is_response(v: &Value) -> bool;

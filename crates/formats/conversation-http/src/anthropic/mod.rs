@@ -38,10 +38,10 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, merge_details, merge_fields,
-    merge_into, merge_missing, native_of, own_fields, says, sealed, set, stop_json,
-    unsupported_fields, unwritable_content, usage_extra,
+    Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage,
+    claude_sampling, count, decode_content, decode_message, encode_content, encode_message,
+    merge_details, merge_fields, merge_into, merge_missing, native_of, own_fields, says, sealed,
+    set, stop_json, unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -163,22 +163,13 @@ fn is_system(m: &Message) -> bool {
 }
 
 /// The parts of the leading system messages, as the system prompt, and
-/// the rest; a later system message is refused.
-fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
+/// the rest, where a later system message is a user's.
+// WARN: a system message's own fields have no place in the prompt; dropped.
+fn split_system(chat: &Input) -> (Vec<Content>, &[Message]) {
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
-    if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Anthropic has no place for a system message after the conversation starts",
-        ));
-    }
-    if !system.iter().all(unsaid) {
-        return Err(Fault::bad_request(
-            "Anthropic's system prompt has no place for a message's other fields",
-        ));
-    }
     let parts = system.iter().flat_map(|m| m.content.iter().cloned());
-    Ok((parts.collect(), rest))
+    (parts.collect(), rest)
 }
 
 /// `m` as Anthropic takes it: its signed reasoning a `thinking` block,
@@ -324,29 +315,15 @@ impl Schema for AnthropicMessages {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let (system, rest) = split_system(chat)?;
-        if rest.is_empty() {
-            return Err(Fault::bad_request(
-                "Anthropic needs at least one user or assistant message",
-            ));
-        }
-        if chat.options.temperature.is_some_and(|t| t > 1.0) {
-            return Err(Fault::bad_request(
-                "Anthropic's temperature is at most 1, so a higher one cannot be translated",
-            ));
-        }
-        let thinking = write_thinking(chat)?;
+        let (system, rest) = split_system(chat);
+        let thinking = write_thinking(chat);
         // Anthropic's `max_tokens` must exceed the thinking budget.
         let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
-        let default = match budget {
-            Some(budget) if budget >= DEFAULT_MAX_TOKENS => {
-                budget.saturating_add(DEFAULT_MAX_TOKENS)
-            }
-            _ => DEFAULT_MAX_TOKENS,
-        };
         let mut v = Map::new();
-        let max_tokens = chat.options.max_output_tokens.unwrap_or(default);
-        v.insert("max_tokens".into(), max_tokens.into());
+        let o = &chat.options;
+        let max = o.max_output_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+        let (max_tokens, temperature, top_p) = claude_sampling(o, Some(max), budget);
+        v.insert("max_tokens".into(), max_tokens.unwrap_or(max).into());
         set(
             &mut v,
             "system",
@@ -363,14 +340,17 @@ impl Schema for AnthropicMessages {
             .enumerate()
             .filter(|(i, m)| *i == last || !is_empty(m));
         let messages = kept.map(|(_, m)| encode_message::<Self>(&m, &ROLES));
-        let messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        let mut messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        // WARN: a message whose every part was dropped is left out.
+        messages.retain(|m| m["content"] != json!([]));
+        if messages.is_empty() {
+            return Err(Fault::bad_request(
+                "Anthropic needs at least one user or assistant message",
+            ));
+        }
         v.insert("messages".into(), messages.into());
-        set(
-            &mut v,
-            "temperature",
-            chat.options.temperature.map(Into::into),
-        );
-        set(&mut v, "top_p", chat.options.top_p.map(Into::into));
+        set(&mut v, "temperature", temperature.map(Into::into));
+        set(&mut v, "top_p", top_p.map(Into::into));
         set(&mut v, "stop_sequences", stop_json(&chat.options.stop));
         let mut metadata = Value::Object(Map::new());
         if let Some(user) = &chat.user {
@@ -451,7 +431,8 @@ impl Schema for AnthropicMessages {
                     match raw["type"].as_str() {
                         Some("ping") => {}
                         Some("message_delta") => stop.add(raw),
-                        _ => return Err(unwritable_content()),
+                        // WARN: an event of a type a body has no place for is dropped.
+                        _ => {}
                     }
                 }
                 AssembledItem::BlockNative { block, native } if *native.format == *ANTHROPIC => {
@@ -482,10 +463,12 @@ impl Schema for AnthropicMessages {
                                         None => input.push((place, json.to_owned())),
                                     }
                                 }
-                                _ => return Err(unwritable_content()),
+                                // WARN: a delta a body has no place for is dropped.
+                                _ => {}
                             }
                         }
-                        _ => return Err(unwritable_content()),
+                        // WARN: so is an event of a block that never started.
+                        _ => {}
                     }
                 }
                 // Another format's: only a client of that format could read it.

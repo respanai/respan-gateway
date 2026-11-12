@@ -954,6 +954,15 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
             { "role": "user", "content": "and then?" },
         ]))
     );
+    // A message whose every part is dropped is left out.
+    let mut heard = Message::new(Role::User, "");
+    heard.content = vec![Content::Audio(Media::new(
+        "audio/ogg",
+        MediaSource::Url("u".into()),
+    ))];
+    let sent = OpenAiChat.encode_request(&Input::new([heard, Message::new(Role::User, "hi")]));
+    let hi = json!([{ "role": "user", "content": "hi" }]);
+    assert_eq!(sent.ok().map(|v| v["messages"].clone()), Some(hi));
     // OpenAI's tool messages hold text alone: the results' media follows
     // them, in call order, and a result of media alone points to it.
     let image = Content::Image(Media::new(
@@ -1739,7 +1748,7 @@ fn a_tool_calls_own_fields_are_kept_when_it_is_replayed() {
 }
 
 #[test]
-fn efforts_above_high_are_written_verbatim_or_refused() {
+fn efforts_above_high_are_written_verbatim_or_as_the_nearest() {
     use crate::gemini::GeminiGenerate;
     use crate::responses::OpenAiResponses;
     use respan_gateway_conversation::{Effort, Reasoning};
@@ -1769,10 +1778,25 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
         anthropic.ok().map(|v| v["output_config"].clone()),
         Some(json!({ "effort": name }))
     );
-    // Gemini has no thinking level above `high`, and does not get one.
-    assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
+    // Gemini has no thinking level above `high`, and gets that.
+    let gemini = GeminiGenerate.encode_request(&chat).map(Value::from);
+    let level = gemini
+        .ok()
+        .map(|v| v["generationConfig"]["thinkingConfig"].clone());
+    assert_eq!(
+        level.map(|t| t["thinkingLevel"].clone()),
+        Some(json!("high"))
+    );
+    // A budget is the effort nearest it, and an effort beside it wins.
     chat.options.reasoning = Some(Reasoning::budget(1024));
-    assert!(OpenAiChat.encode_request(&chat).is_err(), "{name}");
+    let sent = |chat: &Input| {
+        OpenAiChat
+            .encode_request(chat)
+            .map(|v| v["reasoning_effort"].clone())
+    };
+    assert_eq!(sent(&chat).ok(), Some(json!("low")));
+    chat.options.reasoning.as_mut().expect("a budget").effort = Some(Effort::High);
+    assert_eq!(sent(&chat).ok(), Some(json!("high")));
 }
 
 /// What vendors of Chat Completions add to a message: dropped by another

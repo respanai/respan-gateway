@@ -13,8 +13,8 @@
 //! The leading system messages are the `system` blocks. `messages` are the
 //! rest, a message of the role before it joined to that one, as Converse needs
 //! the roles to alternate, and a blank text left out. A part is a `text`,
-//! an `image` or `document` (bytes only: a URL is refused, as the format has
-//! no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
+//! an `image`, `audio` or `document` (bytes only: one by URL is dropped, as
+//! the format has no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
 //! one), or `reasoningContent` that Bedrock signed or redacted, which is the
 //! only reasoning sent back. `inferenceConfig` has `maxTokens`,
 //! `temperature`, `topP` and `stopSequences`; `toolConfig` the tools and the
@@ -22,9 +22,11 @@
 //! answer keeps to. A reasoning budget is
 //! `additionalModelRequestFields.thinking`, and `Off` its disabling.
 //!
-//! Refused as having no field: an effort, JSON without a schema, one
-//! tool call at a time, audio, and a system message after the conversation
-//! starts. An end user's id and the fields of another format, Anthropic's
+//! What Converse has no field for is dropped (JSON without a schema, one
+//! tool call at a time, media by URL or of a type it lacks) or mapped to
+//! its nearest: an effort is a Claude's thinking budget, and a system
+//! message after the conversation starts a user's.
+//! An end user's id and the fields of another format, Anthropic's
 //! `cache_control` among them, are dropped.
 //!
 //! # Responses as events
@@ -161,6 +163,18 @@ const DOCUMENTS: &[(&str, &str)] = &[
     ("md", "text/markdown"),
 ];
 
+/// The audio formats Converse takes, by media type.
+const AUDIO: &[(&str, &str)] = &[
+    ("mp3", "audio/mpeg"),
+    ("wav", "audio/wav"),
+    ("wav", "audio/x-wav"),
+    ("flac", "audio/flac"),
+    ("ogg", "audio/ogg"),
+    ("webm", "audio/webm"),
+    ("aac", "audio/aac"),
+    ("m4a", "audio/mp4"),
+];
+
 /// The Converse format of a media type in `table`.
 fn format_of(table: &[(&'static str, &str)], mime: &str) -> Option<&'static str> {
     table.iter().find(|(_, m)| *m == mime).map(|(f, _)| *f)
@@ -228,7 +242,7 @@ impl Schema for BedrockConverse {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let (system, rest) = split_system(chat)?;
+        let (system, rest) = split_system(chat);
         let messages = write_messages(rest)?;
         if messages.is_empty() {
             return Err(Fault::bad_request(

@@ -36,8 +36,9 @@
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
 //! the kind has no choice for and video parts. A part's `thoughtSignature`
 //! is the kind's `Content::Signature` after it.
-//! An end user's id is dropped when written; a request for several
-//! candidates or one tool call at a time is refused.
+//! An end user's id and one tool call at a time are dropped when written,
+//! and a later system message is a user's; a request for several
+//! candidates is refused.
 //!
 //! A Gemini 3 model refuses a function call in the history that has no
 //! `thoughtSignature`, as a call made in another format has none: written
@@ -376,14 +377,15 @@ impl Schema for GeminiGenerate {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let (system, rest) = split_system(chat)?;
-        if rest.is_empty() {
+        let contents = write_messages(rest)?;
+        if contents.is_empty() {
             return Err(Fault::bad_request(
                 "Gemini needs at least one user or model message",
             ));
         }
         let mut v = Map::new();
         set(&mut v, "systemInstruction", system);
-        v.insert("contents".into(), write_messages(rest)?.into());
+        v.insert("contents".into(), contents.into());
         write_tools(chat, &mut v)?;
         write_config(chat, &mut v)?;
         Ok(v)

@@ -76,11 +76,11 @@ pub struct GenerationOptions {
 /// How much the model thinks before it answers, and whether it says so.
 ///
 /// A vendor states this as a named effort or as a token budget; the two do
-/// not convert (a budget does not pick an effort, and the same effort buys
-/// different thinking from different models), so a format that has only
-/// one refuses the other. Only [`Effort::Off`] is the same in both. A plugin
-/// that wants an effort as a budget decides it by its own policy, in a
-/// filter.
+/// not convert exactly (the same effort buys different thinking from
+/// different models), so a format that has only one writes the nearest of
+/// it, by the budgets the gateway gives a Claude's efforts. Only [`Effort::Off`] is
+/// the same in both. A plugin that wants another policy sets the one the
+/// provider takes, in a filter.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Reasoning {

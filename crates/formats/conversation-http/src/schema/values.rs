@@ -7,7 +7,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
-use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
+use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
@@ -280,6 +280,7 @@ pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fa
         parts => parts
             .iter()
             .map(encode_any_part::<C>)
+            .filter(|p| !matches!(p, Ok(Value::Null)))
             .collect::<Result<_, _>>()?,
     })
 }
@@ -362,22 +363,23 @@ pub(crate) fn tidy(message: &mut Message) {
 /// A message of format `C` written anew: role, content and its other fields.
 pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let mut v = Map::new();
-    v.insert("role".into(), role_of(C::NAME, m, roles)?);
+    v.insert("role".into(), role_of(C::NAME, m, roles));
     v.insert("content".into(), encode_content::<C>(&m.content)?);
     v.extend(m.native.fields_for(C::NAME));
     Ok(v.into())
 }
 
-/// The role to write, if this format has it.
-fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
+/// The role to write: a user's for one this format lacks.
+fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Value {
     let role = match &m.role {
         Role::Native {
             format: f, name, ..
         } if **f == *format => Some(name.as_str()),
         role => roles.name(role),
     };
-    let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    // WARN: a role this format lacks, such as a system message after the
+    // conversation starts, is written as a user's.
+    role.unwrap_or("user").into()
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is
@@ -659,15 +661,51 @@ pub(crate) fn parse_effort(name: &str) -> Option<Effort> {
     })
 }
 
-/// The reasoning controls of `input`, refused if they name an effort and a
-/// budget at once, as no vendor takes both.
-pub(crate) fn reasoning_of(input: &Input) -> Result<Option<&Reasoning>, Fault> {
-    match &input.options.reasoning {
-        Some(r) if r.effort.is_some() && r.budget_tokens.is_some() => Err(Fault::bad_request(
-            "reasoning with both an effort and a token budget cannot be written",
-        )),
-        r => Ok(r.as_ref()),
+/// The thinking budget an effort buys a Claude that thinks to a budget, and
+/// each the nearest of the other for a format that takes only one.
+pub(crate) const EFFORT_BUDGETS: &[(&str, u64)] = &[
+    ("low", 1024),
+    ("medium", 2048),
+    ("high", 4096),
+    ("xhigh", 8192),
+    ("max", 16384),
+];
+
+/// The least effort whose budget ([`EFFORT_BUDGETS`]) covers `tokens`, at
+/// most `high`, which every model that takes an effort has.
+pub(crate) fn effort_for(tokens: u64) -> Effort {
+    match tokens {
+        0 => Effort::Off,
+        1..=1024 => Effort::Low,
+        1025..=2048 => Effort::Medium,
+        _ => Effort::High,
     }
+}
+
+/// The thinking budget of an `effort` but `Off`; `minimal`'s is `low`'s.
+pub(crate) fn budget_for(effort: Effort) -> u64 {
+    let name = effort_name(effort).unwrap_or_default();
+    let near = EFFORT_BUDGETS.iter().find(|(e, _)| *e == name);
+    near.map_or(EFFORT_BUDGETS[0].1, |(_, b)| *b)
+}
+
+/// The output limit `max`, temperature and top_p of `o` as Claude takes
+/// them beside a thinking `budget`.
+// WARN: a limit at or under the budget is raised by it, a temperature above
+// 1 is 1, and beside a budget another temperature or top_p is dropped.
+pub(crate) fn claude_sampling(
+    o: &GenerationOptions,
+    max: Option<u64>,
+    budget: Option<u64>,
+) -> (Option<u64>, Option<f64>, Option<f64>) {
+    let max = max.map(|max| match budget {
+        Some(budget) if max <= budget => budget.saturating_add(max),
+        _ => max,
+    });
+    let temperature = o.temperature.map(|t| t.min(1.0));
+    let temperature = temperature.filter(|t| budget.is_none() || *t == 1.0);
+    let top_p = o.top_p.filter(|p| budget.is_none() || *p >= 0.95);
+    (max, temperature, top_p)
 }
 
 /// The value of the request's native field `key` if `parse` reads all of it,

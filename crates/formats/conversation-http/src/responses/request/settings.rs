@@ -4,9 +4,8 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, merge_fields, native_of, only,
-    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
-    write_search,
+    NativeFieldsExt, decode_tools, each_tool, effort_for, effort_name, merge_fields, native_of,
+    only, parse_effort, read_search, rest_of, set, take_strict, untranslatable, write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -209,10 +208,9 @@ pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
 /// A part of the kind's beyond text, as Responses writes it.
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
-        Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        Content::Reasoning { .. } => Err(untranslatable("reasoning outside an assistant")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Image(m) | Content::Document(m) => Ok(write_media(c, m)),
+        // WARN: audio, and reasoning outside an assistant, have no form here; dropped.
+        _ => Ok(Value::Null),
     }
 }
 
@@ -251,7 +249,7 @@ pub(in crate::responses) fn read_reasoning(input: &mut Input) {
 }
 
 /// The request's `reasoning`: its own fields, with the kind's effort and
-/// summary. Responses has no token budget.
+/// summary. Responses has no token budget: the effort nearest it is written.
 pub(in crate::responses) fn write_reasoning(
     input: &Input,
     out: &mut Map<String, Value>,
@@ -262,19 +260,14 @@ pub(in crate::responses) fn write_reasoning(
         .get("reasoning")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if let Some(r) = reasoning_of(input)? {
-        if r.budget_tokens.is_some() {
-            return Err(untranslatable("a reasoning token budget in Responses"));
+    if let (Some(r), Some(config)) = (&input.options.reasoning, config.as_object_mut()) {
+        if let Some(effort) = r.effort.or(r.budget_tokens.map(effort_for)) {
+            config.insert("effort".into(), effort_name(effort)?.into());
         }
-        if let Some(config) = config.as_object_mut() {
-            if let Some(effort) = r.effort {
-                config.insert("effort".into(), effort_name(effort)?.into());
-            }
-            match r.summary {
-                Some(true) => _ = config.insert("summary".into(), "auto".into()),
-                Some(false) => _ = config.shift_remove("summary"),
-                None => {}
-            }
+        match r.summary {
+            Some(true) => _ = config.insert("summary".into(), "auto".into()),
+            Some(false) => _ = config.shift_remove("summary"),
+            None => {}
         }
     }
     let empty = config.as_object().is_none_or(Map::is_empty);

@@ -301,24 +301,48 @@ fn a_system_message_goes_in_the_system_prompt_only_before_the_conversation() {
     let v = v.unwrap_or_default();
     assert_eq!(v["system"], "be brief");
     assert_eq!(v["messages"], json!([{ "role": "user", "content": "hi" }]));
+    // A later one is a user's, which Anthropic joins to the turn before it.
     chat.messages.push(Message::new(Role::System, "later"));
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let v = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        v.unwrap_or_default()["messages"][1],
+        json!({ "role": "user", "content": "later" })
+    );
 }
 
 #[test]
-fn a_temperature_above_1_is_refused() {
+fn a_temperature_above_1_is_1_and_beside_thinking_dropped() {
+    use respan_gateway_conversation::Reasoning;
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.temperature = Some(1.5);
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
-    chat.options.temperature = Some(1.0);
-    assert!(AnthropicMessages.encode_request(&chat).is_ok());
+    let sent = |chat: &Input| AnthropicMessages.encode_request(chat).map(Value::from);
+    assert_eq!(
+        sent(&chat).ok().map(|v| v["temperature"].clone()),
+        Some(json!(1.0))
+    );
+    chat.options.temperature = Some(0.5);
+    chat.options.top_p = Some(0.9);
+    chat.options.max_output_tokens = Some(800);
+    chat.options.reasoning = Some(Reasoning::budget(500));
+    let v = sent(&chat).unwrap_or_default();
+    assert_eq!((v.get("temperature"), v.get("top_p")), (None, None));
+    assert_eq!(v["max_tokens"], 1824);
+    assert_eq!(
+        v["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
 }
 
 #[test]
 fn an_empty_turn_but_the_last_is_dropped() {
+    use respan_gateway_conversation::{Media, MediaSource};
+    // A turn of audio alone says nothing in Anthropic, too.
+    let mut audio = Message::new(Role::Assistant, "");
+    let wav = Media::new("audio/wav", MediaSource::Bytes(Bytes::from_static(b"RIFF")));
+    audio.content = vec![Content::Audio(wav)];
     let chat = Input::new([
         Message::new(Role::User, "hi"),
-        Message::new(Role::Assistant, ""),
+        audio,
         Message::new(Role::User, "again"),
         Message::new(Role::Assistant, ""),
     ]);

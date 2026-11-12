@@ -6,9 +6,9 @@
 
 use crate::fields::media_url;
 use crate::schema::{
-    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_name,
+    FAILED_RESULT_PREFIX, Names, NativeFieldsExt, decode_tools, each_tool, effort_for, effort_name,
     encode_content, encode_message, merge_fields, merge_missing, native_of, only, read_search,
-    reasoning_of, remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
+    remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -100,15 +100,12 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
-    match chat.provider_tools.as_slice() {
-        [] => {}
-        [search @ ProviderTool::WebSearch { .. }] => {
-            v.insert(
-                "web_search_options".into(),
-                write_search(OPENAI, search)?.into(),
-            );
-        }
-        _ => return Err(untranslatable("more than one search in OpenAI Chat")),
+    // WARN: Chat has one search; the others are dropped.
+    if let Some(search @ ProviderTool::WebSearch { .. }) = chat.provider_tools.first() {
+        v.insert(
+            "web_search_options".into(),
+            write_search(OPENAI, search)?.into(),
+        );
     }
     let choice = match &chat.options.tool_choice {
         None => None,
@@ -279,11 +276,15 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
+        // WARN: a message whose every part was dropped is left out.
+        let dropped = v["content"] == json!([]);
         if !calls.is_empty() {
             v["tool_calls"] = openai_calls(&calls).into();
-            if said.content.is_empty() {
+            if said.content.is_empty() || dropped {
                 v["content"] = Value::Null;
             }
+        } else if dropped {
+            return Ok(out);
         }
         out.push(v);
     }
@@ -348,24 +349,23 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
     })
 }
 
-/// A part of the kind's as OpenAI writes it, refusing what it cannot say.
+/// A part of the kind's as OpenAI writes it, `Null` for one it cannot say.
+// WARN: another part, a document or audio by URL, audio but WAV or MP3, and
+// a display name on an image or audio, have no form in Chat; dropped.
 pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     let (kind, media) = match c {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        _ => return Err(untranslatable("an unsupported kind of part")),
+        _ => return Ok(Value::Null),
     };
-    if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
-    }
     let native = media.native.fields_for(OPENAI);
     let url = || media_url(media);
     let mut v = match kind {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {
             if matches!(media.source, MediaSource::Url(_)) {
-                return Err(untranslatable("a document URL in OpenAI Chat"));
+                return Ok(Value::Null);
             }
             let mut v = json!({"type":"file","file":{"file_data":url()}});
             if let Some(name) = &media.name {
@@ -375,12 +375,12 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         }
         _ => {
             let MediaSource::Bytes(bytes) = &media.source else {
-                return Err(untranslatable("an audio URL in OpenAI Chat"));
+                return Ok(Value::Null);
             };
             let encoding = match media.mime_type.as_str() {
                 "audio/wav" | "audio/x-wav" => "wav",
                 "audio/mpeg" => "mp3",
-                _ => return Err(untranslatable("this audio MIME type")),
+                _ => return Ok(Value::Null),
             };
             json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
         }
@@ -466,18 +466,15 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
     })
 }
 
-/// The request's `reasoning_effort`: the kind's effort, else the request's
-/// own. Chat refuses a token budget and drops an ask for a summary.
+/// The request's `reasoning_effort`: the kind's effort, or the one nearest
+/// its token budget, else the request's own. Chat drops an ask for a summary.
 pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
-    let r = reasoning_of(input)?;
-    if r.is_some_and(|r| r.budget_tokens.is_some()) {
-        return Err(Fault::bad_request(
-            "OpenAI Chat does not take a reasoning token budget; use a reasoning effort instead",
-        ));
-    }
+    let r = input.options.reasoning.as_ref();
     // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
-    Ok(match r.and_then(|r| r.effort) {
-        Some(effort) => Some(effort_name(effort)?.into()),
-        None => input.native.own(OPENAI).get("reasoning_effort").cloned(),
-    })
+    Ok(
+        match r.and_then(|r| r.effort.or(r.budget_tokens.map(effort_for))) {
+            Some(effort) => Some(effort_name(effort)?.into()),
+            None => input.native.own(OPENAI).get("reasoning_effort").cloned(),
+        },
+    )
 }
