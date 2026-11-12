@@ -903,8 +903,15 @@ impl Assembled {
             Output::Finish(finish) => self.finish = Some(finish.clone()),
             // A signature follows the block it seals; reasoning withheld, what came before.
             Output::Signature { block, data } => {
-                let sealed =
-                    |i: &_| matches!(i, AssembledItem::Block(b) if Some(b.block) == *block);
+                if block.is_some_and(|b| self.part(b).is_none()) {
+                    return Err(malformed("a signature names a block that never opened"));
+                }
+                // After its block and the signatures it already has.
+                let sealed = |i: &_| match i {
+                    AssembledItem::Block(b) => Some(b.block) == *block,
+                    AssembledItem::Signature { block: b, .. } => b.is_some() && b == block,
+                    _ => false,
+                };
                 let at =
                     (self.items.iter().rposition(sealed)).map_or(self.items.len(), |at| at + 1);
                 let (block, data) = (*block, data.clone());
@@ -1068,6 +1075,7 @@ mod tests {
             Output::arguments(2, "{\"a\":"),
             Output::arguments(2, "1}"),
             Output::signature(Some(2), "call"),
+            Output::signature(Some(2), "again"),
             Output::block_end(2),
             Output::Native(Native::new(json!({"type": "ping"}))),
             Output::usage(usage),
@@ -1110,6 +1118,7 @@ mod tests {
                 Content::from("Hello"),
                 call,
                 Content::Signature("call".into()),
+                Content::Signature("again".into()),
             ]
         );
         assert_eq!(all.finish, Some(Finish::ToolUse));
@@ -1124,6 +1133,7 @@ mod tests {
         for events in [
             vec![Output::text(0, "x")],
             vec![Output::block_end(0)],
+            vec![Output::signature(Some(0), "s")],
             vec![text(), Output::block_end(0), Output::text(0, "x")],
             vec![text(), Output::block_end(0), Output::block_end(0)],
             vec![text(), Output::block_end(0), text()],

@@ -14,7 +14,7 @@ write one, see the [plugin guide](../../docs/plugins.md).
 | [`mcp-router`](mcp-router/README.md) | `respan-gateway-plugin-mcp-router` | `McpRouter` targets an MCP client of `/mcp/{name}` at the server `name`, and fronts many servers as one at `/mcp` |
 | [`respan`](respan/README.md) | `respan-gateway-plugin-respan` | `Respan` sends each request to Respan as a trace: a span per call to a model or tool server |
 | [`pricing`](pricing/README.md) | `respan-gateway-plugin-pricing` | `Pricing` charges each call to a provider at its price for the model sent, as its usage is reported |
-| [`responses`](responses/README.md) | `respan-gateway-plugin-responses` | `Responses` keeps the conversation state a client or provider cannot: Responses' `previous_response_id` with any provider, and a Chat client's reasoning between tool calls with OpenAI's Responses |
+| [`responses`](responses/README.md) | `respan-gateway-plugin-responses` | `Responses` keeps Responses' `previous_response_id` conversations for any provider |
 
 Billing is application policy, not a supported plugin export: `Pricing`
 measures what calls cost, and what to do with it is the host's. See

@@ -249,6 +249,8 @@ fn media_and_reasoning_round_trip() {
                 { "type": "input_file", "file_data": "data:application/pdf;base64,AAAA", "filename": "a.pdf" },
                 { "type": "input_file", "file_url": "https://x.test/a.pdf" },
             ] },
+            // As Codex sends it, by its encrypted content alone.
+            { "type": "reasoning", "summary": [], "encrypted_content": "gBBB" },
             { "type": "reasoning", "id": "rs_1", "summary": [{ "type": "summary_text", "text": "thought" }], "encrypted_content": "gAAA" },
             { "type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
               "content": [{ "type": "output_text", "text": "hi", "annotations": [] }] },
@@ -262,7 +264,7 @@ fn media_and_reasoning_round_trip() {
         matches!(&chat.messages[0].content[1], Content::Document(m) if m.name.as_deref() == Some("a.pdf"))
     );
     assert!(
-        matches!(&chat.messages[1].content[0], Content::Reasoning { text, .. } if text == "thought")
+        matches!(&chat.messages[1].content[2], Content::Reasoning { text, .. } if text == "thought")
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -316,6 +318,15 @@ fn another_formats_reasoning_is_dropped() {
     assert_eq!(
         sent["input"],
         json!([{ "role": "assistant", "content": "ok" }])
+    );
+    // Signed, it is Responses' own, as a kept turn's whose native was dropped.
+    chat.messages[0]
+        .content
+        .insert(1, Content::Signature("gAAA".into()));
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["input"][0],
+        json!({ "type": "reasoning", "summary": [{ "type": "summary_text", "text": "hm" }], "encrypted_content": "gAAA" })
     );
 }
 
