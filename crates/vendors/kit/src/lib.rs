@@ -29,6 +29,9 @@ pub use respan_gateway_http_faults::built_wrong;
 pub use respan_gateway_http_transport::{HttpTransport, Network, json, reqwest};
 pub use respan_gateway_sdk::{Ask, FormatFor};
 
+use respan_gateway_core::NativeFields;
+use serde_json::{Map, Value};
+
 /// A vendor: a template of the providers of it ([`Vendor::provider`]). A
 /// vendor says what it is and the formats it speaks, each at the base URL
 /// its docs give; the rest is [`Vendor::DEFAULT`]'s:
@@ -86,6 +89,16 @@ impl Vendor {
     pub fn format(&self, name: &str) -> Option<(&'static dyn Upstream, Option<&'static str>)> {
         self.formats.iter().copied().find(|(f, _)| f.name() == name)
     }
+}
+
+/// The fields of `native` a dialect of `format` writes to: another
+/// format's are dropped for them, as its writer drops them.
+pub fn own<'a>(native: &'a mut Option<NativeFields>, format: &str) -> &'a mut Map<String, Value> {
+    // WARN: another format's native fields are dropped here, silently.
+    native.take_if(|n| &*n.format != format);
+    &mut native
+        .get_or_insert_with(|| NativeFields::new(format, Map::new()))
+        .fields
 }
 
 /// `url`, each `{NAME}` in it the environment variable `NAME`; `Err` with

@@ -3,7 +3,6 @@
 //! transcription.
 
 use base64::Engine as _;
-use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
@@ -15,7 +14,7 @@ use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTr
 use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own};
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.mistral.ai/v1";
@@ -81,9 +80,8 @@ fn taken(input: &mut speech::Input) -> Result<(), Fault> {
     let Some(voice) = input.voice.take() else {
         return Ok(());
     };
-    let mut fields = kept(OpenAiSpeech::NAME, &input.native);
+    let fields = own(&mut input.native, OpenAiSpeech::NAME);
     fields.entry("voice_id").or_insert_with(|| voice.into());
-    input.native = native_of(OpenAiSpeech::NAME, fields);
     Ok(())
 }
 
