@@ -230,17 +230,13 @@ fn a_done_without_usage_reports_none() {
 
 #[test]
 fn an_error_says_its_cause() {
+    let bad = json!({"type": "error", "error": {"message": "bad audio", "code": 422}});
     let events = outputs(&[
-        json!({"type": "error", "error": {"message": "bad audio", "code": 422}}),
+        bad.clone(),
         json!({"type": "error", "error": {"message": {"detail": "x"}, "code": 500}}),
     ]);
     let [
-        Output::Error {
-            cause,
-            code,
-            message,
-            ..
-        },
+        Output::Error { cause, message, .. },
         Output::Error {
             cause: second,
             message: object,
@@ -251,7 +247,7 @@ fn an_error_says_its_cause() {
         panic!("{events:?}");
     };
     assert_eq!(*cause, Cause::Invalid);
-    assert_eq!(code.as_deref(), Some("422"));
+    assert_eq!(told(&events[..1]), [bad]);
     assert_eq!(message, "bad audio");
     assert_eq!(*second, Cause::Provider);
     assert_eq!(object, r#"{"detail":"x"}"#);
@@ -367,7 +363,6 @@ fn a_client_is_told_the_transcript_with_its_usage_and_not_an_answer() {
         transcript("Hello", true),
         Output::Error {
             cause: Cause::Invalid,
-            code: Some("422".into()),
             message: "bad audio".into(),
             native: None,
         },
@@ -380,7 +375,7 @@ fn a_client_is_told_the_transcript_with_its_usage_and_not_an_answer() {
             json!({"type": "transcription.text.delta", "text": "Hel"}),
             json!({"type": "transcription.done", "text": "Hello", "usage":
                 {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}}),
-            json!({"type": "error", "error": {"message": "bad audio", "code": 422}}),
+            json!({"type": "error", "error": {"message": "bad audio"}}),
         ]
     );
 }

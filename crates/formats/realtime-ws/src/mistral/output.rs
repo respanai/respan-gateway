@@ -48,7 +48,7 @@ fn decode(v: &Value) -> Option<Vec<Output>> {
             events
         }
         "error" => {
-            let code = take(rest, &["error", "code"], count, number);
+            let code = at(rest, &["error", "code"]).and_then(count);
             let message = match at(rest, &["error", "message"]) {
                 Some(Value::String(message)) => message.clone(),
                 Some(other) => other.to_string(),
@@ -61,7 +61,6 @@ fn decode(v: &Value) -> Option<Vec<Output>> {
             };
             vec![Output::Error {
                 cause,
-                code: code.map(|c| c.to_string()),
                 message,
                 native: json::native(NAME, std::mem::take(rest)),
             }]
@@ -149,19 +148,11 @@ impl Client {
                 return None;
             }
             Output::Error {
-                code,
-                message,
+                message, native, ..
+            } => (
+                json!({"type": "error", "error": {"message": message}}),
                 native,
-                ..
-            } => {
-                let mut v = json!({"type": "error", "error": {"message": message}});
-                if let Some(code) = code {
-                    v["error"]["code"] = code
-                        .parse::<u64>()
-                        .map_or(code.as_str().into(), Value::from);
-                }
-                (v, native)
-            }
+            ),
             Output::Native(native) => return Some(Value::clone(&native.value)),
             _ => return None,
         };

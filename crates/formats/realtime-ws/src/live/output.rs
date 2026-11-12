@@ -82,7 +82,6 @@ impl Provider {
                     _ => Cause::Provider,
                 },
                 message: take(v, &["error", "message"], string, text)?,
-                code: take(v, &["error", "code"], string, text),
                 native: json::native(NAME, rest),
             },
             _ => return None,
@@ -161,24 +160,19 @@ impl Client {
             ),
             Output::Error {
                 cause,
-                code,
                 message,
                 native,
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
-                // Its own code it wrote; another's cause is its type.
-                match (native, code) {
-                    (Some(_), Some(code)) => v["error"]["code"] = code.as_str().into(),
-                    (Some(_), None) => {}
-                    (None, _) => {
-                        let invalid = matches!(cause, Cause::Invalid | Cause::NothingToCancel);
-                        v["error"]["type"] = if invalid {
-                            "invalid_request_error"
-                        } else {
-                            "server_error"
-                        }
-                        .into();
+                // Its own error keeps its fields; another's cause is its type.
+                if native.is_none() {
+                    let invalid = matches!(cause, Cause::Invalid | Cause::NothingToCancel);
+                    v["error"]["type"] = if invalid {
+                        "invalid_request_error"
+                    } else {
+                        "server_error"
                     }
+                    .into();
                 }
                 (v, native)
             }
