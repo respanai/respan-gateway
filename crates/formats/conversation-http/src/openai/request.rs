@@ -19,7 +19,7 @@ use respan_gateway_conversation::{
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use crate::openai::{OpenAiChat, take_signature};
+use crate::openai::{OpenAiChat, sign, take_signature};
 
 /// OpenAI's function tools, choice, `parallel_tool_calls` and
 /// `web_search_options`, as the kind's.
@@ -175,10 +175,11 @@ fn openai_call(call: &Value) -> Option<Vec<Content>> {
     Some([part].into_iter().chain(signature).collect())
 }
 
-/// The kind's calls as OpenAI's `tool_calls`.
-fn openai_calls(calls: &[&Content]) -> Vec<Value> {
+/// The kind's calls as OpenAI's `tool_calls`, each signed as [`SIGNED`](crate::openai::SIGNED)
+/// says with its signature, if it has one.
+fn openai_calls(calls: &[(&Content, Option<&String>)]) -> Vec<Value> {
     let mut out = Vec::new();
-    for c in calls {
+    for (c, signature) in calls {
         if let Content::ToolCall {
             id,
             name,
@@ -191,6 +192,9 @@ fn openai_calls(calls: &[&Content]) -> Vec<Value> {
             let function = json!({ "name": name, "arguments": arguments });
             let mut call = json!({ "id": id, "type": "function", "function": function });
             merge_missing(&mut call, own);
+            if let Some(s) = signature {
+                sign(&mut call, s);
+            }
             out.push(call);
         }
     }
@@ -216,7 +220,8 @@ fn openai_result(
 /// A message as OpenAI's: each result a tool message of its own, then, if
 /// it says more, the message and its calls in `tool_calls`. A tool message
 /// holds text alone, so the results' media leads that message. It has no
-/// field for reasoning, which is dropped.
+/// field for reasoning, which is dropped. A call's signature and its last
+/// text's go where the reader takes them from ([`SIGNED`](crate::openai::SIGNED)).
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
     let results: Vec<&Content> = m.content.iter().filter(|p| is(p, true)).collect();
@@ -256,17 +261,32 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
     if !rest.is_empty() || results.is_empty() || !m.native.is_empty() {
         let call = |p: &&Content| matches!(p, Content::ToolCall { .. });
-        let calls: Vec<&Content> = rest.iter().filter(call).collect();
+        let after = |at: usize| match rest.get(at + 1) {
+            Some(Content::Signature(s)) => Some(s),
+            _ => None,
+        };
+        let calls: Vec<(&Content, Option<&String>)> = (rest.iter().enumerate())
+            .filter(|(_, p)| call(p))
+            .map(|(at, p)| (p, after(at)))
+            .collect();
+        // A text's signature is the message's: its last text's.
+        let text_signature = rest.windows(2).rev().find_map(|w| match w {
+            [Content::Text { .. }, Content::Signature(s)] => Some(s),
+            _ => None,
+        });
         let mut said = m.clone();
         said.content = rest.iter().filter(|p| !call(p)).cloned().collect();
         said.content.retain(|p| match p {
             // WARN: Chat has no field for a past turn's reasoning; it is dropped silently.
             Content::Reasoning { .. } => false,
-            // WARN: OpenAI's Chat has no field for a signature, and a provider may refuse one; it is dropped silently.
+            // WARN: Chat has no field for withheld reasoning, nor for a signature but a call's or the last text's; it is dropped silently.
             Content::Signature(_) | Content::Withheld(_) => false,
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
+        if let Some(s) = text_signature {
+            sign(&mut v, s);
+        }
         // WARN: a message whose every part was dropped is left out.
         let dropped = v["content"] == json!([]);
         if !calls.is_empty() {

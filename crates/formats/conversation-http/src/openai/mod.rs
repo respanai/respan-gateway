@@ -91,8 +91,16 @@ pub(crate) const OPENAI: &str = "openai-chat";
 const SIGNED: &str = "extra_content";
 
 /// Sign `v`, a call or a message, with `signature`, as [`SIGNED`] says.
+// WARN: an `extra_content` or `google` that is no object is left unsigned.
 fn sign(v: &mut Value, signature: &str) {
-    v[SIGNED]["google"]["thought_signature"] = signature.into();
+    let Some(v) = v.as_object_mut() else {
+        return;
+    };
+    let extra = v.entry(SIGNED).or_insert_with(|| json!({}));
+    let google = (extra.as_object_mut()).map(|e| e.entry("google").or_insert_with(|| json!({})));
+    if let Some(google) = google.and_then(Value::as_object_mut) {
+        google.insert("thought_signature".into(), signature.into());
+    }
 }
 
 /// The signature `fields` hold as [`SIGNED`] says, taken out of them.

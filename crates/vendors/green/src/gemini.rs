@@ -4,8 +4,8 @@
 
 use respan_gateway_conversation::{Content, Input, Output, Role};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_core::{Fault, Filter, Native};
-use serde_json::{Value, json};
+use respan_gateway_core::{Fault, Filter};
+use serde_json::Value;
 
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
@@ -67,56 +67,29 @@ impl Dialect for Gemini {
     }
 }
 
-/// `input` as Google's Chat Completions takes it: each call's and text's
-/// signature in its `extra_content`, and, if its model needs them signed,
-/// the first call of each assistant message without one signed with the
-/// placeholder, as Gemini returns one only on the first of a turn's
-/// parallel calls.
+/// `input` with, if its model needs them signed, the first call of each
+/// assistant message without a signature signed with the placeholder, as
+/// Gemini returns one only on the first of a turn's parallel calls. Chat
+/// Completions writes each signature in its `extra_content`.
 fn signed(input: &mut Input) -> Result<(), Fault> {
-    let needs = needs_signatures(input.model.as_deref());
+    if !needs_signatures(input.model.as_deref()) {
+        return Ok(());
+    }
     for message in input
         .messages
         .iter_mut()
         .filter(|m| m.role == Role::Assistant)
     {
-        let mut first = needs;
-        for at in 0..message.content.len() {
-            let signature = match message.content.get(at + 1) {
-                Some(Content::Signature(s)) => Some(s.clone()),
-                _ => None,
-            };
-            let Content::ToolCall { native, .. } = &mut message.content[at] else {
-                continue;
-            };
-            let placeholder = std::mem::take(&mut first).then(|| SIGNATURE_PLACEHOLDER.into());
-            if let Some(signature) = signature.or(placeholder) {
-                sign(native, signature);
-            }
-        }
-        // A text's signature is the message's: its last text's.
-        let text = message.content.windows(2).rev().find_map(|w| match w {
-            [Content::Text { .. }, Content::Signature(s)] => Some(s.clone()),
-            _ => None,
-        });
-        if let Some(signature) = text {
-            sign(&mut message.native, signature);
+        let content = &mut message.content;
+        let first = content
+            .iter()
+            .position(|c| matches!(c, Content::ToolCall { .. }));
+        let Some(at) = first else { continue };
+        if !matches!(content.get(at + 1), Some(Content::Signature(_))) {
+            content.insert(at + 1, Content::Signature(SIGNATURE_PLACEHOLDER.into()));
         }
     }
     Ok(())
-}
-
-/// `native` with `signature` in its `extra_content`, as Google's Chat takes it.
-fn sign(native: &mut Native, signature: String) {
-    *native = OpenAiChat::with_fields(native, |fields| {
-        let extra = fields.entry("extra_content").or_insert_with(|| json!({}));
-        let google = extra
-            .as_object_mut()
-            .map(|e| e.entry("google").or_insert(json!({})));
-        // WARN: a client's `extra_content` that is no object is not signed.
-        if let Some(google) = google.and_then(Value::as_object_mut) {
-            google.insert("thought_signature".into(), signature.into());
-        }
-    });
 }
 
 /// Its models, as its own API lists them (`{"models": [{"name", ..}]}`),
