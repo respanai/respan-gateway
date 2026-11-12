@@ -15,14 +15,14 @@ spec's name: TypeSafe's and Fireworks' move the call to `/systemone`.
 A request is `{"model", "state", "questions": {id: question}}`, each question
 `{"type", "instructions", "criteria"}`: `noul` with criteria
 `{"true", "false"}`, `choice` with `{option: description or null}`, `score`
-with a list of levels, `number`, and `box` (answered with `{"box": {"top",
-"bottom", "left", "right"}}`, each a fraction of the image). A response is `{"model", "answers": {id: answer},
+with a list of levels. A response is `{"model", "answers": {id: answer},
 "usage": {"input_tokens", "output_tokens"}}`, answered whole in JSON.
 
-A question of another type is refused, 400, before any provider is called.
-An answer of a type the kind has no form for is kept and written back where
-it was. A refusal is `{"error": {"message", "type", "code"}}`, whose message
-TypeSafe's SDKs read.
+A question or an answer of another type, such as `number` or `box`, is kept
+whole as the format's own and written back where it was. A format with no
+form for a question of another format drops it, unanswered, and refuses,
+400, only a request left with no question. A refusal is
+`{"error": {"message", "type", "code"}}`, whose message TypeSafe's SDKs read.
 
 `OpenAiDecisions`, named `openai-decisions`: OpenAI's contract, evidence as
 `input` and questions and answers as ordered lists. Its clients are served at

@@ -369,7 +369,9 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
                 });
                 v.insert("levels".into(), levels.collect::<Result<_, _>>()?);
             }
-            _ => return Err(refused("of a type it has none of")),
+            // WARN: openai-decisions has no form for another format's
+            // question; it is dropped and goes unanswered.
+            _ => continue,
         }
         v.insert("name".into(), q.id.clone().into());
         v.insert(
@@ -378,6 +380,11 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         );
         merge_missing(&mut v, &kept(OPENAI, &q.native));
         questions.push(Value::Object(v));
+    }
+    if questions.is_empty() && !input.questions.is_empty() {
+        return Err(Fault::bad_request(format!(
+            "{OPENAI} has no form for any question asked"
+        )));
     }
     let state = match &input.state {
         evidence if is_evidence(evidence) => evidence.clone(),
@@ -535,18 +542,29 @@ mod tests {
     }
 
     #[test]
-    fn a_question_of_another_formats_own_type_is_refused() {
-        let date = json!({"type": "date", "instructions": "When?"});
-        let ask = Ask::Native(NativeValue::new("decisions", date));
-        let input = Input::new(json!("s"), vec![Question::new("when", ask)]);
-        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
-    }
-
-    /// OpenAI's decisions contract has no number type.
-    #[test]
-    fn a_number_question_is_refused() {
-        let input = Input::new(json!("s"), vec![Question::new("days_late", Ask::Number)]);
-        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+    fn a_question_of_another_formats_own_type_is_dropped() {
+        for own in [
+            json!({"type": "date", "instructions": "When?"}),
+            json!({"type": "number"}),
+        ] {
+            let ask = Ask::Native(NativeValue::new("decisions", own));
+            let foreign = Question::new("q", ask);
+            let input = Input::new(json!("s"), vec![foreign.clone()]);
+            assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+            let kept = Question::new(
+                "p",
+                Ask::Noul {
+                    yes: None,
+                    no: None,
+                },
+            );
+            let input = Input::new(json!("s"), vec![foreign, kept]);
+            let sent = encode_request(&input).expect("call");
+            assert_eq!(
+                sent["questions"],
+                json!([{"type": "predicate", "name": "p", "instructions": ""}])
+            );
+        }
     }
 
     #[test]
