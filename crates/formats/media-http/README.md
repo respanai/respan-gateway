@@ -29,6 +29,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   is refused.
 - An answer's image is of its `output_format`, else of the type its bytes
   say, else PNG.
+- An image request's `quality`, `output_format` and `user`, and an answer's
+  `created`, `revised_prompt` and streamed partial images, are
+  `openai-images`' native fields: another format drops them.
 - A file's type is its part's, unless that says none or
   `application/octet-stream`, which OpenAI refuses for images; then its
   name's, then its first bytes'.
@@ -69,8 +72,7 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   Gemini draws (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9;
   within 5%, else 400), with an `imageSize` of `2K` or `4K` above 1K; its
   count `candidateCount`, which Gemini's image models refuse above 1. A
-  mask is refused, 400, as Gemini edits by prompt alone; quality, file
-  format and user are dropped.
+  mask is refused, 400, as Gemini edits by prompt alone.
 - An answer's images are its parts' `inlineData` (or `fileData`), not its
   thoughts'; its text is dropped; its usage is `usageMetadata`'s. An
   answer with no image is refused, 400 `no_image`, saying why: the

@@ -2,9 +2,8 @@
 //! images. A request with source images is an edit.
 //!
 //! A response is a sequence of events, the same for a stream and a whole
-//! body: a [`Output::Start`], then for each image any [`Output::Partial`]
-//! previews (in a stream that asked for them) and its [`Output::Image`],
-//! with [`Output::Usage`] and [`Output::Native`] among them.
+//! body: a [`Output::Start`], then an [`Output::Image`] for each image, with
+//! [`Output::Usage`] and [`Output::Native`] among them.
 
 use respan_gateway_conversation::{Media, Usage};
 use respan_gateway_core::{FormatId, NativeFields, NativeValue};
@@ -26,13 +25,7 @@ pub struct Input {
     pub count: Option<u32>,
     /// Their size, as the provider names it, such as `1024x1024`.
     pub size: Option<String>,
-    /// Their quality, as the provider names it, such as `high`.
-    pub quality: Option<String>,
-    /// Their file format, such as `png`.
-    pub output_format: Option<String>,
-    /// The end user's id, as the client names them to the provider.
-    pub user: Option<String>,
-    /// The request's fields the kind has no place for, such as a background.
+    /// The request's fields the kind has no place for, such as a quality.
     pub native: Option<NativeFields>,
 }
 
@@ -67,9 +60,6 @@ impl Input {
 pub enum Output {
     /// The response begins.
     Start(Start),
-    /// A preview of the image being drawn, superseded by the next one and by
-    /// the image itself. A whole body has none.
-    Partial(Partial),
     /// An image, in the order the provider gave them.
     Image(Image),
     /// Usage the provider reports, as an increment.
@@ -90,44 +80,9 @@ impl Output {
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct Start {
-    /// When the provider made it, in seconds since the Unix epoch.
-    pub created: Option<u64>,
-    /// The response's fields the kind has no place for, such as the size or
-    /// background the provider chose.
+    /// The response's fields the kind has no place for, such as when it was
+    /// made, or the size or background the provider chose.
     pub native: Option<NativeFields>,
-}
-
-impl Start {
-    /// The start of a response made at `created`.
-    pub fn new(created: Option<u64>) -> Self {
-        Self {
-            created,
-            native: None,
-        }
-    }
-}
-
-/// A preview of an image being drawn.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct Partial {
-    /// Which preview it is, from 0.
-    pub index: u32,
-    /// The preview.
-    pub media: Media,
-    /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
-}
-
-impl Partial {
-    /// The preview `index`.
-    pub fn new(index: u32, media: Media) -> Self {
-        Self {
-            index,
-            media,
-            native: None,
-        }
-    }
 }
 
 /// An image a provider made.
@@ -136,8 +91,6 @@ impl Partial {
 pub struct Image {
     /// The image: its bytes, or a URL the provider keeps it at.
     pub media: Media,
-    /// The prompt the provider drew from, if it rewrote the one asked.
-    pub revised_prompt: Option<String>,
     /// Its fields the kind has no place for.
     pub native: Option<NativeFields>,
 }
@@ -147,7 +100,6 @@ impl Image {
     pub fn new(media: Media) -> Self {
         Self {
             media,
-            revised_prompt: None,
             native: None,
         }
     }
