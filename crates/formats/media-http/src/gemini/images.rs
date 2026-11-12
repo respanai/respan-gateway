@@ -30,12 +30,12 @@ const NAME: &str = "gemini-images";
 /// `fileData`, for an image named by URL), then the prompt. Its `count` is
 /// `candidateCount`, which Gemini's image models refuse above 1; its `size`
 /// an `imageConfig` of the nearest `aspectRatio` Gemini draws (within 5%,
-/// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. A mask
-/// is refused, 400, as Gemini edits by prompt alone; quality, file format and
-/// user are dropped. Its native fields go in the body, `generationConfig`
-/// merged with what it says. An answer's images are its parts' `inlineData`
-/// (or `fileData`), not its thoughts', its usage `usageMetadata`'s; its text
-/// is dropped. An answer with no image is refused, 400 `no_image`, saying why.
+/// else 400), and an `imageSize` of `2K` or `4K` for a size above 1K. As
+/// Gemini edits by prompt alone, a mask is dropped. Its native fields go in
+/// the body, `generationConfig` merged with what it says. An answer's images
+/// are its parts' `inlineData` (or `fileData`), not its thoughts', its usage
+/// `usageMetadata`'s; its text is dropped. An answer with no image is
+/// refused, 400 `no_image`, saying why.
 ///
 /// A client speaks it too, of any provider of the kind: a `POST` to
 /// `.../models/{model}:generateContent` or `:streamGenerateContent` with
@@ -113,12 +113,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         return Err(Fault::bad_request(
             "a Gemini image needs a model, such as gemini-2.5-flash-image",
         ));
-    }
-    if input.mask.is_some() {
-        return Err(
-            Fault::bad_request("Gemini edits by prompt, and takes no mask")
-                .with(ErrorCode("unsupported".into())),
-        );
     }
     head.uri = format!("/models/{model}:generateContent")
         .parse()
@@ -215,7 +209,7 @@ fn size_of(aspect: &str, size: Option<&str>) -> Option<String> {
 fn read_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = serde_json::from_slice::<Value>(&raw)
         .map_err(|_| Fault::upstream(format!("the provider's {NAME} response is not JSON")))?;
-    out.push(Output::Start(Start::new(None)));
+    out.push(Output::Start(Start::default()));
     let (mut images, mut said, mut why) = (0, Vec::new(), None);
     for candidate in v["candidates"].as_array().into_iter().flatten() {
         let parts = candidate["content"]["parts"].as_array();
@@ -552,16 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn a_mask_is_refused() {
-        let mut input = Input::new("p");
-        input.model = Some("m".into());
-        input.images = vec![png(b"a")];
-        input.mask = Some(png(b"m"));
-        let mut head = http::Request::new(()).into_parts().0;
-        assert!(call(&mut head, &input).is_err_and(|f| f.is(FaultKind::Client)));
-    }
-
-    #[test]
     fn an_answers_images_are_its_parts_but_thoughts() {
         let answer = json!({
             "candidates": [{ "content": { "parts": [
@@ -578,7 +562,7 @@ mod tests {
         let mut usage = Usage::new(3, 7);
         usage.reasoning_tokens = 2;
         let want = [
-            Output::Start(Start::new(None)),
+            Output::Start(Start::default()),
             Output::Image(Image::new(jpeg)),
             Output::Usage(usage),
         ];
@@ -610,7 +594,7 @@ mod tests {
     #[test]
     fn a_response_is_written_in_the_framing_asked() {
         let events = [
-            Output::Start(Start::new(Some(1))),
+            Output::Start(Start::default()),
             Output::Image(Image::new(png(b"a"))),
             Output::Usage(Usage::new(3, 5)),
         ];

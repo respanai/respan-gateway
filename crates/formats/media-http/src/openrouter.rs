@@ -10,7 +10,7 @@ use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{Method, request::Parts as RequestHead};
 use respan_gateway_http::path::{escape, set_path};
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
@@ -28,13 +28,14 @@ const CONTENT: &str = "/content";
 ///
 /// A job's id starts `gen-vid-`. It is `queued` while `pending`, `in_progress`,
 /// `completed` once its video is made, `failed` with the error OpenRouter
-/// words; a state it adds, such as `cancelled`, is the format's own. Its
+/// words, or `cancelled` or `expired` as that; a state it adds is the
+/// format's own. Its
 /// videos are where it serves them ([`Job::videos`]). What else it answers,
 /// such as its `usage` and the signed `urls` of its video, is dropped: it
 /// reports no progress and names no model, size or length of a job.
 ///
-/// It cannot remix, delete or list videos, nor make a thumbnail or a
-/// spritesheet: those are refused, 400, before any call.
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenRouterVideos;
 
@@ -69,9 +70,14 @@ impl Format<ProviderIo, Output, Input> for OpenRouterVideos {
     }
 }
 
-/// An operation OpenRouter has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("OpenRouter cannot {what}")).with(ErrorCode("unsupported".into()))
+/// An operation OpenRouter has no form for, refused, named by its format.
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { native, .. } => format!("{} operation", native.format),
+        _ => "operation of this kind".to_owned(),
+    };
+    Fault::bad_request(format!("OpenRouter has no video {what}"))
+        .with(ErrorCode("unsupported".into()))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
@@ -84,16 +90,8 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             Some(create_body(create)?),
         ),
         Input::Retrieve { id } => (Method::GET, path(id, ""), None),
-        Input::Content {
-            id,
-            variant: Variant::Video,
-            ..
-        } => (Method::GET, path(id, CONTENT), None),
-        Input::Content { .. } => return Err(unsupported("make a thumbnail or a spritesheet")),
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
-        _ => return Err(unsupported("answer this request")),
+        Input::Content { id, .. } => (Method::GET, path(id, CONTENT), None),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     set_path(head, &path)?;
@@ -135,17 +133,24 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     let id = v["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
+    let mut error = v["error"].as_str();
     let status = match v["status"].as_str() {
         Some("pending") => Status::Queued,
         Some("in_progress") => Status::InProgress,
         Some("completed") => Status::Completed,
         Some("failed") => Status::Failed,
+        // A job `cancelled` or `expired` ended without a video: it failed,
+        // as that, unless OpenRouter says why.
+        Some(ended @ ("cancelled" | "expired")) => {
+            error = error.or(Some(ended));
+            Status::Failed
+        }
         Some(other) => Status::native(NAME, other),
         None => return Err(unreadable("has no status")),
     };
     let mut job = Job::new(id, status);
     job.expires_at = v["expires_at"].as_u64();
-    job.error = v["error"].as_str().map(|m| JobError::new(None, m));
+    job.error = error.map(|m| JobError::new(None, m));
     job.videos = (v["unsigned_urls"].as_array().into_iter().flatten())
         .filter_map(Value::as_str)
         .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
@@ -206,38 +211,17 @@ mod tests {
         assert_eq!(head.uri.path(), "/videos/gen-vid-1%2Fa");
         let content = Input::Content {
             id: "gen-vid-1".into(),
-            variant: Variant::Video,
             url: None,
         };
         call(&mut head, &content).expect("a call");
         assert_eq!(head.uri.path(), "/videos/gen-vid-1/content");
-    }
-
-    #[test]
-    fn an_operation_it_has_no_form_for_is_refused_before_a_call() {
-        let id = || "gen-vid-1".to_owned();
-        let inputs = [
-            Input::Delete { id: id() },
-            Input::Remix {
-                id: id(),
-                prompt: "more".into(),
-                native: None,
-            },
-            Input::List {
-                after: None,
-                limit: None,
-                order: None,
-            },
-            Input::Content {
-                id: id(),
-                variant: Variant::Thumbnail,
-                url: None,
-            },
-        ];
-        for input in inputs {
-            let refused = call(&mut head(), &input).err().expect("refused");
-            assert_eq!(refused.code(), "unsupported");
-        }
+        // Another format's operation, such as OpenAI's remix, is refused before a call.
+        let remix = Input::Native {
+            id: Some("gen-vid-1".into()),
+            native: respan_gateway_core::NativeValue::new("openai-videos", json!({})),
+        };
+        let refused = call(&mut head, &remix).err().expect("refused");
+        assert_eq!(refused.code(), "unsupported");
     }
 
     #[test]
@@ -267,5 +251,13 @@ mod tests {
         };
         assert_eq!(job.status, Status::Failed);
         assert_eq!(job.error, Some(JobError::new(None, "content policy")));
+
+        // Regression: an OpenAI client polling a cancelled job was answered 502.
+        let [Output::Job(job)] = &jobs(json!({ "id": "gen-vid-1", "status": "cancelled" }))[..]
+        else {
+            panic!("a job");
+        };
+        assert_eq!(job.status, Status::Failed);
+        assert_eq!(job.error, Some(JobError::new(None, "cancelled")));
     }
 }
