@@ -58,11 +58,14 @@ again from its value, and a response from its events: a format's promise is
 that a request of its own round-trips.
 
 `Input.options: GenerationOptions` groups the output token limit, sampling
-(`temperature`, `top_p`, `top_k`), stop sequences, tool selection, parallel
-calls, structured-output requirements and `reasoning`.
+(`temperature`, `top_p`), stop sequences, tool selection, parallel
+calls, structured-output requirements, the service tier and `reasoning`.
+What few formats have stays in their own native: `top_k` (Anthropic's and
+Gemini's), `verbosity` and a JSON schema's `strict` (OpenAI's two formats),
+and Anthropic's effort `max`.
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
-`Minimal`, `Low`, `Medium`, `High`), a `budget_tokens` limit, and `summary`
+`Minimal`, `Low`, `Medium`, `High`, `XHigh`), a `budget_tokens` limit, and `summary`
 (whether the thinking is returned). Vendors state either an effort or a
 budget, and the two do not convert: a budget does not pick an effort, and an
 effort buys different thinking from different models. So an effort travels

@@ -665,7 +665,6 @@ fn read_format(config: &mut Map<String, Value>) -> Option<ResponseFormat> {
                     "responseSchema" => json_schema(schema),
                     _ => schema.clone(),
                 },
-                strict: Some(true),
             }
         }
         _ => return None,
@@ -687,7 +686,6 @@ pub(super) fn read_config(v: &Value, chat: &mut Input) {
     chat.options.max_output_tokens = take("maxOutputTokens").and_then(|v| v.as_u64());
     chat.options.temperature = take("temperature").and_then(|v| v.as_f64());
     chat.options.top_p = take("topP").and_then(|v| v.as_f64());
-    chat.options.top_k = take("topK").and_then(|v| v.as_u64());
     if let Some(Value::Array(stops)) = take("stopSequences") {
         chat.options.stop = stops
             .iter()
@@ -724,7 +722,6 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     set_field("maxOutputTokens", o.max_output_tokens.map(Into::into));
     set_field("temperature", o.temperature.map(Into::into));
     set_field("topP", o.top_p.map(Into::into));
-    set_field("topK", o.top_k.map(Into::into));
     set_field("stopSequences", crate::schema::stop_json(&o.stop));
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}
@@ -734,15 +731,11 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         Some(ResponseFormat::JsonSchema {
             schema,
             description,
-            strict,
             ..
         }) => {
-            // Gemini always constrains the answer to a schema, and the
-            // wrapper's description has no field to instruct the model with.
-            if description.is_some() || *strict == Some(false) {
-                return Err(untranslatable(
-                    "a schema wrapper description or non-strict schema output in Gemini",
-                ));
+            // The wrapper's description has no field to instruct the model with.
+            if description.is_some() {
+                return Err(untranslatable("a schema wrapper description in Gemini"));
             }
             set_field("responseMimeType", Some("application/json".into()));
             set_field("responseJsonSchema", Some(schema.clone()));

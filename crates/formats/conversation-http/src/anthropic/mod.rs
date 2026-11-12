@@ -144,7 +144,6 @@ const KNOWN: &[&str] = &[
     "max_tokens",
     "temperature",
     "top_p",
-    "top_k",
     "stop_sequences",
     "stream",
     "metadata",
@@ -286,7 +285,6 @@ impl Schema for AnthropicMessages {
         chat.options.max_output_tokens = v["max_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
-        chat.options.top_k = v["top_k"].as_u64();
         chat.options.stop = v["stop_sequences"]
             .as_array()
             .into_iter()
@@ -372,7 +370,6 @@ impl Schema for AnthropicMessages {
             chat.options.temperature.map(Into::into),
         );
         set(&mut v, "top_p", chat.options.top_p.map(Into::into));
-        set(&mut v, "top_k", chat.options.top_k.map(Into::into));
         set(&mut v, "stop_sequences", stop_json(&chat.options.stop));
         let mut metadata = Value::Object(Map::new());
         if let Some(user) = &chat.user {

@@ -1744,37 +1744,36 @@ fn efforts_above_high_are_written_verbatim_or_refused() {
     use crate::gemini::GeminiGenerate;
     use crate::responses::OpenAiResponses;
     use respan_gateway_conversation::{Effort, Reasoning};
-    for (name, effort) in [("xhigh", Effort::XHigh), ("max", Effort::Max)] {
-        let body = json!({ "model": "m", "max_tokens": 64, "reasoning_effort": name,
-            "messages": [{ "role": "user", "content": "hi" }] });
-        let mut chat = OpenAiChat.decode_json(&body);
-        assert_eq!(
-            chat.options.reasoning.as_ref().and_then(|r| r.effort),
-            Some(effort)
-        );
-        assert!(chat.native.is_empty(), "{name}");
-        // An ask for a summary too, which only Responses has a field for.
-        chat.options.reasoning.as_mut().expect("an effort").summary = Some(true);
-        let chat_sent = OpenAiChat.encode_request(&chat).map(Value::from);
-        assert_eq!(
-            chat_sent.ok().map(|v| v["reasoning_effort"].clone()),
-            Some(json!(name))
-        );
-        let responses = OpenAiResponses.encode_request(&chat).map(Value::from);
-        assert_eq!(
-            responses.ok().map(|v| v["reasoning"].clone()),
-            Some(json!({ "effort": name, "summary": "auto" }))
-        );
-        let anthropic = AnthropicMessages.encode_request(&chat).map(Value::from);
-        assert_eq!(
-            anthropic.ok().map(|v| v["output_config"].clone()),
-            Some(json!({ "effort": name }))
-        );
-        // Gemini has no thinking level above `high`, and does not get one.
-        assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
-        chat.options.reasoning = Some(Reasoning::budget(1024));
-        assert!(OpenAiChat.encode_request(&chat).is_err(), "{name}");
-    }
+    let (name, effort) = ("xhigh", Effort::XHigh);
+    let body = json!({ "model": "m", "max_tokens": 64, "reasoning_effort": name,
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let mut chat = OpenAiChat.decode_json(&body);
+    assert_eq!(
+        chat.options.reasoning.as_ref().and_then(|r| r.effort),
+        Some(effort)
+    );
+    assert!(chat.native.is_empty(), "{name}");
+    // An ask for a summary too, which only Responses has a field for.
+    chat.options.reasoning.as_mut().expect("an effort").summary = Some(true);
+    let chat_sent = OpenAiChat.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        chat_sent.ok().map(|v| v["reasoning_effort"].clone()),
+        Some(json!(name))
+    );
+    let responses = OpenAiResponses.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        responses.ok().map(|v| v["reasoning"].clone()),
+        Some(json!({ "effort": name, "summary": "auto" }))
+    );
+    let anthropic = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        anthropic.ok().map(|v| v["output_config"].clone()),
+        Some(json!({ "effort": name }))
+    );
+    // Gemini has no thinking level above `high`, and does not get one.
+    assert!(GeminiGenerate.encode_request(&chat).is_err(), "{name}");
+    chat.options.reasoning = Some(Reasoning::budget(1024));
+    assert!(OpenAiChat.encode_request(&chat).is_err(), "{name}");
 }
 
 /// What vendors of Chat Completions add to a message: dropped by another
