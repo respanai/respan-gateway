@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::anthropic::AnthropicMessages;
+use crate::fields::rest_of;
 use crate::openai::OpenAiChat;
 use respan_gateway_conversation::{Block, Message, ResponseFormat, Role, Tool, ToolChoice};
 use respan_gateway_core::{NativeFields, NativeValue};
@@ -157,7 +158,7 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     ));
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
-        chat.native.fields(),
+        chat.native.own(RESPONSES),
         json!({ "text": { "format": { "strict": true } }, "instructions": true })
             .as_object()
             .expect("fields"),
@@ -279,7 +280,11 @@ fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
         let mut v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }] });
         v[field] = value.clone();
         let chat = decode_request(&v);
-        assert_eq!(chat.native.fields().get(field), Some(&value), "{field}");
+        assert_eq!(
+            chat.native.own(RESPONSES).get(field),
+            Some(&value),
+            "{field}"
+        );
         assert_eq!(round_trip(&v), v, "{field}");
         for sent in [
             AnthropicMessages.encode_request(&chat),
@@ -348,7 +353,7 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
         Some(ResponseFormat::JsonObject)
     );
     assert_eq!(
-        chat.native.fields().get("text"),
+        chat.native.own(RESPONSES).get("text"),
         Some(&json!({ "verbosity": "low", "extra": 1 }))
     );
     assert_eq!(round_trip(&v), v);
@@ -370,6 +375,13 @@ fn another_formats_conversation_is_written_as_responses() {
             Message::new(Role::User, "weather?"),
         ]);
         let mut calls = Message::new(Role::Assistant, "checking");
+        // Another format's field of the name Responses keeps an item's fields
+        // under splits nothing.
+        let mut more = Content::from(", one moment");
+        if let Content::Text { native, .. } = &mut more {
+            *native = native_of("openai-chat", rest_of(&json!({ "message": {} }), &[]));
+        }
+        calls.content.push(more);
         calls
             .content
             .push(Content::tool_call("c1", "get", "{\"a\":1}"));
@@ -392,7 +404,7 @@ fn another_formats_conversation_is_written_as_responses() {
             "input": [
                 { "role": "system", "content": "be brief" },
                 { "role": "user", "content": "weather?" },
-                { "role": "assistant", "content": "checking" },
+                { "role": "assistant", "content": "checking, one moment" },
                 { "type": "function_call", "call_id": "c1", "name": "get", "arguments": "{\"a\":1}" },
                 { "type": "function_call_output", "call_id": "c1", "output": "rain" },
             ],
@@ -450,12 +462,12 @@ fn a_stream_decodes_to_the_kinds_events() {
         (start.id.as_str(), start.model.as_str()),
         ("resp_1", "gpt-x")
     );
-    assert_eq!(start.native.fields().get("created_at"), Some(&json!(5)));
+    assert_eq!(
+        start.native.own(RESPONSES).get("created_at"),
+        Some(&json!(5))
+    );
     let rest = [
-        Output::native(
-            RESPONSES,
-            json!({ "type": "block_fields", "block": 0, "fields": { "id": "msg_1" } }),
-        ),
+        Output::block_fields(RESPONSES, 0, rest_of(&json!({ "id": "msg_1" }), &[])),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hello"),
         Output::text(0, " world"),
@@ -532,9 +544,10 @@ fn function_calls_and_reasoning_are_blocks() {
         ]
     );
     assert_eq!(all.finish, Some(Finish::ToolUse));
-    assert!(out.contains(&Output::native(
+    assert!(out.contains(&Output::block_fields(
         RESPONSES,
-        json!({ "type": "block_fields", "block": 0, "fields": { "id": "rs_1" } })
+        0,
+        rest_of(&json!({ "id": "rs_1" }), &[])
     )));
 }
 
@@ -784,10 +797,7 @@ fn blocks_that_interleave_are_written_one_at_a_time() {
 fn a_body_is_written_from_the_events() {
     let replies = [
         Output::start("resp_9", "gpt-x"),
-        Output::native(
-            RESPONSES,
-            json!({ "type": "block_fields", "block": 0, "fields": { "id": "msg_real" } }),
-        ),
+        Output::block_fields(RESPONSES, 0, rest_of(&json!({ "id": "msg_real" }), &[])),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hi"),
         Output::block_end(0),
@@ -824,7 +834,7 @@ fn a_body_is_written_from_the_events() {
 #[test]
 fn a_provider_s_own_fields_come_back_in_this_format() {
     let mut start = Start::new("resp_1", "gpt-x");
-    start.native = native_fields(
+    start.native = native_of(
         RESPONSES,
         json!({ "created_at": 77, "temperature": 0.2, "service_tier": "default" })
             .as_object()

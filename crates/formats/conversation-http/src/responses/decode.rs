@@ -1,10 +1,8 @@
 //! Responses, streamed or whole, as events: the decoder.
 
-use super::{
-    ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE_FIELDS, extra_usage, response_fields, usage_of,
-};
+use super::{RESPONSE_FIELDS, RESPONSES, USAGE_FIELDS, extra_usage, response_fields, usage_of};
 use crate::schema::{
-    Totals, ended, error_event, native_fields, rest_of, says, says_error, unreadable_event,
+    Totals, ended, error_event, native_of, rest_of, says, says_error, unreadable_event,
 };
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
@@ -127,7 +125,7 @@ impl ResponsesDecoder {
         let (id, model) = (r["id"].as_str(), r["model"].as_str());
         let mut start = Start::new(id.unwrap_or_default(), model.unwrap_or_default());
         self.said = response_fields(r);
-        start.native = native_fields(RESPONSES, self.said.clone());
+        start.native = native_of(RESPONSES, self.said.clone());
         out.push(Output::Start(start));
     }
 
@@ -160,8 +158,11 @@ impl ResponsesDecoder {
         let all = part["annotations"].as_array().into_iter().flatten();
         let mut count = seen;
         for annotation in all.skip(seen) {
-            let v = json!({ "type": ANNOTATION, "block": block, "annotation": annotation });
-            self.native(v, out);
+            out.push(Output::block_native(
+                self.name.clone(),
+                block,
+                annotation.clone(),
+            ));
             count += 1;
         }
         count
@@ -602,9 +603,11 @@ impl ResponsesDecoder {
             Some(part) => {
                 part.annotations += 1;
                 let block = part.block;
-                let n =
-                    json!({ "type": ANNOTATION, "block": block, "annotation": v["annotation"] });
-                self.native(n, out);
+                out.push(Output::block_native(
+                    RESPONSES,
+                    block,
+                    v["annotation"].clone(),
+                ));
             }
             None => self.native(v.clone(), out),
         }

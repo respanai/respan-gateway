@@ -19,7 +19,7 @@ use respan_gateway_media_http::openai::{
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use serde_json::{Value, json};
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own};
+use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor, own_mut};
 
 /// Where its API is.
 const BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -84,7 +84,7 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
     if withheld {
         reasoning["exclude"] = true.into();
     }
-    own(&mut input.native, OpenAiChat::NAME)
+    own_mut(&mut input.native, OpenAiChat::NAME)
         .entry("reasoning")
         .or_insert(reasoning);
     Ok(())
@@ -118,7 +118,7 @@ impl Dialect for OpenRouterImages {
 
 /// `input` with its images in `input_references`, and no mask.
 fn referenced(input: &mut image::Input) -> Result<(), Fault> {
-    let fields = own(&mut input.native, OpenAiImages::NAME);
+    let fields = own_mut(&mut input.native, OpenAiImages::NAME);
     // WARN: OpenRouter takes no mask; it is dropped.
     fields.shift_remove("mask");
     if !input.images.is_empty() {

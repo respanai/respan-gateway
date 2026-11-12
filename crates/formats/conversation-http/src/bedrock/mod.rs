@@ -12,9 +12,7 @@
 //!
 //! The leading system messages are the `system` blocks. `messages` are the
 //! rest, a message of the role before it joined to that one, as Converse needs
-//! the roles to alternate, and a blank text left out; a part, tool or
-//! system block with a cache marker (Anthropic's `cache_control`) is
-//! followed by a `cachePoint`. A part is a `text`,
+//! the roles to alternate, and a blank text left out. A part is a `text`,
 //! an `image` or `document` (bytes only: a URL is refused, as the format has
 //! no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
 //! one), or `reasoningContent` that Bedrock signed or redacted, which is the
@@ -26,7 +24,8 @@
 //!
 //! Refused as having no field: an effort, JSON without a schema, one
 //! tool call at a time, audio, and a system message after the conversation
-//! starts. An end user's id and the fields of another format are dropped.
+//! starts. An end user's id and the fields of another format, Anthropic's
+//! `cache_control` among them, are dropped.
 //!
 //! # Responses as events
 //!
@@ -47,7 +46,8 @@
 //!   input.
 //! - What else a response says (`metrics`, `trace`, `serviceTier`, the
 //!   model's own response fields), and a block of another type (a citation,
-//!   a guard), is an [`Output::Native`], which another format drops.
+//!   a guard), is an [`Output::Native`] (a block's, an
+//!   [`Output::BlockNative`]), which another format drops.
 //!
 //! A failure in the stream (`:message-type` `exception` or `error`) is an
 //! upstream fault of its type; a stream that ends before `messageStop`, or
@@ -59,7 +59,7 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Framing, Names, NativeFieldsExt, Schema, native_fields, rest_of, unwritable_content,
+    Asked, Framing, Names, NativeFieldsExt, Schema, native_of, rest_of, unwritable_content,
 };
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
@@ -248,7 +248,7 @@ impl Schema for BedrockConverse {
     /// Not read: the request stays native, so only Bedrock is sent it.
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
-        chat.native = native_fields(BEDROCK, rest_of(v, &[]));
+        chat.native = native_of(BEDROCK, rest_of(v, &[]));
         chat
     }
 

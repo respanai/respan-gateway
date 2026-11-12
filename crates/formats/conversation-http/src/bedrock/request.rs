@@ -7,17 +7,11 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use super::{BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
-
-/// The cache marker of a block, Anthropic's `cache_control`, which Converse
-/// writes as a `cachePoint` after it.
-const CACHE_MARKER: &str = "cache_control";
-use crate::schema::{
-    NativeFieldsExt, arguments_object, reasoning_of, sealed, set, stop_json, untranslatable,
-};
+use super::{DOCUMENTS, IMAGES, ROLES, format_of};
+use crate::schema::{arguments_object, reasoning_of, sealed, set, stop_json, untranslatable};
 
 /// The leading system messages as `system` blocks, and the rest; a later
 /// system message is refused.
@@ -34,16 +28,12 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
     for message in system {
         for part in &message.content {
             match part {
-                Content::Text { text, native, .. } => {
+                // WARN: Anthropic's `cache_control`, on a part or tool, is no `cachePoint`;
+                // dropped here, silently, and the prompt cache with it.
+                Content::Text { text, .. } => {
                     if !text.trim().is_empty() {
                         blocks.push(json!({ "text": text }));
-                        if cached(native) {
-                            blocks.push(cache_point());
-                        }
                     }
-                }
-                Content::Native(raw) if *raw.format == *BEDROCK => {
-                    blocks.push(Value::clone(&raw.value));
                 }
                 _ => return Err(untranslatable("a system prompt that is not text")),
             }
@@ -58,12 +48,9 @@ pub(super) fn split_system(chat: &Input) -> Result<(Vec<Value>, &[Message]), Fau
 pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> {
     let mut out: Vec<Value> = Vec::new();
     for m in messages {
-        let role = match &m.role {
-            Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
-            role => ROLES
-                .name(role)
-                .ok_or_else(|| untranslatable("a role this format has no place for"))?,
-        };
+        let role = ROLES
+            .name(&m.role)
+            .ok_or_else(|| untranslatable("a role this format has no place for"))?;
         let mut blocks: Vec<Value> = Vec::new();
         for (part, signature) in sealed(&m.content) {
             match (part, signature) {
@@ -81,12 +68,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 (Content::Reasoning { .. } | Content::Signature(_), _) => continue,
                 _ => {}
             }
-            if let Some(written) = block(part)? {
-                blocks.push(written);
-                if marked(part) {
-                    blocks.push(cache_point());
-                }
-            }
+            blocks.extend(block(part)?);
         }
         if blocks.is_empty() {
             continue;
@@ -101,28 +83,6 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         }
     }
     Ok(out)
-}
-
-/// What Converse caches up to: a `cachePoint` after the block.
-fn cache_point() -> Value {
-    json!({ "cachePoint": { "type": "default" } })
-}
-
-/// Whether fields hold a cache marker: the block they are on is cached up
-/// to.
-fn cached(native: &Option<NativeFields>) -> bool {
-    native.fields().contains_key(CACHE_MARKER)
-}
-
-/// Whether a part is marked to be cached up to.
-fn marked(part: &Content) -> bool {
-    match part {
-        Content::Text { native, .. }
-        | Content::ToolCall { native, .. }
-        | Content::ToolResult { native, .. } => cached(native),
-        Content::Image(media) | Content::Document(media) => cached(&media.native),
-        _ => false,
-    }
 }
 
 /// A part as a content block; `None` for a text that says nothing.
@@ -165,7 +125,6 @@ fn content_block(part: &Content) -> Result<Value, Fault> {
             }
             Ok(json!({ "toolResult": result }))
         }
-        Content::Native(raw) if *raw.format == *BEDROCK => Ok(Value::clone(&raw.value)),
         Content::Audio(_) => Err(untranslatable("audio")),
         _ => Err(untranslatable("an unsupported kind of part")),
     }
@@ -263,9 +222,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         spec.insert("inputSchema".into(), json!({ "json": schema }));
-        let mut fields = t.native.fields_for(BEDROCK);
-        fields.shift_remove(CACHE_MARKER);
-        spec.extend(fields);
         json!({ "toolSpec": spec })
     };
     let choice = match &chat.options.tool_choice {
@@ -275,13 +231,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Tool(name)) => Some(json!({ "tool": { "name": name } })),
         Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
     };
-    let mut tools: Vec<Value> = Vec::new();
-    for t in &chat.tools {
-        tools.push(tool(t));
-        if cached(&t.native) {
-            tools.push(cache_point());
-        }
-    }
+    let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     if tools.is_empty() {
         return Ok(());
     }

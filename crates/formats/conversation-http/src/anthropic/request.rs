@@ -5,8 +5,8 @@
 
 use crate::schema::{
     NativeFieldsExt, arguments_object, decode_content, decode_tools, each_tool, encode_content,
-    merge_missing, native_fields, only, own_native, read_search, remainder, rest_of, set,
-    take_native, untranslatable, write_search,
+    merge_missing, native_of, only, read_search, remainder, rest_of, set, take_native,
+    untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -44,7 +44,7 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
     let mut kind = Tool::new(tool["name"].as_str()?, tool["input_schema"].clone());
     kind.description = description;
     let rest = rest_of(tool, &["type", "name", "description", "input_schema"]);
-    kind.native = native_fields(ANTHROPIC, rest);
+    kind.native = native_of(ANTHROPIC, rest);
     Some(kind)
 }
 
@@ -140,7 +140,7 @@ pub(crate) fn decode_part(p: &Value) -> Option<Content> {
         "image" | "document" => read_media(p),
         "thinking" => Some(Content::Reasoning {
             text: p["thinking"].as_str()?.into(),
-            native: native_fields(ANTHROPIC, remainder(p, &["type", "thinking", "signature"])),
+            native: native_of(ANTHROPIC, remainder(p, &["type", "thinking", "signature"])),
         }),
         "redacted_thinking" => Some(Content::Withheld(p["data"].as_str()?.into())),
         _ => tool_part(p),
@@ -193,7 +193,7 @@ fn read_media(v: &Value) -> Option<Content> {
     }
     let mut media = Media::new(mime, src);
     media.name = v["title"].as_str().map(str::to_owned);
-    media.native = native_fields(ANTHROPIC, fields);
+    media.native = native_of(ANTHROPIC, fields);
     Some(match image {
         true => Content::Image(media),
         false => Content::Document(media),
@@ -233,7 +233,7 @@ fn tool_part(block: &Value) -> Option<Content> {
             let mut part = Content::tool_call(id, name, arguments);
             if let Content::ToolCall { native, .. } = &mut part {
                 let rest = rest_of(block, &["type", "id", "name", "input"]);
-                *native = native_fields(ANTHROPIC, rest);
+                *native = native_of(ANTHROPIC, rest);
             }
             Some(part)
         }
@@ -253,7 +253,7 @@ fn tool_part(block: &Value) -> Option<Content> {
             let mut part = Content::tool_result(id, content, is_error);
             if let Content::ToolResult { native, .. } = &mut part {
                 let rest = rest_of(block, &["type", "tool_use_id", "content", "is_error"]);
-                *native = native_fields(ANTHROPIC, rest);
+                *native = native_of(ANTHROPIC, rest);
             }
             Some(part)
         }
@@ -389,10 +389,7 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
 /// The request's own `output_config`, with the format the kind's structured
 /// output requirement says and the effort its reasoning names.
 pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Result<(), Fault> {
-    let own = input.native.format() == Some(ANTHROPIC);
-    let mut config = own
-        .then(|| input.native.fields().get("output_config").cloned())
-        .flatten();
+    let mut config = input.native.own(ANTHROPIC).get("output_config").cloned();
     let effort = input.options.reasoning.as_ref().and_then(|r| r.effort);
     if let Some(effort) = effort.map(effort_name).transpose()?.flatten() {
         let config = config.get_or_insert_with(|| json!({}));
@@ -562,7 +559,7 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
 /// Anthropic thinks to a token budget here, its effort is `output_config`'s
 /// ([`write_output`]), and it returns its thinking whenever it thinks.
 pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
-    let own = || own_native(input, ANTHROPIC, "thinking");
+    let own = || input.native.own(ANTHROPIC).get("thinking").cloned();
     let Some(r) = &input.options.reasoning else {
         return Ok(own());
     };

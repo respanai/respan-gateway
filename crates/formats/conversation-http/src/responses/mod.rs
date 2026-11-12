@@ -52,8 +52,8 @@
 //!   (`max_output_tokens` the token limit, `content_filter` a filter, else a
 //!   native reason). `response.failed` and `error` are the stream's failure.
 //! - The item's fields the kind has no place for, such as its `id`, are its
-//!   [`Output::block_fields`] before its block opens, and an annotation one
-//!   native `{"type": "annotation", ..}`; the usage object's other fields
+//!   [`Output::BlockFields`] before its block opens, and an annotation one
+//!   [`Output::BlockNative`] of its block; the usage object's other fields
 //!   are `{"type": "usage_fields", ..}`. Another format drops them all.
 //! - An item the kind has no form for (a built-in tool's call, a refusal)
 //!   is a native of each of its events as they came, or, from a whole body,
@@ -76,8 +76,8 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_of,
+    own_fields, parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -92,8 +92,6 @@ pub use decode::ResponsesDecoder;
 /// The wire format's name ([`Schema::NAME`]).
 const RESPONSES: &str = "openai-responses";
 
-/// The type of the native that carries an annotation of a text block.
-const ANNOTATION: &str = "annotation";
 /// The type of the native that carries the usage's other fields.
 const USAGE_FIELDS: &str = "usage_fields";
 /// The type of the native that carries the response's fields that changed.
@@ -209,19 +207,19 @@ impl Schema for OpenAiResponses {
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_fields(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
+        chat.native = native_of(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
-            chat.native.fields_mut(RESPONSES).shift_remove("user");
+            chat.native.own_mut(RESPONSES).shift_remove("user");
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
             chat.native
-                .fields_mut(RESPONSES)
+                .own_mut(RESPONSES)
                 .insert(request::INSTRUCTIONS.into(), true.into());
         }
         request::read_input(v, &mut chat);
         request::read_tools(v, &mut chat);
-        chat.native = native_fields(RESPONSES, std::mem::take(chat.native.fields_mut(RESPONSES)));
+        chat.native.take_if(|n| n.is_empty());
         request::read_format(v, &mut chat);
         chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
         request::read_reasoning(&mut chat);
@@ -391,8 +389,7 @@ pub(crate) fn response_body(
     ];
     let mut body = Map::new();
     body.extend(defaults.map(|(k, v)| (k.to_owned(), v)));
-    let own = start.filter(|s| s.native.format() == Some(RESPONSES));
-    let mut fields = Value::Object(own.map(|s| s.native.fields().clone()).unwrap_or_default());
+    let mut fields = Value::Object(own_fields(start, RESPONSES));
     merge_fields(&mut fields, changed);
     if let Value::Object(fields) = fields {
         body.extend(fields);

@@ -4,8 +4,8 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, merge_fields, native_fields, only,
-    own_native, parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
+    NativeFieldsExt, decode_tools, each_tool, effort_name, merge_fields, native_of, only,
+    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
     write_search,
 };
 use respan_gateway_conversation::{
@@ -43,7 +43,7 @@ fn function_tool(tool: &Value) -> Option<Tool> {
     let mut kind = Tool::new(tool["name"].as_str()?, tool["parameters"].clone());
     kind.description = description;
     let fields = rest_of(tool, &["type", "name", "description", "parameters"]);
-    kind.native = native_fields(RESPONSES, fields);
+    kind.native = native_of(RESPONSES, fields);
     // Strict is on unless it is said; no other format has that default.
     kind.strict = None;
     take_strict(&mut kind);
@@ -166,11 +166,8 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
 /// The request's `text`: its own fields, with the format the kind's
 /// structured output requirement says.
 pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Value>) {
-    let own = input.native.format() == Some(RESPONSES);
-    let mut text = own
-        .then(|| input.native.fields().get("text").cloned())
-        .flatten()
-        .unwrap_or_else(|| json!({}));
+    let own = input.native.own(RESPONSES).get("text").cloned();
+    let mut text = own.unwrap_or_else(|| json!({}));
     let format = match &input.options.response_format {
         None => None,
         Some(ResponseFormat::Text) => Some(json!({ "type": "text" })),
@@ -259,7 +256,12 @@ pub(in crate::responses) fn write_reasoning(
     input: &Input,
     out: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
+    let mut config = input
+        .native
+        .own(RESPONSES)
+        .get("reasoning")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     if let Some(r) = reasoning_of(input)? {
         if r.budget_tokens.is_some() {
             return Err(untranslatable("a reasoning token budget in Responses"));

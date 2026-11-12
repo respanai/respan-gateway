@@ -35,7 +35,7 @@
 
 use respan_gateway_core::Fault;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 
 use respan_gateway_core::{FormatId, NativeFields, NativeValue};
@@ -168,8 +168,7 @@ pub struct Input {
     pub tools: Vec<Tool>,
     /// The tools the provider runs itself while it answers.
     pub provider_tools: Vec<ProviderTool>,
-    /// The request's fields the kind has no place for, such as tools a
-    /// provider runs itself.
+    /// The request's fields the kind has no place for, such as a seed.
     pub native: Option<NativeFields>,
 }
 
@@ -504,6 +503,25 @@ pub enum Output {
         /// The signature, untouched.
         data: String,
     },
+    /// Fields of block `block` the kind has no place for, as their format
+    /// has them: a client of that format gets them with the block,
+    /// [`Assembled::replay`] keeps them on its part, and another format drops
+    /// them.
+    BlockFields {
+        /// The block they are of.
+        block: u32,
+        /// The fields.
+        native: NativeFields,
+    },
+    /// An event about block `block` the kind has no form for, as its format
+    /// has it (a block of a tool the provider runs, an annotation): sent
+    /// only in that format, which names the block `block`.
+    BlockNative {
+        /// The block it is about, which only such events may carry.
+        block: u32,
+        /// The event.
+        native: NativeValue,
+    },
     /// An event the kind has no form for, as `format` has it (pings,
     /// provider-specific events). Sent only in that format.
     Native(NativeValue),
@@ -643,26 +661,31 @@ impl Output {
     }
 
     /// Fields of block `block` the kind has no place for, as `format` has
-    /// them: a client of `format` gets them back with
-    /// the block, [`Assembled::replay`] keeps them on its part, and another
-    /// format drops them. Read by [`block_fields`].
+    /// them ([`Output::BlockFields`]).
     pub fn block_fields(
         format: impl Into<FormatId>,
         block: u32,
         fields: Map<String, Value>,
     ) -> Self {
-        Self::native(
-            format,
-            json!({ "type": BLOCK_FIELDS, "block": block, "fields": fields }),
-        )
+        let native = NativeFields::new(format, fields);
+        Output::BlockFields { block, native }
+    }
+
+    /// An event of `format` about block `block` ([`Output::BlockNative`]).
+    pub fn block_native(format: impl Into<FormatId>, block: u32, raw: impl Into<Value>) -> Self {
+        let native = NativeValue::new(format, raw);
+        Output::BlockNative { block, native }
     }
 
     /// Whether it is content: a start, a block event or a finish. Usage and
-    /// [`Output::Native`] are not.
+    /// natives are not.
     pub fn is_content(&self) -> bool {
         !matches!(
             self,
-            Output::Usage(_) | Output::Native(respan_gateway_core::NativeValue { .. })
+            Output::Usage(_)
+                | Output::BlockFields { .. }
+                | Output::BlockNative { .. }
+                | Output::Native(_)
         )
     }
 }
@@ -744,6 +767,20 @@ pub enum AssembledItem {
         /// The signature.
         data: String,
     },
+    /// Fields of a block ([`Output::BlockFields`]).
+    BlockFields {
+        /// The block they are of.
+        block: u32,
+        /// The fields.
+        native: NativeFields,
+    },
+    /// A format-specific event about a block ([`Output::BlockNative`]).
+    BlockNative {
+        /// The block it is about.
+        block: u32,
+        /// The event.
+        native: NativeValue,
+    },
     /// A format-specific event, kept without interpretation.
     Native(NativeValue),
 }
@@ -804,16 +841,13 @@ impl Assembled {
     pub fn replay(&self) -> Vec<Content> {
         let mut kept: HashMap<u32, NativeFields> = HashMap::new();
         for item in self.items() {
-            let AssembledItem::Native(native) = item else {
-                continue;
-            };
-            let Some((block, fields)) = block_fields(&native.value) else {
+            let AssembledItem::BlockFields { block, native } = item else {
                 continue;
             };
             let entry = kept
-                .entry(block)
+                .entry(*block)
                 .or_insert_with(|| NativeFields::new(native.format.clone(), Map::new()));
-            entry.fields.extend(fields.clone());
+            entry.fields.extend(native.fields.clone());
         }
         let native_of = |block: u32| kept.get(&block).filter(|n| !n.is_empty()).cloned();
         let mut parts = Vec::new();
@@ -852,7 +886,7 @@ impl Assembled {
                     Some(_) => Content::Signature(data.clone()),
                     None => Content::Withheld(data.clone()),
                 }),
-                AssembledItem::Native(_) => {}
+                _ => {}
             }
         }
         parts
@@ -903,12 +937,15 @@ impl Assembled {
                 self.items
                     .insert(at, AssembledItem::Signature { block, data });
             }
-            Output::Native(respan_gateway_core::NativeValue { format, value: raw }) => {
-                self.items.push(AssembledItem::Native(NativeValue {
-                    format: format.clone(),
-                    value: raw.clone(),
-                }));
-            }
+            Output::BlockFields { block, native } => self.items.push(AssembledItem::BlockFields {
+                block: *block,
+                native: native.clone(),
+            }),
+            Output::BlockNative { block, native } => self.items.push(AssembledItem::BlockNative {
+                block: *block,
+                native: native.clone(),
+            }),
+            Output::Native(native) => self.items.push(AssembledItem::Native(native.clone())),
         }
         Ok(())
     }
@@ -932,26 +969,6 @@ impl Assembled {
 /// A sequence of events that is no response.
 fn malformed(what: &str) -> Fault {
     Fault::upstream(format!("the response is malformed: {what}"))
-}
-
-/// The `type` of an [`Output::block_fields`] native.
-const BLOCK_FIELDS: &str = "block_fields";
-
-/// The block and fields of `raw`, if it is an [`Output::block_fields`]
-/// native's.
-pub fn block_fields(raw: &Value) -> Option<(u32, &Map<String, Value>)> {
-    if raw["type"] != BLOCK_FIELDS {
-        return None;
-    }
-    let block = u32::try_from(raw["block"].as_u64()?).ok()?;
-    Some((block, raw["fields"].as_object()?))
-}
-
-/// The block a native event names, by its `block`, or by `index` as a
-/// format's own block events name it; for a plugin that renumbers blocks.
-pub fn native_block(raw: &Value) -> Option<u32> {
-    let named = raw["index"].as_u64().or_else(|| raw["block"].as_u64());
-    u32::try_from(named?).ok()
 }
 
 #[cfg(test)]
@@ -1051,6 +1068,7 @@ mod tests {
     #[test]
     fn events_fold_into_the_whole_answer() {
         let usage = Usage::new(3, 0);
+        let fields = json!({"index": 0}).as_object().cloned().unwrap_or_default();
         let all = fold(&[
             Output::start("r1", "m"),
             Output::block_start(0, Block::Reasoning),
@@ -1062,6 +1080,7 @@ mod tests {
             Output::text(1, "Hel"),
             Output::text(1, "lo"),
             Output::block_end(1),
+            Output::block_fields("chat", 2, fields.clone()),
             Output::block_start(
                 2,
                 Block::ToolCall {
@@ -1097,6 +1116,10 @@ mod tests {
         );
         assert_eq!(all.text(), "Hello");
         // Each signature follows the part it seals; reasoning withheld stays in place.
+        let mut call = Content::tool_call("t", "f", "{\"a\":1}");
+        if let Content::ToolCall { native, .. } = &mut call {
+            *native = Some(NativeFields::new("chat", fields));
+        }
         let reasoning = Content::Reasoning {
             text: "hm".into(),
             native: None,
@@ -1108,7 +1131,7 @@ mod tests {
                 Content::Signature("sig".into()),
                 Content::Withheld("withheld".into()),
                 Content::from("Hello"),
-                Content::tool_call("t", "f", "{\"a\":1}"),
+                call,
                 Content::Signature("call".into()),
             ]
         );

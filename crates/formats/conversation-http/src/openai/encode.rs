@@ -3,7 +3,7 @@
 use crate::schema::{
     Gate, NativeFieldsExt, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
 };
-use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
+use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -14,29 +14,18 @@ use super::{
     FINISH, Fields, OPENAI, OpenAiChat, USAGE, response_of, sign, usage_body, usage_fields,
 };
 
-/// What a tool call's block fields say: the block, the entry's fields and
-/// the function's.
-pub(super) fn call_fields_of(raw: &Value) -> Option<(u32, Fields, Fields)> {
-    let (block, fields) = block_fields(raw)?;
+/// Put a tool call's block fields into the call `call`: the entry's, and
+/// its function's under `function`.
+pub(super) fn merge_call(call: &mut Value, fields: &Fields) {
     let mut entry = fields.clone();
-    let function = match entry.shift_remove("function") {
-        Some(Value::Object(function)) => function,
-        _ => Fields::new(),
-    };
-    Some((block, entry, function))
-}
-
-/// Put a tool call's block fields ([`call_fields_of`]) into the call `call`.
-pub(super) fn merge_call(
-    call: &mut Value,
-    entry: &Map<String, Value>,
-    function: &Map<String, Value>,
-) {
-    if let Some(call) = call.as_object_mut() {
-        call.extend(entry.clone());
+    if let (Some(Value::Object(more)), Some(f)) = (
+        entry.shift_remove("function"),
+        call["function"].as_object_mut(),
+    ) {
+        f.extend(more);
     }
-    if let Some(f) = call["function"].as_object_mut() {
-        f.extend(function.clone());
+    if let Some(call) = call.as_object_mut() {
+        call.extend(entry);
     }
 }
 
@@ -47,8 +36,7 @@ pub(super) fn envelope(start: Option<&Start>, object: &str, now: u64) -> Map<Str
     let (id, model) = start
         .map(|s| (s.id.as_str(), s.model.as_str()))
         .unwrap_or_default();
-    let fields = start.filter(|s| s.native.format() == Some(OPENAI));
-    let fields = fields.map(|s| s.native.fields());
+    let fields = start.map(|s| s.native.own(OPENAI));
     let created = fields.and_then(|f| f.get("created")).cloned();
     let mut v = Map::new();
     v.insert("id".into(), id.into());
@@ -168,7 +156,7 @@ pub(super) struct Chunks {
     /// The vendor fields of usage, written in the usage chunk.
     usage_extra: Map<String, Value>,
     /// The fields of tool calls not yet started, by block.
-    call_fields: Vec<(u32, Fields, Fields)>,
+    call_fields: Vec<(u32, Fields)>,
     /// The response's fields a later chunk changed, for the next chunk.
     response: Fields,
     /// A call's opening delta, held for its signature, which comes next if
@@ -258,8 +246,8 @@ impl Chunks {
                 let index = self.calls;
                 self.calls += 1;
                 let mut call = call_json(Some(index), Some(id), Some(name), "");
-                if let Some((_, entry, function)) = fields {
-                    merge_call(&mut call, &entry, &function);
+                if let Some((_, fields)) = fields {
+                    merge_call(&mut call, &fields);
                 }
                 self.opening = Some((block, call));
                 Some(index)
@@ -374,6 +362,9 @@ impl Chunks {
                 self.finish = Some(finish.clone());
                 self.begin(out);
             }
+            Output::BlockFields { block, native } if *native.format == *OPENAI => {
+                self.call_fields.push((*block, native.fields.clone()));
+            }
             Output::Native(NativeValue { format, value: raw }) if **format == *OPENAI => {
                 self.write_native(raw, out);
             }
@@ -387,22 +378,19 @@ impl Chunks {
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())
     }
 
-    /// An event of this format's own: usage, call and response fields are
-    /// kept for their place, a chunk is written as it came.
+    /// An event of this format's own: usage and response fields are kept
+    /// for their place, a chunk is written as it came.
     fn write_native(&mut self, raw: &Value, out: &mut BytesMut) {
         if let Some(fields) = usage_fields(raw) {
             self.usage_extra.extend(fields.clone());
         } else if let Some(fields) = response_of(raw) {
             merge_into(&mut self.response, fields);
-        } else if let Some((block, entry, function)) = call_fields_of(raw) {
-            self.call_fields
-                .push((block, entry.clone(), function.clone()));
         } else {
             match raw {
                 // An event that could not be read, as it came.

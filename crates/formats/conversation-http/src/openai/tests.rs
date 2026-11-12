@@ -294,7 +294,7 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
         panic!("{out:?}");
     };
     assert_eq!(
-        start.native.fields()["x_vendor"],
+        start.native.own(OPENAI)["x_vendor"],
         json!({ "usage": { "prompt_tokens": 3 } })
     );
     assert_eq!(
@@ -316,7 +316,7 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let chat = OpenAiChat.decode_json(&body);
     assert_eq!(chat.messages[0].content, [Content::from("ok")]);
     assert_eq!(
-        chat.messages[0].native.fields().get("reasoning_content"),
+        chat.messages[0].native.own(OPENAI).get("reasoning_content"),
         Some(&json!("hm"))
     );
     assert_eq!(
@@ -628,7 +628,7 @@ fn what_a_later_chunk_changes_of_the_response_is_native_after_its_usage() {
     let Some(Output::Start(start)) = out.first() else {
         panic!("{out:?}");
     };
-    assert_eq!(start.native.fields()["x_vendor"], json!({ "id": "r" }));
+    assert_eq!(start.native.own(OPENAI)["x_vendor"], json!({ "id": "r" }));
     // Fields said again as they were are no news.
     let changed =
         json!({ "response": { "x_vendor": { "id": "r", "usage": { "prompt_tokens": 1 } } } });
@@ -1002,13 +1002,12 @@ fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
         { "role": "user", "name": "alice", "content": "hi" },
     ], "tools": [{ "type": "function", "function": { "name": "f" } }], "seed": 7 });
     let chat = OpenAiChat.decode_json(&body);
-    assert_eq!(chat.native.fields().get("seed"), Some(&json!(7)));
-    assert_eq!(chat.native.format(), Some(OPENAI));
+    assert_eq!(chat.native.own(OPENAI).get("seed"), Some(&json!(7)));
     // A function tool is the kind's.
     assert_eq!(chat.tools, [Tool::new("f", Value::Null)]);
     assert_eq!(chat.messages[0].text(), "hi");
     assert_eq!(
-        chat.messages[0].native.fields().get("name"),
+        chat.messages[0].native.own(OPENAI).get("name"),
         Some(&json!("alice"))
     );
     // Another format drops its `seed`; OpenAI keeps it.
@@ -1035,7 +1034,7 @@ fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
 fn several_choices_are_refused_as_a_bad_request() {
     let body = json!({ "model": "m", "messages": [], "n": 2 });
     let chat = OpenAiChat.decode_json(&body);
-    assert_eq!(chat.native.fields().get("n"), Some(&json!(2)));
+    assert_eq!(chat.native.own(OPENAI).get("n"), Some(&json!(2)));
     let refused = OpenAiChat.encode_request(&chat).err();
     assert!(refused.is_some_and(|f| f.is(respan_gateway_core::FaultKind::Client)));
     // One choice is the default, and says nothing.
@@ -1071,7 +1070,7 @@ fn the_user_field_is_read_redacted_and_translated() {
     // A user that is not a string is not the kind's: it stays in `native`.
     let odd = OpenAiChat.decode_json(&json!({ "user": 7, "messages": [] }));
     assert_eq!(
-        (odd.user, odd.native.fields().get("user")),
+        (odd.user, odd.native.own(OPENAI).get("user")),
         (None, Some(&json!(7)))
     );
 }
@@ -1080,8 +1079,8 @@ fn the_user_field_is_read_redacted_and_translated() {
 fn a_plugin_that_removes_tools_sends_the_request_without_them() {
     let body = json!({ "model": "m", "messages": [], "tools": [{ "type": "function" }] });
     let edited = written(body, |c| {
-        c.native.fields_mut(OPENAI).shift_remove("tools");
-        c.native.fields_mut(OPENAI).insert("seed".into(), 7.into());
+        c.native.own_mut(OPENAI).shift_remove("tools");
+        c.native.own_mut(OPENAI).insert("seed".into(), 7.into());
     });
     assert_eq!(
         edited.ok(),
@@ -1830,7 +1829,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
         { "role": "user", "content": "hi", "cache_control": { "type": "ephemeral" } },
     ]});
     let chat = OpenAiChat.decode_json(&body);
-    let fields = chat.messages[0].native.fields();
+    let fields = chat.messages[0].native.own(OPENAI);
     assert_eq!(
         fields.get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))

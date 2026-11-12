@@ -2,7 +2,7 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields;
+use crate::fields::{self, native_of};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
@@ -92,14 +92,6 @@ pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
     Cow::Owned(chat)
 }
 
-/// `fields` as the native of a value decoded by `format`: none if empty.
-pub(crate) fn native_fields(format: &str, fields: Map<String, Value>) -> Option<NativeFields> {
-    match fields.is_empty() {
-        true => None,
-        false => Some(NativeFields::new(format, fields)),
-    }
-}
-
 /// Merge the fields of `native` into `target`, an object, objects among them
 /// field by field.
 pub(crate) fn merge_fields(target: &mut Value, native: &Map<String, Value>) {
@@ -126,8 +118,9 @@ pub(crate) fn merge_into(into: &mut Map<String, Value>, fields: &Map<String, Val
 /// The fields of the native a response's start carries, if it is of
 /// `format`.
 pub(crate) fn own_fields(start: Option<&Start>, format: &str) -> Map<String, Value> {
-    let start = start.filter(|s| s.native.format() == Some(format));
-    start.map(|s| s.native.fields().clone()).unwrap_or_default()
+    start
+        .map(|s| s.native.fields_for(format))
+        .unwrap_or_default()
 }
 
 /// Which counts a format's usage object has a field for.
@@ -333,7 +326,7 @@ fn decode_any_part<C: Schema>(p: &Value) -> Content {
             let fields = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
             let mut part = Content::from(text);
             if let Content::Text { native, .. } = &mut part {
-                *native = native_fields(C::NAME, fields);
+                *native = native_of(C::NAME, fields);
             }
             part
         }
@@ -352,7 +345,7 @@ pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Messa
     let fields = fields.filter(|(k, v)| *k != "role" && *k != "content" && says(v));
     let mut message = Message::new(role, "");
     message.content = decode_content::<C>(&m["content"]);
-    message.native = native_fields(
+    message.native = native_of(
         C::NAME,
         fields.map(|(k, v)| (k.clone(), v.clone())).collect(),
     );
@@ -447,7 +440,7 @@ pub(crate) fn each_tool(
 /// A web search of `format`, `fields` its native.
 pub(crate) fn read_search(format: &str, fields: Map<String, Value>) -> ProviderTool {
     ProviderTool::WebSearch {
-        native: native_fields(format, fields),
+        native: native_of(format, fields),
     }
 }
 
@@ -605,37 +598,33 @@ pub(crate) fn set(v: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     };
 }
 
-/// Conveniences for optional format-tagged fields.
+/// Conveniences for optional format-tagged fields. A format reads only its
+/// own: there is no accessor for another's.
 pub(crate) trait NativeFieldsExt {
-    /// The fields, none if there are none.
-    fn fields(&self) -> &Map<String, Value>;
-    /// The fields to edit, made of `format` if there are none.
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
+    /// The fields if they are of `format`, else none.
+    fn own(&self, format: &str) -> &Map<String, Value>;
+    /// The fields of `format` to edit ([`fields::own_mut`]).
+    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value>;
     /// The fields to write in `format` ([`fields::kept`]).
     fn fields_for(&self, format: &str) -> Map<String, Value>;
-    /// The format the fields are of.
-    fn format(&self) -> Option<&str>;
     /// Whether there are no fields.
     fn is_empty(&self) -> bool;
 }
 
 impl NativeFieldsExt for Option<NativeFields> {
-    fn fields(&self) -> &Map<String, Value> {
+    fn own(&self, format: &str) -> &Map<String, Value> {
         static EMPTY: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
-        self.as_ref()
-            .map(|n| &n.fields)
-            .unwrap_or_else(|| EMPTY.get_or_init(Map::new))
+        match self {
+            Some(n) if *n.format == *format => &n.fields,
+            // WARN: another format's native fields are not read here, silently.
+            _ => EMPTY.get_or_init(Map::new),
+        }
     }
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value> {
-        &mut self
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
+    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value> {
+        fields::own_mut(self, format)
     }
     fn fields_for(&self, format: &str) -> Map<String, Value> {
         fields::kept(format, self)
-    }
-    fn format(&self) -> Option<&str> {
-        self.as_ref().map(|n| n.format.as_ref())
     }
     fn is_empty(&self) -> bool {
         self.as_ref().is_none_or(NativeFields::is_empty)
@@ -695,13 +684,6 @@ pub(crate) fn take_native<T>(
         input.native = None;
     }
     Some(parsed)
-}
-
-/// The request's own native field `key`, if it is of `format`.
-pub(crate) fn own_native(input: &Input, format: &str, key: &str) -> Option<Value> {
-    (input.native.format() == Some(format))
-        .then(|| input.native.fields().get(key).cloned())
-        .flatten()
 }
 
 #[cfg(test)]
