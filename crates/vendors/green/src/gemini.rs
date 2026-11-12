@@ -15,7 +15,7 @@ use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Dialect, Dialected, Model, Models, Vendor, VendorProvider,
-    built_wrong, http, json as body_json, models, own,
+    built_wrong, http, json as body_json, models, own_mut,
 };
 
 /// Its own API: `generateContent` and Veo.
@@ -107,7 +107,7 @@ fn signed(input: &mut Input) -> Result<(), Fault> {
 
 /// `native` with `signature` in its `extra_content`, as Google's Chat takes it.
 fn sign(native: &mut Option<NativeFields>, signature: String) {
-    let fields = own(native, OpenAiChat::NAME);
+    let fields = own_mut(native, OpenAiChat::NAME);
     let extra = fields.entry("extra_content").or_insert_with(|| json!({}));
     extra["google"]["thought_signature"] = signature.into();
 }

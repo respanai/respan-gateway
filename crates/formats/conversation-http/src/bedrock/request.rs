@@ -7,17 +7,12 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
 };
-use respan_gateway_core::{Fault, NativeFields};
+use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use super::{AUDIO, BEDROCK, DOCUMENTS, IMAGES, ROLES, format_of};
-
-/// The cache marker of a block, Anthropic's `cache_control`, which Converse
-/// writes as a `cachePoint` after it.
-const CACHE_MARKER: &str = "cache_control";
+use super::{AUDIO, DOCUMENTS, IMAGES, ROLES, format_of};
 use crate::schema::{
-    NativeFieldsExt, arguments_object, budget_for, claude_sampling, sealed, set, stop_json,
-    untranslatable,
+    arguments_object, budget_for, claude_sampling, sealed, set, stop_json, untranslatable,
 };
 
 /// The leading system messages as `system` blocks, and the rest, where a
@@ -26,27 +21,15 @@ pub(super) fn split_system(chat: &Input) -> (Vec<Value>, &[Message]) {
     let is_system = |m: &Message| matches!(m.role, Role::System | Role::Developer);
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
-    let mut blocks = Vec::new();
-    for message in system {
-        for part in &message.content {
-            match part {
-                Content::Text { text, native, .. } => {
-                    if !text.trim().is_empty() {
-                        blocks.push(json!({ "text": text }));
-                        if cached(native) {
-                            blocks.push(cache_point());
-                        }
-                    }
-                }
-                Content::Native(raw) if *raw.format == *BEDROCK => {
-                    blocks.push(Value::clone(&raw.value));
-                }
-                // WARN: a system prompt's media and other parts are dropped.
-                _ => {}
-            }
-        }
-    }
-    (blocks, rest)
+    // WARN: Anthropic's `cache_control`, on a part or tool, is no `cachePoint`;
+    // dropped here, silently, and the prompt cache with it.
+    // WARN: a system prompt's media and other parts are dropped.
+    let parts = system.iter().flat_map(|m| &m.content);
+    let blocks = parts.filter_map(|part| match part {
+        Content::Text { text, .. } if !text.trim().is_empty() => Some(json!({ "text": text })),
+        _ => None,
+    });
+    (blocks.collect(), rest)
 }
 
 /// The messages as Converse's: its content blocks, and, as it needs the
@@ -55,11 +38,8 @@ pub(super) fn split_system(chat: &Input) -> (Vec<Value>, &[Message]) {
 pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> {
     let mut out: Vec<Value> = Vec::new();
     for m in messages {
-        let role = match &m.role {
-            Role::Native { format, name, .. } if **format == *BEDROCK => name.as_str(),
-            // WARN: a role Converse lacks, such as a later system message's, is a user's.
-            role => ROLES.name(role).unwrap_or("user"),
-        };
+        // WARN: a role Converse lacks, such as a later system message's, is a user's.
+        let role = ROLES.name(&m.role).unwrap_or("user");
         let mut blocks: Vec<Value> = Vec::new();
         for (part, signature) in sealed(&m.content) {
             match (part, signature) {
@@ -77,12 +57,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 (Content::Reasoning { .. } | Content::Signature(_), _) => continue,
                 _ => {}
             }
-            if let Some(written) = block(part)? {
-                blocks.push(written);
-                if marked(part) {
-                    blocks.push(cache_point());
-                }
-            }
+            blocks.extend(block(part)?);
         }
         if blocks.is_empty() {
             continue;
@@ -97,28 +72,6 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
         }
     }
     Ok(out)
-}
-
-/// What Converse caches up to: a `cachePoint` after the block.
-fn cache_point() -> Value {
-    json!({ "cachePoint": { "type": "default" } })
-}
-
-/// Whether fields hold a cache marker: the block they are on is cached up
-/// to.
-fn cached(native: &Option<NativeFields>) -> bool {
-    native.fields().contains_key(CACHE_MARKER)
-}
-
-/// Whether a part is marked to be cached up to.
-fn marked(part: &Content) -> bool {
-    match part {
-        Content::Text { native, .. }
-        | Content::ToolCall { native, .. }
-        | Content::ToolResult { native, .. } => cached(native),
-        Content::Image(media) | Content::Document(media) => cached(&media.native),
-        _ => false,
-    }
 }
 
 /// A part as a content block, if Converse has one: `None` for a text that
@@ -165,7 +118,6 @@ fn block(part: &Content) -> Result<Option<Value>, Fault> {
             }
             json!({ "toolResult": result })
         }
-        Content::Native(raw) if *raw.format == *BEDROCK => Value::clone(&raw.value),
         _ => return Ok(None),
     }))
 }
@@ -233,9 +185,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         spec.insert("inputSchema".into(), json!({ "json": schema }));
-        let mut fields = t.native.fields_for(BEDROCK);
-        fields.shift_remove(CACHE_MARKER);
-        spec.extend(fields);
         json!({ "toolSpec": spec })
     };
     let choice = match &chat.options.tool_choice {
@@ -245,13 +194,7 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(ToolChoice::Tool(name)) => Some(json!({ "tool": { "name": name } })),
         Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
     };
-    let mut tools: Vec<Value> = Vec::new();
-    for t in &chat.tools {
-        tools.push(tool(t));
-        if cached(&t.native) {
-            tools.push(cache_point());
-        }
-    }
+    let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     if tools.is_empty() {
         return Ok(());
     }

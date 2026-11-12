@@ -24,26 +24,23 @@ mod values;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use crate::fields::{rest_of, unix_now};
+pub(crate) use crate::fields::{native_of, rest_of, unix_now};
 pub use errors::{merge_details, read_provider_error};
 pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
-pub(crate) use respan_gateway_conversation::block_fields;
 pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
-    EFFORT_BUDGETS, budget_for, claude_sampling, effort_for, effort_name, own_native, parse_effort,
-    take_native,
+    EFFORT_BUDGETS, budget_for, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
     FAILED_RESULT_PREFIX, Names, NativeFieldsExt, Totals, UsageFields, arguments_object,
     check_usage, count, decode_content, decode_message, decode_tools, each_tool, encode_content,
-    encode_message, ended, fits, merge_fields, merge_into, merge_missing, native_fields, only,
-    own_fields, own_shapes, read_search, remainder, sealed, set, source_url, stop_json,
-    take_strict, take_text, tidy, unsupported_fields, untranslatable, unwritable_content,
-    usage_extra, write_search,
+    encode_message, ended, fits, merge_fields, merge_into, merge_missing, only, own_fields,
+    own_shapes, read_search, remainder, sealed, set, source_url, stop_json, take_strict, take_text,
+    tidy, unsupported_fields, untranslatable, unwritable_content, usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};

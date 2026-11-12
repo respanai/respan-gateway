@@ -126,10 +126,9 @@ fn an_edited_tool_call_and_result_keep_their_blocks() {
     ]});
     let chat = AnthropicMessages.decode_json(&body);
     assert_eq!(
-        chat.tools[0].native.fields().get("cache_control"),
+        chat.tools[0].native.own(ANTHROPIC).get("cache_control"),
         Some(&marker)
     );
-    assert_eq!(chat.tools[0].native.format(), Some(ANTHROPIC));
     assert_eq!(
         chat.options.tool_choice,
         Some(ToolChoice::Tool("lookup".into()))
@@ -383,7 +382,7 @@ fn a_system_prompt_with_cache_markers_is_written_as_it_is() {
     };
     assert_eq!(text, "the repo");
     assert_eq!(
-        native.fields().get("cache_control"),
+        native.own(ANTHROPIC).get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))
     );
     assert_eq!(chat.messages[0].content[1], Content::from("be brief"));
@@ -704,12 +703,18 @@ fn a_text_block_with_citations_is_text_with_its_fields_and_events() {
         "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
     ]);
     assert_eq!(out.len(), 5);
-    assert!(matches!(&out[0], Output::Native(NativeValue { .. })));
+    assert!(matches!(&out[0], Output::BlockFields { block: 0, .. }));
     assert_eq!(out[1], Output::block_start(0, Block::Text));
     assert_eq!(out[2], Output::text(0, "x"));
     // And written as it is, in this format.
     let stream = stream_of(&out).expect("a stream");
     assert!(stream.contains("citations_delta"), "{stream}");
+    // Behind reasoning withheld, as in a tool loop's later step, the citation
+    // names the text's index on the wire.
+    let behind = [&[Output::signature(None, "w")][..], &out].concat();
+    let events = stream_events(&stream_of(&behind).expect("a stream"));
+    let cited = |e: &Value| e["delta"]["type"] == "citations_delta" && e["index"] == 1;
+    assert!(events.iter().any(cited), "{events:?}");
 }
 
 #[test]

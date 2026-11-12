@@ -258,10 +258,8 @@ impl ConverseDecoder {
             } else if b["reasoningContent"].is_object() {
                 self.reasoning(block, &b["reasoningContent"], out);
             } else {
-                self.other(
-                    json!({ "type": "content_block", "index": block, "block": b }),
-                    out,
-                );
+                let v = json!({ "type": "content_block", "block": b });
+                out.push(Output::block_native(self.name.clone(), block, v));
                 continue;
             }
             self.close(block, out);

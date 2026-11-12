@@ -14,13 +14,15 @@
 //!   whole body's blocks are the same events, one delta each.
 //! - `message_delta`'s `stop_reason` is the [`Output::Finish`]; `usage` of
 //!   `message_start` and `message_delta` are [`Output::Usage`] increments.
-//! - A block's fields the kind has no place for, its `signature` (a
-//!   `signature_delta`) among them, are its [`Output::block_fields`].
-//! - What else the kind has no form for is a [`Output::Native`] of this
-//!   format, as the stream event that carries it: `ping`, a block
-//!   of another type (and its deltas and stop), citations, a `stop_sequence`
-//!   (as a `message_delta`), an event of an unknown type. In a whole body a
-//!   block of another type is a `content_block_start` of the whole block.
+//! - A block's fields the kind has no place for are its
+//!   [`Output::BlockFields`].
+//! - What else the kind has no form for is a native of this format, as the
+//!   stream event that carries it: an [`Output::BlockNative`] if it has an
+//!   `index` (a block of another type, its deltas and stop, citations), else
+//!   an [`Output::Native`] (`ping`, a `stop_sequence` as a `message_delta`,
+//!   an event of an unknown type). The block's number is the `index` written.
+//!   In a whole body a block of another type is a `content_block_start` of
+//!   the whole block.
 //!   `message_stop` ends the stream.
 //!
 //! Encoders do the reverse. A stream's blocks are written one at a time, as
@@ -38,12 +40,11 @@ mod tests;
 use crate::schema::{
     Asked, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage,
     claude_sampling, count, decode_content, decode_message, encode_content, encode_message,
-    merge_details, merge_fields, merge_into, merge_missing, native_fields, own_fields, says,
-    sealed, set, stop_json, unsupported_fields, unwritable_content, usage_extra,
+    merge_details, merge_fields, merge_into, merge_missing, native_of, own_fields, says, sealed,
+    set, stop_json, unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
-    block_fields,
 };
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, NativeValue};
@@ -212,7 +213,7 @@ fn is_empty(m: &Message) -> bool {
 
 /// Whether a message's fields are none Anthropic writes.
 fn unsaid(m: &Message) -> bool {
-    m.native.format() != Some(ANTHROPIC)
+    m.native.own(ANTHROPIC).is_empty()
 }
 
 /// Anthropic counts no reasoning apart from the output.
@@ -283,7 +284,7 @@ impl Schema for AnthropicMessages {
             .filter_map(|s| s.as_str().map(Into::into))
             .collect();
         chat.user = v["metadata"]["user_id"].as_str().map(Into::into);
-        chat.native = native_fields(ANTHROPIC, unsupported_fields(v, KNOWN, &[]));
+        chat.native = native_of(ANTHROPIC, unsupported_fields(v, KNOWN, &[]));
         // Metadata beside the user id is kept for this format to write again.
         let others = v["metadata"].as_object().into_iter().flatten();
         let others: Map<String, Value> = others
@@ -292,7 +293,7 @@ impl Schema for AnthropicMessages {
             .collect();
         if !others.is_empty() {
             chat.native
-                .fields_mut(ANTHROPIC)
+                .own_mut(ANTHROPIC)
                 .insert("metadata".into(), others.into());
         }
         if says(&v["system"]) {
@@ -306,7 +307,7 @@ impl Schema for AnthropicMessages {
             chat.messages.push(message);
         }
         read_tools_of(v, &mut chat);
-        chat.native = native_fields(ANTHROPIC, std::mem::take(chat.native.fields_mut(ANTHROPIC)));
+        chat.native = native_of(ANTHROPIC, std::mem::take(chat.native.own_mut(ANTHROPIC)));
         read_output(v, &mut chat);
         read_thinking(&mut chat);
         read_effort(&mut chat);
@@ -359,21 +360,13 @@ impl Schema for AnthropicMessages {
         if let Some(user) = &chat.user {
             metadata["user_id"] = user.as_str().into();
         }
-        let own = chat.native.format() == Some(ANTHROPIC);
         if let Some(more) = chat
             .native
-            .fields()
+            .own(ANTHROPIC)
             .get("metadata")
             .and_then(Value::as_object)
         {
-            merge_fields(
-                &mut metadata,
-                &more
-                    .iter()
-                    .filter(|_| own)
-                    .map(|(k, x)| (k.clone(), x.clone()))
-                    .collect(),
-            );
+            merge_fields(&mut metadata, more);
         }
         let empty = metadata.as_object().is_none_or(Map::is_empty);
         set(&mut v, "metadata", (!empty).then_some(metadata));
@@ -430,33 +423,30 @@ impl Schema for AnthropicMessages {
                 }
                 // WARN: Anthropic signs only thinking; another block's signature is dropped here, silently.
                 AssembledItem::Signature { .. } => {}
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if **format == *ANTHROPIC && block_fields(raw).is_some() =>
-                {
-                    let Some((block, more)) = block_fields(raw) else {
-                        continue;
-                    };
-                    match at.iter().find(|(b, _)| *b == block) {
-                        Some((_, place)) => merge_fields(&mut content[*place], more),
-                        None => fields.push((block, more.clone())),
+                AssembledItem::BlockFields { block, native } if *native.format == *ANTHROPIC => {
+                    match at.iter().find(|(b, _)| b == block) {
+                        Some((_, place)) => merge_fields(&mut content[*place], &native.fields),
+                        None => fields.push((*block, native.fields.clone())),
                     }
                 }
                 AssembledItem::Native(NativeValue { format, value: raw })
                     if **format == *ANTHROPIC =>
                 {
-                    let place = raw["index"]
-                        .as_u64()
-                        .and_then(|i| u32::try_from(i).ok())
-                        .and_then(|i| at.iter().find(|(b, _)| *b == i))
-                        .map(|(_, place)| *place);
+                    match raw["type"].as_str() {
+                        Some("ping") => {}
+                        Some("message_delta") => stop.add(raw),
+                        _ => return Err(unwritable_content()),
+                    }
+                }
+                AssembledItem::BlockNative { block, native } if *native.format == *ANTHROPIC => {
+                    let raw = &native.value;
+                    let place = at.iter().find(|(b, _)| b == block).map(|(_, place)| *place);
                     match (raw["type"].as_str(), place) {
                         (Some("content_block_start"), _) => {
-                            let index = raw["index"].as_u64().and_then(|i| u32::try_from(i).ok());
-                            at.extend(index.map(|i| (i, content.len())));
+                            at.push((*block, content.len()));
                             content.push(raw["content_block"].clone());
                         }
-                        (Some("content_block_stop" | "ping"), _) => {}
-                        (Some("message_delta"), _) => stop.add(raw),
+                        (Some("content_block_stop"), _) => {}
                         (Some("content_block_delta"), Some(place)) => {
                             let delta = &raw["delta"];
                             match delta["type"].as_str() {
@@ -483,7 +473,7 @@ impl Schema for AnthropicMessages {
                     }
                 }
                 // Another format's: only a client of that format could read it.
-                AssembledItem::Native(_) => {}
+                _ => {}
             }
         }
         for (place, text) in input {

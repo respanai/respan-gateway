@@ -1,7 +1,7 @@
 //! Gemini generateContent, streamed or whole, as events: the decoder.
 
 use crate::schema::{
-    Totals, error_event, native_fields, remainder, says, says_error, unreadable_event,
+    Totals, error_event, native_of, remainder, says, says_error, unreadable_event,
 };
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
@@ -188,7 +188,7 @@ impl GeminiDecoder {
             self.id = v["responseId"].as_str().unwrap_or_default().to_owned();
             let model = v["modelVersion"].as_str().unwrap_or_default();
             let mut start = Start::new(self.id.clone(), model);
-            start.native = native_fields(GEMINI, top.clone());
+            start.native = native_of(GEMINI, top.clone());
             self.response = top;
             out.push(Output::Start(start));
         } else {
