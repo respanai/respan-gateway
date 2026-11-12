@@ -603,8 +603,8 @@ pub(crate) fn set(v: &mut Map<String, Value>, key: &str, value: Option<Value>) {
 pub(crate) trait NativeFieldsExt {
     /// The fields if they are of `format`, else none.
     fn own(&self, format: &str) -> &Map<String, Value>;
-    /// The fields to edit, made of `format` if there are none.
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
+    /// The fields of `format` to edit ([`fields::own_mut`]).
+    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value>;
     /// The fields to write in `format` ([`fields::kept`]).
     fn fields_for(&self, format: &str) -> Map<String, Value>;
     /// Whether there are no fields.
@@ -620,10 +620,8 @@ impl NativeFieldsExt for Option<NativeFields> {
             _ => EMPTY.get_or_init(Map::new),
         }
     }
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value> {
-        &mut self
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
+    fn own_mut(&mut self, format: &str) -> &mut Map<String, Value> {
+        fields::own_mut(self, format)
     }
     fn fields_for(&self, format: &str) -> Map<String, Value> {
         fields::kept(format, self)

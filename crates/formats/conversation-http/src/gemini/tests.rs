@@ -391,7 +391,7 @@ fn what_gemini_cannot_say_is_refused_or_dropped() {
     // Another format's native fields are dropped.
     assert!(!refused(|c| {
         c.native
-            .fields_mut("openai-chat")
+            .own_mut("openai-chat")
             .insert("seed".into(), 1.into());
     }));
 }

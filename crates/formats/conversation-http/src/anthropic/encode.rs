@@ -32,6 +32,8 @@ pub(super) struct EventStream {
     next: u32,
     /// The fields of blocks that have not opened, by block.
     fields: Vec<(u32, Map<String, Value>)>,
+    /// The index of each block only natives carry, by block.
+    natives: Vec<(u32, u32)>,
     gate: Gate,
 }
 
@@ -103,6 +105,20 @@ impl EventStream {
             delta(index, &held, out);
         }
         Ok(())
+    }
+
+    /// The index a native of `block` names: its block's on the wire, or the
+    /// next for a block only natives carry (a tool loop's numbers are not
+    /// the wire's).
+    fn native_index(&mut self, block: u32) -> u32 {
+        let slot = self.blocks.iter().find(|b| b.block == block);
+        let typed = slot.and_then(|b| b.index);
+        let named = self.natives.iter().find(|(b, _)| *b == block).map(|n| n.1);
+        typed.or(named).unwrap_or_else(|| {
+            self.natives.push((block, self.next));
+            self.next += 1;
+            self.next - 1
+        })
     }
 
     /// Opens the waiting blocks, one after another, as far as each has ended.
@@ -307,12 +323,8 @@ impl EventStream {
             }
             Output::BlockNative { block, native } if *native.format == *ANTHROPIC => {
                 self.begin(out);
-                // A block this format keeps takes its index.
-                if native.value["type"] == "content_block_start" {
-                    self.next = self.next.max(block.saturating_add(1));
-                }
                 let mut raw = Value::clone(&native.value);
-                raw["index"] = (*block).into();
+                raw["index"] = self.native_index(*block).into();
                 emit(out, raw);
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *ANTHROPIC => {

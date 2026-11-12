@@ -39,7 +39,7 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
         let search = read_search(OPENAI, options.clone());
         chat.provider_tools.push(search);
         chat.native
-            .fields_mut(OPENAI)
+            .own_mut(OPENAI)
             .shift_remove("web_search_options");
     }
 }

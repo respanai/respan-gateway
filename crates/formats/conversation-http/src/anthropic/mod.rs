@@ -304,7 +304,7 @@ impl Schema for AnthropicMessages {
             .collect();
         if !others.is_empty() {
             chat.native
-                .fields_mut(ANTHROPIC)
+                .own_mut(ANTHROPIC)
                 .insert("metadata".into(), others.into());
         }
         if says(&v["system"]) {
@@ -318,7 +318,7 @@ impl Schema for AnthropicMessages {
             chat.messages.push(message);
         }
         read_tools_of(v, &mut chat);
-        chat.native = native_of(ANTHROPIC, std::mem::take(chat.native.fields_mut(ANTHROPIC)));
+        chat.native = native_of(ANTHROPIC, std::mem::take(chat.native.own_mut(ANTHROPIC)));
         read_output(v, &mut chat);
         read_thinking(&mut chat);
         read_effort(&mut chat);

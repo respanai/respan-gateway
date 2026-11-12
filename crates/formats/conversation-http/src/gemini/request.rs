@@ -553,7 +553,7 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
         chat.provider_tools = provided;
     } else if says(&v["tools"]) {
         chat.native
-            .fields_mut(GEMINI)
+            .own_mut(GEMINI)
             .insert("tools".into(), v["tools"].clone());
     }
     let config = &v["toolConfig"];
@@ -573,7 +573,7 @@ pub(super) fn read_tools(v: &Value, chat: &mut Input) {
     }
     if !rest.is_empty() {
         chat.native
-            .fields_mut(GEMINI)
+            .own_mut(GEMINI)
             .insert("toolConfig".into(), rest.into());
     }
 }
@@ -699,7 +699,7 @@ pub(super) fn read_config(v: &Value, chat: &mut Input) {
     rest.retain(|_, v| says(v) || v.is_boolean() || v.is_number());
     if !rest.is_empty() {
         chat.native
-            .fields_mut(GEMINI)
+            .own_mut(GEMINI)
             .insert("generationConfig".into(), rest.into());
     }
 }

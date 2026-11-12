@@ -370,7 +370,7 @@ impl Schema for GeminiGenerate {
         read_messages(v, &mut chat);
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat.native = native_of(GEMINI, std::mem::take(chat.native.fields_mut(GEMINI)));
+        chat.native = native_of(GEMINI, std::mem::take(chat.native.own_mut(GEMINI)));
         chat
     }
 

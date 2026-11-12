@@ -282,7 +282,7 @@ impl Schema for OpenAiChat {
         chat.user = v["user"].as_str().map(Into::into);
         chat.native = native_of(OPENAI, unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
-            chat.native.fields_mut(OPENAI).shift_remove("user");
+            chat.native.own_mut(OPENAI).shift_remove("user");
         }
         chat.options.service_tier = take_text(&mut chat, "service_tier");
         chat.options.verbosity = take_text(&mut chat, "verbosity");
@@ -293,7 +293,7 @@ impl Schema for OpenAiChat {
             chat.messages.push(message);
         }
         read_openai_tools(v, &mut chat);
-        chat.native = native_of(OPENAI, std::mem::take(chat.native.fields_mut(OPENAI)));
+        chat.native = native_of(OPENAI, std::mem::take(chat.native.own_mut(OPENAI)));
         read_response_format(v, &mut chat);
         chat.options.reasoning =
             take_native(&mut chat, "reasoning_effort", |e| parse_effort(e.as_str()?))

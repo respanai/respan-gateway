@@ -147,7 +147,7 @@ impl AnthropicDecoder {
     }
 
     /// The fields of block `b` the kind has no place for, beyond its `known`
-    /// ones, as one `Native` before the block opens, which the encoder merges
+    /// ones, as its `BlockFields` before the block opens, which the encoder merges
     /// into the block's start.
     fn fields(&self, block: u32, b: &Value, known: &[&str], out: &mut Vec<Output>) {
         let rest = b.as_object().into_iter().flatten();

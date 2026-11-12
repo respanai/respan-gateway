@@ -1079,8 +1079,8 @@ fn the_user_field_is_read_redacted_and_translated() {
 fn a_plugin_that_removes_tools_sends_the_request_without_them() {
     let body = json!({ "model": "m", "messages": [], "tools": [{ "type": "function" }] });
     let edited = written(body, |c| {
-        c.native.fields_mut(OPENAI).shift_remove("tools");
-        c.native.fields_mut(OPENAI).insert("seed".into(), 7.into());
+        c.native.own_mut(OPENAI).shift_remove("tools");
+        c.native.own_mut(OPENAI).insert("seed".into(), 7.into());
     });
     assert_eq!(
         edited.ok(),

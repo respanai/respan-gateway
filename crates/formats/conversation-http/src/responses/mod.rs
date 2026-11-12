@@ -209,12 +209,12 @@ impl Schema for OpenAiResponses {
         chat.user = v["user"].as_str().map(Into::into);
         chat.native = native_of(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
-            chat.native.fields_mut(RESPONSES).shift_remove("user");
+            chat.native.own_mut(RESPONSES).shift_remove("user");
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
             chat.native
-                .fields_mut(RESPONSES)
+                .own_mut(RESPONSES)
                 .insert(request::INSTRUCTIONS.into(), true.into());
         }
         request::read_input(v, &mut chat);

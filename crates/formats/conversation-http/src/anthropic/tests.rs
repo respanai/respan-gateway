@@ -685,6 +685,12 @@ fn a_text_block_with_citations_is_text_with_its_fields_and_events() {
     // And written as it is, in this format.
     let stream = stream_of(&out).expect("a stream");
     assert!(stream.contains("citations_delta"), "{stream}");
+    // Behind reasoning withheld, as in a tool loop's later step, the citation
+    // names the text's index on the wire.
+    let behind = [&[Output::signature(None, "w")][..], &out].concat();
+    let events = stream_events(&stream_of(&behind).expect("a stream"));
+    let cited = |e: &Value| e["delta"]["type"] == "citations_delta" && e["index"] == 1;
+    assert!(events.iter().any(cited), "{events:?}");
 }
 
 #[test]
