@@ -435,7 +435,8 @@ impl Schema for AnthropicMessages {
                     match raw["type"].as_str() {
                         Some("ping") => {}
                         Some("message_delta") => stop.add(raw),
-                        _ => return Err(unwritable_content()),
+                        // WARN: an event of a type a body has no place for is dropped.
+                        _ => {}
                     }
                 }
                 AssembledItem::BlockNative { block, native } if *native.format == *ANTHROPIC => {
@@ -466,10 +467,12 @@ impl Schema for AnthropicMessages {
                                         None => input.push((place, json.to_owned())),
                                     }
                                 }
-                                _ => return Err(unwritable_content()),
+                                // WARN: a delta a body has no place for is dropped.
+                                _ => {}
                             }
                         }
-                        _ => return Err(unwritable_content()),
+                        // WARN: so is an event of a block that never started.
+                        _ => {}
                     }
                 }
                 // Another format's: only a client of that format could read it.

@@ -523,10 +523,14 @@ impl Events {
         annotation: &Value,
         out: &mut BytesMut,
     ) -> Result<(), Fault> {
-        let slot = self.find(block)?;
-        if slot.kind != Block::Text || slot.ended {
-            return Err(unwritable_content());
-        }
+        // WARN: an annotation of a block missing, ended or not text is dropped.
+        let Some(slot) = self
+            .find(block)
+            .ok()
+            .filter(|s| s.kind == Block::Text && !s.ended)
+        else {
+            return Ok(());
+        };
         let n = slot.annotations.len();
         slot.annotations.push(annotation.clone());
         if let Some(index) = slot.index {
