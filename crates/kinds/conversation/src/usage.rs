@@ -12,6 +12,8 @@ pub struct Usage {
     /// Of `input_tokens`, those read from a cache.
     pub cached_input_tokens: u64,
     /// Of `input_tokens`, those written to a cache.
+    // WARN: only Anthropic and Converse count them; OpenAI's formats and
+    // Gemini report none.
     pub cache_write_input_tokens: u64,
     /// Of `output_tokens`, those spent on reasoning.
     pub reasoning_tokens: u64,

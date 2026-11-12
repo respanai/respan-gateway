@@ -22,7 +22,7 @@
 //! answer keeps to. A reasoning budget is
 //! `additionalModelRequestFields.thinking`, and `Off` its disabling.
 //!
-//! Refused as having no field: `top_k`, an effort, JSON without a schema, one
+//! Refused as having no field: an effort, JSON without a schema, one
 //! tool call at a time, audio, and a system message after the conversation
 //! starts. An end user's id and the fields of another format, Anthropic's
 //! `cache_control` among them, are dropped.

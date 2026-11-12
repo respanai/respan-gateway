@@ -159,10 +159,18 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
         chat.native.own(RESPONSES),
-        json!({ "instructions": true }).as_object().expect("fields"),
-        "everything is the kind's, but that it had instructions"
+        json!({ "text": { "format": { "strict": true } }, "instructions": true })
+            .as_object()
+            .expect("fields"),
+        "everything is the kind's, but its schema's strict and that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
+    let sent = OpenAiChat.encode_request(&chat).expect("written");
+    assert!(
+        sent["response_format"]["json_schema"]
+            .get("strict")
+            .is_none()
+    );
 }
 
 #[test]
@@ -344,10 +352,9 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
         chat.options.response_format,
         Some(ResponseFormat::JsonObject)
     );
-    assert_eq!(chat.options.verbosity.as_deref(), Some("low"));
     assert_eq!(
         chat.native.own(RESPONSES).get("text"),
-        Some(&json!({ "extra": 1 }))
+        Some(&json!({ "verbosity": "low", "extra": 1 }))
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -1012,7 +1019,7 @@ fn a_foreign_value_is_dropped_beside_what_it_can_write() {
 
 #[test]
 fn every_named_effort_is_the_kinds_and_written_as_it_came() {
-    for name in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
+    for name in ["none", "minimal", "low", "medium", "high", "xhigh"] {
         let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
             "reasoning": { "effort": name } });
         let chat = decode_request(&v);
@@ -1072,14 +1079,14 @@ fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
 }
 
 #[test]
-fn a_chats_service_tier_and_verbosity_are_said_in_responses() {
+fn a_chats_service_tier_is_said_in_responses_and_its_verbosity_is_its_own() {
     let chat = OpenAiChat.decode_json(&json!({
         "model": "m", "messages": [{ "role": "user", "content": "hi" }],
         "service_tier": "flex", "verbosity": "low",
     }));
     let sent = OpenAiResponses.encode_request(&chat).expect("written");
     assert_eq!(sent["service_tier"], "flex");
-    assert_eq!(sent["text"]["verbosity"], "low");
+    assert!(sent.get("text").is_none(), "{sent:?}");
     let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
         "service_tier": "flex", "text": { "verbosity": "low" } });
     assert_eq!(round_trip(&v), v);
@@ -1087,7 +1094,7 @@ fn a_chats_service_tier_and_verbosity_are_said_in_responses() {
         .encode_request(&decode_request(&v))
         .expect("written");
     assert_eq!(sent["service_tier"], "flex");
-    assert_eq!(sent["verbosity"], "low");
+    assert!(sent.get("verbosity").is_none(), "{sent:?}");
 }
 
 /// OpenRouter has reported 87 reasoning tokens of 76 output: the answer is

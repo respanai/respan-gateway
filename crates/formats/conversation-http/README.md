@@ -168,8 +168,9 @@ maps; what Converse has no field for is refused.
 
 ## Reasoning and sampling
 
-`Input.options.reasoning` and `top_k` are the kind's; each format reads and
-writes them as below. A value the kind has no form for (an unknown effort, a
+`Input.options.reasoning` is the kind's; each format reads and
+writes it as below. `top_k` is Anthropic's and Gemini's own, and dropped
+elsewhere. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
 to its own format unchanged, and is dropped by another.
 
@@ -177,16 +178,15 @@ to its own format unchanged, and is dropped by another.
 | --- | --- | --- | --- | --- | --- |
 | `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
-| `effort: XHigh/Max` | `reasoning_effort: "xhigh"/"max"` | `reasoning.effort` | `output_config.effort` | refused | refused |
+| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | refused | refused |
 | `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
 | `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
-| `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` | refused |
 
 An effort and a budget do not convert, so each travels only to a format that
 has it (see the [kind](../../kinds/conversation/README.md)); asking for both
 at once is refused everywhere but Anthropic. Anthropic's rules of thinking
-hold beside a budget: one under 1024, a temperature but 1, or `top_k` is
+hold beside a budget: one under 1024 or a temperature but 1 is
 refused, and a default `max_tokens` exceeds the budget. Gemini levels are
 read in either case and written in lower case.
 

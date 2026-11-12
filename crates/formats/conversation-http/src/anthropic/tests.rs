@@ -1032,7 +1032,7 @@ fn large_content_in_another_order_is_written_in_that_order() {
 
 #[test]
 fn every_output_effort_is_the_kinds_and_reaches_openai() {
-    for name in ["low", "medium", "high", "xhigh", "max"] {
+    for name in ["low", "medium", "high", "xhigh"] {
         let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": name },
             "messages": [{ "role": "user", "content": "hi" }] });
         let chat = AnthropicMessages.decode_json(&v);
@@ -1048,6 +1048,18 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
             Some(json!(name))
         );
     }
+    // `max` is Anthropic's own: written back, dropped by OpenAI.
+    let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": "max" },
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let chat = AnthropicMessages.decode_json(&v);
+    assert!(chat.options.reasoning.is_none());
+    let back = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        back.ok().map(|v| v["output_config"].clone()),
+        Some(json!({ "effort": "max" }))
+    );
+    let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+    assert!(sent.is_ok_and(|v| v.get("reasoning_effort").is_none()));
 }
 
 #[test]
@@ -1069,6 +1081,11 @@ fn a_chats_json_output_is_written_as_anthropic_takes_it() {
         "name": "r", "description": "a reply", "strict": false,
         "schema": { "type": "object", "properties": { "tags": { "type": "array", "maxItems": 2 } } },
     } });
+    let back = OpenAiChat.encode_request(&chat(format.clone()));
+    assert_eq!(
+        back.ok().map(|v| v["response_format"].clone()),
+        Some(format.clone())
+    );
     let sent = AnthropicMessages
         .encode_request(&chat(format))
         .expect("written");

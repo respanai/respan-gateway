@@ -321,7 +321,6 @@ pub(crate) fn read_output(v: &Value, input: &mut Input) {
         name: "response".into(),
         description: None,
         schema: spec["schema"].clone(),
-        strict: Some(true),
     });
     if let Some(native) = &mut input.native
         && let Some(Value::Object(config)) = native.fields.get_mut("output_config")
@@ -344,7 +343,6 @@ pub(crate) fn read_effort(input: &mut Input) {
         "medium" => Some(Effort::Medium),
         "high" => Some(Effort::High),
         "xhigh" => Some(Effort::XHigh),
-        "max" => Some(Effort::Max),
         _ => None,
     };
     let Some(native) = &mut input.native else {
@@ -380,7 +378,6 @@ fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault> {
         Effort::Medium => Some("medium"),
         Effort::High => Some("high"),
         Effort::XHigh => Some("xhigh"),
-        Effort::Max => Some("max"),
         _ => {
             return Err(untranslatable(
                 "a reasoning effort Anthropic has no level for",
@@ -580,7 +577,7 @@ pub(crate) fn write_thinking(input: &Input) -> Result<Option<Value>, Fault> {
 }
 
 /// Refuse what Anthropic refuses beside a thinking budget: a budget under
-/// 1024, a temperature but 1, `top_k`.
+/// 1024, a temperature but 1.
 fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
     if budget < 1024 {
         return Err(untranslatable("a thinking budget under 1024 in Anthropic"));
@@ -589,9 +586,6 @@ fn check_thinking(input: &Input, budget: u64) -> Result<(), Fault> {
         return Err(untranslatable(
             "a temperature other than 1 beside thinking in Anthropic",
         ));
-    }
-    if input.options.top_k.is_some() {
-        return Err(untranslatable("top_k beside thinking in Anthropic"));
     }
     Ok(())
 }

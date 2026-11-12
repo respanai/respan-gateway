@@ -356,7 +356,6 @@ fn structured_output_is_a_mime_type_and_a_schema() {
             name: "response".into(),
             description: None,
             schema: schema.clone(),
-            strict: Some(true),
         })
     );
     let back = written(body, |_| {}).expect("a request");
@@ -755,18 +754,17 @@ fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
         "generationConfig": { "thinkingConfig": { "thinkingLevel": "max" } } });
     assert!(GeminiGenerate.decode_json(&v).options.reasoning.is_none());
     assert_eq!(written(v.clone(), |_| {}).ok(), Some(v));
-    for (effort, name) in [(Effort::XHigh, "xhigh"), (Effort::Max, "max")] {
-        let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
-        let sent = written(one, |c| {
-            c.options.reasoning = Some(Reasoning::effort(effort))
-        });
-        assert_eq!(
-            sent.err().map(|f| f.message().to_owned()),
-            Some(format!(
-                "Gemini does not take a reasoning effort of \"{name}\"; its highest is \"high\""
-            ))
-        );
-    }
+    let (effort, name) = (Effort::XHigh, "xhigh");
+    let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
+    let sent = written(one, |c| {
+        c.options.reasoning = Some(Reasoning::effort(effort))
+    });
+    assert_eq!(
+        sent.err().map(|f| f.message().to_owned()),
+        Some(format!(
+            "Gemini does not take a reasoning effort of \"{name}\"; its highest is \"high\""
+        ))
+    );
 }
 
 /// What a chat's `reasoning_effort` of `effort` to `model` asks of Gemini's

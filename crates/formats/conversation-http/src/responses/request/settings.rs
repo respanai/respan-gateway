@@ -4,8 +4,9 @@
 use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, native_of, only, parse_effort,
-    read_search, reasoning_of, rest_of, set, take_strict, untranslatable, write_search,
+    NativeFieldsExt, decode_tools, each_tool, effort_name, merge_fields, native_of, only,
+    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
+    write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -137,7 +138,6 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
                 name: raw["name"].as_str().unwrap_or("response").into(),
                 description: raw["description"].as_str().map(str::to_owned),
                 schema: raw["schema"].clone(),
-                strict: raw["strict"].as_bool(),
             })
         }
         _ => None,
@@ -149,7 +149,11 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
     if let Some(native) = &mut input.native
         && let Some(Value::Object(text)) = native.fields.get_mut("text")
     {
-        text.shift_remove("format");
+        // Its `strict` is Responses' own, which only Responses writes back.
+        match raw.get("strict") {
+            Some(strict) => _ = text.insert("format".into(), json!({ "strict": strict })),
+            None => _ = text.shift_remove("format"),
+        }
         if text.is_empty() {
             native.fields.shift_remove("text");
         }
@@ -161,27 +165,6 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
 
 /// The request's `text`: its own fields, with the format the kind's
 /// structured output requirement says.
-/// Its `text.verbosity`, which Chat Completions says at the top, out of its
-/// `native`.
-pub(in crate::responses) fn read_verbosity(chat: &mut Input) {
-    let Some(native) = chat.native.as_mut() else {
-        return;
-    };
-    let Some(Value::Object(text)) = native.fields.get_mut("text") else {
-        return;
-    };
-    if !text.get("verbosity").is_some_and(Value::is_string) {
-        return;
-    }
-    chat.options.verbosity = text
-        .shift_remove("verbosity")
-        .and_then(|v| v.as_str().map(str::to_owned));
-    if text.is_empty() {
-        native.fields.shift_remove("text");
-    }
-    chat.native.take_if(|n| n.is_empty());
-}
-
 pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Value>) {
     let own = input.native.own(RESPONSES).get("text").cloned();
     let mut text = own.unwrap_or_else(|| json!({}));
@@ -193,23 +176,26 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
             name,
             description,
             schema,
-            strict,
         }) => {
             let mut spec = json!({ "type": "json_schema", "name": name, "schema": schema });
             if let Some(description) = description {
                 spec["description"] = description.as_str().into();
             }
-            if let Some(strict) = strict {
-                spec["strict"] = (*strict).into();
+            if let Some(Value::Object(own)) = text.get("format") {
+                merge_fields(&mut spec, own);
             }
             Some(spec)
         }
     };
-    if let (Some(verbosity), Some(text)) = (&input.options.verbosity, text.as_object_mut()) {
-        text.insert("verbosity".into(), verbosity.as_str().into());
-    }
-    if let (Some(format), Some(text)) = (format, text.as_object_mut()) {
-        text.insert("format".into(), format);
+    if let Some(text) = text.as_object_mut() {
+        match format {
+            Some(format) => _ = text.insert("format".into(), format),
+            // A `strict` alone, of a format no longer asked for.
+            None if text.get("format").is_some_and(|f| f["type"].is_null()) => {
+                _ = text.shift_remove("format")
+            }
+            None => {}
+        }
     }
     let empty = text.as_object().is_none_or(Map::is_empty);
     set(out, "text", (!empty).then_some(text));

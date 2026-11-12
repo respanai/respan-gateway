@@ -50,24 +50,24 @@ pub use usage::Usage;
 #[non_exhaustive]
 pub struct GenerationOptions {
     /// The processing tier asked for, as OpenAI names it.
+    // WARN: Anthropic, Gemini and Converse have tiers under fields of their
+    // own (Anthropic's names differ too); they drop it.
     pub service_tier: Option<String>,
-    /// How much the answer says, as OpenAI names it.
-    pub verbosity: Option<String>,
     /// Maximum generated tokens.
     pub max_output_tokens: Option<u64>,
     /// Sampling temperature.
     pub temperature: Option<f64>,
     /// Nucleus sampling cutoff.
     pub top_p: Option<f64>,
-    /// Sampling from the `top_k` likeliest tokens only.
-    pub top_k: Option<u64>,
     /// How hard the model thinks before it answers.
     pub reasoning: Option<Reasoning>,
     /// Stop sequences.
+    // WARN: Responses has none.
     pub stop: Vec<String>,
     /// Tool selection policy.
     pub tool_choice: Option<ToolChoice>,
     /// Whether parallel tool calls are allowed.
+    // WARN: Gemini and Converse cannot turn them off.
     pub parallel_tool_calls: Option<bool>,
     /// Required shape of the generated answer.
     pub response_format: Option<ResponseFormat>,
@@ -85,8 +85,10 @@ pub struct GenerationOptions {
 #[non_exhaustive]
 pub struct Reasoning {
     /// A named effort.
+    // WARN: Converse has none.
     pub effort: Option<Effort>,
     /// A limit on the thinking, in tokens.
+    // WARN: Chat and Responses have none.
     pub budget_tokens: Option<u64>,
     /// Whether the thinking is returned, summarized where the provider only
     /// summarizes it. `Some(false)` asks that it is withheld.
@@ -118,6 +120,7 @@ pub enum Effort {
     /// No thinking.
     Off,
     /// The least thinking.
+    // WARN: Anthropic has none.
     Minimal,
     /// Little thinking.
     Low,
@@ -126,9 +129,8 @@ pub enum Effort {
     /// Much thinking.
     High,
     /// More thinking than [`Effort::High`].
+    // WARN: Gemini has none.
     XHigh,
-    /// The most thinking.
-    Max,
 }
 
 /// A common structured-output requirement.
@@ -137,6 +139,7 @@ pub enum ResponseFormat {
     /// Ordinary text.
     Text,
     /// A JSON object, without a supplied schema.
+    // WARN: Anthropic and Converse have no such mode.
     JsonObject,
     /// JSON matching a named schema.
     JsonSchema {
@@ -146,8 +149,6 @@ pub enum ResponseFormat {
         description: Option<String>,
         /// JSON Schema definition.
         schema: Value,
-        /// Whether the provider must enforce the schema strictly.
-        strict: Option<bool>,
     },
 }
 
@@ -258,6 +259,8 @@ pub enum Role {
     System,
     /// Instructions for the model with a developer's authority; a format that has no
     /// such role writes them as system.
+    // WARN: only OpenAI's formats have it; Anthropic, Gemini and Converse
+    // write it as system.
     Developer,
     /// The person or program using the model.
     User,
@@ -319,6 +322,7 @@ pub enum Content {
     /// An image with a typed source and MIME type.
     Image(Media),
     /// Audio with a typed source and MIME type.
+    // WARN: Anthropic has no form for audio, and Responses takes none yet.
     Audio(Media),
     /// A document with a typed source and MIME type.
     Document(Media),

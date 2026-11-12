@@ -222,7 +222,6 @@ impl Schema for OpenAiResponses {
         chat.native.take_if(|n| n.is_empty());
         request::read_format(v, &mut chat);
         chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
-        request::read_verbosity(&mut chat);
         request::read_reasoning(&mut chat);
         chat
     }
@@ -253,9 +252,6 @@ impl Schema for OpenAiResponses {
         crate::schema::set(&mut v, "user", chat.user.clone().map(Into::into));
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
-        if chat.options.top_k.is_some() {
-            return Err(crate::schema::untranslatable("top_k in Responses"));
-        }
         Ok(v)
     }
 
