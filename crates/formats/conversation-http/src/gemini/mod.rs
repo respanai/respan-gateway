@@ -57,7 +57,7 @@
 //!   [`Block::Reasoning`]), a `functionCall` is a [`Block::ToolCall`] whose
 //!   arguments are one delta. A part with fields beyond its content, such as
 //!   a `thoughtSignature`, is a block of its own, and the fields come before
-//!   it as its [`Output::block_fields`].
+//!   it as its [`Output::BlockFields`].
 //! - `finishReason` is the [`Output::Finish`]: `STOP` is a stop, or a
 //!   tool use when the response made calls, `MAX_TOKENS` the token limit, and
 //!   `SAFETY`, `RECITATION`, `BLOCKLIST` and the like are filtered; any other
@@ -84,8 +84,8 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
-    merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
+    Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, merge_details,
+    merge_fields, native_of, set, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
@@ -366,11 +366,11 @@ impl Schema for GeminiGenerate {
     fn decode_json(&self, v: &Value) -> Input {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
-        chat.native = native_fields(GEMINI, rest);
+        chat.native = native_of(GEMINI, rest);
         read_messages(v, &mut chat);
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat.native = native_fields(GEMINI, std::mem::take(chat.native.fields_mut(GEMINI)));
+        chat.native = native_of(GEMINI, std::mem::take(chat.native.fields_mut(GEMINI)));
         chat
     }
 
@@ -424,18 +424,20 @@ impl Schema for GeminiGenerate {
                 }
                 // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
                 AssembledItem::Signature { .. } => {}
+                AssembledItem::BlockFields { block, native } if *native.format == *GEMINI => {
+                    fields.push((*block, native.fields.clone()));
+                }
                 AssembledItem::Native(NativeValue { format, value: raw })
                     if **format == *GEMINI =>
                 {
-                    match (block_fields(raw), raw["type"].as_str()) {
-                        (Some((block, f)), _) => fields.push((block, f.clone())),
-                        (None, Some("part")) => parts.push(raw["part"].clone()),
+                    match raw["type"].as_str() {
+                        Some("part") => parts.push(raw["part"].clone()),
                         _ if body.add(raw) => {}
                         _ => return Err(unwritable_content()),
                     }
                 }
                 // Another format's: only a client of that format could read it.
-                AssembledItem::Native(_) => {}
+                _ => {}
             }
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);

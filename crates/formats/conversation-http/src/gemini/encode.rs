@@ -1,8 +1,8 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Schema, arguments_object, block_fields, check_usage, merge_fields, merge_into,
-    own_fields, unwritable_content,
+    Gate, Schema, arguments_object, check_usage, merge_fields, merge_into, own_fields,
+    unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::{Fault, NativeValue};
@@ -394,21 +394,22 @@ impl EventStream {
             }
             // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
             Output::Signature { block: None, .. } => {}
+            Output::BlockFields { block, native } if *native.format == *GEMINI => {
+                let fields = native.fields.clone();
+                match self.blocks.iter_mut().find(|b| b.block == *block) {
+                    Some(slot) => slot.fields = Some(fields),
+                    None => self.pending.push((*block, fields)),
+                }
+            }
             Output::Native(NativeValue { format, value: raw }) if **format == *GEMINI => {
-                match (block_fields(raw), raw["type"].as_str()) {
-                    (Some((block, fields)), _) => {
-                        match self.blocks.iter_mut().find(|b| b.block == block) {
-                            Some(slot) => slot.fields = Some(fields.clone()),
-                            None => self.pending.push((block, fields.clone())),
-                        }
-                    }
-                    (None, Some("part")) => self.emit(vec![raw["part"].clone()], out)?,
+                match raw["type"].as_str() {
+                    Some("part") => self.emit(vec![raw["part"].clone()], out)?,
                     _ if self.fields.add(raw) => {}
                     _ => return Err(unwritable_content()),
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

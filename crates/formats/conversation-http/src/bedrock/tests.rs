@@ -65,8 +65,8 @@ fn a_request_is_system_messages_and_inference_config() {
     assert_eq!(
         written(&chat),
         json!({
-            // A cache marker of any format is a cache point after its block.
-            "system": [{ "text": "be brief" }, { "cachePoint": { "type": "default" } }, { "text": "no lists" }],
+            // Another format's cache marker is dropped: no cache point.
+            "system": [{ "text": "be brief" }, { "text": "no lists" }],
             "messages": [
                 { "role": "user", "content": [{ "text": "hi" }] },
                 { "role": "assistant", "content": [{ "text": "hello" }] },
@@ -412,8 +412,10 @@ fn a_whole_body_is_the_same_events() {
             Output::block_start(2, call),
             Output::arguments(2, "{\"id\":7}"),
             Output::block_end(2),
-            native(
-                json!({ "type": "content_block", "index": 3, "block": { "citationsContent": { "citations": [] } } })
+            Output::block_native(
+                BEDROCK,
+                3,
+                json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } })
             ),
             Output::finished(Finish::ToolUse),
             native(

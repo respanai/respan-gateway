@@ -27,7 +27,9 @@ write, such as cache writes in Gemini.
 A reply is a sequence of events, the same for a stream and a whole body, and
 an `Output` is one such event, not a whole reply: `Output::Start`, then for each content block a `BlockStart`, its `Delta`s and a
 `BlockEnd`, with `Usage` increments, a `Finish` and `Native` (an event the kind
-has no form for, in its format's own JSON) among them. A `Delta` is a
+has no form for, in its format's own JSON) among them; `BlockFields` and
+`BlockNative` are a block's native fields and events, typed by the block they
+are of, so a plugin that renumbers blocks renumbers them too. A `Delta` is a
 `Delta::Text`, `Delta::Arguments` or `Delta::Reasoning`, of its block's own
 kind, so a plugin need not track what a block holds. An encoder collects the
 events into one body or writes them as a stream, so a plugin handles one shape;

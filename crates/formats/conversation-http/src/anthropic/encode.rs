@@ -3,7 +3,7 @@
 use crate::schema::{
     Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
 };
-use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
+use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::{Fault, NativeValue};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -302,32 +302,29 @@ impl EventStream {
                 data,
             } => self.signature(*block, data, out),
             Output::Signature { block: None, data } => self.withheld(data, out),
-            Output::Native(NativeValue { format, value: raw })
-                if **format == *ANTHROPIC && block_fields(raw).is_some() =>
-            {
-                if let Some((block, fields)) = block_fields(raw) {
-                    self.fields.push((block, fields.clone()));
+            Output::BlockFields { block, native } if *native.format == *ANTHROPIC => {
+                self.fields.push((*block, native.fields.clone()));
+            }
+            Output::BlockNative { block, native } if *native.format == *ANTHROPIC => {
+                self.begin(out);
+                // A block this format keeps takes its index.
+                if native.value["type"] == "content_block_start" {
+                    self.next = self.next.max(block.saturating_add(1));
                 }
+                let mut raw = Value::clone(&native.value);
+                raw["index"] = (*block).into();
+                emit(out, raw);
             }
             Output::Native(NativeValue { format, value: raw }) if **format == *ANTHROPIC => {
                 self.begin(out);
                 match raw["type"].as_str() {
                     // Beside the terminal `message_delta`, which carries them.
                     Some("message_delta") => self.stop.add(raw),
-                    kind => {
-                        // A block this format keeps takes its index.
-                        if kind == Some("content_block_start")
-                            && let Some(i) =
-                                raw["index"].as_u64().and_then(|i| u32::try_from(i).ok())
-                        {
-                            self.next = self.next.max(i.saturating_add(1));
-                        }
-                        emit(out, Value::clone(raw));
-                    }
+                    _ => emit(out, Value::clone(raw)),
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

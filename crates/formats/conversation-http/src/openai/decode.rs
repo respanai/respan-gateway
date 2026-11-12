@@ -1,7 +1,7 @@
 //! OpenAI Chat, streamed or whole, as events: the decoder.
 
 use crate::schema::{
-    Totals, ended, error_event, native_fields, remainder, says, says_error, unreadable_event,
+    Totals, ended, error_event, native_of, remainder, says, says_error, unreadable_event,
     unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start};
@@ -91,7 +91,7 @@ struct Call {
 }
 
 /// The fields of tool call `block` the kind has no place for, the entry's,
-/// and its function's under `function`, as its [`Output::block_fields`]:
+/// and its function's under `function`, as its [`Output::BlockFields`]:
 /// before the call's block opens.
 fn call_fields(block: u32, entry: &Fields, function: &Fields) -> Option<Output> {
     if entry.is_empty() && function.is_empty() {
@@ -193,7 +193,7 @@ impl OpenAiDecoder {
             let model = v["model"].as_str().unwrap_or_default();
             let mut start = Start::new(id, model);
             self.said = std::mem::take(&mut self.early);
-            start.native = native_fields(OPENAI, self.said.clone());
+            start.native = native_of(OPENAI, self.said.clone());
             out.push(Output::Start(start));
         }
         let u = &v["usage"];

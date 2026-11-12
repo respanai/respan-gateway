@@ -1,8 +1,7 @@
 //! Anthropic Messages, streamed or whole, as events: the decoder.
 
 use crate::schema::{
-    Totals, ended, error_event, native_fields, says, says_error, unreadable_event,
-    unsupported_fields,
+    Totals, ended, error_event, native_of, says, says_error, unreadable_event, unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Output, Start};
 use respan_gateway_core::Fault;
@@ -23,7 +22,7 @@ pub struct AnthropicDecoder {
     /// The usage fields with no unit that were last said, to say them once.
     usage_extra: Map<String, Value>,
     /// The indexes of blocks the kind has no form for: all their events are
-    /// [`Output::Native`].
+    /// [`Output::BlockNative`].
     others: Vec<u32>,
     /// The indexes of `redacted_thinking` blocks: a signature alone, whose
     /// other events say nothing.
@@ -56,8 +55,13 @@ pub(super) fn event_of(kind: &str, index: u32, fields: Value) -> Value {
 }
 
 impl AnthropicDecoder {
+    /// An event the kind has no form for: a block's if it names one.
     fn other(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        let block = v["index"].as_u64().and_then(|i| u32::try_from(i).ok());
+        out.push(match block {
+            Some(block) => Output::block_native(self.name.clone(), block, v),
+            None => Output::native(self.name.clone(), v),
+        });
     }
 
     /// The events of a message: its start and usage so far.
@@ -76,7 +80,7 @@ impl AnthropicDecoder {
             m["id"].as_str().unwrap_or_default(),
             m["model"].as_str().unwrap_or_default(),
         );
-        start.native = native_fields(ANTHROPIC, unsupported_fields(m, &known, &[]));
+        start.native = native_of(ANTHROPIC, unsupported_fields(m, &known, &[]));
         out.push(Output::Start(start));
         let usage = self.totals.increment(&usage_of(&m["usage"])?);
         if !usage.is_empty() {
