@@ -4,10 +4,8 @@
 
 use super::{is_segment, refusal};
 use crate::edge::{bind_provider, sends};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::invalid;
+use respan_gateway_conversation_http::fields::{base64_bytes, invalid};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
@@ -248,7 +246,7 @@ fn read_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 fn media_of(part: &Value) -> Option<Media> {
     if let Some(data) = part.get("inlineData") {
         let mime = data["mimeType"].as_str().unwrap_or("image/png");
-        let bytes = STANDARD.decode(data["data"].as_str()?).ok()?;
+        let bytes = base64_bytes(data["data"].as_str()?)?;
         return Some(Media::new(mime, MediaSource::Bytes(bytes.into())));
     }
     let file = part.get("fileData")?;
@@ -342,7 +340,10 @@ fn read_turn(contents: Option<Value>) -> Result<(String, Vec<Media>), Fault> {
             (None, None) => {
                 let param = format!("contents[0].parts[{i}]");
                 return Err(match part.get("inlineData") {
-                    Some(_) => invalid(&format!("{param}.inlineData"), "holds no image in base64"),
+                    Some(data) if data["data"].is_string() => {
+                        invalid(&format!("{param}.inlineData.data"), "is not valid base64")
+                    }
+                    Some(_) => invalid(&format!("{param}.inlineData.data"), "is required"),
                     None => invalid(&param, "is neither text nor an image"),
                 });
             }

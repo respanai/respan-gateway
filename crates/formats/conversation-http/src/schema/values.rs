@@ -2,11 +2,7 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields;
-use base64::Engine;
-use base64::alphabet;
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use percent_encoding::percent_decode_str;
+use crate::fields::{self, base64_bytes, data_url};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
@@ -36,62 +32,55 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
-/// Base64 decoding that accepts the data with or without its padding, and
-/// a last symbol whose unused bits are not zero.
-const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
-    let config = GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
-        .with_decode_allow_trailing_bits(true);
-    GeneralPurpose::new(alphabet, config)
-}
-
-/// The base64 alphabets embedded data is read in, the standard one first.
-const DATA_URL_BASE64: [GeneralPurpose; 2] =
-    [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
-
-/// Base64 a request embeds that does not decode.
-#[derive(Debug)]
-pub(crate) struct NotBase64;
-
 /// The refusal of a request whose `field`, as its format names it, holds
-/// base64 that does not decode: no provider would read the part.
-pub(crate) fn not_base64(field: &str) -> Fault {
-    Fault::bad_request(format!("{field} is not valid base64"))
+/// media no provider would read, as `what` says.
+pub(crate) fn unreadable_media(field: &str, what: &str) -> Fault {
+    Fault::bad_request(format!("{field} {what}"))
 }
 
-/// The bytes of base64 `data` a request embeds, read with or without
-/// padding, in either alphabet, across the line breaks a client may have
-/// wrapped it at: what any provider reads, and more.
-pub(crate) fn base64_bytes(data: &str) -> Result<Vec<u8>, NotBase64> {
-    let data = match data.contains(|c: char| c.is_ascii_whitespace()) {
-        true => Cow::Owned(data.chars().filter(|c| !c.is_ascii_whitespace()).collect()),
-        false => Cow::Borrowed(data),
-    };
-    DATA_URL_BASE64
-        .iter()
-        .find_map(|engine| engine.decode(data.as_bytes()).ok())
-        .ok_or(NotBase64)
+/// The string in `value`, the client's `field`; one that is missing is
+/// refused.
+pub(crate) fn required_str<'a>(value: &'a Value, field: &str) -> Result<&'a str, Fault> {
+    value
+        .as_str()
+        .ok_or_else(|| unreadable_media(field, "is required"))
 }
 
-/// The media type and source of a URL: the bytes of a `data:` URL, else the
-/// URL, of type `fallback`. A `data:` URL (RFC 2397) is base64 when a
-/// parameter of its header says so, in any case, and percent-encoded bytes
-/// otherwise; its type is `text/plain` when it names none.
-pub(crate) fn source_url(url: &str, fallback: &str) -> Result<(String, MediaSource), NotBase64> {
-    let Some(data_url) = url.strip_prefix("data:") else {
-        return Ok((fallback.into(), MediaSource::Url(url.into())));
-    };
-    let (header, data) = data_url.split_once(',').ok_or(NotBase64)?;
-    let mut params = header.split(';');
-    let mime = Some(params.next().unwrap_or_default().trim())
-        .filter(|m| !m.is_empty())
-        .unwrap_or("text/plain");
-    let data = Cow::from(percent_decode_str(data));
-    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
-        true => base64_bytes(std::str::from_utf8(&data).map_err(|_| NotBase64)?)?,
-        false => data.into_owned(),
-    };
-    Ok((mime.into(), MediaSource::Bytes(bytes.into())))
+/// The part of a media `holder` that names no source of its own: one that
+/// names a file by `file_id` is a form the kind cannot carry, `None`; one
+/// that names nothing is refused, as `wanted` says.
+pub(crate) fn unless_file_id(holder: &Value, wanted: &str) -> Result<Option<Content>, Fault> {
+    match holder["file_id"].is_null() {
+        true => Err(unreadable_media(wanted, "is required")),
+        false => Ok(None),
+    }
+}
+
+/// The bytes of the base64 in `value`, the client's `field`; a field that is
+/// missing, or whose base64 does not decode, is refused.
+pub(crate) fn base64_field(value: &Value, field: &str) -> Result<Vec<u8>, Fault> {
+    base64_bytes(required_str(value, field)?)
+        .ok_or_else(|| unreadable_media(field, "is not valid base64"))
+}
+
+/// The media type and bytes of `url`, the client's `field`, if it is a
+/// `data:` URL ([`data_url`]); `None` for any other URL. One with no data,
+/// or whose base64 does not decode, is refused.
+pub(crate) fn data_media(url: &str, field: &str) -> Result<Option<(String, Vec<u8>)>, Fault> {
+    data_url(url).map_err(|e| unreadable_media(field, e.reason()))
+}
+
+/// The media type and source of `url`, the client's `field`: the bytes of a
+/// `data:` URL ([`data_media`]), else the URL, of type `fallback`.
+pub(crate) fn source_url(
+    url: &str,
+    fallback: &str,
+    field: &str,
+) -> Result<(String, MediaSource), Fault> {
+    Ok(match data_media(url, field)? {
+        Some((mime, bytes)) => (mime, MediaSource::Bytes(bytes.into())),
+        None => (fallback.into(), MediaSource::Url(url.into())),
+    })
 }
 
 /// A request body that is not a JSON object.

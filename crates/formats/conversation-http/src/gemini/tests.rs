@@ -847,8 +847,15 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     };
     let inline = |data: &str| json!({"inlineData": {"mimeType": "image/png", "data": data}});
     let cases = [
-        (inline("aGVsbG8"), Some(b"hello".to_vec())),
-        (inline("not*base64!"), None),
+        (inline("aGVsbG8"), Ok(b"hello".to_vec())),
+        (
+            inline("not*base64!"),
+            Err("`inlineData.data` is not valid base64"),
+        ),
+        (
+            json!({"inlineData": {"data": "aGVsbG8="}}),
+            Err("`inlineData.mimeType` is required"),
+        ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {
         Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
@@ -867,8 +874,8 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     for (part, read_as) in cases {
         let said = part.to_string();
         match (read(part), read_as) {
-            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (Ok(chat), Ok(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

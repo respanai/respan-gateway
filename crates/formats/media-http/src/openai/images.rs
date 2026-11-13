@@ -10,7 +10,7 @@ use super::{
     unreadable, usage_extras, whole_json, write_field, write_usage,
 };
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::media_url;
+use respan_gateway_conversation_http::fields::{data_url, media_url};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -149,19 +149,12 @@ fn linked(v: &Value, param: &str) -> Result<Media, Fault> {
     let url = v["image_url"]
         .as_str()
         .ok_or_else(|| invalid(param, "must name an image_url"))?;
-    if let Some((mime, bytes)) = data_url(url) {
-        return Ok(Media::new(mime, MediaSource::Bytes(bytes)));
+    if let Some((mime, bytes)) = data_url(url).map_err(|e| invalid(param, e.reason()))? {
+        return Ok(Media::new(mime, MediaSource::Bytes(bytes.into())));
     }
     let path = url.split(['?', '#']).next().unwrap_or_default();
     let mime = mime_of(None, path, &[]);
     Ok(Media::new(mime, MediaSource::Url(url.to_owned())))
-}
-
-/// The type and bytes of a base64 data URL.
-fn data_url(url: &str) -> Option<(String, Bytes)> {
-    let (head, data) = url.strip_prefix("data:")?.split_once(',')?;
-    let mime = head.strip_suffix(";base64")?;
-    Some((mime.to_owned(), unb64(data)?))
 }
 
 /// The call of `input`: a generation in JSON; an edit as a form, or in

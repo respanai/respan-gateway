@@ -1313,21 +1313,35 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     let image = |data: &str| json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}});
     let result =
         |block: Value| json!({"type": "tool_result", "tool_use_id": "t", "content": [block]});
-    let hello = Some(b"hello".to_vec());
+    let hello = |mime: &'static str| Ok((mime, b"hello".to_vec()));
     let cases = [
-        (image("aGVsbG8"), hello.clone()),
-        (result(image("-_8=")), Some(vec![0xfb, 0xff])),
-        (image("not*base64!"), None),
-        (result(image("not*base64!")), None),
+        (image("aGVsbG8"), hello("image/png")),
+        (
+            json!({"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "hello"}}),
+            hello("text/plain"),
+        ),
+        (result(image("-_8=")), Ok(("image/png", vec![0xfb, 0xff]))),
+        (
+            image("not*base64!"),
+            Err("`source.data` is not valid base64"),
+        ),
+        (
+            result(image("not*base64!")),
+            Err("`source.data` is not valid base64"),
+        ),
+        (
+            json!({"type": "image", "source": {"type": "base64", "data": "aGVsbG8="}}),
+            Err("`source.media_type` is required"),
+        ),
     ];
-    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+    let media = |chat: &Input| match chat.messages[0].content.first() {
         Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
-            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            MediaSource::Bytes(bytes) => (m.mime_type.clone(), bytes.to_vec()),
             other => panic!("{other:?}"),
         },
         Some(Content::ToolResult { content, .. }) => match content.first() {
             Some(Content::Image(m)) => match &m.source {
-                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                MediaSource::Bytes(bytes) => (m.mime_type.clone(), bytes.to_vec()),
                 other => panic!("{other:?}"),
             },
             other => panic!("{other:?}"),
@@ -1337,8 +1351,10 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     for (part, read_as) in cases {
         let said = part.to_string();
         match (read(part), read_as) {
-            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (Ok(chat), Ok((mime, expected))) => {
+                assert_eq!(media(&chat), (mime.to_owned(), expected), "{said}")
+            }
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

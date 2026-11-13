@@ -7,10 +7,10 @@
 use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
-    FAILED_RESULT_PREFIX, Names, Own, base64_bytes, decode_tools, each_tool, edit_native,
-    effort_for, effort_name, encode_content, encode_message, merge_fields, merge_missing,
-    not_base64, only, read_search, remainder, rest_of, set, source_url, take_strict,
-    untranslatable, write_search,
+    FAILED_RESULT_PREFIX, Names, Own, base64_field, data_media, decode_tools, each_tool,
+    edit_native, effort_for, effort_name, encode_content, encode_message, merge_fields,
+    merge_missing, only, read_search, remainder, required_str, rest_of, set, source_url,
+    take_strict, unless_file_id, unreadable_media, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -303,19 +303,22 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     Ok(out)
 }
 
-/// A part the kind has a form for: an image, audio, or a file of data.
-pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
-    read_part(v).transpose()
+/// Whether `format` names an audio format, such as `flac`, and nothing else.
+fn is_format_name(format: &str) -> bool {
+    !format.is_empty()
+        && format
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
-/// [`decode_part`], with `None` for a part the kind has no form for.
-fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
-    let (kind, mime, source, mut fields, name) = match v["type"].as_str()? {
-        "image_url" => {
+/// A part the kind has a form for: an image, audio, or a file of data, `None`
+/// for one it has no form for. One whose media cannot be read is refused.
+pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
+    let (kind, mime, source, mut fields, name) = match v["type"].as_str() {
+        Some("image_url") => {
             let image = &v["image_url"];
-            let Ok((mime, src)) = source_url(image["url"].as_str()?, "image/*") else {
-                return Some(Err(not_base64("`image_url.url`")));
-            };
+            let field = "`image_url.url`";
+            let (mime, src) = source_url(required_str(&image["url"], field)?, "image/*", field)?;
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
             if !nested.is_empty() {
@@ -323,36 +326,38 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
             }
             (0, mime, src, fields, None)
         }
-        "input_audio" => {
+        Some("input_audio") => {
             let audio = &v["input_audio"];
-            let mime = match audio["format"].as_str()? {
-                "wav" => "audio/wav",
-                "mp3" => "audio/mpeg",
-                _ => return None,
+            let field = "`input_audio.format`";
+            let format = required_str(&audio["format"], field)?.to_ascii_lowercase();
+            let subtype = match format.as_str() {
+                "wav" => "wav",
+                "mp3" => "mpeg",
+                name if is_format_name(name) => name,
+                _ => return Err(unreadable_media(field, "is not a format name")),
             };
-            let Ok(bytes) = base64_bytes(audio["data"].as_str()?) else {
-                return Some(Err(not_base64("`input_audio.data`")));
-            };
+            let bytes = base64_field(&audio["data"], "`input_audio.data`")?;
             let src = MediaSource::Bytes(bytes.into());
             let mut fields = remainder(v, &["type", "input_audio"]);
             let nested = remainder(audio, &["data", "format"]);
             if !nested.is_empty() {
                 fields.insert("input_audio".into(), nested.into());
             }
-            (1, mime.into(), src, fields, None)
+            (1, format!("audio/{subtype}"), src, fields, None)
         }
-        "file" => {
+        Some("file") => {
             let file = &v["file"];
             if file.get("filename").is_some_and(|v| !v.is_string()) {
-                return None;
+                return Ok(None);
             }
-            let data = file["file_data"].as_str()?;
-            if !data.starts_with("data:") {
-                return None;
-            }
-            let Ok((mime, src)) = source_url(data, "application/octet-stream") else {
-                return Some(Err(not_base64("`file.file_data`")));
+            let Some(data) = file["file_data"].as_str() else {
+                return unless_file_id(file, "`file.file_data` or `file.file_id`");
             };
+            let field = "`file.file_data`";
+            let Some((mime, bytes)) = data_media(data, field)? else {
+                return Err(unreadable_media(field, "must be a `data:` URL"));
+            };
+            let src = MediaSource::Bytes(bytes.into());
             let mut fields = remainder(v, &["type", "file"]);
             let nested = remainder(file, &["file_data", "filename"]);
             if !nested.is_empty() {
@@ -361,12 +366,12 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
             let name = file["filename"].as_str().map(str::to_owned);
             (2, mime, src, fields, name)
         }
-        _ => return None,
+        _ => return Ok(None),
     };
     let mut media = Media::new(mime, source);
     media.name = name;
     media.native = OpenAiChat::native(std::mem::take(&mut fields));
-    Some(Ok(match kind {
+    Ok(Some(match kind {
         0 => Content::Image(media),
         1 => Content::Audio(media),
         _ => Content::Document(media),
@@ -374,8 +379,8 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
 }
 
 /// A part of the kind's as OpenAI writes it, `Null` for one it cannot say.
-// WARN: another part, a document or audio by URL, audio but WAV or MP3, and
-// a display name on an image or audio, have no form in Chat; dropped.
+// WARN: another part, a document or audio by URL, audio of no format name,
+// and a display name on an image or audio, have no form in Chat; dropped.
 pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     let (kind, media) = match c {
         Content::Image(m) => ("image", m),
@@ -401,12 +406,19 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             let MediaSource::Bytes(bytes) = &media.source else {
                 return Ok(Value::Null);
             };
-            let encoding = match media.mime_type.as_str() {
-                "audio/wav" | "audio/x-wav" => "wav",
-                "audio/mpeg" => "mp3",
+            let mime = media.mime_type.to_ascii_lowercase();
+            // A type's parameters, such as `codecs`, are not its format.
+            let subtype = mime
+                .strip_prefix("audio/")
+                .and_then(|subtype| subtype.split(';').next())
+                .map(str::trim);
+            let format = match subtype {
+                Some("x-wav") => "wav",
+                Some("mpeg") => "mp3",
+                Some(name) if is_format_name(name) => name,
                 _ => return Ok(Value::Null),
             };
-            json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
+            json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":format}})
         }
     };
     merge_missing(&mut v, native);

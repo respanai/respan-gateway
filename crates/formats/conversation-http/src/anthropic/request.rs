@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    EFFORT_BUDGETS, arguments_object, base64_bytes, decode_content, decode_tools, each_tool,
-    edit_native, effort_for, encode_content, merge_missing, not_base64, only, read_search,
-    remainder, rest_of, set, take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, arguments_object, base64_field, decode_content, decode_tools, each_tool,
+    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder,
+    required_str, rest_of, set, take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -135,22 +135,19 @@ pub(crate) fn signed(m: &mut Message, content: &Value) {
 }
 
 /// A part the kind has a form for: an image or a document, reasoning, or a
-/// tool block.
+/// tool block, `None` for one it has no form for.
 pub(crate) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
-    read_part(p).transpose()
-}
-
-/// [`decode_part`], with `None` for a part the kind has no form for.
-fn read_part(p: &Value) -> Option<Result<Content, Fault>> {
-    match p["type"].as_str()? {
-        "image" | "document" => read_media(p),
-        "thinking" => Some(Ok(Content::Reasoning {
-            text: p["thinking"].as_str()?.into(),
+    Ok(match p["type"].as_str() {
+        Some("image" | "document") => read_media(p)?,
+        Some("thinking") => p["thinking"].as_str().map(|text| Content::Reasoning {
+            text: text.into(),
             native: AnthropicMessages::native(remainder(p, &["type", "thinking", "signature"])),
-        })),
-        "redacted_thinking" => Some(Ok(Content::Withheld(p["data"].as_str()?.into()))),
-        _ => tool_part(p),
-    }
+        }),
+        Some("redacted_thinking") => p["data"]
+            .as_str()
+            .map(|data| Content::Withheld(data.into())),
+        _ => tool_part(p).transpose()?,
+    })
 }
 
 /// A part of the kind's as Anthropic writes it.
@@ -165,38 +162,42 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     }
 }
 
+/// The one media type Anthropic takes a document's plain text in.
+const PLAIN_TEXT: &str = "text/plain";
+
 /// An image or document block, if the kind can say its source: its other
-/// fields are its media's `native`. One whose base64 does not decode is
-/// refused.
-fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
+/// fields are its media's `native`. One whose source misses its data, or
+/// whose base64 does not decode, is refused.
+fn read_media(v: &Value) -> Result<Option<Content>, Fault> {
     if v.get("title").is_some_and(|v| !v.is_string()) {
-        return None;
+        return Ok(None);
     }
     let source = &v["source"];
-    let (mut mime, src) = match source["type"].as_str()? {
-        "base64" => (
-            source["media_type"].as_str()?.to_owned(),
-            match base64_bytes(source["data"].as_str()?) {
-                Ok(bytes) => MediaSource::Bytes(bytes.into()),
-                Err(_) => return Some(Err(not_base64("`source.data`"))),
-            },
-        ),
-        "url" => (
-            "image/*".to_owned(),
-            MediaSource::Url(source["url"].as_str()?.into()),
-        ),
-        _ => return None,
+    let (mut mime, src, known) = match required_str(&source["type"], "`source.type`")? {
+        "base64" => {
+            let mime = required_str(&source["media_type"], "`source.media_type`")?;
+            let bytes = base64_field(&source["data"], "`source.data`")?;
+            let src = MediaSource::Bytes(bytes.into());
+            (mime.to_owned(), src, &["type", "media_type", "data"][..])
+        }
+        "url" => {
+            let url = required_str(&source["url"], "`source.url`")?;
+            let src = MediaSource::Url(url.into());
+            ("image/*".to_owned(), src, &["type", "url"][..])
+        }
+        "text" if v["type"] == "document" => {
+            let mime = required_str(&source["media_type"], "`source.media_type`")?;
+            let text = required_str(&source["data"], "`source.data`")?;
+            let src = MediaSource::Bytes(text.as_bytes().to_vec().into());
+            (mime.to_owned(), src, &["type", "media_type", "data"][..])
+        }
+        _ => return Ok(None),
     };
     let image = v["type"] == "image";
     if !image && mime == "image/*" {
         mime = "application/pdf".into();
     }
     let mut fields = remainder(v, &["type", "source", "title"]);
-    let known = if source["type"] == "base64" {
-        &["type", "media_type", "data"][..]
-    } else {
-        &["type", "url"][..]
-    };
     let nested = remainder(source, known);
     if !nested.is_empty() {
         fields.insert("source".into(), nested.into());
@@ -204,7 +205,7 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
     let mut media = Media::new(mime, src);
     media.name = v["title"].as_str().map(str::to_owned);
     media.native = AnthropicMessages::native(fields);
-    Some(Ok(match image {
+    Ok(Some(match image {
         true => Content::Image(media),
         false => Content::Document(media),
     }))
@@ -216,9 +217,14 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     let native = AnthropicMessages::fields(&media.native).clone();
     let source = match &media.source {
         MediaSource::Url(url) => json!({"type":"url","url":url}),
-        MediaSource::Bytes(bytes) => {
-            json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
-        }
+        MediaSource::Bytes(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) if kind == "document" && media.mime_type.starts_with("text/") => {
+                json!({"type":"text","media_type":PLAIN_TEXT,"data":text})
+            }
+            _ => {
+                json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
+            }
+        },
     };
     let mut v = json!({"type":kind,"source":source});
     if let Some(name) = media.name.as_ref().filter(|_| kind == "document") {

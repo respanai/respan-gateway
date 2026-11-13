@@ -36,7 +36,9 @@ use crate::edge::{bind_provider, sends};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::{self, merge_missing, rest_of, set, unix_now};
+use respan_gateway_conversation_http::fields::{
+    self, base64_bytes, merge_missing, rest_of, set, unix_now,
+};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
 use respan_gateway_core::{Connection, ErrorCode, Fault, Native};
@@ -312,7 +314,7 @@ fn b64(bytes: &[u8]) -> String {
 
 /// Base64 `text` as bytes.
 fn unb64(text: &str) -> Option<Bytes> {
-    STANDARD.decode(text.trim()).ok().map(Bytes::from)
+    base64_bytes(text).map(Bytes::from)
 }
 
 /// `v` as JSON bytes.
