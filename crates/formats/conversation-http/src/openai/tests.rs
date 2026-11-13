@@ -2026,26 +2026,41 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     let audio_as = |data: &str, format: &str| json!({"type": "input_audio", "input_audio": {"data": data, "format": format}});
     let audio = |data: &str| audio_as(data, "wav");
     let file = |data: &str| json!({"type": "file", "file": {"file_data": data}});
-    let hello = Some(b"hello".to_vec());
+    let hello = Ok(b"hello".to_vec());
     let cases = [
         (image("data:image/png;base64,aGVsbG8"), hello.clone()),
         (image("data:image/png;BASE64,aGVs%0AbG8="), hello.clone()),
         (image("data:image/png;base64;x=y,aGVsbG9="), hello.clone()),
         (
             image("data:image/svg+xml,%3Csvg%2F%3E"),
-            Some(b"<svg/>".to_vec()),
+            Ok(b"<svg/>".to_vec()),
         ),
         (audio("aGVsbG8"), hello.clone()),
         (file("data:application/pdf;base64,aGVsbG8="), hello),
-        (image("data:image/png;base64,not*base64!"), None),
-        (audio("not*base64!"), None),
-        (file("data:application/pdf;base64,%%%"), None),
-        (file("aGVsbG8="), None),
-        (image("data:image/png;base64"), None),
-        (audio_as("aGVsbG8=", "flac"), Some(b"hello".to_vec())),
+        (
+            image("data:image/png;base64,not*base64!"),
+            Err("`image_url.url` is not valid base64"),
+        ),
+        (
+            audio("not*base64!"),
+            Err("`input_audio.data` is not valid base64"),
+        ),
+        (
+            file("data:application/pdf;base64,%%%"),
+            Err("`file.file_data` is not valid base64"),
+        ),
+        (
+            file("aGVsbG8="),
+            Err("`file.file_data` must be a base64 `data:` URL"),
+        ),
+        (
+            image("data:image/png;base64"),
+            Err("`image_url.url` is a `data:` URL with no data"),
+        ),
+        (audio_as("aGVsbG8=", "flac"), Ok(b"hello".to_vec())),
         (
             json!({"type": "input_audio", "input_audio": {"data": "aGVsbG8="}}),
-            None,
+            Err("`input_audio.format` is required"),
         ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {
@@ -2065,8 +2080,8 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     for (part, read_as) in cases {
         let said = part.to_string();
         match (read(part), read_as) {
-            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().starts_with('`'), "{said}: {fault}"),
+            (Ok(chat), Ok(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

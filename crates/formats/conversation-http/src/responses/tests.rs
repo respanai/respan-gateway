@@ -1149,18 +1149,24 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     let message = |part: Value| json!({"role": "user", "content": [part]});
     let output =
         |part: Value| json!({"type": "function_call_output", "call_id": "c", "output": [part]});
-    let hello = Some(b"hello".to_vec());
+    let hello = Ok(b"hello".to_vec());
     let cases = [
         (
             message(image("data:image/png;base64,aGVs\nbG8")),
             hello.clone(),
         ),
         (output(image("data:image/png;base64,aGVsbG8=")), hello),
-        (message(image("data:image/png;base64,not*base64!")), None),
-        (output(image("data:image/png;base64,not*base64!")), None),
+        (
+            message(image("data:image/png;base64,not*base64!")),
+            Err("`image_url` is not valid base64"),
+        ),
+        (
+            output(image("data:image/png;base64,not*base64!")),
+            Err("`image_url` is not valid base64"),
+        ),
         (
             message(json!({"type": "input_file", "file_data": "aGVsbG8="})),
-            None,
+            Err("`file_data` must be a base64 `data:` URL"),
         ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {
@@ -1180,8 +1186,8 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     for (part, read_as) in cases {
         let said = part.to_string();
         match (read(part), read_as) {
-            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().starts_with('`'), "{said}: {fault}"),
+            (Ok(chat), Ok(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

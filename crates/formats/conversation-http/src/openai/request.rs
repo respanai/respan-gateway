@@ -336,7 +336,8 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
         }
         "input_audio" => {
             let audio = &v["input_audio"];
-            let mime = match audio["format"].as_str() {
+            let format = audio["format"].as_str().map(str::to_ascii_lowercase);
+            let mime = match format.as_deref() {
                 Some("wav") => "audio/wav".to_owned(),
                 Some("mp3") => "audio/mpeg".to_owned(),
                 Some(format) if is_format_name(format) => format!("audio/{format}"),
@@ -431,6 +432,9 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
                     None => return Ok(Value::Null),
                 },
             };
+            if encoding.is_empty() {
+                return Ok(Value::Null);
+            }
             json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
         }
     };

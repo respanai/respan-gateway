@@ -341,7 +341,10 @@ fn read_turn(contents: Option<Value>) -> Result<(String, Vec<Media>), Fault> {
             (None, None) => {
                 let param = format!("contents[0].parts[{i}]");
                 return Err(match part.get("inlineData") {
-                    Some(_) => invalid(&format!("{param}.inlineData.data"), "is not valid base64"),
+                    Some(data) if data["data"].is_string() => {
+                        invalid(&format!("{param}.inlineData.data"), "is not valid base64")
+                    }
+                    Some(_) => invalid(&format!("{param}.inlineData.data"), "is required"),
                     None => invalid(&param, "is neither text nor an image"),
                 });
             }
