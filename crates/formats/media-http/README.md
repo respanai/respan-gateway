@@ -127,7 +127,9 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   file is its job: its name, `files/{id}`, spelled as an operation's,
   retrieved by `GET /files/{id}`, `in_progress` until the file is `ACTIVE`,
   `completed` then with the file's download URI as its video, `failed` if
-  `FAILED`. An answer with no video is the provider's fault, 502.
+  `FAILED`. An answer with no video is the provider's fault, 502. The
+  interaction's `usage`, its tokens by modality, is the created job's
+  native `usage`; a file reports none.
 - Content is a `GET` of the URL its job names at the provider's base, its
   path after the version, so the key goes to no other host. The Gemini API
   may redirect it to storage: the transport follows only if told to
@@ -135,7 +137,7 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   answer is a 502. A redirect to another origin leaves the key behind.
 - Another format's operation, such as OpenAI's remix, delete, list or
   thumbnail, is refused, 400 `unsupported`, before any call.
-- What Veo answers beyond the kind is dropped rather than kept native.
+- What else Veo answers beyond the kind is dropped rather than kept native.
 - A client of it, served by any provider of the kind: it creates with
   `POST .../models/{model}:predictLongRunning` (one instance; its prompt,
   its base64 `image`; `aspectRatio` and `resolution` read as a size,
@@ -162,8 +164,9 @@ generation, as a provider only, its key a bearer token. Its job ids start
 - `GET /videos/{id}` polls it: `pending` is `queued`, `in_progress`,
   `completed` and `failed` are the kind's, its error a string; `cancelled`
   and `expired` are `failed`, with that as the error unless one is said; its
-  `unsigned_urls` are the job's videos; its `usage` and the signed `urls`
-  of its video are dropped.
+  `unsigned_urls` are the job's videos; its `usage`, the cost of a job
+  done, is the job's native `usage`; the signed `urls` of its video are
+  dropped.
   It reports no progress, model, size or length. `GET /videos/{id}/content`
   is the video's bytes, relayed as they come. It answers a 404 for the
   content of a job not finished, as for a job it never made, so

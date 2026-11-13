@@ -59,10 +59,11 @@ const PREFIX: &str = "veo_";
 /// the Files API, which is its job: the file's name (`files/{id}`) spelled
 /// as an operation's is, retrieved by `GET /files/{id}`, `in_progress`
 /// until the file is `ACTIVE`, then `completed`, its video the file's
-/// download URI.
+/// download URI. The interaction's `usage`, its tokens by modality, is the
+/// created job's native `usage`: a file has none.
 ///
 /// Another format's operation, such as OpenAI's remix, delete, list or
-/// thumbnail, is refused, 400, before any call. What Veo answers
+/// thumbnail, is refused, 400, before any call. What else Veo answers
 /// beyond the kind is dropped.
 ///
 /// A client speaks it too, of any provider of the kind: it creates with
@@ -459,7 +460,7 @@ fn job_of(raw: &[u8], parameters: &Value) -> Result<Job, Fault> {
 }
 
 /// The job of a Gemini Omni interaction `raw`: its video's file, not yet
-/// known to be ready.
+/// known to be ready, and the `usage` it reports, native.
 fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's interaction {what}"));
     let v = serde_json::from_slice::<Value>(raw).map_err(|_| unreadable("is not JSON"))?;
@@ -472,6 +473,9 @@ fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let file = file.ok_or_else(|| unreadable("holds no video"))?;
     let mut job = Job::new(GeminiVeo::job_id(&file), Status::InProgress);
     job.model = v["model"].as_str().map(str::to_owned);
+    if let Some(usage) = v.get("usage").filter(|usage| usage.is_object()) {
+        job.native = Native::json::<Key>(json!({ "usage": usage }));
+    }
     Ok(job)
 }
 
@@ -801,6 +805,7 @@ fn operation_of_job(job: &Job, base: &str, model: Option<&str>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Natives;
 
     /// Regression: this format's own copy of Google's names lacked 409 and
     /// 499, and read `UNIMPLEMENTED` back as 500.
@@ -1008,7 +1013,9 @@ mod tests {
             })
         );
         assert!(matches!(asked, Call::Omni));
-        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "usage": {"total_input_tokens": 12}, "steps": [
+        let usage = json!({"total_input_tokens": 12, "total_thought_tokens": 386,
+            "output_tokens_by_modality": [{"modality": "video", "tokens": 26064}]});
+        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "usage": usage, "steps": [
             {"type": "model_output", "content": [{"type": "video", "mime_type": "video/mp4",
               "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1x2:download?alt=media"}]},
         ]});
@@ -1016,7 +1023,7 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
-        assert!(job.native.is_empty());
+        assert_eq!(GeminiVeo::fields(&job.native).get("usage"), Some(&usage));
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;
