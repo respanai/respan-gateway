@@ -37,12 +37,12 @@ pub(crate) use values::{
     EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
-    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, base64_bytes, check_usage,
-    count, decode_content, decode_message, decode_tools, each_tool, edit_native, encode_content,
+    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, check_usage, count,
+    decode_content, decode_message, decode_tools, each_tool, edit_native, encode_content,
     encode_message, ended, fits, merge_fields, merge_into, merge_missing, not_base64, only,
     own_fields, own_shapes, read_search, remainder, sealed, set, source_url, stop_json,
-    take_strict, take_text, tidy, unsupported_fields, untranslatable, unwritable_content,
-    usage_extra, write_search,
+    take_strict, take_text, tidy, unreadable_media, unsupported_fields, untranslatable,
+    unwritable_content, usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};

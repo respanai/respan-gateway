@@ -4,7 +4,7 @@ use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
-use crate::schema::{Own, not_base64, only, remainder, says, source_url};
+use crate::schema::{Own, only, remainder, says, source_url, unreadable_media};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
@@ -64,18 +64,23 @@ fn read_media_part(p: &Value) -> Option<Result<Content, Fault>> {
         if fields.get("detail") == Some(&json!("auto")) {
             fields.shift_remove("detail");
         }
-        let Ok((mime, source)) = source_url(p["image_url"].as_str()?, "image/*") else {
-            return Some(Err(not_base64("`image_url`")));
+        let (mime, source) = match source_url(p["image_url"].as_str()?, "image/*", "`image_url`") {
+            Ok(read) => read,
+            Err(fault) => return Some(Err(fault)),
         };
         Media::new(mime, source)
     } else {
         let (mime, source) = match (p["file_data"].as_str(), p["file_url"].as_str()) {
-            (Some(data), None) if data.starts_with("data:") => {
-                match source_url(data, "application/octet-stream") {
+            (Some(data), None) => match data.starts_with("data:") {
+                true => match source_url(data, "application/octet-stream", "`file_data`") {
                     Ok(read) => read,
-                    Err(_) => return Some(Err(not_base64("`file_data`"))),
+                    Err(fault) => return Some(Err(fault)),
+                },
+                false => {
+                    let refused = unreadable_media("`file_data`", "must be a base64 `data:` URL");
+                    return Some(Err(refused));
                 }
-            }
+            },
             (None, Some(url)) => (
                 "application/octet-stream".into(),
                 MediaSource::Url(url.into()),

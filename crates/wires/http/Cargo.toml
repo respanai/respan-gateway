@@ -11,6 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
+base64.workspace = true
 parking_lot.workspace = true
 respan-gateway-core.workspace = true
 respan-gateway-http-faults.workspace = true

@@ -7,9 +7,9 @@
 use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
-    FAILED_RESULT_PREFIX, Names, Own, base64_bytes, decode_tools, each_tool, edit_native,
-    effort_for, effort_name, encode_content, encode_message, merge_fields, merge_missing,
-    not_base64, only, read_search, remainder, rest_of, set, source_url, take_strict,
+    FAILED_RESULT_PREFIX, Names, Own, decode_tools, each_tool, edit_native, effort_for,
+    effort_name, encode_content, encode_message, merge_fields, merge_missing, not_base64, only,
+    read_search, remainder, rest_of, set, source_url, take_strict, unreadable_media,
     untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -18,6 +18,7 @@ use respan_gateway_conversation::{
     ToolChoice,
 };
 use respan_gateway_core::Fault;
+use respan_gateway_http::content::base64_bytes;
 use serde_json::{Map, Value, json};
 
 use crate::openai::{OpenAiChat, sign, take_signature};
@@ -313,8 +314,10 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
     let (kind, mime, source, mut fields, name) = match v["type"].as_str()? {
         "image_url" => {
             let image = &v["image_url"];
-            let Ok((mime, src)) = source_url(image["url"].as_str()?, "image/*") else {
-                return Some(Err(not_base64("`image_url.url`")));
+            let read = source_url(image["url"].as_str()?, "image/*", "`image_url.url`");
+            let (mime, src) = match read {
+                Ok(read) => read,
+                Err(fault) => return Some(Err(fault)),
             };
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
@@ -325,12 +328,16 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
         }
         "input_audio" => {
             let audio = &v["input_audio"];
-            let mime = match audio["format"].as_str()? {
-                "wav" => "audio/wav",
-                "mp3" => "audio/mpeg",
-                _ => return None,
+            let mime = match audio["format"].as_str() {
+                Some("wav") => "audio/wav".to_owned(),
+                Some("mp3") => "audio/mpeg".to_owned(),
+                Some(format) => format!("audio/{format}"),
+                None => {
+                    let field = "`input_audio.format`";
+                    return Some(Err(unreadable_media(field, "is required")));
+                }
             };
-            let Ok(bytes) = base64_bytes(audio["data"].as_str()?) else {
+            let Some(bytes) = base64_bytes(audio["data"].as_str()?) else {
                 return Some(Err(not_base64("`input_audio.data`")));
             };
             let src = MediaSource::Bytes(bytes.into());
@@ -339,7 +346,7 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
             if !nested.is_empty() {
                 fields.insert("input_audio".into(), nested.into());
             }
-            (1, mime.into(), src, fields, None)
+            (1, mime, src, fields, None)
         }
         "file" => {
             let file = &v["file"];
@@ -347,11 +354,13 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
                 return None;
             }
             let data = file["file_data"].as_str()?;
+            let field = "`file.file_data`";
             if !data.starts_with("data:") {
-                return None;
+                return Some(Err(unreadable_media(field, "must be a base64 `data:` URL")));
             }
-            let Ok((mime, src)) = source_url(data, "application/octet-stream") else {
-                return Some(Err(not_base64("`file.file_data`")));
+            let (mime, src) = match source_url(data, "application/octet-stream", field) {
+                Ok(read) => read,
+                Err(fault) => return Some(Err(fault)),
             };
             let mut fields = remainder(v, &["type", "file"]);
             let nested = remainder(file, &["file_data", "filename"]);
@@ -404,7 +413,10 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
             let encoding = match media.mime_type.as_str() {
                 "audio/wav" | "audio/x-wav" => "wav",
                 "audio/mpeg" => "mp3",
-                _ => return Ok(Value::Null),
+                other => match other.strip_prefix("audio/") {
+                    Some(format) => format,
+                    None => return Ok(Value::Null),
+                },
             };
             json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
         }

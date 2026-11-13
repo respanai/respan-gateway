@@ -1158,6 +1158,10 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         (output(image("data:image/png;base64,aGVsbG8=")), hello),
         (message(image("data:image/png;base64,not*base64!")), None),
         (output(image("data:image/png;base64,not*base64!")), None),
+        (
+            message(json!({"type": "input_file", "file_data": "aGVsbG8="})),
+            None,
+        ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {
         Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
@@ -1177,7 +1181,7 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         let said = part.to_string();
         match (read(part), read_as) {
             (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (Err(fault), None) => assert!(fault.message().starts_with('`'), "{said}: {fault}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

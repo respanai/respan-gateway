@@ -4,9 +4,9 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    EFFORT_BUDGETS, arguments_object, base64_bytes, decode_content, decode_tools, each_tool,
-    edit_native, effort_for, encode_content, merge_missing, not_base64, only, read_search,
-    remainder, rest_of, set, take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
+    effort_for, encode_content, merge_missing, not_base64, only, read_search, remainder, rest_of,
+    set, take_native, unreadable_media, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -16,6 +16,7 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
+use respan_gateway_http::content::base64_bytes;
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::AnthropicMessages;
@@ -174,13 +175,16 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
     }
     let source = &v["source"];
     let (mut mime, src) = match source["type"].as_str()? {
-        "base64" => (
-            source["media_type"].as_str()?.to_owned(),
-            match base64_bytes(source["data"].as_str()?) {
-                Ok(bytes) => MediaSource::Bytes(bytes.into()),
-                Err(_) => return Some(Err(not_base64("`source.data`"))),
-            },
-        ),
+        "base64" => {
+            let Some(mime) = source["media_type"].as_str() else {
+                let field = "`source.media_type`";
+                return Some(Err(unreadable_media(field, "is required for base64 data")));
+            };
+            let Some(bytes) = base64_bytes(source["data"].as_str()?) else {
+                return Some(Err(not_base64("`source.data`")));
+            };
+            (mime.to_owned(), MediaSource::Bytes(bytes.into()))
+        }
         "url" => (
             "image/*".to_owned(),
             MediaSource::Url(source["url"].as_str()?.into()),

@@ -1392,7 +1392,7 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
     let mut chat = OpenAiChat
         .decode_json(&json!({ "model": "m", "messages": [
         { "role": "user", "content": [{ "type": "text", "text": "read" },
-            { "type": "file", "file": { "file_data": "x" } }] }] }))
+            { "type": "file", "file": { "file_id": "file-x" } }] }] }))
         .expect("read");
     // A part in OpenAI's shape does not reach Anthropic.
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
@@ -2023,8 +2023,8 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         OpenAiChat.decode_request(Bytes::from(body.to_string()))
     };
     let image = |url: &str| json!({"type": "image_url", "image_url": {"url": url}});
-    let audio =
-        |data: &str| json!({"type": "input_audio", "input_audio": {"data": data, "format": "wav"}});
+    let audio_as = |data: &str, format: &str| json!({"type": "input_audio", "input_audio": {"data": data, "format": format}});
+    let audio = |data: &str| audio_as(data, "wav");
     let file = |data: &str| json!({"type": "file", "file": {"file_data": data}});
     let hello = Some(b"hello".to_vec());
     let cases = [
@@ -2040,6 +2040,13 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         (image("data:image/png;base64,not*base64!"), None),
         (audio("not*base64!"), None),
         (file("data:application/pdf;base64,%%%"), None),
+        (file("aGVsbG8="), None),
+        (image("data:image/png;base64"), None),
+        (audio_as("aGVsbG8=", "flac"), Some(b"hello".to_vec())),
+        (
+            json!({"type": "input_audio", "input_audio": {"data": "aGVsbG8="}}),
+            None,
+        ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {
         Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
@@ -2059,7 +2066,7 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         let said = part.to_string();
         match (read(part), read_as) {
             (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
-            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (Err(fault), None) => assert!(fault.message().starts_with('`'), "{said}: {fault}"),
             (read, _) => panic!("{said}: {read:?}"),
         }
     }

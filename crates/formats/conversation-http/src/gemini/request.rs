@@ -13,12 +13,13 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
+use respan_gateway_http::content::base64_bytes;
 use serde_json::{Map, Value, json};
 
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    Own, arguments_object, base64_bytes, edit_native, effort_name, merge_fields, merge_missing,
-    not_base64, parse_effort, remainder, sealed, set, untranslatable, write_search,
+    Own, arguments_object, edit_native, effort_name, merge_fields, merge_missing, not_base64,
+    parse_effort, remainder, sealed, set, unreadable_media, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -200,20 +201,24 @@ fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
 /// [`read_media`], with `None` for a part the kind has no form for.
 fn read_media_part(p: &Value, which: &str) -> Option<Result<Content, Fault>> {
     let data = &p[which];
-    let mime = data["mimeType"].as_str()?;
+    let mime = data["mimeType"].as_str();
     let (source, known): (MediaSource, &[&str]) = match which {
-        "inlineData" => (
-            match base64_bytes(data["data"].as_str()?) {
-                Ok(bytes) => MediaSource::Bytes(bytes.into()),
-                Err(_) => return Some(Err(not_base64("`inlineData.data`"))),
-            },
-            &["mimeType", "data"],
-        ),
+        "inlineData" => {
+            if mime.is_none() {
+                let refused = unreadable_media("`inlineData.mimeType`", "is required");
+                return Some(Err(refused));
+            }
+            let Some(bytes) = base64_bytes(data["data"].as_str()?) else {
+                return Some(Err(not_base64("`inlineData.data`")));
+            };
+            (MediaSource::Bytes(bytes.into()), &["mimeType", "data"])
+        }
         _ => (
             MediaSource::Url(data["fileUri"].as_str()?.into()),
             &["mimeType", "fileUri"],
         ),
     };
+    let mime = mime?;
     let mut fields = remainder(p, &[which]);
     let nested = remainder(data, known);
     if !nested.is_empty() {

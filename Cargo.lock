@@ -1733,6 +1733,7 @@ dependencies = [
 name = "respan-gateway-http"
 version = "0.1.1"
 dependencies = [
+ "base64 0.22.1",
  "bytes",
  "futures",
  "http",
