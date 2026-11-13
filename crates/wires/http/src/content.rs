@@ -1,7 +1,8 @@
 //! A body's content, as formats read it: its content type, whether a
 //! response is a stream of server-sent events ([`is_stream`]; reading one
 //! is [`Sse`](crate::Sse)'s), a body's or an event's JSON, and the bytes of
-//! base64 a body embeds ([`base64_bytes`]). The formats
+//! base64 or a `data:` URL a body embeds ([`base64_bytes`], [`data_url`]).
+//! The formats
 //! themselves are the `respan-gateway-*-http` crates'; traffic of no kind
 //! relays through `respan-gateway-passthrough-http`.
 
@@ -39,6 +40,40 @@ pub fn base64_bytes(data: &str) -> Option<Vec<u8>> {
     EMBEDDED_BASE64
         .iter()
         .find_map(|engine| engine.decode(data.as_bytes()).ok())
+}
+
+/// Why the data of a `data:` URL cannot be read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DataUrlError {
+    /// It has no `,` before its data.
+    NoData,
+    /// It says it is base64, and its data does not decode.
+    NotBase64,
+}
+
+/// The media type and bytes of `url` if it is a `data:` URL (RFC 2397):
+/// base64 when a parameter of its header says so, in any case, and
+/// percent-encoded bytes otherwise, its data percent-decoded either way; its
+/// type is `text/plain` when it names none. `None` for any other URL.
+pub fn data_url(url: &str) -> Option<Result<(String, Vec<u8>), DataUrlError>> {
+    let data_url = url.strip_prefix("data:")?;
+    let Some((header, data)) = data_url.split_once(',') else {
+        return Some(Err(DataUrlError::NoData));
+    };
+    let mut params = header.split(';');
+    let mime = Some(params.next().unwrap_or_default().trim())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("text/plain");
+    let data = Cow::from(percent_encoding::percent_decode_str(data));
+    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
+        true => std::str::from_utf8(&data)
+            .ok()
+            .and_then(base64_bytes)
+            .ok_or(DataUrlError::NotBase64),
+        false => Ok(data.into_owned()),
+    };
+    Some(bytes.map(|bytes| (mime.to_owned(), bytes)))
 }
 
 /// A provider's message as JSON: a whole body, or an event's `data:`.

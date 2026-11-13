@@ -1316,6 +1316,10 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     let hello = Some(b"hello".to_vec());
     let cases = [
         (image("aGVsbG8"), hello.clone()),
+        (
+            json!({"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "hello"}}),
+            hello.clone(),
+        ),
         (result(image("-_8=")), Some(vec![0xfb, 0xff])),
         (image("not*base64!"), None),
         (result(image("not*base64!")), None),

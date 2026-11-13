@@ -304,6 +304,14 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
     Ok(out)
 }
 
+/// Whether `format` names an audio format, such as `flac`, and nothing else.
+fn is_format_name(format: &str) -> bool {
+    !format.is_empty()
+        && format
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
 /// A part the kind has a form for: an image, audio, or a file of data.
 pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
     read_part(v).transpose()
@@ -331,7 +339,11 @@ fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
             let mime = match audio["format"].as_str() {
                 Some("wav") => "audio/wav".to_owned(),
                 Some("mp3") => "audio/mpeg".to_owned(),
-                Some(format) => format!("audio/{format}"),
+                Some(format) if is_format_name(format) => format!("audio/{format}"),
+                Some(_) => {
+                    let field = "`input_audio.format`";
+                    return Some(Err(unreadable_media(field, "is not a format name")));
+                }
                 None => {
                     let field = "`input_audio.format`";
                     return Some(Err(unreadable_media(field, "is required")));
@@ -414,7 +426,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
                 "audio/wav" | "audio/x-wav" => "wav",
                 "audio/mpeg" => "mp3",
                 other => match other.strip_prefix("audio/") {
-                    Some(format) => format,
+                    // A type's parameters, such as `codecs`, are not its format.
+                    Some(format) => format.split(';').next().unwrap_or_default().trim(),
                     None => return Ok(Value::Null),
                 },
             };

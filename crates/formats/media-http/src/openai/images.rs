@@ -15,6 +15,7 @@ use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
+use respan_gateway_http::content::{DataUrlError, data_url};
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole, native::Json};
@@ -149,19 +150,22 @@ fn linked(v: &Value, param: &str) -> Result<Media, Fault> {
     let url = v["image_url"]
         .as_str()
         .ok_or_else(|| invalid(param, "must name an image_url"))?;
-    if let Some((mime, bytes)) = data_url(url) {
-        return Ok(Media::new(mime, MediaSource::Bytes(bytes)));
+    match data_url(url) {
+        Some(Ok((mime, bytes))) => return Ok(Media::new(mime, MediaSource::Bytes(bytes.into()))),
+        Some(Err(DataUrlError::NoData)) => {
+            return Err(invalid(param, "is a `data:` URL with no data"));
+        }
+        Some(Err(_)) => {
+            return Err(invalid(
+                param,
+                "holds a `data:` URL that is not valid base64",
+            ));
+        }
+        None => {}
     }
     let path = url.split(['?', '#']).next().unwrap_or_default();
     let mime = mime_of(None, path, &[]);
     Ok(Media::new(mime, MediaSource::Url(url.to_owned())))
-}
-
-/// The type and bytes of a base64 data URL.
-fn data_url(url: &str) -> Option<(String, Bytes)> {
-    let (head, data) = url.strip_prefix("data:")?.split_once(',')?;
-    let mime = head.strip_suffix(";base64")?;
-    Some((mime.to_owned(), unb64(data)?))
 }
 
 /// The call of `input`: a generation in JSON; an edit as a form, or in

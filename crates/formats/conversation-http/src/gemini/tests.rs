@@ -873,4 +873,9 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
             (read, _) => panic!("{said}: {read:?}"),
         }
     }
+    // A file Gemini finds the type of is an untyped URL, written back as it came.
+    let file = json!({"fileData": {"fileUri": "gs://b/a"}});
+    let chat = read(file.clone()).expect("read");
+    let written = GeminiGenerate.encode_request(&chat).expect("written");
+    assert_eq!(written["contents"][0]["parts"][0], file);
 }

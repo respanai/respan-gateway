@@ -166,6 +166,9 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     }
 }
 
+/// The one media type Anthropic takes a document's plain text in.
+const PLAIN_TEXT: &str = "text/plain";
+
 /// An image or document block, if the kind can say its source: its other
 /// fields are its media's `native`. One whose base64 does not decode is
 /// refused.
@@ -189,6 +192,14 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
             "image/*".to_owned(),
             MediaSource::Url(source["url"].as_str()?.into()),
         ),
+        "text" if v["type"] == "document" => {
+            let mime = source["media_type"].as_str().unwrap_or(PLAIN_TEXT);
+            let text = source["data"].as_str()?;
+            (
+                mime.to_owned(),
+                MediaSource::Bytes(text.as_bytes().to_vec().into()),
+            )
+        }
         _ => return None,
     };
     let image = v["type"] == "image";
@@ -196,10 +207,9 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
         mime = "application/pdf".into();
     }
     let mut fields = remainder(v, &["type", "source", "title"]);
-    let known = if source["type"] == "base64" {
-        &["type", "media_type", "data"][..]
-    } else {
-        &["type", "url"][..]
+    let known = match source["type"].as_str() {
+        Some("url") => &["type", "url"][..],
+        _ => &["type", "media_type", "data"][..],
     };
     let nested = remainder(source, known);
     if !nested.is_empty() {
@@ -218,9 +228,16 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
 /// Anthropic has no field for, is dropped.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     let native = AnthropicMessages::fields(&media.native).clone();
-    let source = match &media.source {
-        MediaSource::Url(url) => json!({"type":"url","url":url}),
-        MediaSource::Bytes(bytes) => {
+    let text = match &media.source {
+        MediaSource::Bytes(bytes) if kind == "document" && media.mime_type.starts_with("text/") => {
+            std::str::from_utf8(bytes).ok()
+        }
+        _ => None,
+    };
+    let source = match (&media.source, text) {
+        (_, Some(text)) => json!({"type":"text","media_type":PLAIN_TEXT,"data":text}),
+        (MediaSource::Url(url), _) => json!({"type":"url","url":url}),
+        (MediaSource::Bytes(bytes), _) => {
             json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
         }
     };

@@ -3,13 +3,12 @@
 //! faults of what cannot be written, and small JSON helpers.
 
 use crate::fields;
-use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, Native};
-use respan_gateway_http::content::base64_bytes;
+use respan_gateway_http::content::{DataUrlError, data_url};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value};
@@ -47,34 +46,21 @@ pub(crate) fn not_base64(field: &str) -> Fault {
 }
 
 /// The media type and source of `url`, the client's `field`: the bytes of a
-/// `data:` URL, else the URL, of type `fallback`. A `data:` URL (RFC 2397)
-/// is base64 when a parameter of its header says so, in any case, and
-/// percent-encoded bytes otherwise; its type is `text/plain` when it names
-/// none. One with no data, or whose base64 does not decode, is refused.
+/// `data:` URL ([`data_url`]), else the URL, of type `fallback`. One with no
+/// data, or whose base64 does not decode, is refused.
 pub(crate) fn source_url(
     url: &str,
     fallback: &str,
     field: &str,
 ) -> Result<(String, MediaSource), Fault> {
-    let Some(data_url) = url.strip_prefix("data:") else {
-        return Ok((fallback.into(), MediaSource::Url(url.into())));
-    };
-    let Some((header, data)) = data_url.split_once(',') else {
-        return Err(unreadable_media(field, "is a `data:` URL with no data"));
-    };
-    let mut params = header.split(';');
-    let mime = Some(params.next().unwrap_or_default().trim())
-        .filter(|m| !m.is_empty())
-        .unwrap_or("text/plain");
-    let data = Cow::from(percent_decode_str(data));
-    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
-        true => std::str::from_utf8(&data)
-            .ok()
-            .and_then(base64_bytes)
-            .ok_or_else(|| not_base64(field))?,
-        false => data.into_owned(),
-    };
-    Ok((mime.into(), MediaSource::Bytes(bytes.into())))
+    match data_url(url) {
+        None => Ok((fallback.into(), MediaSource::Url(url.into()))),
+        Some(Ok((mime, bytes))) => Ok((mime, MediaSource::Bytes(bytes.into()))),
+        Some(Err(DataUrlError::NoData)) => {
+            Err(unreadable_media(field, "is a `data:` URL with no data"))
+        }
+        Some(Err(_)) => Err(not_base64(field)),
+    }
 }
 
 /// A request body that is not a JSON object.

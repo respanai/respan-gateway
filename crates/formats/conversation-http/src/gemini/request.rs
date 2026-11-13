@@ -192,6 +192,9 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Result<
     })
 }
 
+/// The type of a URL whose type a client did not say.
+const ANY_IMAGE: &str = "image/*";
+
 /// An `inlineData` or `fileData` part, if the kind can say it; one whose
 /// `data` does not decode is refused.
 fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
@@ -218,7 +221,9 @@ fn read_media_part(p: &Value, which: &str) -> Option<Result<Content, Fault>> {
             &["mimeType", "fileUri"],
         ),
     };
-    let mime = mime?;
+    // A file Gemini finds the type of: the kind's untyped URL, which
+    // [`media_part`] writes back without one.
+    let mime = mime.unwrap_or(ANY_IMAGE);
     let mut fields = remainder(p, &[which]);
     let nested = remainder(data, known);
     if !nested.is_empty() {
@@ -431,7 +436,7 @@ fn write_result(content: &[Content], is_error: bool, response: &mut Value) {
 /// type, and finds a URL's type itself.
 pub fn media_part(media: &Media) -> Value {
     match &media.source {
-        MediaSource::Url(uri) if media.mime_type == "image/*" => {
+        MediaSource::Url(uri) if media.mime_type == ANY_IMAGE => {
             json!({ "fileData": { "fileUri": uri } })
         }
         MediaSource::Url(uri) => {
