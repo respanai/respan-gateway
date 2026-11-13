@@ -72,3 +72,21 @@ fn json_answer(head: &ResponseHead) -> bool {
     head.status.is_success()
         && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_vendor_with_no_formats_given_serves_decisions_at_its_own_base() {
+        let at = |vendor: &Vendor| vendor.format("decisions").map(|(_, url)| url);
+        assert_eq!(
+            at(&deepinfra::VENDOR),
+            Some(Some("https://api.deepinfra.com/v1"))
+        );
+        assert_eq!(
+            at(&perplexity::VENDOR),
+            Some(Some("https://api.perplexity.ai/v1"))
+        );
+    }
+}
