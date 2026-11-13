@@ -1213,3 +1213,272 @@ async fn fireworks_answers_each_decision_contract_in_its_own() {
     }
     server.abort();
 }
+
+#[tokio::test]
+async fn providers_carry_the_gateway_release_user_agent() {
+    let (gateway, a, _) = local(TWO).await;
+    request(&gateway, "a/gpt-x").await;
+    let calls = a.requests();
+    assert_eq!(calls.len(), 1);
+    let ua = &calls[0].headers["user-agent"];
+    assert_eq!(*ua, format!("respan-gateway/{}", crate::VERSION));
+}
+
+/// A scripted Drex for both inference and model discovery.
+mod nace_fixture {
+    use super::*;
+    use axum::{Json, Router, extract::State};
+    use serde_json::Value;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
+    type Call = (String, http::HeaderMap, Value);
+    type Calls = Arc<Mutex<Vec<Call>>>;
+    type Script = (Calls, Arc<Mutex<VecDeque<(u16, Value)>>>);
+
+    pub struct Drex {
+        pub base: String,
+        pub calls: Calls,
+        server: tokio::task::JoinHandle<std::io::Result<()>>,
+    }
+    impl Drop for Drex {
+        fn drop(&mut self) {
+            self.server.abort();
+        }
+    }
+    async fn answer(
+        State((calls, replies)): State<Script>,
+        uri: http::Uri,
+        headers: http::HeaderMap,
+        body: Bytes,
+    ) -> (StatusCode, http::HeaderMap, Json<Value>) {
+        let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+        let mut captured = calls.lock().expect("calls");
+        captured.push((uri.path().into(), headers, body));
+        let mut script = replies.lock().expect("script");
+        let (status, body) = script.pop_front().expect("response per call");
+        let mut headers = http::HeaderMap::new();
+        if status == 529 {
+            headers.insert("retry-after", http::HeaderValue::from_static("0"));
+            headers.insert("retry-after-ms", http::HeaderValue::from_static("1"));
+        }
+        let status = StatusCode::from_u16(status).expect("status");
+        (status, headers, Json(body))
+    }
+    impl Drex {
+        pub async fn start(replies: Vec<(u16, Value)>) -> Self {
+            let calls: Calls = Arc::default();
+            let app = Router::new()
+                .fallback(answer)
+                .with_state((calls.clone(), Arc::new(Mutex::new(replies.into()))));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("listener");
+            let base = format!("http://{}/v1", listener.local_addr().expect("address"));
+            Self {
+                base,
+                calls,
+                server: tokio::spawn(axum::serve(listener, app).into_future()),
+            }
+        }
+        pub fn gateway(&self, route: &str) -> Gateway {
+            let base = &self.base;
+            resolve(&format!(
+                "providers = {{ nace = {{ vendor = \"nace\", base_url = \"{base}\", key = \"provider-secret\" }} }}\nformats = [\"decisions\", \"openai-decisions\"]\n{route}"
+            )).expect("gateway")
+        }
+        pub fn inference_calls(&self, count: usize) -> Vec<Value> {
+            let calls = self.calls.lock().expect("calls");
+            assert_eq!(calls.len(), count);
+            for (path, headers, body) in calls.iter() {
+                let native = body.get("input").is_none();
+                let endpoint = if native {
+                    "/v1/systemone"
+                } else {
+                    "/v1/decisions"
+                };
+                assert_eq!(path, endpoint);
+                assert_eq!(headers["authorization"], "Bearer provider-secret");
+                let identity = format!("respan/{}", crate::VERSION);
+                let ua = format!("respan-gateway/{}", crate::VERSION);
+                assert_eq!(headers["x-nace-client"], identity);
+                assert_eq!(headers["user-agent"], ua);
+                let legend = headers.get("x-nace-legend").map(|v| v.as_bytes());
+                assert_eq!(legend, native.then_some(b"object".as_slice()));
+            }
+            calls.iter().map(|(_, _, body)| body.clone()).collect()
+        }
+    }
+    pub async fn call(gateway: &Gateway, path: &str, asked: &Value) -> (StatusCode, Value) {
+        let (response, _) = serve(gateway, super::post(path, asked.to_string())).await;
+        let (status, _, body) = read_whole(response).await;
+        gateway.idle().await;
+        (
+            status,
+            serde_json::from_slice(&body.expect("body")).expect("json"),
+        )
+    }
+}
+
+#[tokio::test]
+async fn nace_answers_each_contract_and_keeps_mixed_batches_answers_and_images() {
+    use nace_fixture::{Drex, call};
+    use serde_json::json;
+    let native = json!({"model":"drex-max", "request_id":"native",
+        "answers":{
+            "eligible":{"type":"noul", "noul":0.98, "confidence":0.99},
+            "tone":{"type":"choice", "choice":"calm", "probabilities":{"angry":0.2,"calm":0.8}, "confidence":0.9},
+            "urgency":{"type":"score", "score":1.7, "probabilities":{"0":0.1,"1":0.1,"2":0.8}, "confidence":0.9,
+                "legend":{"0":"Can wait","1":"This week","2":"Today"}}},
+        "usage":{"input_tokens":42,"output_tokens":0,"cached":1}});
+    let openai = json!({"model":"drex-max", "request_id":"openai",
+        "answers":[{"type":"predicate","name":"eligible","probability":0.98}],
+        "usage":{"input_tokens":4,"output_tokens":0,"total_tokens":4,
+            "input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},
+            "output_tokens_details":{"reasoning_tokens":0}}});
+    let replies = [native.clone(), native.clone(), openai.clone()].map(|body| (200, body));
+    let drex = Drex::start(replies.into()).await;
+    let gateway = drex.gateway("");
+    let states = [json!("hello"), json!({"subject":"Refund","amount":42})];
+    for (i, state) in states.into_iter().enumerate() {
+        let mut asked = json!({"model":"nace/drex-max", "state":state,
+            "images":["data:image/png;base64,aGVsbG8=","data:image/jpeg;base64,d29ybGQ="],
+            "questions":{
+                "eligible":{"type":"noul","criteria":{"true":"Eligible","false":"Ineligible"}},
+                "tone":{"type":"choice","instructions":"Tone?","criteria":{"angry":null,"calm":"Calm"}},
+                "urgency":{"type":"score","instructions":"Urgency?","criteria":["Can wait","This week","Today"]}}});
+        let got = call(&gateway, "/v1/decisions", &asked).await;
+        assert_eq!(got, (StatusCode::OK, native.clone()));
+        asked["model"] = json!("drex-max");
+        // Whole-body equality checks state, criteria-only noul, null option and image order.
+        assert_eq!(drex.inference_calls(i + 1)[i], asked);
+    }
+    let mut asked = json!({"model":"nace/drex-max", "input":[{"role":"user","content":[
+        {"type":"input_text","text":"hello"},
+        {"type":"input_image","image_url":"data:image/png;base64,aGVsbG8="},
+        {"type":"input_image","image_url":"data:image/jpeg;base64,d29ybGQ="}]}],
+        "questions":[{"type":"predicate","name":"eligible","instructions":"Eligible?"}]});
+    let got = call(&gateway, "/openai/v1/decisions", &asked).await;
+    assert_eq!(got, (StatusCode::OK, openai));
+    asked["model"] = json!("drex-max");
+    assert_eq!(drex.inference_calls(3)[2], asked);
+}
+
+#[tokio::test]
+async fn nace_relays_an_image_refusal_with_drexs_status_and_message() {
+    use nace_fixture::{Drex, call};
+    use serde_json::json;
+    let message = "This model does not support images. Use drex-max.";
+    let refusal = json!({"error":{"type":"invalid_request_error","message":message,
+        "issues":[{"path":"images","message":message}]},"request_id":"refused"});
+    let drex = Drex::start(vec![(422, refusal)]).await;
+    let gateway = drex.gateway("");
+    let mut asked = json!({"model":"nace/drex-v2.0","state":"hi", "images":["data:image/png;base64,aA=="],
+        "questions":{"q":{"type":"noul","criteria":{"true":"yes"}}}});
+    let (status, body) = call(&gateway, "/v1/decisions", &asked).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["message"], message);
+    asked["model"] = json!("drex-v2.0");
+    assert_eq!(drex.inference_calls(1)[0], asked, "no direct retry");
+}
+
+#[tokio::test]
+async fn nace_retries_an_overload_once_with_its_identity() {
+    use nace_fixture::{Drex, call};
+    use serde_json::json;
+    let success = json!({"model":"drex-max","answers":{"q":{"type":"noul","noul":0.9}},"usage":{"input_tokens":4,"output_tokens":0}});
+    let busy = json!({"error":{"type":"overloaded_error","message":"Overloaded"}});
+    let drex = Drex::start(vec![(529, busy), (200, success.clone())]).await;
+    let gateway =
+        drex.gateway("[routes.overload]\nto = [\"nace/drex-max\"]\ntries = 2\nbackoff = \"1ms\"\n");
+    let mut asked = json!({"model":"overload","state":"hi","questions":{"q":{"type":"noul","criteria":{"true":"yes"}}}});
+    let got = call(&gateway, "/v1/decisions", &asked).await;
+    assert_eq!(got, (StatusCode::OK, success));
+    asked["model"] = json!("drex-max");
+    assert_eq!(drex.inference_calls(2), [asked.clone(), asked]);
+}
+
+// Vendor tiers have no Axum/Tokio test dependencies; reuse this local-server harness.
+#[tokio::test]
+async fn nace_lists_a_keyless_priced_feed_and_authenticated_aliases_with_either_list_available() {
+    use nace_fixture::Drex;
+    use respan_gateway_vendors::{Modality, nace};
+    use serde_json::json;
+    let feed = json!({"data":[{"id":"drex-max","name":"Drex Max","is_ready":false,
+        "input_modalities":[{"type":"text","supported_inputs":{"max_context_length":{"value":262144}},
+            "pricing":[{"type":"prompt","unit":"token","cost_usd":"0.000000030"}]},{"type":"image"}]}]});
+    let names = json!({"models":[{"name":"drex-v1.0","alias_for":"drex-max"},{"name":"drex-max"}]});
+    for (feed_ok, names_ok) in [(true, true), (false, true), (true, false)] {
+        let drex = Drex::start(vec![
+            (if feed_ok { 200 } else { 503 }, feed.clone()),
+            (if names_ok { 200 } else { 401 }, names.clone()),
+        ])
+        .await;
+        let p = nace::VENDOR
+            .provider("nace")
+            .base(&drex.base)
+            .key("provider-secret");
+        let models = p
+            .models()
+            .await
+            .expect("HTTP models")
+            .expect("available list");
+        assert_eq!(models.len(), if names_ok { 2 } else { 1 });
+        if feed_ok {
+            for model in &models {
+                assert_eq!(model.input_modalities, [Modality::Image]);
+                assert_eq!(model.context_window, Some(262144));
+                let price = model.price.expect("priced");
+                assert!((price.input - 0.03).abs() < 1e-12 && price.output == 0.0);
+            }
+        } else {
+            assert_eq!(
+                models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                ["drex-v1.0", "drex-max"]
+            );
+            assert!(models.iter().all(|m| m.price.is_none()));
+        }
+        let calls = drex.calls.lock().expect("calls");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "/models");
+        assert!(!calls[0].1.contains_key("authorization"));
+        assert_eq!(calls[1].0, "/v1/models");
+        assert_eq!(calls[1].1["authorization"], "Bearer provider-secret");
+    }
+}
+
+#[tokio::test]
+async fn nace_passthrough_uses_the_host_identity_and_preserves_other_client_headers() {
+    use nace_fixture::Drex;
+    use serde_json::json;
+    let drex = Drex::start(vec![(200, json!({"ok":true}))]).await;
+    let base = &drex.base;
+    let gateway = resolve(&format!(
+        "providers = {{ nace = {{ vendor = \"nace\", formats = \"passthrough\", base_url = \"{base}\", key = \"provider-secret\" }} }}\nformats = [\"passthrough\"]\n"
+    )).expect("gateway");
+    let mut req = post("/inspect", "{}");
+    req.headers_mut()
+        .insert("x-nace-client", http::HeaderValue::from_static("client/1"));
+    req.headers_mut()
+        .append("x-nace-client", http::HeaderValue::from_static("client/2"));
+    req.headers_mut()
+        .insert("user-agent", http::HeaderValue::from_static("client/1"));
+    req.headers_mut()
+        .insert("x-client-note", http::HeaderValue::from_static("keep"));
+    let (response, _) = serve(&gateway, req).await;
+    let (status, _, body) = read_whole(response).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    gateway.idle().await;
+    let calls = drex.calls.lock().expect("calls");
+    assert_eq!(calls.len(), 1);
+    let (path, headers, _) = &calls[0];
+    assert_eq!(path, "/v1/inspect");
+    assert_eq!(
+        headers["x-nace-client"],
+        format!("respan/{}", crate::VERSION)
+    );
+    assert_eq!(headers.get_all("x-nace-client").iter().count(), 1);
+    assert_eq!(headers["user-agent"], "client/1");
+    assert_eq!(headers["x-client-note"], "keep");
+}

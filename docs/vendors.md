@@ -43,6 +43,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
+| | Nace (Drex) | `nace` | `NACE_API_KEY` | `decisions` (at `/systemone`), `openai-decisions` |
 | <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions` |
 | | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings` |
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
@@ -116,6 +117,43 @@ sent no key; a provider at another base URL lists at
 `decisions` is called at `{base}/decisions`, as Respan serves it. TypeSafe
 serves it at `/systemone` instead, which `vendor = "typesafe"` knows; a
 provider of no vendor at TypeSafe's URL calls `/decisions` and is not found.
+
+Nace (Drex) serves both decision contracts at `https://console.nace.ai/v1`:
+`decisions` at `/systemone`, `openai-decisions` at `/decisions`, with a bearer
+key. Its public `/models` feed (OpenRouter 2.4) supplies input-token prices,
+modalities and limits; `/v1/models` adds names and aliases with their
+target's card. A `base_url` override reads the public feed at that URL's
+origin, without a key.
+
+```toml
+[providers.nace]
+vendor = "nace"
+key = "env:NACE_API_KEY"
+```
+
+A text decision, then a Drex Max image decision:
+
+```sh
+curl http://localhost:8080/v1/decisions -H 'Content-Type: application/json' -d '{
+  "model": "nace/drex-v2.0",
+  "state": "The invoice is overdue.",
+  "questions": {"late": {"type": "noul", "criteria": {"true": "Overdue", "false": "On time"}}}
+}'
+curl http://localhost:8080/v1/decisions -H 'Content-Type: application/json' -d '{
+  "model": "nace/drex-max-v1.1",
+  "state": "Inspect the image.",
+  "images": ["data:image/png;base64,<base64>"],
+  "questions": {"damaged": {"type": "noul", "criteria": {"true": "Damaged", "false": "Intact"}}}
+}'
+```
+
+Use native `images` or OpenAI `input_image` parts; images do not convert
+between formats. Drex refuses images on text models and `number` questions
+with 422 (the OpenAI format refuses `number` before calling it). Its OpenAI
+endpoint takes string instructions, not arrays; the gateway refuses
+`input_json` parts. Drex's 529 overload becomes 503. Both `Retry-After` and
+`retry-after-ms` pass through; only `Retry-After` (seconds or an HTTP date)
+determines the retry delay.
 
 Without a config file, `RESPAN_<VENDOR>_BASE_URL` moves a vendor's base URL
 (`OLLAMA_HOST` for `ollama`); with one, only the file's `base_url` counts

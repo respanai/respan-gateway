@@ -36,6 +36,7 @@ pub const VENDOR: Vendor = Vendor {
     ],
     models: no_models,
     format_for: Some(format_for),
+    ..Vendor::DEFAULT
 };
 
 /// Anthropic's Messages as Bedrock serves them: under `/anthropic`, the key a
