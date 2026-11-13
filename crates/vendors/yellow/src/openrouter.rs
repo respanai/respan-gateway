@@ -315,22 +315,26 @@ mod tests {
     #[test]
     fn a_thinking_budget_is_its_reasoning_limit() {
         use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-        let mut messages = AnthropicMessages.decode_json(&json!({
-            "max_tokens": 9000,
-            "messages": [{ "role": "user", "content": "hi" }],
-            "thinking": { "type": "enabled", "budget_tokens": 2048 },
-            "context_management": { "edits": [] },
-        }));
+        let mut messages = AnthropicMessages
+            .decode_json(&json!({
+                "max_tokens": 9000,
+                "messages": [{ "role": "user", "content": "hi" }],
+                "thinking": { "type": "enabled", "budget_tokens": 2048 },
+                "context_management": { "edits": [] },
+            }))
+            .expect("read");
         reasoning_limit(&mut messages).expect("taken");
         assert!(messages.options.reasoning.is_none());
         let sent = OpenAiChat.encode_request(&messages).expect("written");
         assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
         assert!(sent.get("reasoning_effort").is_none());
         // Without a budget the input is as it came.
-        let plain = AnthropicMessages.decode_json(&json!({
-            "max_tokens": 9,
-            "messages": [{ "role": "user", "content": "hi" }],
-        }));
+        let plain = AnthropicMessages
+            .decode_json(&json!({
+                "max_tokens": 9,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }))
+            .expect("read");
         let mut taken = plain.clone();
         reasoning_limit(&mut taken).expect("taken");
         assert_eq!(taken, plain);

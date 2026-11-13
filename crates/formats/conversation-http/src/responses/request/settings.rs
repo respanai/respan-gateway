@@ -201,7 +201,7 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
 }
 
 /// A part the kind has a form for beyond text: an image or a file.
-pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
+pub(in crate::responses) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
     read_media(p)
 }
 

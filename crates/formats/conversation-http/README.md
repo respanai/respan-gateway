@@ -32,7 +32,11 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 What a format has no form for stays native to it (a `Native` only it, or
 code that names it through `Schema::fields` and `Schema::with_fields`, reads), is written
 only by that format, and is dropped by another, silently: what has meaning
-beyond its format belongs in the kind. A message whose every part a format drops is left out. A call
+beyond its format belongs in the kind. Media a format's reader finds and
+cannot decode, such as base64 that is not, is not kept native: the request is
+refused with a 400 before any provider is called. Base64 is read with or
+without padding, in either alphabet, across line breaks, and a `data:` URL's
+data may be percent-encoded. A message whose every part a format drops is left out. A call
 to a provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
@@ -42,14 +46,7 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `openai::OpenAiChat`: a `POST` to a path ending in `/chat/completions`; its
 provider base URL includes the version, such as `https://api.openai.com/v1`.
 A Chat Completions request with `n > 1` is refused before the provider
-is called, including when the selected provider speaks another format. So
-is a Chat Completions or Responses request with an image or file `data:`
-URL that says it is base64 and is not, an Anthropic Messages request with
-an image or document block whose base64 `source.data` is not, and a Gemini
-request with an `inlineData` part whose `data` is not, since a provider of
-another format would never receive the part. Base64 with or without
-padding, in the URL-safe alphabet or wrapped across lines is read, and a
-`data:` URL's may also be percent-encoded.
+is called, including when the selected provider speaks another format.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it

@@ -7,9 +7,10 @@
 use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
-    FAILED_RESULT_PREFIX, Names, Own, decode_tools, each_tool, edit_native, effort_for,
-    effort_name, encode_content, encode_message, merge_fields, merge_missing, only, read_search,
-    remainder, rest_of, set, source_url, take_strict, untranslatable, write_search,
+    FAILED_RESULT_PREFIX, Names, Own, base64_bytes, decode_tools, each_tool, edit_native,
+    effort_for, effort_name, encode_content, encode_message, merge_fields, merge_missing,
+    not_base64, only, read_search, remainder, rest_of, set, source_url, take_strict,
+    untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -303,11 +304,18 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
 }
 
 /// A part the kind has a form for: an image, audio, or a file of data.
-pub(crate) fn decode_part(v: &Value) -> Option<Content> {
+pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
+    read_part(v).transpose()
+}
+
+/// [`decode_part`], with `None` for a part the kind has no form for.
+fn read_part(v: &Value) -> Option<Result<Content, Fault>> {
     let (kind, mime, source, mut fields, name) = match v["type"].as_str()? {
         "image_url" => {
             let image = &v["image_url"];
-            let (mime, src) = source_url(image["url"].as_str()?, "image/*")?;
+            let Ok((mime, src)) = source_url(image["url"].as_str()?, "image/*") else {
+                return Some(Err(not_base64("`image_url.url`")));
+            };
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
             if !nested.is_empty() {
@@ -322,7 +330,10 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
                 "mp3" => "audio/mpeg",
                 _ => return None,
             };
-            let src = MediaSource::Bytes(STANDARD.decode(audio["data"].as_str()?).ok()?.into());
+            let Ok(bytes) = base64_bytes(audio["data"].as_str()?) else {
+                return Some(Err(not_base64("`input_audio.data`")));
+            };
+            let src = MediaSource::Bytes(bytes.into());
             let mut fields = remainder(v, &["type", "input_audio"]);
             let nested = remainder(audio, &["data", "format"]);
             if !nested.is_empty() {
@@ -339,7 +350,9 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
             if !data.starts_with("data:") {
                 return None;
             }
-            let (mime, src) = source_url(data, "application/octet-stream")?;
+            let Ok((mime, src)) = source_url(data, "application/octet-stream") else {
+                return Some(Err(not_base64("`file.file_data`")));
+            };
             let mut fields = remainder(v, &["type", "file"]);
             let nested = remainder(file, &["file_data", "filename"]);
             if !nested.is_empty() {
@@ -353,11 +366,11 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
     let mut media = Media::new(mime, source);
     media.name = name;
     media.native = OpenAiChat::native(std::mem::take(&mut fields));
-    Some(match kind {
+    Some(Ok(match kind {
         0 => Content::Image(media),
         1 => Content::Audio(media),
         _ => Content::Document(media),
-    })
+    }))
 }
 
 /// A part of the kind's as OpenAI writes it, `Null` for one it cannot say.

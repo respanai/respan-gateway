@@ -216,7 +216,13 @@ fn read_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     for candidate in v["candidates"].as_array().into_iter().flatten() {
         let parts = candidate["content"]["parts"].as_array();
         for part in parts.into_iter().flatten().filter(|p| p["thought"] != true) {
-            match media_of(part) {
+            let media = media_of(part).map_err(|e| {
+                Fault::upstream(format!(
+                    "the provider's {NAME} response holds an image not in base64"
+                ))
+                .with_source(e)
+            })?;
+            match media {
                 Some(media) => {
                     out.push(Output::Image(Image::new(media)));
                     images += 1;
@@ -244,17 +250,23 @@ fn read_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     Err(Fault::bad_request(message).with(ErrorCode("no_image".into())))
 }
 
-/// The image of a part, if it holds one: its bytes inline, or a file's URL.
-fn media_of(part: &Value) -> Option<Media> {
+/// The image of a part, if it holds one: its bytes inline, or a file's URL;
+/// inline data that does not decode is an error.
+fn media_of(part: &Value) -> Result<Option<Media>, base64::DecodeError> {
     if let Some(data) = part.get("inlineData") {
         let mime = data["mimeType"].as_str().unwrap_or("image/png");
-        let bytes = STANDARD.decode(data["data"].as_str()?).ok()?;
-        return Some(Media::new(mime, MediaSource::Bytes(bytes.into())));
+        let Some(text) = data["data"].as_str() else {
+            return Ok(None);
+        };
+        let bytes = STANDARD.decode(text)?;
+        return Ok(Some(Media::new(mime, MediaSource::Bytes(bytes.into()))));
     }
-    let file = part.get("fileData")?;
+    let Some(file) = part.get("fileData") else {
+        return Ok(None);
+    };
     let mime = file["mimeType"].as_str().unwrap_or("image/png");
-    let url = file["fileUri"].as_str()?;
-    Some(Media::new(mime, MediaSource::Url(url.to_owned())))
+    let url = file["fileUri"].as_str();
+    Ok(url.map(|url| Media::new(mime, MediaSource::Url(url.to_owned()))))
 }
 
 // --- A client of Gemini's image models: its requests read, the kind's
@@ -336,12 +348,18 @@ fn read_turn(contents: Option<Value>) -> Result<(String, Vec<Media>), Fault> {
     }
     let (mut text, mut images) = (Vec::new(), Vec::new());
     for (i, part) in turn["parts"].as_array().into_iter().flatten().enumerate() {
-        match (part["text"].as_str(), media_of(part)) {
+        let param = || format!("contents[0].parts[{i}]");
+        let media = media_of(part).map_err(|_| {
+            invalid(
+                &format!("{}.inlineData.data", param()),
+                "is not valid base64",
+            )
+        })?;
+        match (part["text"].as_str(), media) {
             (Some(said), _) => text.push(said),
             (None, Some(media)) => images.push(media),
             (None, None) => {
-                let param = format!("contents[0].parts[{i}]");
-                return Err(invalid(&param, "is neither text nor an image"));
+                return Err(invalid(&param(), "is neither text nor an image"));
             }
         }
     }

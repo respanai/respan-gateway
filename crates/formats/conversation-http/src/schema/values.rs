@@ -36,9 +36,6 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
-/// The marker of base64 data in a `data:` URL.
-const BASE64_DATA: &str = ";base64,";
-
 /// Base64 decoding that accepts the data with or without its padding, and
 /// a last symbol whose unused bits are not zero.
 const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
@@ -52,64 +49,49 @@ const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
 const DATA_URL_BASE64: [GeneralPurpose; 2] =
     [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
 
+/// Base64 a request embeds that does not decode.
+#[derive(Debug)]
+pub(crate) struct NotBase64;
+
+/// The refusal of a request whose `field`, as its format names it, holds
+/// base64 that does not decode: no provider would read the part.
+pub(crate) fn not_base64(field: &str) -> Fault {
+    Fault::bad_request(format!("{field} is not valid base64"))
+}
+
 /// The bytes of base64 `data` a request embeds, read with or without
 /// padding, in either alphabet, across the line breaks a client may have
 /// wrapped it at: what any provider reads, and more.
-pub(crate) fn base64_bytes(data: &str) -> Option<Vec<u8>> {
-    let data: String = data.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+pub(crate) fn base64_bytes(data: &str) -> Result<Vec<u8>, NotBase64> {
+    let data = match data.contains(|c: char| c.is_ascii_whitespace()) {
+        true => Cow::Owned(data.chars().filter(|c| !c.is_ascii_whitespace()).collect()),
+        false => Cow::Borrowed(data),
+    };
     DATA_URL_BASE64
         .iter()
-        .find_map(|engine| engine.decode(&data).ok())
+        .find_map(|engine| engine.decode(data.as_bytes()).ok())
+        .ok_or(NotBase64)
 }
 
-/// The bytes of a `data:` URL's base64 `data`, percent-decoded first, as a
-/// URL's data may be.
-fn data_url_bytes(data: &str) -> Option<Vec<u8>> {
-    base64_bytes(&percent_decode_str(data).decode_utf8().ok()?)
-}
-
-/// The media type and source of a URL: the data of a `data:` URL, else the
-/// URL, of type `fallback`.
-pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSource)> {
-    match url.strip_prefix("data:") {
-        Some(data) => {
-            let (mime, data) = data.split_once(BASE64_DATA)?;
-            let bytes = data_url_bytes(data)?;
-            Some((mime.into(), MediaSource::Bytes(bytes.into())))
-        }
-        None => Some((fallback.into(), MediaSource::Url(url.into()))),
-    }
-}
-
-/// Refuse a part of `messages` whose `data:` URL says it is base64 and is
-/// not: no format could send it, and one that cannot hold the part as it
-/// came would drop it.
-pub(crate) fn check_data_urls(messages: &Value) -> Result<(), Fault> {
-    let parts = messages
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m["content"].as_array())
-        .flatten();
-    for part in parts {
-        let urls = [
-            &part["image_url"]["url"],
-            &part["image_url"],
-            &part["file"]["file_data"],
-            &part["file_data"],
-        ];
-        let is_unreadable = urls.into_iter().filter_map(Value::as_str).any(|url| {
-            url.strip_prefix("data:")
-                .and_then(|data| data.split_once(BASE64_DATA))
-                .is_some_and(|(_, data)| data_url_bytes(data).is_none())
-        });
-        if is_unreadable {
-            return Err(Fault::bad_request(
-                "a `data:` URL in the request is not valid base64",
-            ));
-        }
-    }
-    Ok(())
+/// The media type and source of a URL: the bytes of a `data:` URL, else the
+/// URL, of type `fallback`. A `data:` URL (RFC 2397) is base64 when a
+/// parameter of its header says so, in any case, and percent-encoded bytes
+/// otherwise; its type is `text/plain` when it names none.
+pub(crate) fn source_url(url: &str, fallback: &str) -> Result<(String, MediaSource), NotBase64> {
+    let Some(data_url) = url.strip_prefix("data:") else {
+        return Ok((fallback.into(), MediaSource::Url(url.into())));
+    };
+    let (header, data) = data_url.split_once(',').ok_or(NotBase64)?;
+    let mut params = header.split(';');
+    let mime = Some(params.next().unwrap_or_default().trim())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("text/plain");
+    let data = Cow::from(percent_decode_str(data));
+    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
+        true => base64_bytes(std::str::from_utf8(&data).map_err(|_| NotBase64)?)?,
+        false => data.into_owned(),
+    };
+    Ok((mime.into(), MediaSource::Bytes(bytes.into())))
 }
 
 /// A request body that is not a JSON object.
@@ -352,13 +334,16 @@ pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fa
 }
 
 /// Content of format `C` as parts: a string is one text part.
-pub(crate) fn decode_content<C: Schema>(v: &Value) -> Vec<Content> {
-    match v {
+pub(crate) fn decode_content<C: Schema>(v: &Value) -> Result<Vec<Content>, Fault> {
+    Ok(match v {
         Value::String(text) => vec![Content::from(text.as_str())],
-        Value::Array(parts) => parts.iter().map(decode_any_part::<C>).collect(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(decode_any_part::<C>)
+            .collect::<Result<_, _>>()?,
         Value::Null => Vec::new(),
         other => vec![Content::Native(C::native(other.clone()))],
-    }
+    })
 }
 
 /// A part as format `C` has it: text, a part in that format only, or what
@@ -380,11 +365,11 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
 /// What the format reads of a part as the kind's ([`Schema::decode_part`]); a
 /// text part, whose other fields, such as a cache marker, are its `native`;
 /// or other content, which only a call in the format it is in can send.
-fn decode_any_part<C: Schema>(p: &Value) -> Content {
-    if let Some(part) = C::decode_part(p) {
-        return part;
+fn decode_any_part<C: Schema>(p: &Value) -> Result<Content, Fault> {
+    if let Some(part) = C::decode_part(p)? {
+        return Ok(part);
     }
-    match (p["type"].as_str(), p["text"].as_str()) {
+    Ok(match (p["type"].as_str(), p["text"].as_str()) {
         (Some("text"), Some(text)) => {
             let fields = p.as_object().into_iter().flatten();
             let fields = fields.filter(|(k, v)| *k != "type" && *k != "text" && says(v));
@@ -396,12 +381,12 @@ fn decode_any_part<C: Schema>(p: &Value) -> Content {
             part
         }
         _ => Content::Native(C::native(p.clone())),
-    }
+    })
 }
 
 /// A message of format `C` as a conversation keeps it: its other fields in
 /// its `native`.
-pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Message {
+pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Result<Message, Fault> {
     let name = m["role"].as_str().unwrap_or_default();
     let role = roles
         .value(name)
@@ -409,10 +394,10 @@ pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Messa
     let fields = m.as_object().into_iter().flatten();
     let fields = fields.filter(|(k, v)| *k != "role" && *k != "content" && says(v));
     let mut message = Message::new(role, "");
-    message.content = decode_content::<C>(&m["content"]);
+    message.content = decode_content::<C>(&m["content"])?;
     let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
     message.native = C::native(fields);
-    message
+    Ok(message)
 }
 
 /// Leave a message no `native` if it says nothing the kind has no form for.
@@ -752,69 +737,5 @@ mod tests {
         assert_eq!(totals.increment(&total(3)).output_tokens, 2);
         assert!(totals.increment(&total(3)).is_empty());
         assert!(totals.increment(&total(2)).is_empty(), "never negative");
-    }
-
-    #[test]
-    fn a_data_url_that_is_not_base64_is_refused_and_an_unusual_one_is_read() {
-        let messages = |url: &str| {
-            serde_json::json!([{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": url}},
-            ]}])
-        };
-        let refused = check_data_urls(&messages("data:image/png;base64,not*base64!"));
-        assert!(refused.is_err(), "not base64");
-        let file = serde_json::json!([{"role": "user", "content": [
-            {"type": "input_file", "file_data": "data:application/pdf;base64,%%%"},
-        ]}]);
-        assert!(check_data_urls(&file).is_err(), "a file's data");
-        for url in [
-            "data:image/png;base64,aGVsbG8=",
-            "data:image/png;base64,aGVsbG8",
-            "data:image/png;base64,-_8=",
-            "data:image/png;base64,aGVsbG9=",
-            "data:image/png;base64,iVBORw0KGgo%3D",
-            "data:image/png;base64,aGVs\r\nbG8=",
-            "data:image/svg+xml,%3Csvg%2F%3E",
-            "https://example.com/a.png",
-        ] {
-            assert!(check_data_urls(&messages(url)).is_ok(), "{url}");
-            if let Some((_, MediaSource::Bytes(bytes))) = source_url(url, "image/*") {
-                assert!(!bytes.is_empty(), "{url}");
-            }
-        }
-        // The same base64, raw, in Anthropic's and Gemini's own fields.
-        use crate::anthropic::AnthropicMessages;
-        use crate::gemini::GeminiGenerate;
-        use respan_gateway_http::bytes::Bytes;
-        let anthropic = |data: &str| {
-            let block = serde_json::json!({"type": "image", "source": {
-                "type": "base64", "media_type": "image/png", "data": data}});
-            let body = serde_json::json!({"model": "m", "max_tokens": 1, "messages": [
-                {"role": "user", "content": [block]},
-                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t",
-                    "content": [block]}]},
-            ]});
-            AnthropicMessages.decode_request(Bytes::from(body.to_string()))
-        };
-        let gemini = |data: &str| {
-            let part = serde_json::json!({"inlineData": {"mimeType": "image/png", "data": data}});
-            let body = serde_json::json!({"contents": [{"role": "user", "parts": [part]}]});
-            GeminiGenerate.decode_request(Bytes::from(body.to_string()))
-        };
-        let image = |chat: Input| match &chat.messages[0].content[0] {
-            Content::Image(media) => match &media.source {
-                MediaSource::Bytes(bytes) => bytes.to_vec(),
-                other => panic!("{other:?}"),
-            },
-            other => panic!("{other:?}"),
-        };
-        assert!(anthropic("not*base64!").is_err(), "anthropic");
-        assert!(gemini("not*base64!").is_err(), "gemini");
-        for data in ["aGVsbG8=", "aGVsbG8", "aGVs\nbG8=", "aGVsbG9="] {
-            let read = anthropic(data).expect(data);
-            assert_eq!(image(read), b"hello", "{data}");
-            let read = gemini(data).expect(data);
-            assert_eq!(image(read), b"hello", "{data}");
-        }
     }
 }

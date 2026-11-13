@@ -76,9 +76,8 @@ mod tests;
 
 use crate::openai::error_type;
 use crate::schema::{
-    Asked, Own, Schema, UsageFields, check_data_urls, count, edit_native, merge_details,
-    merge_fields, own_fields, parts_within_totals, unsupported_fields, unwritable_content,
-    usage_extra,
+    Asked, Own, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
+    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -194,10 +193,6 @@ impl Schema for OpenAiResponses {
         }
     }
 
-    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
-        check_data_urls(&v["input"])
-    }
-
     fn decoder(&self) -> ResponsesDecoder {
         ResponsesDecoder::default()
     }
@@ -206,7 +201,7 @@ impl Schema for OpenAiResponses {
         self.decoder().body(v, out)
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.options.max_output_tokens = v["max_output_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
@@ -221,13 +216,13 @@ impl Schema for OpenAiResponses {
             let instructions = request::INSTRUCTIONS.into();
             edit_native::<Self, _>(&mut chat.native, |f| f.insert(instructions, true.into()));
         }
-        request::read_input(v, &mut chat);
+        request::read_input(v, &mut chat)?;
         request::read_tools(v, &mut chat);
         edit_native::<Self, _>(&mut chat.native, |_| {});
         request::read_format(v, &mut chat);
         chat.options.service_tier = crate::schema::take_text::<Self>(&mut chat, "service_tier");
         request::read_reasoning(&mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
@@ -257,7 +252,7 @@ impl Schema for OpenAiResponses {
         Ok(v)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 

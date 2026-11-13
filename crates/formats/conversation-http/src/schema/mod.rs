@@ -15,8 +15,8 @@
 //! it reads ([`Schema::fields`]), and is written only by that format;
 //! another drops it. A request that asks
 //! for several OpenAI Chat choices (`n > 1`) is refused on input, before
-//! translation can drop the choice count, and so is one whose base64
-//! `data:` URL does not decode, before translation can drop the part.
+//! translation can drop the choice count, and so is one with media a
+//! reader cannot decode, before translation can drop the part.
 
 mod errors;
 mod exchange;
@@ -37,12 +37,12 @@ pub(crate) use values::{
     EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
-    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, base64_bytes,
-    check_data_urls, check_usage, count, decode_content, decode_message, decode_tools, each_tool,
-    edit_native, encode_content, encode_message, ended, fits, merge_fields, merge_into,
-    merge_missing, only, own_fields, own_shapes, read_search, remainder, sealed, set, source_url,
-    stop_json, take_strict, take_text, tidy, unsupported_fields, untranslatable,
-    unwritable_content, usage_extra, write_search,
+    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, base64_bytes, check_usage,
+    count, decode_content, decode_message, decode_tools, each_tool, edit_native, encode_content,
+    encode_message, ended, fits, merge_fields, merge_into, merge_missing, not_base64, only,
+    own_fields, own_shapes, read_search, remainder, sealed, set, source_url, stop_json,
+    take_strict, take_text, tidy, unsupported_fields, untranslatable, unwritable_content,
+    usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};
@@ -143,14 +143,18 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn validate_request_json(&self, _v: &Value) -> Result<(), Fault> {
         Ok(())
     }
-    /// A JSON request as a conversation, noting what it has no place for.
-    fn decode_json(&self, v: &Value) -> Input;
+    /// A JSON request as a conversation, noting what it has no place for,
+    /// refusing a part it reads the media of but cannot, such as base64 that
+    /// does not decode.
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault>;
     /// A conversation as a request, but for its own `native` fields and the
     /// model, refusing what the kind says that this format cannot.
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault>;
     /// A message part the kind has a form for beyond text, such as media or
-    /// a tool block; `None` keeps the part this format's own.
-    fn decode_part(p: &Value) -> Option<Content>;
+    /// a tool block; `None` keeps the part this format's own. A part of media
+    /// that cannot be read is refused, as another format's provider would
+    /// never receive it.
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault>;
     /// A part beyond text and this format's own parts, as it writes it, or
     /// `Value::Null` for one it drops.
     fn encode_part(c: &Content) -> Result<Value, Fault>;
@@ -211,7 +215,7 @@ pub trait Schema: Copy + Send + Sync + 'static {
             _ => return Err(values::not_an_object()),
         };
         self.validate_request_json(&v)?;
-        let mut chat = self.decode_json(&v);
+        let mut chat = self.decode_json(&v)?;
         chat.model = v["model"].as_str().map(Into::into);
         Ok(chat)
     }

@@ -55,11 +55,10 @@ use std::marker::PhantomData;
 
 use decode::AnthropicDecoder;
 use encode::EventStream;
-use request::{
-    check_base64_sources, read_effort, read_output, read_thinking, read_tools_of, signed,
-    write_output, write_tools,
-};
 pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
+use request::{
+    read_effort, read_output, read_thinking, read_tools_of, signed, write_output, write_tools,
+};
 
 /// The `max_tokens` of a translated request without one, as it is required.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
@@ -247,10 +246,6 @@ impl Schema for AnthropicMessages {
         fit_thinking(v);
     }
 
-    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
-        check_base64_sources(v)
-    }
-
     fn decoder(&self) -> AnthropicDecoder {
         AnthropicDecoder::default()
     }
@@ -259,7 +254,7 @@ impl Schema for AnthropicMessages {
         self.decoder().body(v, out)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 
@@ -285,7 +280,7 @@ impl Schema for AnthropicMessages {
     }
 
     /// The system prompt becomes a leading system message.
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.options.max_output_tokens = v["max_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
@@ -311,11 +306,11 @@ impl Schema for AnthropicMessages {
         }
         if says(&v["system"]) {
             let mut system = Message::new(Role::System, "");
-            system.content = decode_content::<Self>(&v["system"]);
+            system.content = decode_content::<Self>(&v["system"])?;
             chat.messages.push(system);
         }
         for m in v["messages"].as_array().into_iter().flatten() {
-            let mut message = decode_message::<Self>(m, &ROLES);
+            let mut message = decode_message::<Self>(m, &ROLES)?;
             signed(&mut message, &m["content"]);
             chat.messages.push(message);
         }
@@ -323,7 +318,7 @@ impl Schema for AnthropicMessages {
         read_output(v, &mut chat);
         read_thinking(&mut chat);
         read_effort(&mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {

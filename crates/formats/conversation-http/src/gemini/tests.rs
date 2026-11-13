@@ -60,7 +60,7 @@ fn uri(path: &str) -> http::Uri {
 }
 
 fn written(body: Value, edit: impl FnOnce(&mut Input)) -> Result<Value, Fault> {
-    let mut chat = GeminiGenerate.decode_json(&body);
+    let mut chat = GeminiGenerate.decode_json(&body).expect("read");
     edit(&mut chat);
     Ok(GeminiGenerate.encode_request(&chat)?.into())
 }
@@ -139,7 +139,7 @@ fn a_request_reads_as_the_conversation_it_says_and_writes_back() {
         "generationConfig": { "temperature": 0.5, "topP": 0.9, "maxOutputTokens": 50,
             "stopSequences": ["END"], "candidateCount": 1 },
     });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     assert!(chat.native.is_empty(), "{:?}", chat.native);
     assert_eq!(chat.messages[0].role, Role::System);
     assert_eq!(chat.messages[0].text(), "be brief");
@@ -239,7 +239,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
         "toolConfig": { "functionCallingConfig": { "mode": "VALIDATED" } },
         "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     let native = GeminiGenerate::fields(&chat.native);
     for key in ["safetySettings", "tools", "toolConfig", "generationConfig"] {
         assert!(native.contains_key(key), "{key}");
@@ -275,7 +275,7 @@ fn media_reads_by_its_mime_type_and_writes_as_it_came() {
         { "inlineData": { "mimeType": "audio/wav", "data": "aGk=" } },
         { "fileData": { "mimeType": "application/pdf", "fileUri": "https://x/y.pdf" } },
     ] }] });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     let parts = &chat.messages[0].content;
     assert!(matches!(parts[0], Content::Image(..)));
     assert!(matches!(parts[1], Content::Audio(..)));
@@ -336,7 +336,9 @@ fn results_of_one_turn_are_one_content_and_name_their_tools() {
             { "type": "input_file", "file_data": "data:application/pdf;base64,JVBERi0=", "filename": "r.pdf" }] },
         { "type": "function_call_output", "call_id": "b", "output": [text(r#"{"ok":true}"#)] },
     ] });
-    let chat = crate::responses::OpenAiResponses.decode_json(&body);
+    let chat = crate::responses::OpenAiResponses
+        .decode_json(&body)
+        .expect("read");
     let written = GeminiGenerate.encode_request(&chat).expect("written");
     assert_eq!(
         written["contents"][2]["parts"],
@@ -356,7 +358,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
     let body = json!({ "contents": [{ "parts": [{ "text": "x" }] }],
         "generationConfig": { "responseMimeType": "application/json",
             "responseSchema": { "type": "OBJECT", "properties": { "a": { "type": "INTEGER" } } } } });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     assert!(chat.native.is_empty());
     assert_eq!(
         chat.options.response_format,
@@ -374,7 +376,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
     );
     let json_object = json!({ "contents": [{ "parts": [{ "text": "x" }] }],
         "generationConfig": { "responseMimeType": "application/json" } });
-    let chat = GeminiGenerate.decode_json(&json_object);
+    let chat = GeminiGenerate.decode_json(&json_object).expect("read");
     assert_eq!(
         chat.options.response_format,
         Some(respan_gateway_conversation::ResponseFormat::JsonObject)
@@ -554,7 +556,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         { "role": "user", "content": "go" }, message,
     ] });
     let back = GeminiGenerate
-        .encode_request(&chat.decode_json(&turn))
+        .encode_request(&chat.decode_json(&turn).expect("read"))
         .expect("a request");
     let parts = &Value::from(back)["contents"][1]["parts"];
     assert_eq!(parts[0]["thoughtSignature"], "t");
@@ -764,13 +766,20 @@ fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_its_highest() {
     for level in ["minimal", "low", "medium", "high"] {
         let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
             "generationConfig": { "thinkingConfig": { "thinkingLevel": level } } });
-        let chat = GeminiGenerate.decode_json(&v);
+        let chat = GeminiGenerate.decode_json(&v).expect("read");
         assert!(chat.options.reasoning.is_some(), "{level}");
         assert_eq!(written(v.clone(), |_| {}).ok(), Some(v), "{level}");
     }
     let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
         "generationConfig": { "thinkingConfig": { "thinkingLevel": "max" } } });
-    assert!(GeminiGenerate.decode_json(&v).options.reasoning.is_none());
+    assert!(
+        GeminiGenerate
+            .decode_json(&v)
+            .expect("read")
+            .options
+            .reasoning
+            .is_none()
+    );
     assert_eq!(written(v.clone(), |_| {}).ok(), Some(v));
     let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
     let sent = written(one, |c| {
@@ -828,4 +837,39 @@ fn a_chats_effort_is_the_thinking_its_gemini_has() {
         effort_thinking("gemini-2.5-flash", "xhigh").ok(),
         Some(budget(4096, true))
     );
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |part: Value| {
+        let body = json!({"contents": [{"role": "user", "parts": [part]}]});
+        GeminiGenerate.decode_request(Bytes::from(body.to_string()))
+    };
+    let inline = |data: &str| json!({"inlineData": {"mimeType": "image/png", "data": data}});
+    let cases = [
+        (inline("aGVsbG8"), Some(b"hello".to_vec())),
+        (inline("not*base64!"), None),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
+    }
 }

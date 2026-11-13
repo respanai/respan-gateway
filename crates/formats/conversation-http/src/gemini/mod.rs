@@ -101,8 +101,8 @@ use std::marker::PhantomData;
 use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
 use request::{
-    check_inline_data, effort_thinking, read_config, read_messages, read_tools, sign_calls,
-    split_system, write_config, write_messages, write_tools,
+    effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
+    write_config, write_messages, write_tools,
 };
 pub use request::{media_part, needs_signatures};
 
@@ -256,12 +256,7 @@ fn is_segment(model: &str) -> bool {
 impl GeminiGenerate {
     /// A call's request: its body, and the model its path names.
     fn decode_call(&self, head: &RequestHead, raw: Bytes) -> Result<Input, Fault> {
-        let v = match serde_json::from_slice::<Value>(&raw) {
-            Ok(v) if v.is_object() => v,
-            _ => return Err(Fault::bad_request("request body is not a JSON object")),
-        };
-        self.validate_request_json(&v)?;
-        let mut chat = self.decode_json(&v);
+        let mut chat = self.decode_request(raw)?;
         chat.model = call_of(&head.uri).map(|(model, _)| model);
         Ok(chat)
     }
@@ -279,10 +274,6 @@ impl Schema for GeminiGenerate {
     const STREAM_FLAG: bool = false;
     const OWN: &'static [&'static str] = &["generationConfig", "tools", "toolConfig"];
     type Decoding = GeminiDecoder;
-
-    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
-        check_inline_data(v)
-    }
 
     fn decoder(&self) -> GeminiDecoder {
         GeminiDecoder::default()
@@ -358,8 +349,8 @@ impl Schema for GeminiGenerate {
         Box::new(JsonArray::new(encoder))
     }
 
-    fn decode_part(_: &Value) -> Option<respan_gateway_conversation::Content> {
-        None
+    fn decode_part(_: &Value) -> Result<Option<respan_gateway_conversation::Content>, Fault> {
+        Ok(None)
     }
 
     fn encode_part(_: &respan_gateway_conversation::Content) -> Result<Value, Fault> {
@@ -370,14 +361,14 @@ impl Schema for GeminiGenerate {
         Box::new(EventStream::default())
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
         chat.native = GeminiGenerate::native(rest);
-        read_messages(v, &mut chat);
+        read_messages(v, &mut chat)?;
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {

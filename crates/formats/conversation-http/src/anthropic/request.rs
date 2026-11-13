@@ -5,8 +5,8 @@
 
 use crate::schema::{
     EFFORT_BUDGETS, arguments_object, base64_bytes, decode_content, decode_tools, each_tool,
-    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of,
-    set, take_native, untranslatable, write_search,
+    edit_native, effort_for, encode_content, merge_missing, not_base64, only, read_search,
+    remainder, rest_of, set, take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -136,14 +136,19 @@ pub(crate) fn signed(m: &mut Message, content: &Value) {
 
 /// A part the kind has a form for: an image or a document, reasoning, or a
 /// tool block.
-pub(crate) fn decode_part(p: &Value) -> Option<Content> {
+pub(crate) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
+    read_part(p).transpose()
+}
+
+/// [`decode_part`], with `None` for a part the kind has no form for.
+fn read_part(p: &Value) -> Option<Result<Content, Fault>> {
     match p["type"].as_str()? {
         "image" | "document" => read_media(p),
-        "thinking" => Some(Content::Reasoning {
+        "thinking" => Some(Ok(Content::Reasoning {
             text: p["thinking"].as_str()?.into(),
             native: AnthropicMessages::native(remainder(p, &["type", "thinking", "signature"])),
-        }),
-        "redacted_thinking" => Some(Content::Withheld(p["data"].as_str()?.into())),
+        })),
+        "redacted_thinking" => Some(Ok(Content::Withheld(p["data"].as_str()?.into()))),
         _ => tool_part(p),
     }
 }
@@ -160,38 +165,10 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     }
 }
 
-/// Refuse a request with an image or document block, in `system`, a
-/// message or a tool result, whose base64 `source.data` does not decode:
-/// another format's provider would never receive it.
-pub(super) fn check_base64_sources(v: &Value) -> Result<(), Fault> {
-    let messages = v["messages"].as_array().into_iter().flatten();
-    let blocks = messages
-        .map(|m| &m["content"])
-        .chain([&v["system"]])
-        .filter_map(Value::as_array)
-        .flatten();
-    let is_unreadable = |block: &Value| {
-        let source = &block["source"];
-        let is_media = matches!(block["type"].as_str(), Some("image" | "document"));
-        let data = source["data"]
-            .as_str()
-            .filter(|_| source["type"] == "base64");
-        is_media && data.is_some_and(|d| base64_bytes(d).is_none())
-    };
-    for block in blocks {
-        let results = block["content"].as_array().into_iter().flatten();
-        if is_unreadable(block) || results.into_iter().any(is_unreadable) {
-            return Err(Fault::bad_request(
-                "an image or document block's `source.data` is not valid base64",
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// An image or document block, if the kind can say its source: its other
-/// fields are its media's `native`.
-fn read_media(v: &Value) -> Option<Content> {
+/// fields are its media's `native`. One whose base64 does not decode is
+/// refused.
+fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
     if v.get("title").is_some_and(|v| !v.is_string()) {
         return None;
     }
@@ -199,7 +176,10 @@ fn read_media(v: &Value) -> Option<Content> {
     let (mut mime, src) = match source["type"].as_str()? {
         "base64" => (
             source["media_type"].as_str()?.to_owned(),
-            MediaSource::Bytes(base64_bytes(source["data"].as_str()?)?.into()),
+            match base64_bytes(source["data"].as_str()?) {
+                Ok(bytes) => MediaSource::Bytes(bytes.into()),
+                Err(_) => return Some(Err(not_base64("`source.data`"))),
+            },
         ),
         "url" => (
             "image/*".to_owned(),
@@ -224,10 +204,10 @@ fn read_media(v: &Value) -> Option<Content> {
     let mut media = Media::new(mime, src);
     media.name = v["title"].as_str().map(str::to_owned);
     media.native = AnthropicMessages::native(fields);
-    Some(match image {
+    Some(Ok(match image {
         true => Content::Image(media),
         false => Content::Document(media),
-    })
+    }))
 }
 
 /// An image or document block of `media`; an image's display name, which
@@ -252,7 +232,7 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
 /// can say all of it. A field it has no place for, other than a cache marker,
 /// on the block or on a text block of a result, keeps it the format's own:
 /// translating it is refused, not dropped.
-fn tool_part(block: &Value) -> Option<Content> {
+fn tool_part(block: &Value) -> Option<Result<Content, Fault>> {
     match block["type"].as_str()? {
         "tool_use" => {
             let input = block["input"].as_object()?;
@@ -263,7 +243,7 @@ fn tool_part(block: &Value) -> Option<Content> {
                 let rest = rest_of(block, &["type", "id", "name", "input"]);
                 *native = AnthropicMessages::native(rest);
             }
-            Some(part)
+            Some(Ok(part))
         }
         "tool_result" => {
             let is_error = match &block["is_error"] {
@@ -276,14 +256,17 @@ fn tool_part(block: &Value) -> Option<Content> {
             if blocks.into_iter().any(marked) {
                 return None;
             }
-            let content = decode_content::<AnthropicMessages>(&block["content"]);
             let id = block["tool_use_id"].as_str()?;
+            let content = match decode_content::<AnthropicMessages>(&block["content"]) {
+                Ok(content) => content,
+                Err(fault) => return Some(Err(fault)),
+            };
             let mut part = Content::tool_result(id, content, is_error);
             if let Content::ToolResult { native, .. } = &mut part {
                 let rest = rest_of(block, &["type", "tool_use_id", "content", "is_error"]);
                 *native = AnthropicMessages::native(rest);
             }
-            Some(part)
+            Some(Ok(part))
         }
         _ => None,
     }
