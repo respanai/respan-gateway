@@ -23,6 +23,9 @@
 //!   run commands and code and write files in them (`create_sandbox`,
 //!   `list_sandboxes`, `delete_sandbox`, `run_command`, `run_code`,
 //!   `write_file`), its key from `DAYTONA_API_KEY`.
+//! - [`deedpage`]: deed.page's static HTML hosting: publishing a page to a
+//!   public URL, listing sites and deleting one (`publish_site`,
+//!   `list_sites`, `delete_site`), its key from `DEEDPAGE_TOKEN`.
 //! - [`e2b`]: E2B's cloud sandboxes, running code (`run_code`,
 //!   `list_sandboxes`, `kill_sandbox`), its key from `E2B_API_KEY`.
 //! - [`elevenlabs`]: ElevenLabs's speech, voices, transcripts and sound
@@ -53,7 +56,7 @@ pub use respan_gateway_tool_vendor_kit::*;
 pub use respan_gateway_tool_vendors_green::{
     apify, browserbase, cloudinary, context7, daytona, linkup, reducto, tavily, tinyfish, zep,
 };
-pub use respan_gateway_tool_vendors_yellow::{e2b, elevenlabs, exa, firecrawl};
+pub use respan_gateway_tool_vendors_yellow::{deedpage, e2b, elevenlabs, exa, firecrawl};
 
 /// The green tool vendors: maintained, and verified end to end.
 pub const GREEN: &[&ToolVendor] = respan_gateway_tool_vendors_green::ALL;
@@ -68,6 +71,7 @@ pub const ALL: &[&ToolVendor] = &[
     &cloudinary::VENDOR,
     &context7::VENDOR,
     &daytona::VENDOR,
+    &deedpage::VENDOR,
     &e2b::VENDOR,
     &elevenlabs::VENDOR,
     &exa::VENDOR,
