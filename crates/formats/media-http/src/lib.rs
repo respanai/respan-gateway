@@ -42,3 +42,4 @@ impl Natives for openai::OpenAiTranscriptions {}
 impl Natives for openai::OpenAiVideos {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}
+impl Natives for openrouter::OpenRouterVideos {}

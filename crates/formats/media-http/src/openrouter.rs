@@ -15,7 +15,8 @@ use serde_json::{Map, Value, json};
 
 const NAME: &str = "openrouter-videos";
 
-enum Key {}
+type Key = crate::Own<OpenRouterVideos>;
+
 /// What ends the path of a download, after its job's escaped id.
 const CONTENT: &str = "/content";
 
@@ -32,9 +33,10 @@ const CONTENT: &str = "/content";
 /// `completed` once its video is made, `failed` with the error OpenRouter
 /// words, or `cancelled` or `expired` as that; a state it adds is the
 /// format's own. Its
-/// videos are where it serves them ([`Job::videos`]). What else it answers,
-/// such as its `usage` and the signed `urls` of its video, is dropped: it
-/// reports no progress and names no model, size or length of a job.
+/// videos are where it serves them ([`Job::videos`]), and the `usage` it
+/// reports once done, its cost, is the job's native `usage`. What else it
+/// answers, such as the signed `urls` of its video, is dropped: it reports
+/// no progress and names no model, size or length of a job.
 ///
 /// Another format's operation, such as OpenAI's remix, delete, list or
 /// thumbnail, is refused, 400, before any call.
@@ -157,6 +159,9 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         .filter_map(Value::as_str)
         .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
         .collect();
+    if let Some(usage) = v.get("usage").filter(|usage| usage.is_object()) {
+        job.native = Native::json::<Key>(json!({ "usage": usage }));
+    }
     out.push(Output::Job(job));
     Ok(())
 }
@@ -164,6 +169,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Natives;
     use respan_gateway_http::http;
 
     fn head() -> RequestHead {
@@ -245,7 +251,11 @@ mod tests {
         );
         let at = "https://o.example/videos/gen-vid-1/content?index=0";
         assert_eq!(job.video_url(), Some(at));
-        assert!(job.native.is_empty());
+        let usage = json!({ "cost": 0.02, "is_byok": false });
+        assert_eq!(
+            OpenRouterVideos::fields(&job.native).get("usage"),
+            Some(&usage)
+        );
 
         let failed = json!({ "id": "gen-vid-1", "status": "failed", "error": "content policy" });
         let [Output::Job(job)] = &jobs(failed)[..] else {
