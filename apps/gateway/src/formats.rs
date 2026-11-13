@@ -22,11 +22,13 @@ use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs, SessionModel, requested_model,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, PhonicSts, ResponsesWs, SessionModel,
+    requested_model,
 };
 
 /// The kinds of traffic this binary carries, as the admin API and routing
@@ -242,6 +244,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
         session(kind::RESPONSES, ResponsesWs, ResponsesWs::PATH, false),
+        session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),
         KnownFormat::of(
@@ -268,6 +271,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
+        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
@@ -283,6 +287,7 @@ pub fn formats() -> Vec<KnownFormat> {
             false,
         )
         .model(realtime()),
+        session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
             .job_ids("veo_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
@@ -362,9 +367,10 @@ where
     }
 }
 
-/// How the model of a chat request is named.
+/// How the model of a chat request is named, and whether it offers tools.
 fn chat() -> Model {
     Model::of(conversation::Input::model, conversation::Input::set_model)
+        .tools(|input: &conversation::Input| !input.tools.is_empty())
 }
 
 /// How a realtime session names its model: at `?model=` on its handshake,

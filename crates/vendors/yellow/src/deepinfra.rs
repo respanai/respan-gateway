@@ -1,17 +1,14 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
 //! transcriptions, as OpenAI serves them, and videos in its dialect.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use respan_gateway_conversation::MediaSource;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
@@ -60,11 +57,7 @@ impl Dialect for DeepInfra {
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
-            return None;
-        }
-        Some(Box::new(openai_job))
+        crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
 }
 
@@ -79,16 +72,10 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
     let Some(reference) = create.reference.take() else {
         return Ok(());
     };
-    let url = match reference.source {
-        MediaSource::Url(url) => url,
-        MediaSource::Bytes(bytes) => {
-            let data = STANDARD.encode(bytes);
-            format!("data:{};base64,{data}", reference.mime_type)
-        }
-    };
-    let mut fields = kept(OpenAiVideos::NAME, &create.native)?;
-    fields.entry("image_url").or_insert_with(|| url.into());
-    create.native = native_of(OpenAiVideos::NAME, fields);
+    let url = media_url(&reference);
+    create.native = OpenAiVideos::with_fields(&create.native, |fields| {
+        fields.entry("image_url").or_insert_with(|| url.into());
+    });
     Ok(())
 }
 
@@ -169,7 +156,7 @@ fn price(p: &Value) -> Option<Price> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::Media;
+    use respan_gateway_conversation::{Media, MediaSource};
     use serde_json::json;
 
     fn head(status: u16, content_type: &str) -> ResponseHead {
@@ -225,11 +212,13 @@ mod tests {
             create.reference = Some(Media::new("image/png", reference));
             let mut input = video::Input::Create(create);
             referenced(&mut input).expect("referenced");
-            let native = match input {
-                video::Input::Create(c) if c.reference.is_none() => c.native,
-                _ => None,
+            let video::Input::Create(c) = input else {
+                return None;
             };
-            native.and_then(|n| n.fields.get("image_url").cloned())
+            if c.reference.is_some() {
+                return None;
+            }
+            OpenAiVideos::fields(&c.native).get("image_url").cloned()
         };
         let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
         assert_eq!(image_url(bytes), Some(json!("data:image/png;base64,cG5n")));

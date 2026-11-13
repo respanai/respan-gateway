@@ -1,19 +1,18 @@
 //! What the model says: OpenAI Realtime's server events as the kind's
 //! [`Output`], read at the provider's edge and written at the client's.
 
+use respan_gateway_http::native::Json;
 use std::collections::HashMap;
 
-use respan_gateway_core::{Fault, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Status, Usage};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use super::{NAME, session};
+use super::{Key, NAME, session};
 use crate::audio::Convert;
 use crate::foreign;
-use crate::json::{
-    self, at, count, merge, number, own, set, string, take, text, untranslatable_output,
-};
+use crate::json::{self, at, count, merge, number, set, string, take, text, untranslatable_output};
 
 /// A count of [`Usage`].
 type Counter = fn(&mut Usage) -> &mut u64;
@@ -66,7 +65,7 @@ impl Provider {
         let mut rest = v.clone();
         match take(&mut rest, &["type"], string, text) {
             Some(kind) if self.decode(&kind, rest, out).is_some() => {}
-            _ => out.push(Output::native(NAME, v)),
+            _ => out.push(Output::Native(Native::json::<Key>(v))),
         }
         Ok(())
     }
@@ -88,42 +87,45 @@ impl Provider {
             }
             "input_audio_buffer.speech_started" => Output::SpeechStarted {
                 at_ms: take(v, &["audio_start_ms"], |n| n.as_u64(), number),
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "input_audio_buffer.speech_stopped" => Output::SpeechStopped {
                 at_ms: take(v, &["audio_end_ms"], |n| n.as_u64(), number),
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "conversation.item.input_audio_transcription.delta" => Output::InputTranscript {
                 text: delta(v)?,
                 complete: false,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "conversation.item.input_audio_transcription.completed" => Output::InputTranscript {
                 text: take(v, &["transcript"], string, text)?,
                 complete: true,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             // A response's start is OpenAI's even if it says nothing more:
             // its items are the provider's.
-            "response.created" => Output::ResponseStart {
-                id: take(v, &["response", "id"], string, text),
-                native: Some(NativeFields::new(NAME, rest.as_object()?.clone())),
-            },
+            "response.created" => {
+                let native = match rest.as_object()? {
+                    rest if rest.is_empty() => Native::own::<Key>(),
+                    rest => Native::json::<Key>(rest.clone()),
+                };
+                Output::ResponseStart { native }
+            }
             "response.output_audio.delta" => Output::Audio {
                 audio: Audio {
                     data: json::take_audio(v, &["delta"])?,
                     format: self.output,
                 },
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "response.output_text.delta" => Output::Text {
                 text: delta(v)?,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "response.output_audio_transcript.delta" => Output::Transcript {
                 text: delta(v)?,
-                native: json::native(NAME, rest),
+                native: Native::json::<Key>(rest),
             },
             "response.output_item.added" => {
                 let item = &v["item"];
@@ -144,7 +146,7 @@ impl Provider {
                     arguments: take(v, &["arguments"], string, text)?,
                     id,
                     name,
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             "response.done" => {
@@ -158,7 +160,7 @@ impl Provider {
                 }
                 Output::ResponseDone {
                     status,
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             "error" => {
@@ -170,8 +172,7 @@ impl Provider {
                 Output::Error {
                     cause,
                     message: take(v, &["error", "message"], string, text)?,
-                    code: take(v, &["error", "type"], string, text),
-                    native: json::native(NAME, rest),
+                    native: Native::json::<Key>(rest),
                 }
             }
             _ => return None,
@@ -190,12 +191,7 @@ fn status(v: &mut Value) -> Option<Status> {
         .and_then(|d| d.get("type"))
         .is_none_or(|t| *t == *said);
     let reason = details.and_then(|d| d["reason"].as_str());
-    let known = [
-        Status::Interrupted,
-        Status::Cancelled,
-        Status::Length,
-        Status::Filtered,
-    ];
+    let known = [Status::Interrupted, Status::Cancelled, Status::Filtered];
     let named = known
         .into_iter()
         .find(|s| typed && spelled(s) == Some((said.as_str(), reason)));
@@ -208,10 +204,11 @@ fn status(v: &mut Value) -> Option<Status> {
         ("completed", None) => Status::Completed,
         ("failed", None) => Status::Failed,
         (_, None) => Status::Native {
-            format: NAME.into(),
-            reason: said.clone(),
-            fallback: Box::new(match said.as_str() {
-                "cancelled" => Status::Cancelled,
+            native: Native::json::<Key>(said.as_str()),
+            // A response cut at its token limit is whole as far as it went.
+            fallback: Box::new(match (said.as_str(), reason) {
+                ("cancelled", _) => Status::Cancelled,
+                ("incomplete", Some("max_output_tokens")) => Status::Completed,
                 _ => Status::Failed,
             }),
         },
@@ -227,11 +224,12 @@ fn spelled(status: &Status) -> Option<(&str, Option<&str>)> {
         Status::Completed => ("completed", None),
         Status::Interrupted => ("cancelled", Some("turn_detected")),
         Status::Cancelled => ("cancelled", Some("client_cancelled")),
-        Status::Length => ("incomplete", Some("max_output_tokens")),
         Status::Filtered => ("incomplete", Some("content_filter")),
         Status::Failed => ("failed", None),
-        Status::Native { format, reason, .. } if **format == *NAME => (reason.as_str(), None),
-        Status::Native { fallback, .. } => return spelled(fallback),
+        Status::Native { native, fallback } => match native.value::<Key>() {
+            Some(Value::String(reason)) => (reason.as_str(), None),
+            _ => return spelled(fallback),
+        },
         _ => return None,
     })
 }
@@ -274,7 +272,7 @@ impl Default for Client {
 
 impl Client {
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event)? else {
+        let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
         // A response's audio starts afresh: none the last one's resampler
@@ -304,7 +302,7 @@ impl Client {
                     _ => "session.updated",
                 };
                 let mut session = session::encode(s, refuse)?;
-                if s.native.is_none() && session.get("type").is_none() {
+                if s.native.fields::<Key>().is_empty() && session.get("type").is_none() {
                     session["type"] = "realtime".into();
                 }
                 (json!({"type": kind, "session": session}), &s.native)
@@ -314,7 +312,7 @@ impl Client {
                 if let Some(ms) = at_ms {
                     v["audio_start_ms"] = (*ms).into();
                 }
-                if native.is_none() {
+                if native.fields::<Key>().is_empty() {
                     let item = self.ids.next("item");
                     v["item_id"] = item.as_str().into();
                     self.user = Some(item);
@@ -326,7 +324,7 @@ impl Client {
                 if let Some(ms) = at_ms {
                     v["audio_end_ms"] = (*ms).into();
                 }
-                if native.is_none() {
+                if native.fields::<Key>().is_empty() {
                     v["item_id"] = self.user().into();
                 }
                 (v, native)
@@ -341,7 +339,7 @@ impl Client {
                     false => json!({"type": format!("{kind}.delta"), "delta": text}),
                     true => json!({"type": format!("{kind}.completed"), "transcript": text}),
                 };
-                if native.is_none() {
+                if native.fields::<Key>().is_empty() {
                     v["item_id"] = self.user().into();
                     v["content_index"] = 0.into();
                     match complete {
@@ -352,7 +350,7 @@ impl Client {
                 }
                 (v, native)
             }
-            Output::ResponseStart { id, native } if native.is_none() => {
+            Output::ResponseStart { native } if native.value::<Key>().is_none() => {
                 // What was heard of the turn it answers is all there is.
                 if let Some(heard) = self.heard.take() {
                     out.push(
@@ -361,7 +359,7 @@ impl Client {
                     );
                 }
                 self.user = None;
-                let id = id.clone().unwrap_or_else(|| self.ids.next("resp"));
+                let id = self.ids.next("resp");
                 out.push(json!({"type": "response.created", "response": {
                     "object": "realtime.response", "id": id, "status": "in_progress",
                     "status_details": null, "output": [], "usage": null}}));
@@ -372,13 +370,9 @@ impl Client {
                 });
                 return Ok(());
             }
-            Output::ResponseStart { id, native } => {
+            Output::ResponseStart { native } => {
                 self.response = None;
-                let mut v = json!({"type": "response.created", "response": {}});
-                if let Some(id) = id {
-                    v["response"]["id"] = id.as_str().into();
-                }
-                (v, native)
+                (json!({"type": "response.created", "response": {}}), native)
             }
             Output::Audio { audio, native } => {
                 let data = self.convert.to(audio, self.output);
@@ -430,6 +424,8 @@ impl Client {
                 *self.usage.get_or_insert_default() += usage;
                 return Ok(());
             }
+            // OpenAI Realtime bills by token: a duration has no place in it.
+            Output::Seconds(_) => return Ok(()),
             Output::ResponseDone { status, native } => {
                 let (said, reason) = spelled(status).ok_or_else(|| refuse("this status"))?;
                 let mut v = json!({"type": "response.done", "response": {"status": said}});
@@ -440,12 +436,12 @@ impl Client {
                     response.close(said == "completed", out);
                     let made_up = json!({"object": "realtime.response", "id": response.id,
                         "status_details": null, "output": response.output});
-                    merge(&mut v["response"], made_up.as_object());
+                    merge(
+                        &mut v["response"],
+                        made_up.as_object().unwrap_or(&Map::new()),
+                    );
                 }
-                merge(
-                    &mut v,
-                    own(NAME, native, || refuse("another format's event"))?,
-                );
+                merge(&mut v, native.fields::<Key>());
                 for (path, counter) in USAGE {
                     let mut usage = self.usage.unwrap_or_default();
                     let n = *counter(&mut usage);
@@ -459,36 +455,34 @@ impl Client {
             }
             Output::Error {
                 cause,
-                code,
                 message,
                 native,
             } => {
                 let mut v = json!({"type": "error", "error": {"message": message}});
-                // Another format's code is its own: OpenAI's says the cause.
-                let code = match native.as_ref().is_some_and(|n| *n.format == *NAME) {
-                    true => code.clone(),
-                    false => None,
-                };
-                let typed = code.unwrap_or_else(|| match cause {
-                    Cause::Invalid | Cause::NothingToCancel => "invalid_request_error".into(),
-                    _ => "server_error".into(),
-                });
-                v["error"]["type"] = typed.into();
-                if *cause == Cause::NothingToCancel && native.is_none() {
+                // Its own type it kept; otherwise the cause says one.
+                merge(&mut v, native.fields::<Key>());
+                if v["error"]["type"].is_null() {
+                    v["error"]["type"] = match cause {
+                        Cause::Invalid | Cause::NothingToCancel => "invalid_request_error",
+                        _ => "server_error",
+                    }
+                    .into();
+                }
+                if *cause == Cause::NothingToCancel && native.fields::<Key>().is_empty() {
                     v["error"]["code"] = "response_cancel_not_active".into();
                 }
                 (v, native)
             }
-            Output::Native(NativeValue { format, value }) if **format == *NAME => {
-                out.push(Value::clone(value));
-                return Ok(());
-            }
+            Output::Native(native) => match native.value::<Key>() {
+                Some(value) => {
+                    out.push(value.clone());
+                    return Ok(());
+                }
+                None => return Err(refuse("another format's event")),
+            },
             _ => return Err(refuse("another format's event")),
         };
-        merge(
-            &mut v,
-            own(NAME, native, || refuse("another format's event"))?,
-        );
+        merge(&mut v, native.fields::<Key>());
         out.push(v);
         Ok(())
     }
@@ -517,7 +511,7 @@ fn owned(event: &Output) -> bool {
         | Output::Error { native, .. } => native,
         _ => return true,
     };
-    native.is_some()
+    !native.fields::<Key>().is_empty()
 }
 
 /// The ids a client's writer makes up: a prefix and a number, unique in
@@ -621,7 +615,7 @@ impl Response {
         let event = |kind: &str, fields: Value| {
             let mut v = self.at(&said);
             v["type"] = kind.into();
-            merge(&mut v, fields.as_object());
+            merge(&mut v, fields.as_object().unwrap_or(&Map::new()));
             v
         };
         let text = said.text.as_str();
@@ -681,7 +675,7 @@ impl Response {
         ] {
             let mut v = at.clone();
             v["type"] = kind.into();
-            merge(&mut v, fields.as_object());
+            merge(&mut v, fields.as_object().unwrap_or(&Map::new()));
             out.push(v);
         }
         self.done(item("completed", arguments), out);

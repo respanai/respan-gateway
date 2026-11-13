@@ -25,10 +25,15 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   as the client's request did, if to the same endpoint, else not. `stream`
   and `stream_format` are framing, not part of an `Input`.
 - An edit goes to `/images/edits` as a form of its images' bytes, or in JSON
-  if one is a URL. An image a client names by file id cannot be relayed and
-  is refused.
+  if one, or the mask, is a URL. An image a client names by file id cannot be
+  relayed and is refused. The mask is `openai-images`' native field
+  (`mask: {"image_url"}`, a data URL of a form's file): another format drops
+  it.
 - An answer's image is of its `output_format`, else of the type its bytes
   say, else PNG.
+- An image request's `quality`, `output_format` and `user`, and an answer's
+  `created`, `revised_prompt` and streamed partial images, are
+  `openai-images`' native fields: another format drops them.
 - A file's type is its part's, unless that says none or
   `application/octet-stream`, which OpenAI refuses for images; then its
   name's, then its first bytes'.
@@ -42,6 +47,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - A video's `seconds` is a string in OpenAI's API, as it is written; a
   client may send a number. Its `/videos/{id}` never takes
   `/videos/{id}/content` or `/remix`; an id is escaped in a call's path.
+  A remix, a deletion, a page of jobs and a still (`?variant=thumbnail` or
+  `spritesheet`) are the format's own operations, relayed as they came, the
+  answer too, to an `openai-videos` provider only.
 - Usage `{"type": "tokens"}` is `Usage`, `{"type": "duration"}` `Seconds`; a
   usage object's other fields, such as `input_token_details`, stay native.
 - A stream that ends before its end event fails `truncated`.
@@ -56,7 +64,9 @@ Vendors' fields the kind has no form for (Groq's `x_groq`, Together's
 
 A vendor's departures from one of these formats are its dialect of it,
 laid over the format (`respan_gateway_http::dialect::Dialected`), so a
-client of the spec is still relayed to it.
+client of the spec is still relayed to it. A dialect or a host reaches a
+format's native only through that format's own functions: `fields`, and,
+for each but Gemini's images, `with_fields`.
 
 `gemini::GeminiImages`, named `gemini-images`: Gemini's image models,
 such as Nano Banana, through `generateContent`, to clients and providers,
@@ -68,9 +78,8 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   prompt. Its `size` is the `imageConfig` of the nearest aspect ratio
   Gemini draws (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9;
   within 5%, else 400), with an `imageSize` of `2K` or `4K` above 1K; its
-  count `candidateCount`, which Gemini's image models refuse above 1. A
-  mask is refused, 400, as Gemini edits by prompt alone; quality, file
-  format and user are dropped.
+  count `candidateCount`, which Gemini's image models refuse above 1. As
+  Gemini edits by prompt alone, a mask is dropped.
 - An answer's images are its parts' `inlineData` (or `fileData`), not its
   thoughts'; its text is dropped; its usage is `usageMetadata`'s. An
   answer with no image is refused, 400 `no_image`, saying why: the
@@ -111,21 +120,24 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
 - A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews
   (shut down 2026-10-22), is created by `POST /interactions`: its prompt,
   after its reference image if any, the `input`, its `size` the
-  `response_format`'s `aspect_ratio` and `resolution`; it chooses its
-  length, and has no place for Veo's own parameters (`negativePrompt`,
-  `personGeneration`), so those and `seconds` are dropped. Its video is a file of the Files API, asked at a URI, and the
+  `response_format`'s `aspect_ratio` and `resolution` (with no size, its
+  native `aspectRatio` and `resolution`), its `seconds` the `duration`
+  (`"8s"`); it has no place for Veo's other parameters (`negativePrompt`,
+  `personGeneration`), so those are dropped. Its video is a file of the Files API, asked at a URI, and the
   file is its job: its name, `files/{id}`, spelled as an operation's,
   retrieved by `GET /files/{id}`, `in_progress` until the file is `ACTIVE`,
   `completed` then with the file's download URI as its video, `failed` if
-  `FAILED`. An answer with no video is the provider's fault, 502.
+  `FAILED`. An answer with no video is the provider's fault, 502. The
+  interaction's `usage`, its tokens by modality, is the created job's
+  native `usage`; a file reports none.
 - Content is a `GET` of the URL its job names at the provider's base, its
   path after the version, so the key goes to no other host. The Gemini API
   may redirect it to storage: the transport follows only if told to
   (`HttpTransport::follow_redirects`, which says which locations), else the
   answer is a 502. A redirect to another origin leaves the key behind.
-- Veo cannot remix, delete or list videos, nor make a thumbnail or
-  spritesheet: those are refused, 400 `unsupported`, before any call.
-- What Veo answers beyond the kind is dropped rather than kept native.
+- Another format's operation, such as OpenAI's remix, delete, list or
+  thumbnail, is refused, 400 `unsupported`, before any call.
+- What else Veo answers beyond the kind is dropped rather than kept native.
 - A client of it, served by any provider of the kind: it creates with
   `POST .../models/{model}:predictLongRunning` (one instance; its prompt,
   its base64 `image`; `aspectRatio` and `resolution` read as a size,
@@ -138,18 +150,43 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   operation's `error`, or, filtered, a response of
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
   message, status}}`. Veo reports no progress: an operation is done or not.
+  Polling a Gemini Omni operation by its qualified name returns that same
+  name, including when the provider reports the video through the Files API.
+
+`openrouter::OpenRouterVideos`, named `openrouter-videos`: OpenRouter's video
+generation, as a provider only, its key a bearer token. Its job ids start
+`gen-vid-`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /videos` makes a job: the kind's `seconds` go as `duration`, its
+  `size` as it is, its reference image, a URL or a data URL of its bytes, as
+  the first of the `frame_images`, and its `openrouter-videos` native fields
+  (`resolution`, `aspect_ratio`, `generate_audio`, `seed`) as they are.
+- `GET /videos/{id}` polls it: `pending` is `queued`, `in_progress`,
+  `completed` and `failed` are the kind's, its error a string; `cancelled`
+  and `expired` are `failed`, with that as the error unless one is said; its
+  `unsigned_urls` are the job's videos; its `usage`, the cost of a job
+  done, is the job's native `usage`; the signed `urls` of its video are
+  dropped.
+  It reports no progress, model, size or length. `GET /videos/{id}/content`
+  is the video's bytes, relayed as they come. It answers a 404 for the
+  content of a job not finished, as for a job it never made, so
+  `video::LocateContent` retrieves the job first and refuses one not
+  finished, 400 `video_not_ready`.
+- Another format's operation, such as OpenAI's remix, delete, list or
+  thumbnail, is refused, 400 `unsupported`, before any call.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.
 
-- Cohere Embed (`cohere.embed-*`) embeds every text in one call, as the
-  client's `input_type` (an `openai-embeddings` field) says, else
-  `search_document`; v4 takes `dimensions` as `output_dimension`.
+- Cohere Embed (`cohere.embed-*`) embeds every text in one call as a
+  `search_document`: a client's `input_type` is another format's native
+  field, so it is dropped; v4 takes `dimensions` as `output_dimension`.
 - Titan Text (`amazon.titan-embed-text-*`) and Titan Multimodal's texts
   (`amazon.titan-embed-image-v1`) embed one text per call, so a request of
   several is refused, 400; v2 and Multimodal take `dimensions`.
 - Usage is the input tokens Bedrock counts: Titan's `inputTextTokenCount`,
   else the `x-amzn-bedrock-input-token-count` header.
-- Token ids, parts, an end user's id, a `dimensions` the model takes none
-  of, and other fields of another format are refused, 400, before the call.
+- Token ids, parts and a `dimensions` the model takes none of are refused,
+  400, before the call; other fields of another format, such as an end
+  user's id, are dropped.

@@ -11,18 +11,19 @@
 //! provider of its own format keeps the headers and query parameters of
 //! the format's spec ([`Schema::CARRIED`]).
 //!
-//! What a format has no form for stays in its own terms (optional
-//! `NativeFields`, a `Content::Native`, a `Output::Native`) and is written
-//! only by that format; translating it is refused where it could change the
-//! answer. A request that asks for several choices (`n > 1`) cannot be
-//! written and is refused.
+//! What a format has no form for stays in its own terms, a `Native` only
+//! it reads ([`Schema::fields`]), and is written only by that format;
+//! another drops it. A request that asks
+//! for several OpenAI Chat choices (`n > 1`) is refused on input, before
+//! translation can drop the choice count, and so is one with media a
+//! reader cannot decode, before translation can drop the part.
 
 mod errors;
 mod exchange;
 mod values;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) use crate::fields::{rest_of, unix_now};
 pub use errors::{merge_details, read_provider_error};
@@ -31,26 +32,43 @@ pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
-pub(crate) use respan_gateway_conversation::block_fields;
-pub use values::INERT;
+pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
-    Keep, Names, NativeFieldsExt, Totals, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, decode_tools, each_tool, encode_content, encode_message,
-    encode_native, ended, fits, kept_fields, merge_fields, merge_into, merge_missing,
-    message_fields, native_fields, only, own_fields, read_search, remainder, set, source_url,
-    stop_json, tidy, tool_field, unsupported_fields, untranslatable, unwritable_content,
-    usage_extra, write_search,
+    EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
-pub(crate) use values::{effort_name, own_native, parse_effort, reasoning_of, take_native};
+pub(crate) use values::{
+    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, base64_field, check_usage,
+    count, data_media, decode_content, decode_message, decode_tools, each_tool, edit_native,
+    encode_content, encode_message, ended, fits, merge_fields, merge_into, merge_missing, only,
+    own_fields, own_shapes, read_search, remainder, required_str, sealed, set, source_url,
+    stop_json, take_strict, take_text, tidy, unless_file_id, unreadable_media, unsupported_fields,
+    untranslatable, unwritable_content, usage_extra, write_search,
+};
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};
-use respan_gateway_core::{Connection, EventSink, Fault};
+use respan_gateway_core::{Connection, EventSink, Fault, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::http::{
     self, StatusCode, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
-use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, rules::bodiless};
+use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, rules::bodiless};
 use serde_json::{Map, Value};
+
+/// What only format `F` reads of a value: a type no other crate can name.
+struct Key<F>(std::marker::PhantomData<fn() -> F>);
+
+/// A format's own natives, which only this crate opens.
+pub(crate) trait Own: Schema {
+    /// `value` as this format's own: none if it says nothing.
+    fn native(value: impl Into<Value>) -> Native {
+        Native::json::<Key<Self>>(value)
+    }
+    /// The value of this format's own in `native`, if it holds one.
+    fn value(native: &Native) -> Option<&Value> {
+        native.value::<Key<Self>>()
+    }
+}
+impl<F: Schema> Own for F {}
 
 /// Provider HTTP delivery preference, set in call extensions.
 /// Without an override the HTTP binding follows the original client request,
@@ -80,9 +98,7 @@ pub enum Framing {
 /// finite values synchronously (JSON, a part, a whole body), and `read_*`
 /// and `write_*` bind lazy streams of events to an HTTP body.
 pub trait Schema: Copy + Send + Sync + 'static {
-    /// The wire format's name, which tags what its values hold that the
-    /// kind has no place for (`NativeFields`, `Content::Native`,
-    /// `Output::Native`, a native role or finish).
+    /// The wire format's name.
     const NAME: &'static str;
     /// The path a request is posted to, which a client's request ends with.
     const PATH: &'static str;
@@ -101,14 +117,21 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// The query parameters of this format's spec, carried as
     /// [`Schema::CARRIED`] is.
     const CARRIED_QUERY: &'static [&'static str] = &[];
+    /// The fields of this format's own in `native`, none if it holds
+    /// another's: with [`Schema::with_fields`], the door through which only
+    /// code that names this format, such as a vendor's dialect or a host,
+    /// reaches its own.
+    fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Key<Self>>()
+    }
+    /// A native of this format's own fields in `native`, edited by `edit`:
+    /// another's dropped, and none if no field is left.
+    fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        native.with_fields::<Key<Self>>(edit)
+    }
     /// The keys of a conversation's `native` this format writes itself, from
     /// the conversation and the native together.
     const OWN: &'static [&'static str] = &[];
-    /// Fields of another format's `native` this format writes as its own,
-    /// meaning the same: `(format, key, path)`, its dotted `path` where it
-    /// goes, such as Chat Completions' `verbosity` as Responses'
-    /// `text.verbosity`.
-    const ADOPTED: &'static [(&'static str, &'static str, &'static str)] = &[];
     /// Decodes the events of a streamed response into events.
     type Decoding: respan_gateway_http::Decoder<Output>;
 
@@ -116,16 +139,24 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn decoder(&self) -> Self::Decoding;
     /// The events of one whole response body `v`.
     fn decode_body(&self, v: &Value, out: &mut Vec<Output>) -> Result<(), Fault>;
-    /// A JSON request as a conversation, noting what it has no place for.
-    fn decode_json(&self, v: &Value) -> Input;
+    /// Refuse a client request the conversation kind cannot represent.
+    fn validate_request_json(&self, _v: &Value) -> Result<(), Fault> {
+        Ok(())
+    }
+    /// A JSON request as a conversation, noting what it has no place for,
+    /// refusing a part it reads the media of but cannot, such as base64 that
+    /// does not decode.
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault>;
     /// A conversation as a request, but for its own `native` fields and the
-    /// model, refusing what this format cannot say.
+    /// model, refusing what the kind says that this format cannot.
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault>;
     /// A message part the kind has a form for beyond text, such as media or
-    /// a tool block; `None` keeps the part this format's own.
-    fn decode_part(p: &Value) -> Option<Content>;
+    /// a tool block; `None` keeps the part this format's own. A part of media
+    /// that cannot be read is refused, as another format's provider would
+    /// never receive it.
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault>;
     /// A part beyond text and this format's own parts, as it writes it, or
-    /// refused.
+    /// `Value::Null` for one it drops.
     fn encode_part(c: &Content) -> Result<Value, Fault>;
     /// Whether a successful body is a whole response of this format.
     fn is_response(v: &Value) -> bool;
@@ -143,9 +174,9 @@ pub trait Schema: Copy + Send + Sync + 'static {
     /// Prepare the request sent to a provider: add what the gateway needs of it,
     /// such as usage in a stream.
     fn prepare_call(_v: &mut Map<String, Value>) {}
-    /// Prepare a call whose client speaks another format: say what the
-    /// format must for a client that can name nothing it keeps.
-    fn translated(_v: &mut Map<String, Value>) {}
+    /// Prepare a call of `input` whose client speaks another format: say
+    /// what the format must for a client that can name nothing it keeps.
+    fn translated(_input: &Input, _v: &mut Map<String, Value>) {}
     /// Spell the fields of `v` as `original`, the client's request in this
     /// format, did, where the format has two spellings of one field.
     fn respell(_original: &Value, _v: &mut Map<String, Value>) {}
@@ -183,62 +214,22 @@ pub trait Schema: Copy + Send + Sync + 'static {
             Ok(v) if v.is_object() => v,
             _ => return Err(values::not_an_object()),
         };
-        let mut chat = self.decode_json(&v);
+        self.validate_request_json(&v)?;
+        let mut chat = self.decode_json(&v)?;
         chat.model = v["model"].as_str().map(Into::into);
         Ok(chat)
     }
 
-    /// A conversation as a request's JSON body, if nothing is lost: its
-    /// fields the kind has no place for are written only if they are this
-    /// format's.
+    /// A conversation as a request's JSON body: its fields the kind has no
+    /// place for are written only if they are this format's.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = Keep {
-            own: Self::OWN,
-            droppable: &[],
-        };
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        // Another format's fields this one writes as its own leave its native.
-        let mut adopted = Vec::new();
-        let mut rest = chat.native.clone();
-        if let Some(n) = rest.as_mut() {
-            for (format, key, path) in Self::ADOPTED {
-                if *n.format != **format {
-                    continue;
-                }
-                // As it came, or set aside as that format's alone.
-                let inert = match n.fields.get_mut(INERT) {
-                    Some(Value::Object(inert)) => inert.shift_remove(*key),
-                    _ => None,
-                };
-                if let Some(value) = n.fields.shift_remove(*key).or(inert) {
-                    adopted.push((*path, value));
-                }
-            }
-        }
-        let mut native = kept_fields(Self::NAME, &rest, in_the_request, keep)?;
-        // What only this format needs is written as it came.
-        if let Some(Value::Object(inert)) = native.shift_remove(INERT) {
-            native.extend(inert);
-        }
+        let chat = &*own_shapes::<Self>(chat);
+        let mut native = Self::fields(&chat.native).clone();
+        native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = Map::new();
         set(&mut v, "model", chat.model.clone().map(Into::into));
         v.extend(self.encode_json(chat)?);
         v.extend(native);
-        for (path, value) in adopted {
-            let mut at = &mut v;
-            let mut keys = path.split('.').peekable();
-            while let Some(key) = keys.next() {
-                if keys.peek().is_none() {
-                    at.entry(key).or_insert(value);
-                    break;
-                }
-                let next = at.entry(key).or_insert_with(|| Value::Object(Map::new()));
-                let Value::Object(next) = next else {
-                    return Err(untranslatable(&format!("'{path}' in the request")));
-                };
-                at = next;
-            }
-        }
         Ok(v)
     }
 

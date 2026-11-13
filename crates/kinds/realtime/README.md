@@ -13,21 +13,20 @@ event each. Its formats, over WebSocket, are
 - `Output`: the session `Opened` and `Updated`, `SpeechStarted` and
   `SpeechStopped` (barge-in), `InputTranscript`, then a response:
   `ResponseStart`, its `Audio`, `Text`, `Transcript` and `ToolCall`s,
-  `Usage`, and `ResponseDone` with its `Status`; and `Error`, with its
-  `Cause` (`Invalid`, `NothingToCancel`, `Provider`) beside the provider's
-  own code.
+  `Usage`, and `ResponseDone` with its `Status`; `Seconds` billed, from a
+  provider that bills by duration; and `Error`, with its
+  `Cause` (`Invalid`, `NothingToCancel`, `Provider`).
 - `Audio` is decoded bytes in an `AudioFormat` (16-bit PCM at a rate, or
   G.711 μ-law or A-law), never base64; `duration()` says how long it plays.
 
-What the kind has no form for stays as its format has it: `NativeFields` on
-an event, or a whole `Input::Native` / `Output::Native` event, sent only in
-that format; crossing to another, it is dropped where it cannot change the
-answer and refused where it can. Messages, tools and token usage are the
+What the kind has no form for stays as its format has it: a `Native` on
+an event, or a whole `Input::Native` / `Output::Native` event, which only
+that format reads or sends; crossing to another, it is dropped. Messages, tools and token usage are the
 conversation kind's.
 
 Formats translate through these events, OpenAI Realtime and Gemini Live
-both ways, so a plugin reads any session the same: it meters `Usage` and
-`Audio::duration()`, vets `Session.tools` and `ToolCall`s, or pins the
+both ways, so a plugin reads any session the same: it meters `Usage`,
+`Seconds` and `Audio::duration()`, vets `Session.tools` and `ToolCall`s, or pins the
 `Session` (`set_model(m)` is the filter routing asks for a model with).
 
 The crate is the kind's types alone, depending on `respan-gateway-core`,

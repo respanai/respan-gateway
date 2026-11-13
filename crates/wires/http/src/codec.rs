@@ -125,7 +125,13 @@ impl<T, D: Decoder<T>> Decoder<T> for Sse<D> {
     }
 
     fn decode(&mut self, raw: Bytes, out: &mut Vec<T>) -> Result<(), Fault> {
+        if self.inner.done() {
+            return Ok(());
+        }
         for event in self.parser.push(raw)? {
+            if self.inner.done() {
+                break;
+            }
             self.inner.decode(event, out)?;
         }
         Ok(())
@@ -134,6 +140,9 @@ impl<T, D: Decoder<T>> Decoder<T> for Sse<D> {
     fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<T>) -> Result<(), Fault> {
         if end.is_ok() {
             for event in self.parser.finish() {
+                if self.inner.done() {
+                    break;
+                }
                 self.inner.decode(event, out)?;
             }
         }

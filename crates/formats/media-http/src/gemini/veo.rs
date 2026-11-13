@@ -6,24 +6,25 @@ use crate::edge::{bind_provider, content, sends};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::kept;
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, NativeFields};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::forwarded_path;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, KeyIn, Reach, Upstream};
 use serde_json::{Map, Value, json};
 use std::sync::{Arc, OnceLock};
 
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status, Variant};
+use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 
 const NAME: &str = "gemini-veo";
+
+type Key = crate::Own<GeminiVeo>;
 /// What starts the id of a job of Veo's.
 const PREFIX: &str = "veo_";
 
@@ -52,15 +53,17 @@ const PREFIX: &str = "veo_";
 /// A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews, is
 /// created by `POST /interactions` instead: its prompt and reference image
 /// the `input`, its `size` the `response_format`'s `aspect_ratio` and
-/// `resolution`; it chooses its length, and has no place for Veo's own
-/// parameters, so those and `seconds` are dropped. Its video is a file of
+/// `resolution` (else its native `aspectRatio` and `resolution`, as for 4k),
+/// its `seconds` the `duration`; it has no place for Veo's other
+/// parameters, so those are dropped. Its video is a file of
 /// the Files API, which is its job: the file's name (`files/{id}`) spelled
 /// as an operation's is, retrieved by `GET /files/{id}`, `in_progress`
 /// until the file is `ACTIVE`, then `completed`, its video the file's
-/// download URI.
+/// download URI. The interaction's `usage`, its tokens by modality, is the
+/// created job's native `usage`: a file has none.
 ///
-/// Veo cannot remix, delete or list videos, nor make a thumbnail or a
-/// spritesheet: those are refused, 400, before any call. What Veo answers
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call. What else Veo answers
 /// beyond the kind is dropped.
 ///
 /// A client speaks it too, of any provider of the kind: it creates with
@@ -75,7 +78,7 @@ const PREFIX: &str = "veo_";
 pub struct GeminiVeo;
 
 impl GeminiVeo {
-    /// The format's name, `gemini-veo`, which tags its native fields.
+    /// The format's name, `gemini-veo`.
     pub const NAME: &'static str = NAME;
 
     /// The job id of the operation `name`.
@@ -146,8 +149,12 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
 }
 
 /// An operation Veo has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("Veo cannot {what}")).with(ErrorCode("unsupported".into()))
+fn unsupported(input: &Input) -> Fault {
+    let what = match input {
+        Input::Native { .. } => "operation of another format",
+        _ => "operation of this kind",
+    };
+    Fault::bad_request(format!("Veo has no video {what}")).with(ErrorCode("unsupported".into()))
 }
 
 /// The operation a job `id` names, else a 404.
@@ -196,20 +203,14 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             };
             (Method::GET, format!("/{name}"), None, asked)
         }
-        Input::Content { id, variant, url } => {
-            if *variant != Variant::Video {
-                return Err(unsupported("make a thumbnail or a spritesheet"));
-            }
+        Input::Content { id, url } => {
             operation_of(id)?;
             let url = url.as_deref().ok_or_else(|| {
                 Fault::config("Veo's content is at the URL its job names, which the request needs")
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        Input::Remix { .. } => return Err(unsupported("remix a video")),
-        Input::Delete { .. } => return Err(unsupported("delete a video")),
-        Input::List { .. } => return Err(unsupported("list videos")),
-        _ => return Err(unsupported("answer this request")),
+        _ => return Err(unsupported(input)),
     };
     head.method = method;
     head.uri = path
@@ -247,7 +248,7 @@ fn create_body(create: &Create) -> Result<(Bytes, Value), Fault> {
     if let Some(seconds) = create.seconds {
         parameters.insert("durationSeconds".into(), seconds.into());
     }
-    for (key, value) in kept(NAME, &create.native)? {
+    for (key, value) in create.native.fields::<Key>().clone() {
         parameters.entry(key).or_insert(value);
     }
     let parameters = Value::Object(parameters);
@@ -267,8 +268,8 @@ fn is_omni(model: &str) -> bool {
 
 /// A Gemini Omni creation's body: its prompt, after its reference image if
 /// any, as the input, and a video as the response, at a URI, as the Files
-/// API keeps it. Veo's own parameters, such as `negativePrompt`, Omni has
-/// no place for: they are dropped.
+/// API keeps it, at its `seconds` as a `duration`. Veo's other parameters,
+/// such as `negativePrompt`, Omni has no place for: they are dropped.
 fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
     let input = match &create.reference {
         None => Value::String(create.prompt.clone()),
@@ -289,6 +290,18 @@ fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
         let (aspect, resolution) = aspect_of(size)?;
         format["aspect_ratio"] = aspect.into();
         format["resolution"] = resolution.into();
+    }
+    let native = create.native.fields::<Key>();
+    for (key, said) in [
+        ("aspect_ratio", "aspectRatio"),
+        ("resolution", "resolution"),
+    ] {
+        if let Some(value) = native.get(said).filter(|_| format.get(key).is_none()) {
+            format[key] = value.clone();
+        }
+    }
+    if let Some(seconds) = create.seconds {
+        format["duration"] = format!("{seconds}s").into();
     }
     let body = json!({ "model": model, "input": input, "response_format": format });
     let body = serde_json::to_vec(&body)
@@ -447,7 +460,7 @@ fn job_of(raw: &[u8], parameters: &Value) -> Result<Job, Fault> {
 }
 
 /// The job of a Gemini Omni interaction `raw`: its video's file, not yet
-/// known to be ready.
+/// known to be ready, and the `usage` it reports, native.
 fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's interaction {what}"));
     let v = serde_json::from_slice::<Value>(raw).map_err(|_| unreadable("is not JSON"))?;
@@ -460,6 +473,9 @@ fn job_of_interaction(raw: &[u8]) -> Result<Job, Fault> {
     let file = file.ok_or_else(|| unreadable("holds no video"))?;
     let mut job = Job::new(GeminiVeo::job_id(&file), Status::InProgress);
     job.model = v["model"].as_str().map(str::to_owned);
+    if let Some(usage) = v.get("usage").filter(|usage| usage.is_object()) {
+        job.native = Native::json::<Key>(json!({ "usage": usage }));
+    }
     Ok(job)
 }
 
@@ -539,7 +555,7 @@ enum Route {
     Create(String),
     /// `GET .../operations/{id}`, as a job's operation is named
     /// ([`issued`]).
-    Retrieve(String),
+    Retrieve { id: String, model: Option<String> },
     /// `GET .../files/{id}:download`, where a finished job's video is
     /// ([`issued`]).
     Download(String),
@@ -566,7 +582,16 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
             is_segment(model).then(|| Route::Create(model.to_owned()))
         }
         Method::GET if parent == "operations" && issued(last) => {
-            Some(Route::Retrieve(last.clone()))
+            let model = match segments.as_slice() {
+                [.., models, model, _, _] if models == "models" && is_segment(model) => {
+                    Some(model.clone())
+                }
+                _ => None,
+            };
+            Some(Route::Retrieve {
+                id: last.clone(),
+                model,
+            })
         }
         Method::GET if parent == "files" => {
             let id = last.strip_suffix(":download").filter(|id| issued(id))?;
@@ -576,12 +601,15 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
     }
 }
 
-/// Whether `id` is spelled as a job id the gateway gives out, Veo's or
-/// OpenAI's, perhaps wrapped in its provider's name (`<provider>~<id>`):
-/// none of Google's own files or operations is, so those pass through.
+/// Whether `id` is spelled as a job id the gateway gives out, Veo's,
+/// OpenAI's or OpenRouter's, perhaps wrapped in its provider's name
+/// (`<provider>~<id>`): none of Google's own files or operations is, so
+/// those pass through.
 fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [PREFIX, "video_"].iter().any(|s| inner.starts_with(s))
+    [PREFIX, "video_", "gen-vid-"]
+        .iter()
+        .any(|s| inner.starts_with(s))
 }
 
 /// What a client asks: a creation's body read into the kind's, the rest by
@@ -591,12 +619,8 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
         .ok_or_else(|| Fault::bad_request("the request is to no Veo endpoint"))?;
     Ok(match route {
         Route::Create(model) => Input::Create(read_create(model, raw)?),
-        Route::Retrieve(id) => Input::Retrieve { id },
-        Route::Download(id) => Input::Content {
-            id,
-            variant: Variant::Video,
-            url: None,
-        },
+        Route::Retrieve { id, .. } => Input::Retrieve { id },
+        Route::Download(id) => Input::Content { id, url: None },
     })
 }
 
@@ -661,9 +685,7 @@ fn read_create(model: String, raw: &[u8]) -> Result<Create, Fault> {
                 .ok_or_else(|| invalid("`parameters.durationSeconds` must be a whole number"))?,
         ),
     };
-    if !parameters.is_empty() {
-        create.native = Some(NativeFields::new(NAME, parameters));
-    }
+    create.native = Native::json::<Key>(parameters);
     Ok(create)
 }
 
@@ -673,10 +695,8 @@ fn response_encoder(
     request: &http::Request<Bytes>,
     head: &mut ResponseHead,
 ) -> Box<dyn Encoder<Output>> {
-    let content = matches!(
-        route(request.method(), request.uri()),
-        Some(Route::Download(_))
-    );
+    let route = route(request.method(), request.uri());
+    let content = matches!(route, Some(Route::Download(_)));
     let typed = if content {
         "video/mp4"
     } else {
@@ -699,7 +719,21 @@ fn response_encoder(
             _ => None,
         });
         let job = job.ok_or_else(|| Fault::upstream("the provider's answer said no video"))?;
-        serde_json::to_vec(&operation_of_job(job, &base))
+        // A Files API poll has no model. The matching Gemini client path
+        // carries the model this operation was originally named with.
+        let model = job.model.as_deref().or_else(|| match &route {
+            Some(Route::Retrieve {
+                id,
+                model: Some(model),
+            }) if id == &job.id && is_omni(model) => {
+                let inner = id.split_once('~').map_or(id.as_str(), |(_, inner)| inner);
+                GeminiVeo::operation(inner)
+                    .filter(|name| name.starts_with("files/"))
+                    .map(|_| model.as_str())
+            }
+            _ => None,
+        });
+        serde_json::to_vec(&operation_of_job(job, &base, model))
             .map_err(|e| Fault::internal("a body could not be written").with_source(e))
     }))
 }
@@ -722,8 +756,8 @@ fn gateway_base(request: &http::Request<Bytes>) -> String {
 /// provider that made it; done once it finished; its video, if made, at the
 /// gateway, never the provider's own URL; its failure as an error, or as a
 /// filtered response when the provider's filters took the video.
-fn operation_of_job(job: &Job, base: &str) -> Value {
-    let name = match &job.model {
+fn operation_of_job(job: &Job, base: &str, model: Option<&str>) -> Value {
+    let name = match model {
         Some(model) => format!("models/{model}/operations/{}", job.id),
         None => format!("operations/{}", job.id),
     };
@@ -771,6 +805,7 @@ fn operation_of_job(job: &Job, base: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Natives;
 
     /// Regression: this format's own copy of Google's names lacked 409 and
     /// 499, and read `UNIMPLEMENTED` back as 500.
@@ -820,15 +855,24 @@ mod tests {
         for (path, routed) in [
             (
                 format!("/v1beta/models/veo-3.0/operations/{id}"),
-                Some(Route::Retrieve(id.clone())),
+                Some(Route::Retrieve {
+                    id: id.clone(),
+                    model: Some("veo-3.0".into()),
+                }),
             ),
             (
                 format!("/v1beta/operations/{id}"),
-                Some(Route::Retrieve(id.clone())),
+                Some(Route::Retrieve {
+                    id: id.clone(),
+                    model: None,
+                }),
             ),
             (
                 "/v1beta/operations/east~video_1".into(),
-                Some(Route::Retrieve("east~video_1".into())),
+                Some(Route::Retrieve {
+                    id: "east~video_1".into(),
+                    model: None,
+                }),
             ),
             (
                 format!("/v1beta/files/{id}:download"),
@@ -837,6 +881,13 @@ mod tests {
             (
                 "/v1beta/files/video_1:download".into(),
                 Some(Route::Download("video_1".into())),
+            ),
+            (
+                "/v1beta/operations/gen-vid-1".into(),
+                Some(Route::Retrieve {
+                    id: "gen-vid-1".into(),
+                    model: None,
+                }),
             ),
             ("/v1beta/files/abc123:download".into(), None),
             ("/v1beta/operations/abc123".into(), None),
@@ -870,6 +921,53 @@ mod tests {
     }
 
     #[test]
+    fn an_omni_files_poll_keeps_the_clients_operation_name() {
+        let model = "gemini-omni-1.1-flash";
+        let answer = json!({"model": model, "steps": [
+            {"type": "model_output", "content": [{"type": "video",
+                "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1:download?alt=media"}]},
+        ]});
+        let encode = |method, path: &str, job| {
+            let request = http::Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Bytes::new())
+                .unwrap_or_else(|e| panic!("{e}"));
+            let mut head = http::Response::new(()).into_parts().0;
+            let bytes = response_encoder(&request, &mut head)
+                .encode_all(&[Output::Job(job)])
+                .unwrap_or_else(|e| panic!("{e}"));
+            serde_json::from_slice::<Value>(&bytes).unwrap_or_else(|e| panic!("{e}"))
+        };
+
+        let created =
+            job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+        for provider in ["", "east~"] {
+            let mut created = created.clone();
+            created.id = format!("{provider}{}", created.id);
+            let initial = encode(
+                Method::POST,
+                &format!("/v1beta/models/{model}:predictLongRunning"),
+                created.clone(),
+            );
+            let name = format!("models/{model}/operations/{}", created.id);
+            assert_eq!(initial["name"], name);
+            for (state, done) in [("PROCESSING", false), ("ACTIVE", true), ("FAILED", true)] {
+                let raw = json!({"name": "files/f1", "state": state,
+                    "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1"});
+                let mut job =
+                    job_of_file(raw.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+                job.id = format!("{provider}{}", job.id);
+                let reply = encode(Method::GET, &format!("/v1beta/{name}"), job.clone());
+                assert_eq!(reply["name"], initial["name"], "{state}");
+                assert_eq!(reply["done"].as_bool().unwrap_or_default(), done, "{state}");
+                let bare = encode(Method::GET, &format!("/v1beta/operations/{}", job.id), job);
+                assert_eq!(bare["name"], format!("operations/{}", created.id));
+            }
+        }
+    }
+
+    #[test]
     fn content_is_fetched_at_the_providers_base() {
         let at = |url: &str| content_path(url).ok();
         assert_eq!(
@@ -888,10 +986,13 @@ mod tests {
     fn a_gemini_omni_video_is_an_interaction_whose_file_is_its_job() {
         let mut create = Create::new("a paper boat");
         create.model = Some("gemini-omni-1.1-flash".into());
-        create.size = Some("720x1280".into());
         create.seconds = Some(8);
-        let veo = Map::from_iter([("negativePrompt".to_owned(), json!("rain"))]);
-        create.native = Some(NativeFields::new(NAME, veo));
+        let veo = Map::from_iter([
+            ("negativePrompt".to_owned(), json!("rain")),
+            ("aspectRatio".to_owned(), json!("9:16")),
+            ("resolution".to_owned(), json!("4k")),
+        ]);
+        create.native = Native::json::<Key>(veo);
         let mut head = http::Request::new(()).into_parts().0;
         let input = Input::Create(create);
         let (encoder, asked) = call(&mut head, &input).unwrap_or_else(|e| panic!("{e}"));
@@ -907,11 +1008,14 @@ mod tests {
             json!({
                 "model": "gemini-omni-1.1-flash",
                 "input": "a paper boat",
-                "response_format": {"type": "video", "delivery": "uri", "aspect_ratio": "9:16", "resolution": "720p"},
+                "response_format": {"type": "video", "delivery": "uri", "aspect_ratio": "9:16",
+                    "resolution": "4k", "duration": "8s"},
             })
         );
         assert!(matches!(asked, Call::Omni));
-        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "steps": [
+        let usage = json!({"total_input_tokens": 12, "total_thought_tokens": 386,
+            "output_tokens_by_modality": [{"modality": "video", "tokens": 26064}]});
+        let answer = json!({"id": "v1_abc", "model": "gemini-omni-1.1-flash", "usage": usage, "steps": [
             {"type": "model_output", "content": [{"type": "video", "mime_type": "video/mp4",
               "uri": "https://generativelanguage.googleapis.com/v1beta/files/f1x2:download?alt=media"}]},
         ]});
@@ -919,6 +1023,7 @@ mod tests {
             job_of_interaction(answer.to_string().as_bytes()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(job.status, Status::InProgress);
         assert_eq!(job.model.as_deref(), Some("gemini-omni-1.1-flash"));
+        assert_eq!(GeminiVeo::fields(&job.native).get("usage"), Some(&usage));
         assert_eq!(GeminiVeo::operation(&job.id).as_deref(), Some("files/f1x2"));
 
         let mut head = http::Request::new(()).into_parts().0;

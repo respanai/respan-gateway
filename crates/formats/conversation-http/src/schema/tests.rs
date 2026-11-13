@@ -1,10 +1,10 @@
 //! Cross-format checks of the shared schema helpers, which are private to
 //! this crate.
 
-use respan_gateway_conversation::{Assembled, Content};
+use respan_gateway_conversation::{Assembled, Content, Finish, Output};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::Schema;
 use crate::anthropic::AnthropicMessages;
@@ -12,7 +12,23 @@ use crate::gemini::GeminiGenerate;
 use crate::openai::OpenAiChat;
 use crate::responses::OpenAiResponses;
 use crate::schema::errors::answer;
-use crate::schema::{NativeFieldsExt, decode_content, encode_content};
+use crate::schema::{Own, decode_content, encode_content};
+
+/// Asserts `a` and `b` are the same events, their natives by `C`'s JSON.
+#[track_caller]
+pub(crate) fn assert_same<C: Schema>(a: &[Output], b: &[Output]) {
+    let json = |events: &[Output]| -> Vec<Option<Value>> {
+        let natives = events.iter().filter_map(|e| match e {
+            Output::Start(start) => Some(&start.native),
+            Output::BlockFields { native, .. } | Output::BlockNative { native, .. } => Some(native),
+            Output::Native(native) | Output::Finish(Finish::Native { native, .. }) => Some(native),
+            _ => None,
+        });
+        natives.map(|n| C::value(n).cloned()).collect()
+    };
+    assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    assert_eq!(json(a), json(b));
+}
 
 #[test]
 fn a_cache_marker_stays_with_its_own_part_among_equal_text() {
@@ -20,7 +36,7 @@ fn a_cache_marker_stays_with_its_own_part_among_equal_text() {
         { "type": "text", "text": "A", "cache_control": { "type": "ephemeral" } },
         { "type": "text", "text": "A" },
     ]);
-    let mut content = decode_content::<AnthropicMessages>(&old);
+    let mut content = decode_content::<AnthropicMessages>(&old).expect("read");
     // A part that says more is text with its own native, and so equal text
     // beside it is a part of its own.
     assert!(matches!(&content[0], Content::Text { native, .. } if !native.is_empty()));
@@ -109,7 +125,7 @@ fn usage_is_written_only_where_each_count_has_a_field() {
 fn a_web_search_is_asked_of_each_provider_in_its_own_terms() {
     let v =
         json!({ "messages": [{ "role": "user", "content": "news?" }], "web_search_options": {} });
-    let input = OpenAiChat.decode_json(&v);
+    let input = OpenAiChat.decode_json(&v).expect("read");
     assert_eq!(input.provider_tools.len(), 1);
     let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
     let search = json!({ "type": "web_search_20250305", "name": "web_search" });
@@ -120,31 +136,29 @@ fn a_web_search_is_asked_of_each_provider_in_its_own_terms() {
     assert_eq!(responses["tools"], json!([{ "type": "web_search" }]));
     let chat = OpenAiChat.encode_request(&input).expect("chat");
     assert_eq!(chat["web_search_options"], json!({}));
-    // Most providers that speak Chat would ignore another format's search.
-    let anthropic = AnthropicMessages.decode_json(&anthropic.into());
-    assert!(OpenAiChat.encode_request(&anthropic).is_err());
+    let anthropic = AnthropicMessages
+        .decode_json(&anthropic.into())
+        .expect("read");
+    assert_eq!(
+        OpenAiChat.encode_request(&anthropic).expect("chat")["web_search_options"],
+        json!({})
+    );
 }
 
 #[test]
-fn a_searchs_bounds_go_only_to_its_own_format_and_its_hints_are_dropped() {
+fn a_searchs_bounds_and_hints_go_only_to_its_own_format() {
     let search = json!({
         "type": "web_search_20260209", "name": "web_search", "max_uses": 3,
         "cache_control": { "type": "ephemeral" },
     });
     let v = json!({ "messages": [{ "role": "user", "content": "hi" }], "tools": [search] });
-    let input = AnthropicMessages.decode_json(&v);
+    let input = AnthropicMessages.decode_json(&v).expect("read");
     let back = AnthropicMessages.encode_request(&input).expect("anthropic");
     assert_eq!(back["tools"], json!([search]));
-    let refused = OpenAiResponses
-        .encode_request(&input)
-        .expect_err("max_uses");
-    assert!(
-        refused.message().contains("max_uses"),
-        "{}",
-        refused.message()
-    );
+    let responses = OpenAiResponses.encode_request(&input).expect("responses");
+    assert_eq!(responses["tools"], json!([{ "type": "web_search" }]));
     let v = json!({ "input": "hi", "tools": [{ "type": "web_search_preview", "search_context_size": "low" }] });
-    let input = OpenAiResponses.decode_json(&v);
+    let input = OpenAiResponses.decode_json(&v).expect("read");
     assert_eq!(
         OpenAiResponses.encode_request(&input).expect("responses")["tools"],
         v["tools"]
@@ -160,7 +174,7 @@ fn a_google_search_beside_another_google_tool_stays_geminis_own() {
         "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
         "tools": [{ "googleSearch": {}, "urlContext": {} }],
     });
-    let input = GeminiGenerate.decode_json(&v);
+    let input = GeminiGenerate.decode_json(&v).expect("read");
     assert!(input.provider_tools.is_empty());
     assert_eq!(
         GeminiGenerate.encode_request(&input).expect("gemini")["tools"],
@@ -196,4 +210,74 @@ fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     assert_eq!(chat["choices"][0]["finish_reason"], "length");
     let back = AnthropicMessages.encode_whole(&whole).expect("anthropic");
     assert_eq!(back["stop_reason"], "pause_turn");
+}
+
+/// A Chat request whose tool says `strict` as `strict`.
+fn strict_tool_request(strict: serde_json::Value) -> respan_gateway_conversation::Input {
+    OpenAiChat
+        .decode_json(&json!({
+            "messages": [{ "role": "user", "content": "x" }],
+            "tools": [{ "type": "function", "function": {
+                "name": "lookup", "strict": strict, "parameters": { "type": "object" } } }],
+        }))
+        .expect("read")
+}
+
+#[test]
+fn a_strict_tool_is_only_strict_where_a_format_can_say_it() {
+    let chat = strict_tool_request(json!(true));
+    let sent = GeminiGenerate.encode_request(&chat).expect("gemini");
+    assert!(!serde_json::Value::from(sent).to_string().contains("strict"));
+    let sent = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(sent["tools"][0]["strict"], true);
+}
+
+#[test]
+fn not_asking_for_a_strict_tool_says_nothing_to_another_format() {
+    let chat = strict_tool_request(json!(false));
+    let gemini = GeminiGenerate.encode_request(&chat).expect("a request");
+    let declaration = &gemini["tools"][0]["functionDeclarations"][0];
+    assert_eq!(declaration["name"], "lookup");
+    assert!(declaration.get("strict").is_none());
+    let claude = AnthropicMessages.encode_request(&chat).expect("a request");
+    assert!(claude["tools"][0].get("strict").is_none());
+    assert!(
+        crate::bedrock::BedrockConverse
+            .encode_request(&chat)
+            .is_ok()
+    );
+}
+
+#[test]
+fn a_strict_tool_keeps_its_promise_in_openais_formats() {
+    let chat = strict_tool_request(json!(true));
+    let responses = OpenAiResponses.encode_request(&chat).expect("a request");
+    assert_eq!(responses["tools"][0]["strict"], true);
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], true);
+}
+
+#[test]
+fn a_strict_that_is_no_boolean_stays_native() {
+    let chat = strict_tool_request(json!("yes"));
+    assert_eq!(chat.tools[0].strict, Some(false));
+    let back = OpenAiChat.encode_request(&chat).expect("a request");
+    assert_eq!(back["tools"][0]["function"]["strict"], "yes");
+}
+
+#[test]
+fn a_tool_the_kind_cannot_say_costs_another_format_only_that_tool() {
+    let body = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }], "tools": [
+        { "type": "file_search", "vector_store_ids": ["vs_1"] },
+        { "type": "function", "name": "f", "parameters": { "type": "object" }, "strict": false },
+    ] });
+    let chat = OpenAiResponses.decode_json(&body).expect("read");
+    let sent = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(sent["tools"].as_array().map(Vec::len), Some(1));
+    assert_eq!(sent["tools"][0]["name"], "f");
+    let back = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(
+        back["tools"], body["tools"],
+        "its own format keeps the list"
+    );
 }

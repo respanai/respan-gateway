@@ -1,9 +1,14 @@
 use super::*;
+use crate::anthropic::AnthropicMessages;
+use crate::bedrock::BedrockConverse;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
+use respan_gateway_core::Native;
 
 use respan_gateway_conversation::{
-    Block, Effort, Media, MediaSource, Message, Reasoning, Start, Tool, ToolChoice, Usage,
+    Block, Effort, Media, MediaSource, Message, Reasoning, ResponseFormat, Start, Tool, ToolChoice,
+    Usage,
 };
-use respan_gateway_core::NativeFields;
 use respan_gateway_eventstream::{Header, Message as Frame};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
@@ -44,10 +49,7 @@ fn a_request_is_system_messages_and_inference_config() {
     let mut brief = Message::new(Role::System, "be brief");
     if let Content::Text { native, .. } = &mut brief.content[0] {
         let marker = json!({ "cache_control": { "type": "ephemeral" } });
-        *native = Some(NativeFields::new(
-            "anthropic-messages",
-            marker.as_object().cloned().unwrap_or_default(),
-        ));
+        *native = AnthropicMessages::native(marker.as_object().cloned().unwrap_or_default());
     }
     let mut chat = chat([
         brief,
@@ -65,8 +67,8 @@ fn a_request_is_system_messages_and_inference_config() {
     assert_eq!(
         written(&chat),
         json!({
-            // A cache marker of any format is a cache point after its block.
-            "system": [{ "text": "be brief" }, { "cachePoint": { "type": "default" } }, { "text": "no lists" }],
+            // Another format's cache marker is dropped: no cache point.
+            "system": [{ "text": "be brief" }, { "text": "no lists" }],
             "messages": [
                 { "role": "user", "content": [{ "text": "hi" }] },
                 { "role": "assistant", "content": [{ "text": "hello" }] },
@@ -81,7 +83,7 @@ fn a_request_is_system_messages_and_inference_config() {
 }
 
 #[test]
-fn media_is_bytes_and_a_url_is_refused() {
+fn media_is_bytes_and_a_url_is_dropped() {
     let mut message = user("what is this");
     message
         .content
@@ -101,7 +103,13 @@ fn media_is_bytes_and_a_url_is_refused() {
     let url = Media::new("image/png", MediaSource::Url("https://x.io/a.png".into()));
     let mut remote = user("see");
     remote.content.push(Content::Image(url));
-    assert!(refused(&chat([remote])).contains("data URL"));
+    remote
+        .content
+        .push(Content::Audio(media("audio/mpeg", b"ID3")));
+    assert_eq!(
+        written(&chat([remote]))["messages"][0]["content"],
+        json!([{ "text": "see" }, { "audio": { "format": "mp3", "source": { "bytes": "SUQz" } } }])
+    );
 }
 
 #[test]
@@ -147,30 +155,27 @@ fn tools_a_call_and_its_result_are_blocks() {
 
 #[test]
 fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
-    let signed = NativeFields::new(
-        BEDROCK,
-        json!({ "signature": "sig" })
-            .as_object()
-            .cloned()
-            .unwrap_or_default(),
-    );
     let mut turn = assistant("done");
+    turn.content.insert(0, Content::Signature("sig".into()));
     turn.content.insert(
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: Some(signed),
+            native: Native::default(),
         },
     );
     turn.content.insert(
         0,
         Content::Reasoning {
             text: "unsigned".into(),
-            native: None,
+            native: Native::default(),
         },
     );
+    turn.content.insert(0, Content::Withheld("hidden".into()));
     let mut chat = chat([user("think"), turn, user("more")]);
     chat.options.reasoning = Some(Reasoning::budget(2048));
+    assert!(written(&chat).get("additionalModelRequestFields").is_none());
+    chat.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
     let v = written(&chat);
     assert_eq!(
         v["additionalModelRequestFields"],
@@ -179,6 +184,7 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
     assert_eq!(
         v["messages"][1]["content"],
         json!([
+            { "reasoningContent": { "redactedContent": "hidden" } },
             { "reasoningContent": { "reasoningText": { "text": "hm", "signature": "sig" } } },
             { "text": "done" },
         ])
@@ -191,19 +197,58 @@ fn a_reasoning_budget_is_the_thinking_field_and_signed_reasoning_goes_back() {
 }
 
 #[test]
-fn what_converse_has_no_field_for_is_refused() {
+fn what_converse_has_no_field_for_is_dropped_or_its_nearest() {
     let base = || chat([user("hi")]);
     let mut c = base();
-    c.options.top_k = Some(5);
-    assert!(refused(&c).contains("top_k"));
-    let mut c = base();
     c.user = Some("u".into());
-    assert!(refused(&c).contains("end user"));
+    c.options.parallel_tool_calls = Some(false);
+    c.options.response_format = Some(ResponseFormat::JsonObject);
+    assert_eq!(written(&c), written(&base()));
     let mut c = base();
     c.options.reasoning = Some(Reasoning::effort(Effort::High));
-    assert!(refused(&c).contains("budget"));
+    assert_eq!(
+        written(&c),
+        written(&base()),
+        "Nova names its effort its own way"
+    );
+    c.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
+    assert_eq!(
+        written(&c)["additionalModelRequestFields"],
+        json!({ "thinking": { "type": "enabled", "budget_tokens": 4096 } })
+    );
+    c.options.reasoning = Some(Reasoning::budget(500));
+    c.options.max_output_tokens = Some(800);
+    c.options.temperature = Some(1.5);
+    c.options.top_p = Some(0.9);
+    let v = written(&c);
+    let thinking = &v["additionalModelRequestFields"]["thinking"];
+    assert_eq!(thinking["budget_tokens"], 1024);
+    let config = json!({ "maxTokens": 1824, "temperature": 1.0 });
+    assert_eq!(v["inferenceConfig"], config);
+    // A Claude that thinks adaptively takes the nearest effort for a budget,
+    // and chooses `auto` where it refuses to force a tool.
+    c.model = Some("global.anthropic.claude-opus-5-5".into());
+    c.tools = vec![Tool::new("f", json!({ "type": "object" }))];
+    c.options.tool_choice = Some(ToolChoice::Required);
+    let v = written(&c);
+    let fields =
+        json!({ "thinking": { "type": "adaptive" }, "output_config": { "effort": "low" } });
+    assert_eq!(v["additionalModelRequestFields"], fields);
+    assert_eq!(
+        (v["toolConfig"].get("toolChoice"), &v["inferenceConfig"]),
+        (None, &config)
+    );
+    // Where forcing a tool is allowed, it takes the thinking's place.
+    c.model = Some("us.anthropic.claude-sonnet-4-5-v1:0".into());
+    let v = written(&c);
+    assert!(v.get("additionalModelRequestFields").is_none());
+    assert_eq!(v["toolConfig"]["toolChoice"], json!({ "any": {} }));
     let c = chat([user("a"), Message::new(Role::System, "late")]);
-    assert!(refused(&c).contains("system message"));
+    assert_eq!(
+        written(&c)["messages"],
+        json!([{ "role": "user", "content": [{ "text": "a" }, { "text": "late" }] }])
+    );
+    assert!(refused(&chat([])).contains("at least one"));
 }
 
 #[test]
@@ -257,7 +302,7 @@ fn decode_chunks(chunks: &[Bytes]) -> Result<Vec<Output>, Fault> {
 }
 
 fn native(v: Value) -> Output {
-    Output::native(BEDROCK, v)
+    Output::Native(BedrockConverse::native(v))
 }
 
 fn stream_of(frames: Vec<Bytes>) -> Vec<u8> {
@@ -291,9 +336,9 @@ fn a_stream_is_blocks_a_finish_and_usage() {
     let mut usage = Usage::new(16, 5);
     usage.cached_input_tokens = 4;
     usage.cache_write_input_tokens = 2;
-    assert_eq!(
-        decode_chunks(&text_stream()).expect("events"),
-        [
+    assert_same::<BedrockConverse>(
+        &decode_chunks(&text_stream()).expect("events"),
+        &[
             Output::Start(Start::new("", "")),
             Output::block_start(0, Block::Text),
             Output::text(0, "Hel"),
@@ -302,9 +347,9 @@ fn a_stream_is_blocks_a_finish_and_usage() {
             Output::finished(Finish::Stop),
             Output::Usage(usage),
             native(
-                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } })
+                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } }),
             ),
-        ]
+        ],
     );
 }
 
@@ -318,13 +363,11 @@ fn tool_use_and_reasoning_blocks_open_as_converse_sends_them() {
         event("contentBlockDelta", json!({ "contentBlockIndex": 1, "delta": { "toolUse": { "input": "{\"id\":" } } })),
         event("contentBlockDelta", json!({ "contentBlockIndex": 1, "delta": { "toolUse": { "input": "7}" } } })),
         event("contentBlockStop", json!({ "contentBlockIndex": 1 })),
+        event("contentBlockDelta", json!({ "contentBlockIndex": 2, "delta": { "reasoningContent": { "redactedContent": "aGlk" } } })),
+        event("contentBlockStop", json!({ "contentBlockIndex": 2 })),
         event("messageStop", json!({ "stopReason": "tool_use" })),
     ])
     .expect("events");
-    let signature = json!({ "signature": "sig" })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
     let call = Block::ToolCall {
         id: "t1".into(),
         name: "lookup".into(),
@@ -334,12 +377,14 @@ fn tool_use_and_reasoning_blocks_open_as_converse_sends_them() {
         [
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(BEDROCK, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
             Output::block_start(1, call),
             Output::arguments(1, "{\"id\":"),
             Output::arguments(1, "7}"),
             Output::block_end(1),
+            // Reasoning withheld opens no block.
+            Output::signature(None, "aGlk"),
             Output::finished(Finish::ToolUse),
         ]
     );
@@ -397,22 +442,18 @@ fn a_whole_body_is_the_same_events() {
     BedrockConverse
         .decode_body(&body, &mut events)
         .expect("events");
-    let signature = json!({ "signature": "sig" })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
     let call = Block::ToolCall {
         id: "t1".into(),
         name: "lookup".into(),
     };
-    assert_eq!(
-        events,
-        [
+    assert_same::<BedrockConverse>(
+        &events,
+        &[
             Output::Start(Start::new("", "")),
             Output::Usage(Usage::new(10, 5)),
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(BEDROCK, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
             Output::block_start(1, Block::Text),
             Output::text(1, "Hello"),
@@ -420,17 +461,20 @@ fn a_whole_body_is_the_same_events() {
             Output::block_start(2, call),
             Output::arguments(2, "{\"id\":7}"),
             Output::block_end(2),
-            native(
-                json!({ "type": "content_block", "index": 3, "block": { "citationsContent": { "citations": [] } } })
+            Output::block_native(
+                3,
+                BedrockConverse::native(
+                    json!({ "type": "content_block", "block": { "citationsContent": { "citations": [] } } }),
+                ),
             ),
             Output::finished(Finish::ToolUse),
             native(
-                json!({ "type": "stop_fields", "fields": { "additionalModelResponseFields": { "x": 1 } } })
+                json!({ "type": "stop_fields", "fields": { "additionalModelResponseFields": { "x": 1 } } }),
             ),
             native(
-                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } })
+                json!({ "type": "metadata_fields", "fields": { "metrics": { "latencyMs": 40 } } }),
             ),
-        ]
+        ],
     );
 }
 

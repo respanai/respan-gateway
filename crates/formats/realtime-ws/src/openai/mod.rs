@@ -15,50 +15,16 @@ use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output, Purpose};
 use respan_gateway_ws::WsTransport;
 
-use crate::foreign::{Drop, Harmless};
 use crate::session::{Spec, model_at, model_query, transcribes_at};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
+pub(crate) type Key = crate::Own<OpenAiRealtime>;
 
 /// The model OpenAI transcribes a session's input with, unless the session
 /// names one: it transcribes only with a named model, so a session that
 /// turns transcription on without one asks for this one.
 const TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
-
-/// What of OpenAI Realtime's own natives another format may drop: its
-/// event and item ids, its session's noise reduction, speed,
-/// transcription settings, tracing, includes, context truncation and output
-/// cap, and its voice detection's tuning, as each format manages its
-/// context, and detects voices, itself; its truncation of what was heard
-/// and clearing of what is played, as a format keeps only what it sent, and
-/// its clearing of the user's audio if there is none. Its MCP events tell
-/// of what the model said.
-pub(crate) const HARMLESS: Harmless = Harmless {
-    session: &[
-        "event_id",
-        "session.audio.input.noise_reduction",
-        "session.audio.input.transcription",
-        "session.audio.output.speed",
-        "session.include",
-        "session.tracing",
-        "session.truncation",
-        "session.max_output_tokens",
-    ],
-    vad: &["type", "threshold", "eagerness"],
-    message: &["id"],
-    event: &["event_id", "item.id", "response_id"],
-    input: |event| {
-        let kind = event["type"].as_str().unwrap_or_default().to_owned();
-        let drop = match kind.as_str() {
-            "conversation.item.truncate" | "output_audio_buffer.clear" => Drop::Always,
-            "input_audio_buffer.clear" => Drop::Unheard,
-            _ => Drop::Never,
-        };
-        (drop, kind)
-    },
-    said: |event| event["type"].as_str().is_some_and(|t| t.contains("mcp")),
-};
 
 /// A handshake's query asking for a transcription, as [`purpose_at`] reads
 /// it.
@@ -79,7 +45,6 @@ pub(crate) const SPEC: Spec = Spec {
     protocol: Some("realtime"),
     binary_text: false,
     transcribes: false,
-    harmless: Some(&HARMLESS),
 };
 
 /// OpenAI Realtime: a `GET` upgrade to a path ending in `/realtime`, and a
@@ -106,7 +71,7 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct OpenAiRealtime;
 
 impl OpenAiRealtime {
-    /// The format's name, `openai-realtime`, which tags its native events.
+    /// The format's name, `openai-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
@@ -114,14 +79,6 @@ impl OpenAiRealtime {
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {
         SPEC.transport(base_url)
-    }
-
-    /// `input` as its writer takes it: the fields of other formats' natives
-    /// that OpenAI can do without are dropped, and one that could change
-    /// the answer is refused. A plugin that adds OpenAI's own fields to an
-    /// input from another format's client admits it first.
-    pub fn admit(&self, input: &Input) -> Result<Input, Fault> {
-        input::admit(input)
     }
 }
 

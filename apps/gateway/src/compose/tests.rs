@@ -141,6 +141,55 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
+async fn several_chat_choices_are_refused_before_calling_any_provider() {
+    let openai = FakeOpenAi::start().await;
+    let anthropic = FakeAnthropic::start().await;
+    let text = format!(
+        "providers = {{ openai = {{ vendor = \"openai\", base_url = \"{}\", key = \"sk-openai\" }}, anthropic = {{ vendor = \"anthropic\", base_url = \"{}\", key = \"sk-ant\" }} }}\n",
+        openai.base_url(),
+        anthropic.base_url()
+    );
+    let gateway = resolve(&text).unwrap_or_else(|e| panic!("gateway: {e}"));
+    for (model, n) in [
+        ("anthropic/claude-sonnet-4-5", "2"),
+        ("anthropic/claude-sonnet-4-5", "2.0"),
+        ("anthropic/claude-sonnet-4-5", "2e0"),
+        ("openai/gpt-4.1-mini", "2"),
+    ] {
+        let body = format!(
+            r#"{{"model":"{model}","messages":[{{"role":"user","content":"hi"}}],"n":{n}}}"#
+        );
+        let (response, _) = serve(&gateway, post("/v1/chat/completions", body)).await;
+        let (status, _, body) = read_whole(response).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{model}, n={n}: {body:?}");
+        let body = body.expect("error body");
+        let error: serde_json::Value = serde_json::from_slice(&body).expect("OpenAI error");
+        assert_eq!(
+            error["error"]["message"],
+            "several choices (n > 1) cannot be represented"
+        );
+    }
+    gateway.idle().await;
+    assert!(openai.requests().is_empty());
+    assert!(anthropic.requests().is_empty());
+
+    anthropic.answer(Answer::text("hi"));
+    let one = r#"{"model":"anthropic/claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}],"n":1}"#;
+    let (response, _) = serve(&gateway, post("/v1/chat/completions", one)).await;
+    let (status, _, body) = read_whole(response).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    gateway.idle().await;
+    assert_eq!(anthropic.requests().len(), 1);
+    assert!(
+        anthropic.requests()[0]
+            .object()
+            .expect("request JSON")
+            .get("n")
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn the_example_config_routes_by_model_both_ways() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;
@@ -245,6 +294,11 @@ fn a_vendor_is_every_format_it_speaks() {
                 "wss://api.openai.com/v1"
             ),
             entry(
+                "openai-live",
+                "openai:openai-live",
+                "wss://api.openai.com/v1"
+            ),
+            entry(
                 "openai-images",
                 "openai:openai-images",
                 "https://api.openai.com/v1"
@@ -262,6 +316,11 @@ fn a_vendor_is_every_format_it_speaks() {
             entry(
                 "openai-embeddings",
                 "openai:openai-embeddings",
+                "https://api.openai.com/v1"
+            ),
+            entry(
+                "openai-decisions",
+                "openai:openai-decisions",
                 "https://api.openai.com/v1"
             ),
         ]
@@ -303,8 +362,8 @@ fn a_vendor_is_every_format_it_speaks() {
     );
     assert_eq!(header(1, 4, "x-goog-api-key").as_deref(), Some("AIza"));
     assert!(plan.upstreams.iter().all(|u| u.own_key));
-    // Served by default: the chat formats, each chat, media and realtime client
-    // format, and Responses over WebSocket.
+    // Served by default: the chat formats, each chat, media, realtime and
+    // decision client format, and Responses over WebSocket.
     assert_eq!(
         plan.serve,
         [
@@ -312,6 +371,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "anthropic-messages",
             "openai-responses",
             "openai-realtime",
+            "openai-live",
             "openai-images",
             "openai-transcriptions",
             "openai-speech",
@@ -321,7 +381,10 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-images",
             "gemini-live",
             "mistral-realtime",
+            "phonic-sts",
             "gemini-veo",
+            "decisions",
+            "openai-decisions",
             "responses-ws"
         ]
     );
@@ -565,6 +628,63 @@ async fn a_route_applies_to_every_kind_its_provider_serves() {
 }
 
 #[tokio::test]
+async fn chat_only_providers_serve_responses_and_gemini_clients_by_default() {
+    for explicit in [false, true] {
+        let provider = FakeOpenAi::start().await;
+        let formats = if explicit {
+            "formats = [\"openai-chat\"]\n"
+        } else {
+            ""
+        };
+        let config = format!(
+            "{formats}providers = {{ local = {{ formats = \"openai-chat\", base_url = \"{}\", key = \"sk-test\" }} }}\n",
+            provider.base_url()
+        );
+        let gateway = resolve(&config).unwrap_or_else(|e| panic!("gateway: {e}"));
+        for (path, body, text) in [
+            (
+                "/v1/responses",
+                r#"{"model":"llama","input":"hi"}"#,
+                "/output/0/content/0/text",
+            ),
+            (
+                "/v1beta/models/llama:generateContent",
+                r#"{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}"#,
+                "/candidates/0/content/parts/0/text",
+            ),
+        ] {
+            provider.answer(Answer::text("hello"));
+            let (response, _) = serve(&gateway, post(path, body)).await;
+            let (status, _, body) = read_whole(response).await;
+            let expected = if explicit {
+                StatusCode::NOT_FOUND
+            } else {
+                StatusCode::OK
+            };
+            assert_eq!(
+                status, expected,
+                "{path}, explicit formats: {explicit}: {body:?}"
+            );
+            if !explicit {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&body.expect("response body")).expect("JSON");
+                assert_eq!(body.pointer(text).and_then(|v| v.as_str()), Some("hello"));
+            }
+        }
+        gateway.idle().await;
+        assert_eq!(provider.requests().len(), if explicit { 0 } else { 2 });
+        for request in provider.requests() {
+            assert_eq!(request.path, "/v1/chat/completions");
+            assert_eq!(request.object().expect("JSON")["model"], "llama");
+            assert_eq!(
+                request.object().expect("JSON")["messages"][0]["content"],
+                "hi"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn responses_are_served_by_default_natively_where_a_provider_speaks_them() {
     let text = "providers = { a = { formats = [\"openai-chat\", \"openai-responses\"], base_url = \"https://a.test/v1\", auth = { type = \"bearer\", key = \"sk-test\" } }, b = { formats = \"openai-chat\", base_url = \"https://b.test/v1\", auth = { type = \"bearer\", key = \"sk-test\" } } }\n[routes.\"gpt*\"]\nto = \"a\"\n[routes.\"llama*\"]\nto = \"b\"\n";
     let (gateway, a, b) = local(text).await;
@@ -658,6 +778,19 @@ fn veo_is_served_to_its_clients() {
         "providers = { g = { vendor = \"gemini\", key = \"k\" } }\nformats = [\"gemini-veo\"]\n";
     let served = plan(text).map(|p| p.serve);
     assert_eq!(served, Ok(vec!["gemini-veo".to_owned()]));
+}
+
+#[test]
+fn openrouter_videos_are_called_at_its_api_and_spoken_by_no_client() {
+    let text = "providers = { o = { vendor = \"openrouter\", key = \"k\" } }\n";
+    let plan = plan(text).unwrap_or_else(|e| panic!("{e}"));
+    let videos = plan.upstreams[0]
+        .entries
+        .iter()
+        .find(|e| e.format == "openrouter-videos");
+    let base = videos.map(|e| e.base_url.as_str());
+    assert_eq!(base, Some("https://openrouter.ai/api/v1"));
+    assert!(!plan.serves("openrouter-videos"));
 }
 
 #[test]
@@ -828,15 +961,20 @@ fn bad_routes_and_retired_settings_are_errors() {
 async fn a_vendor_sends_a_chat_to_a_model_its_chat_format_refuses_in_another() {
     let text = "providers = { a = { vendor = \"openai\", base_url = \"https://a.test/v1\", key = \"k\" } }\nformats = [\"openai-chat\"]\n";
     let (gateway, a, _) = local(text).await;
-    // gpt-5.4 and later, and a model only Responses serves, whatever the
-    // chat carries.
-    for (model, path) in [
-        ("gpt-5-mini", "/v1/chat/completions"),
-        ("gpt-6-luna", "/v1/responses"),
-        ("o3-pro", "/v1/responses"),
+    // gpt-5.4 and later offered function tools, and a model only Responses
+    // serves, whatever the chat carries.
+    let tools = serde_json::json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }]);
+    for (model, offers, path) in [
+        ("gpt-5-mini", true, "/v1/chat/completions"),
+        ("gpt-6-luna", false, "/v1/chat/completions"),
+        ("gpt-6-luna", true, "/v1/responses"),
+        ("o3-pro", false, "/v1/responses"),
     ] {
         a.answer(Answer::text("a"));
-        let body = serde_json::json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        let mut body = serde_json::json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        if offers {
+            body["tools"] = tools.clone();
+        }
         let (response, _) = serve(&gateway, post("/v1/chat/completions", body.to_string())).await;
         let (status, _, body) = read_whole(response).await;
         gateway.idle().await;
@@ -931,6 +1069,147 @@ async fn azure_decisions_uses_the_reserved_path_and_api_key() {
             assert!(headers.get("authorization").is_none());
             assert_eq!(body["model"], "deployment");
         }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn openai_decisions_go_to_openai_with_a_bearer_key() {
+    use axum::{Json, Router, extract::State, routing::post as route_post};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    type Captured = Arc<Mutex<Vec<(http::HeaderMap, Value)>>>;
+    async fn fake(
+        State(seen): State<Captured>,
+        headers: http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let answers: Vec<Value> = (body["questions"].as_array().into_iter().flatten())
+            .map(|q| json!({"type": "predicate", "name": q["name"], "probability": 0.7}))
+            .collect();
+        seen.lock().expect("capture").push((headers, body));
+        Json(
+            json!({"model":"gpt-6-luna", "answers": answers, "usage":{"input_tokens":4,"output_tokens":0}}),
+        )
+    }
+    let seen: Captured = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let addr = listener.local_addr().expect("address");
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/decisions", route_post(fake))
+                .with_state(seen.clone()),
+        )
+        .into_future(),
+    );
+    let text = format!(
+        "providers = {{ openai = {{ vendor = \"openai\", base_url = \"http://{addr}/v1\", key = \"provider-secret\", formats = [\"openai-decisions\"] }} }}\nformats = [\"openai-decisions\"]\n"
+    );
+    let gateway = resolve(&text).expect("gateway");
+    let body = json!({"model":"openai/gpt-6-luna","input":"hello","questions":[{"type":"predicate","instructions":"is it true?"}]});
+    let (resp, _) = serve(&gateway, post("/openai/v1/decisions", body.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let result: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(result["answers"][0]["probability"], 0.7);
+    gateway.idle().await;
+    {
+        let captured = seen.lock().expect("capture");
+        let [(headers, body)] = captured.as_slice() else {
+            panic!("one call: {captured:?}");
+        };
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer provider-secret")
+        );
+        assert!(headers.get("api-key").is_none());
+        assert_eq!(body["model"], "gpt-6-luna");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn fireworks_answers_each_decision_contract_in_its_own() {
+    use axum::{Json, Router, extract::State, routing::post as route_post};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    type Captured = Arc<Mutex<Vec<(&'static str, http::HeaderMap, Value)>>>;
+    async fn system_one(
+        State(seen): State<Captured>,
+        headers: http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        seen.lock()
+            .expect("capture")
+            .push(("/systemone", headers, body));
+        Json(
+            json!({"model":"accounts/fireworks/models/rune", "answers":{"q1":{"type":"noul","noul":0.9}}, "usage":{"input_tokens":4,"output_tokens":0}}),
+        )
+    }
+    async fn openai(
+        State(seen): State<Captured>,
+        headers: http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let answers: Vec<Value> = (body["questions"].as_array().into_iter().flatten())
+            .map(|q| json!({"type": "predicate", "name": q["name"], "probability": 0.7}))
+            .collect();
+        seen.lock()
+            .expect("capture")
+            .push(("/decisions", headers, body));
+        Json(
+            json!({"model":"accounts/fireworks/models/rune", "answers": answers, "usage":{"input_tokens":4,"output_tokens":0}}),
+        )
+    }
+    let seen: Captured = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let addr = listener.local_addr().expect("address");
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/inference/v1/systemone", route_post(system_one))
+                .route("/inference/v1/decisions", route_post(openai))
+                .with_state(seen.clone()),
+        )
+        .into_future(),
+    );
+    let text = format!(
+        "providers = {{ fireworks = {{ vendor = \"fireworks\", base_url = \"http://{addr}/inference/v1\", key = \"provider-secret\" }} }}\nformats = [\"decisions\", \"openai-decisions\"]\n"
+    );
+    let gateway = resolve(&text).expect("gateway");
+    let model = "fireworks/accounts/fireworks/models/rune";
+    let asked = json!({"model": model, "state":"hello", "questions":{"q1":{"type":"noul","instructions":"is it true?","criteria":{"true":"yes","false":"no"}}}});
+    let (resp, _) = serve(&gateway, post("/v1/decisions", asked.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let result: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(result["answers"]["q1"]["noul"], 0.9);
+    let asked = json!({"model": model, "input":"hello", "questions":[{"type":"predicate","instructions":"is it true?"}]});
+    let (resp, _) = serve(&gateway, post("/openai/v1/decisions", asked.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let result: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(result["answers"][0]["probability"], 0.7);
+    gateway.idle().await;
+    {
+        let captured = seen.lock().expect("capture");
+        let [(first, headers, body), (second, _, _)] = captured.as_slice() else {
+            panic!("two calls: {captured:?}");
+        };
+        assert_eq!((*first, *second), ("/systemone", "/decisions"));
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer provider-secret")
+        );
+        assert_eq!(body["model"], "accounts/fireworks/models/rune");
+        assert_eq!(body["questions"]["q1"]["criteria"]["true"], "yes");
     }
     server.abort();
 }

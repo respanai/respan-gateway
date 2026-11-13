@@ -4,8 +4,8 @@
 
 use respan_gateway_conversation::{Content, Input, Output, Role};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_core::{Fault, Filter, NativeFields};
-use serde_json::{Map, Value, json};
+use respan_gateway_core::{Fault, Filter};
+use serde_json::Value;
 
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
@@ -67,54 +67,29 @@ impl Dialect for Gemini {
     }
 }
 
-/// `input`, its calls signed if its model needs them signed.
+/// `input` with, if its model needs them signed, the first call of each
+/// assistant message without a signature signed with the placeholder, as
+/// Gemini returns one only on the first of a turn's parallel calls. Chat
+/// Completions writes each signature in its `extra_content`.
 fn signed(input: &mut Input) -> Result<(), Fault> {
-    if needs_signatures(input.model.as_deref()) {
-        sign_calls(input);
+    if !needs_signatures(input.model.as_deref()) {
+        return Ok(());
     }
-    Ok(())
-}
-
-/// Signs, with the placeholder in its `extra_content`, the first call of
-/// each assistant message that has no signature of its own, as Gemini
-/// returns one only on the first of a turn's parallel calls.
-fn sign_calls(input: &mut Input) {
-    // Another format's fields a translation drops anyway, as a client's
-    // item id or cache marker, give way to the signature.
-    const DROPPED: &[&str] = &["inert", "cache_control", "thoughtSignature"];
-    let format = OpenAiChat::NAME;
-    let signature = json!({ "google": { "thought_signature": SIGNATURE_PLACEHOLDER } });
-    let own = |native: &mut Option<NativeFields>| match native {
-        Some(n) if &*n.format != format => {
-            let dropped = n.fields.keys().all(|k| DROPPED.contains(&k.as_str()));
-            if dropped {
-                *native = None;
-            }
-            dropped
-        }
-        _ => true,
-    };
     for message in input
         .messages
         .iter_mut()
         .filter(|m| m.role == Role::Assistant)
     {
-        let first = message.content.iter_mut().find_map(|part| match part {
-            Content::ToolCall { native, .. } => Some(native),
-            _ => None,
-        });
-        let Some(native) = first else {
-            continue;
-        };
-        if !own(native) {
-            continue;
+        let content = &mut message.content;
+        let first = content
+            .iter()
+            .position(|c| matches!(c, Content::ToolCall { .. }));
+        let Some(at) = first else { continue };
+        if !matches!(content.get(at + 1), Some(Content::Signature(_))) {
+            content.insert(at + 1, Content::Signature(SIGNATURE_PLACEHOLDER.into()));
         }
-        let fields = native
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
-            .entry("extra_content");
-        fields.or_insert_with(|| signature.clone());
     }
+    Ok(())
 }
 
 /// Its models, as its own API lists them (`{"models": [{"name", ..}]}`),

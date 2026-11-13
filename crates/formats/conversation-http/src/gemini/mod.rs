@@ -20,9 +20,10 @@
 //! answer finds by name, and which is never sent back to Gemini. A
 //! `functionResponse`'s `response` object is the result's text, as JSON;
 //! writing it, an object stays as it is, other text goes under `output`
-//! (`error` for a failed call). `systemInstruction` is a leading system
-//! message; `tools` are the function declarations, their `parameters` (or
-//! `parametersJsonSchema`) JSON Schema; `toolConfig` gives the tool choice;
+//! (`error` for a failed call), and images and documents are its `parts`.
+//! `systemInstruction` is a leading system message; `tools` are the function
+//! declarations, their `parameters` (or `parametersJsonSchema`) JSON Schema;
+//! `toolConfig` gives the tool choice;
 //! `generationConfig` the output limit, `temperature`, `topP`, `topK`, stop
 //! sequences, structured output (`responseMimeType` with a schema) and
 //! `thinkingConfig`: `thinkingLevel` is an effort, `thinkingBudget` a token
@@ -30,13 +31,14 @@
 //! beside a `thinkingLevel`, or a dynamic one (`-1`), stays native.
 //!
 //! What the kind has no form for is this format's `native`, where it
-//! appeared, and refused in another format: `safetySettings`,
+//! appeared, and dropped by another format: `safetySettings`,
 //! `cachedContent`, other `thinkingConfig` fields, other `generationConfig`
 //! fields, tools Google runs but an empty `googleSearch`, a `toolConfig`
-//! the kind has no choice for, video parts, and a part's `thoughtSignature`
-//! (which another format drops).
-//! A request for several candidates, one tool call at a time, or an end
-//! user's id is refused when written.
+//! the kind has no choice for and video parts. A part's `thoughtSignature`
+//! is the kind's `Content::Signature` after it.
+//! An end user's id and one tool call at a time are dropped when written,
+//! and a later system message is a user's; a request for several
+//! candidates is refused.
 //!
 //! A Gemini 3 model refuses a function call in the history that has no
 //! `thoughtSignature`, as a call made in another format has none: written
@@ -56,7 +58,7 @@
 //!   [`Block::Reasoning`]), a `functionCall` is a [`Block::ToolCall`] whose
 //!   arguments are one delta. A part with fields beyond its content, such as
 //!   a `thoughtSignature`, is a block of its own, and the fields come before
-//!   it as its [`Output::block_fields`].
+//!   it as its [`Output::BlockFields`].
 //! - `finishReason` is the [`Output::Finish`]: `STOP` is a stop, or a
 //!   tool use when the response made calls, `MAX_TOKENS` the token limit, and
 //!   `SAFETY`, `RECITATION`, `BLOCKLIST` and the like are filtered; any other
@@ -66,11 +68,10 @@
 //!   `toolUsePromptTokenCount` are the input, `candidatesTokenCount` and
 //!   `thoughtsTokenCount` the output,
 //!   `cachedContentTokenCount` the cached input.
-//! - What else a response says is an inert [`Output::Native`] of this format
-//!   (`candidate_fields`, `response_fields`, `usage_fields`), which another
-//!   format drops, and what the kind has no form for is not inert:
-//!   a part of another kind (`executableCode`, a response image), and a
-//!   second candidate.
+//! - What else a response says is an [`Output::Native`] of this format, which
+//!   another format drops: `candidate_fields`, `response_fields`,
+//!   `usage_fields`, a part of another kind (`executableCode`, a response
+//!   image), and a second candidate.
 //!
 //! A stream ends with its last response, which has the `finishReason`; one
 //! that ends without it was cut. Encoders do the reverse: a stream is a
@@ -84,32 +85,36 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Keep, Names, NativeFieldsExt, Schema, UsageFields, block_fields, check_usage, count,
-    kept_fields, merge_details, merge_fields, native_fields, set, unwritable_content, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, merge_details, merge_fields, set,
+    unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode, request::Parts as RequestHead};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use serde_json::{Map, Value, json};
+use std::marker::PhantomData;
 
 use decode::GeminiDecoder;
 use encode::{EventStream, JsonArray, ResponseFields, part_of};
-pub use request::needs_signatures;
 use request::{
-    read_config, read_messages, read_tools, sign_calls, split_system, write_config, write_messages,
-    write_tools,
+    effort_thinking, read_config, read_messages, read_tools, sign_calls, split_system,
+    write_config, write_messages, write_tools,
 };
+pub use request::{media_part, needs_signatures};
 
 /// This format's name.
-const GEMINI: &str = "gemini-generate";
+pub(crate) const GEMINI: &str = "gemini-generate";
 
 /// What a Gemini 3 model accepts as the signature of a function call made
 /// elsewhere, as Google documents it.
 pub const SIGNATURE_PLACEHOLDER: &str = "skip_thought_signature_validator";
+
+/// The field of a part that holds its signature.
+const SIGNATURE: &str = "thoughtSignature";
 
 /// What starts the id of a tool call Gemini named none for.
 const SYNTHETIC: &str = "gemini_call_";
@@ -119,26 +124,26 @@ const ROLES: Names<respan_gateway_conversation::Role> = Names(
         ("user", respan_gateway_conversation::Role::User),
         ("model", respan_gateway_conversation::Role::Assistant),
     ],
-    GEMINI,
+    PhantomData,
 );
 
 /// The reasons the kind has; `STOP` is also a tool use, which a response
 /// that made calls says so.
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, GeminiGenerate> = Names(
     &[
         ("STOP", Finish::Stop),
         ("MAX_TOKENS", Finish::Length),
         ("STOP", Finish::ToolUse),
         ("SAFETY", Finish::Filtered),
     ],
-    GEMINI,
+    PhantomData,
 );
 
 /// The finish reason of a prompt Gemini blocked, which has no candidate.
 const BLOCKED: &str = "PROMPT_BLOCKED";
 
-/// A reason as a [`Finish`]: those that filter the answer, as the kind has
-/// it, stay Gemini's own for a client of this format.
+/// A reason as a [`Finish`]: Gemini's others stay its own for a client of
+/// this format, and another writes the kind's nearest.
 fn finish_of(reason: &str) -> Finish {
     match reason {
         "RECITATION"
@@ -148,8 +153,17 @@ fn finish_of(reason: &str) -> Finish {
         | "IMAGE_SAFETY"
         | "IMAGE_PROHIBITED_CONTENT"
         | "IMAGE_RECITATION"
-        | "LANGUAGE" => Finish::native_or(GEMINI, reason, Finish::Filtered),
-        _ => FINISH.finish(reason),
+        | "IMAGE_OTHER"
+        | "NO_IMAGE"
+        | "ESCALATION"
+        | "PUP_LIMITED_DISABLED"
+        | "LANGUAGE" => Finish::native(GeminiGenerate::native(reason), Some(Finish::Filtered)),
+        "CONTINUATION" => Finish::native(GeminiGenerate::native(reason), Some(Finish::Length)),
+        "STOP" | "MAX_TOKENS" | "SAFETY" => FINISH.finish(reason),
+        // OTHER, FINISH_REASON_UNSPECIFIED, MALFORMED_FUNCTION_CALL,
+        // UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS, MALFORMED_RESPONSE,
+        // MISSING_THOUGHT_SIGNATURE, and any Google adds.
+        _ => Finish::native(GeminiGenerate::native(reason), Some(Finish::Stop)),
     }
 }
 
@@ -242,11 +256,7 @@ fn is_segment(model: &str) -> bool {
 impl GeminiGenerate {
     /// A call's request: its body, and the model its path names.
     fn decode_call(&self, head: &RequestHead, raw: Bytes) -> Result<Input, Fault> {
-        let v = match serde_json::from_slice::<Value>(&raw) {
-            Ok(v) if v.is_object() => v,
-            _ => return Err(Fault::bad_request("request body is not a JSON object")),
-        };
-        let mut chat = self.decode_json(&v);
+        let mut chat = self.decode_request(raw)?;
         chat.model = call_of(&head.uri).map(|(model, _)| model);
         Ok(chat)
     }
@@ -290,12 +300,9 @@ impl Schema for GeminiGenerate {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = Keep {
-            own: Self::OWN,
-            droppable: &[],
-        };
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        let native = kept_fields(GEMINI, &chat.native, in_the_request, keep)?;
+        let chat = &*crate::schema::own_shapes::<Self>(chat);
+        let mut native = GeminiGenerate::fields(&chat.native).clone();
+        native.retain(|key, _| !Self::OWN.contains(&key.as_str()));
         let mut v = self.encode_json(chat)?;
         v.extend(native);
         if needs_signatures(chat.model.as_deref()) {
@@ -342,8 +349,8 @@ impl Schema for GeminiGenerate {
         Box::new(JsonArray::new(encoder))
     }
 
-    fn decode_part(_: &Value) -> Option<respan_gateway_conversation::Content> {
-        None
+    fn decode_part(_: &Value) -> Result<Option<respan_gateway_conversation::Content>, Fault> {
+        Ok(None)
     }
 
     fn encode_part(_: &respan_gateway_conversation::Content) -> Result<Value, Fault> {
@@ -354,27 +361,27 @@ impl Schema for GeminiGenerate {
         Box::new(EventStream::default())
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
-        chat.native = native_fields(GEMINI, rest);
-        read_messages(v, &mut chat);
+        chat.native = GeminiGenerate::native(rest);
+        read_messages(v, &mut chat)?;
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat.native = native_fields(GEMINI, std::mem::take(chat.native.fields_mut(GEMINI)));
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let (system, rest) = split_system(chat)?;
-        if rest.is_empty() {
+        let contents = write_messages(rest)?;
+        if contents.is_empty() {
             return Err(Fault::bad_request(
                 "Gemini needs at least one user or model message",
             ));
         }
         let mut v = Map::new();
         set(&mut v, "systemInstruction", system);
-        v.insert("contents".into(), write_messages(rest)?.into());
+        v.insert("contents".into(), contents.into());
         write_tools(chat, &mut v)?;
         write_config(chat, &mut v)?;
         Ok(v)
@@ -394,9 +401,11 @@ impl Schema for GeminiGenerate {
         for item in whole.items() {
             match item {
                 AssembledItem::Block(part) => {
+                    let signature = whole.signature(part.block);
                     let mut written = match &part.kind {
                         Block::Text | Block::Reasoning if part.text.is_empty() => {
-                            if !fields.iter().any(|(b, _)| *b == part.block) {
+                            if signature.is_none() && !fields.iter().any(|(b, _)| *b == part.block)
+                            {
                                 continue;
                             }
                             part_of(&part.kind, "")?
@@ -406,24 +415,36 @@ impl Schema for GeminiGenerate {
                     if let Some(i) = fields.iter().position(|(b, _)| *b == part.block) {
                         merge_fields(&mut written, &fields.remove(i).1);
                     }
+                    if let Some(s) = signature {
+                        written[SIGNATURE] = s.into();
+                    }
                     parts.push(written);
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if **format == *GEMINI =>
-                {
-                    match (block_fields(raw), raw["type"].as_str()) {
-                        (Some((block, f)), _) => fields.push((block, f.clone())),
-                        (None, Some("part")) => parts.push(raw["part"].clone()),
+                // WARN: Gemini has no part for reasoning withheld; it is dropped here, silently.
+                AssembledItem::Signature { .. } => {}
+                AssembledItem::BlockFields { block, native } if Self::value(native).is_some() => {
+                    fields.push((*block, Self::fields(native).clone()));
+                }
+                AssembledItem::Native(n) if Self::value(n).is_some() => {
+                    let raw = Self::value(n).unwrap_or_default();
+                    match raw["type"].as_str() {
+                        Some("part") => parts.push(raw["part"].clone()),
                         _ if body.add(raw) => {}
                         _ => return Err(unwritable_content()),
                     }
                 }
                 // Another format's: only a client of that format could read it.
-                AssembledItem::Native(_) => {}
+                _ => {}
             }
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         body.finish(whole.start.as_ref(), parts, finish, &whole.usage)
+    }
+
+    /// A client of another format names its reasoning by an effort: Gemini
+    /// thinks as its model does for it (`effort_thinking`).
+    fn translated(input: &Input, v: &mut Map<String, Value>) {
+        effort_thinking(input.model.as_deref().unwrap_or_default(), v);
     }
 
     fn error_body(fault: &Fault) -> Value {

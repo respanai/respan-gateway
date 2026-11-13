@@ -1,23 +1,18 @@
 //! Responses, streamed or whole, as events: the decoder.
 
-use super::{
-    ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE_FIELDS, extra_usage, response_fields, usage_of,
-};
-use crate::schema::{
-    Totals, ended, error_event, native_fields, rest_of, says, says_error, unreadable_event,
-};
+use super::{RESPONSE_FIELDS, USAGE_FIELDS, extra_usage, response_fields, usage_of};
+use crate::responses::OpenAiResponses;
+use crate::schema::{Own, Totals, ended, error_event, rest_of, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
 /// Decodes events and whole bodies of Responses into events, as the module
 /// says.
 #[derive(Debug)]
 pub struct ResponsesDecoder {
-    name: Arc<str>,
     totals: Totals,
     /// The usage fields with no unit that were last said, to say them once.
     usage_extra: Map<String, Value>,
@@ -47,7 +42,6 @@ enum Closing {
 impl Default for ResponsesDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(RESPONSES),
             totals: Totals::default(),
             usage_extra: Map::new(),
             started: false,
@@ -107,7 +101,7 @@ fn index_of(v: &Value) -> u64 {
 
 impl ResponsesDecoder {
     fn native(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        out.push(Output::Native(OpenAiResponses::native(v)));
     }
 
     fn item(&mut self, index: u64) -> Option<&mut Item> {
@@ -127,7 +121,7 @@ impl ResponsesDecoder {
         let (id, model) = (r["id"].as_str(), r["model"].as_str());
         let mut start = Start::new(id.unwrap_or_default(), model.unwrap_or_default());
         self.said = response_fields(r);
-        start.native = native_fields(RESPONSES, self.said.clone());
+        start.native = OpenAiResponses::native(self.said.clone());
         out.push(Output::Start(start));
     }
 
@@ -151,7 +145,7 @@ impl ResponsesDecoder {
             None => self.fields_said.push((block, fields.clone())),
         }
         if !fields.is_empty() {
-            out.push(Output::block_fields(RESPONSES, block, fields));
+            out.push(Output::block_fields(block, OpenAiResponses::native(fields)));
         }
     }
 
@@ -160,8 +154,10 @@ impl ResponsesDecoder {
         let all = part["annotations"].as_array().into_iter().flatten();
         let mut count = seen;
         for annotation in all.skip(seen) {
-            let v = json!({ "type": ANNOTATION, "block": block, "annotation": annotation });
-            self.native(v, out);
+            out.push(Output::block_native(
+                block,
+                OpenAiResponses::native(annotation.clone()),
+            ));
             count += 1;
         }
         count
@@ -206,12 +202,13 @@ impl ResponsesDecoder {
             },
             Some("reasoning") if summary_texts(item).is_some() => {
                 let block = self.next_block();
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.push(Output::block_start(block, Block::Reasoning));
                 let text = summary_texts(item).unwrap_or_default().join("\n\n");
                 if !text.is_empty() {
                     out.push(Output::reasoning(block, text));
                 }
+                out.extend(sealed(block, item));
                 out.push(Output::block_end(block));
                 self.items.push(Item {
                     index,
@@ -313,8 +310,8 @@ impl ResponsesDecoder {
             Some("incomplete") => match r["incomplete_details"]["reason"].as_str() {
                 Some("max_output_tokens") => Finish::Length,
                 Some("content_filter") => Finish::Filtered,
-                Some(reason) => Finish::native(RESPONSES, reason),
-                None => Finish::native(RESPONSES, "incomplete"),
+                Some(reason) => Finish::native(OpenAiResponses::native(reason), None),
+                None => Finish::native(OpenAiResponses::native("incomplete"), None),
             },
             Some(other) => {
                 let message = format!("the response ended as '{other}', not completed");
@@ -359,7 +356,7 @@ impl ResponsesDecoder {
             }
             Some("reasoning") => {
                 let block = self.next_block();
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.push(Output::block_start(block, Block::Reasoning));
                 self.items.push(Item {
                     index,
@@ -533,8 +530,9 @@ impl ResponsesDecoder {
                 }
             }
             Closing::Reasoning(block, open, late) => {
-                self.fields(block, item, &["type", "summary"], out);
+                self.fields(block, item, &["type", "summary", SEALED], out);
                 out.extend(late.map(|t| Output::reasoning(block, t)));
+                out.extend(sealed(block, item));
                 if open {
                     out.push(Output::block_end(block));
                 }
@@ -600,9 +598,10 @@ impl ResponsesDecoder {
             Some(part) => {
                 part.annotations += 1;
                 let block = part.block;
-                let n =
-                    json!({ "type": ANNOTATION, "block": block, "annotation": v["annotation"] });
-                self.native(n, out);
+                out.push(Output::block_native(
+                    block,
+                    OpenAiResponses::native(v["annotation"].clone()),
+                ));
             }
             None => self.native(v.clone(), out),
         }
@@ -673,6 +672,15 @@ fn call(id: &str, name: &str) -> Block {
     }
 }
 
+/// The field of a reasoning item that holds it encrypted.
+pub(super) const SEALED: &str = "encrypted_content";
+
+/// A reasoning item's encrypted content, as the signature of its `block`.
+fn sealed(block: u32, item: &Value) -> Option<Output> {
+    let data = item[SEALED].as_str().filter(|d| !d.is_empty())?;
+    Some(Output::signature(Some(block), data))
+}
+
 /// The texts of a reasoning item's summary, if each part is a summary text.
 fn summary_texts(item: &Value) -> Option<Vec<&str>> {
     let parts = item["summary"].as_array()?;
@@ -710,7 +718,7 @@ impl ResponsesDecoder {
             return Ok(());
         }
         let Some(v) = event_json(&raw) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<OpenAiResponses>(&raw, out);
             return Ok(());
         };
         if says_error(&v) {

@@ -38,14 +38,14 @@ use parking_lot::Mutex;
 use respan_gateway_conversation::Content;
 use respan_gateway_core::futures::{SinkExt, Stream, StreamExt, stream};
 use respan_gateway_core::{
-    ClientContext, ErrorCode, EventStream, Fault, Filter, Gateway, NativeFields, Plugin, Provider,
+    ClientContext, ErrorCode, EventStream, Fault, Filter, Gateway, Native, Plugin, Provider,
     Response, async_trait,
 };
 use respan_gateway_http::Credential;
 use respan_gateway_realtime::{Audio, Input, Output, Status, Usage};
-use respan_gateway_realtime_ws::OpenAiRealtime;
+use respan_gateway_realtime_ws::{Natives, OpenAiRealtime};
 use respan_gateway_ws::{CloseCode, WsTransport};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
 /// The most output tokens a turn may say. A plan would set it per tenant.
@@ -226,24 +226,10 @@ impl Tab {
     fn before(&mut self, input: &mut Input) -> Result<(), Fault> {
         self.context = self.context.saturating_add(input_bound(input));
         match input {
-            Input::Session(session) => {
-                // The cap of the turns the provider starts on its own.
-                let turn = TURN.unsigned_abs();
-                if session.max_output_tokens.is_none_or(|n| n > turn) {
-                    session.max_output_tokens = Some(turn);
-                }
-            }
+            // The cap of the turns the provider starts on its own.
+            Input::Session(session) => cap(&mut session.native, "session"),
             Input::Respond { native } => {
-                let ours = || NativeFields::new(OpenAiRealtime::NAME, Map::new());
-                let fields = &mut native.get_or_insert_with(ours).fields;
-                let response = fields.entry("response").or_insert_with(|| json!({}));
-                if !response.is_object() {
-                    *response = json!({});
-                }
-                let cap = &mut response["max_output_tokens"];
-                if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
-                    *cap = TURN.into();
-                }
+                cap(native, "response");
                 self.hold()?;
             }
             _ => {}
@@ -322,13 +308,27 @@ impl Filter<Output> for Answers {
     }
 }
 
+/// OpenAI's `max_output_tokens` of its `object` (a session or a response) in
+/// `native`, at most `TURN`.
+fn cap(native: &mut Native, object: &str) {
+    *native = OpenAiRealtime::with_fields(native, |fields| {
+        let object = fields.entry(object).or_insert_with(|| json!({}));
+        if !object.is_object() {
+            *object = json!({});
+        }
+        let cap = &mut object["max_output_tokens"];
+        if cap.as_i64().is_none_or(|n| !(1..=TURN).contains(&n)) {
+            *cap = TURN.into();
+        }
+    });
+}
+
 /// A response's end as the log names it.
 fn finish(status: &Status) -> &str {
     match status {
         Status::Completed => "completed",
         Status::Cancelled | Status::Interrupted => "cancelled",
-        Status::Length | Status::Filtered => "incomplete",
-        Status::Native { reason, .. } => reason,
+        Status::Filtered => "incomplete",
         _ => "failed",
     }
 }
@@ -342,6 +342,14 @@ fn audio_tokens(audio: &Audio) -> i64 {
 /// A bound on the tokens of `text`: a token of text is at least a byte.
 fn text_tokens(text: &str) -> i64 {
     i64::try_from(text.len()).unwrap_or(i64::MAX)
+}
+
+/// A bound on the tokens of an OpenAI Realtime event or part: its JSON's.
+fn native_tokens(native: &Native) -> i64 {
+    match OpenAiRealtime::fields(native) {
+        fields if fields.is_empty() => 0,
+        fields => text_tokens(&Value::Object(fields.clone()).to_string()),
+    }
 }
 
 /// What an input adds to the context.
@@ -358,13 +366,13 @@ fn input_bound(input: &Input) -> i64 {
             .iter()
             .map(|part| match part {
                 Content::Text { text, .. } => text_tokens(text),
-                Content::Native(part) => text_tokens(&part.value.to_string()),
+                Content::Native(part) => native_tokens(part),
                 _ => 0,
             })
             .sum(),
         Input::Audio { audio, .. } => audio_tokens(audio),
         Input::ToolResult(result) => text_tokens(&result.output),
-        Input::Native(event) => text_tokens(&event.value.to_string()),
+        Input::Native(event) => native_tokens(event),
         _ => 0,
     };
     content.saturating_add(FRAME)

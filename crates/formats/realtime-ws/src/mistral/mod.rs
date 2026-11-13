@@ -7,35 +7,19 @@ mod session;
 mod tests;
 
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::raw::Original;
-use respan_gateway_http::{ClientIo, ProviderIo};
+use respan_gateway_http::{ClientIo, ProviderIo, native::Json};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::foreign::{Drop, Harmless};
 use crate::session::{Spec, model_at, model_query};
 use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
-
-/// What of Mistral's own natives another format may drop: its session's
-/// streaming delay, which says how soon text comes, not what it says.
-pub(crate) const HARMLESS: Harmless = Harmless {
-    session: &["session.target_streaming_delay_ms"],
-    vad: &[],
-    message: &[],
-    event: &[],
-    input: |event| {
-        (
-            Drop::Never,
-            event["type"].as_str().unwrap_or_default().to_owned(),
-        )
-    },
-    said: |_| false,
-};
+enum Key {}
 
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
@@ -43,7 +27,6 @@ pub(crate) const SPEC: Spec = Spec {
     protocol: None,
     binary_text: false,
     transcribes: true,
-    harmless: Some(&HARMLESS),
 };
 
 /// Mistral's realtime transcription: a `GET` upgrade to a path ending in
@@ -72,10 +55,17 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct MistralRealtime;
 
 impl MistralRealtime {
-    /// The format's name, `mistral-realtime`, which tags its native events.
+    /// The format's name, `mistral-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is sent to.
     pub const PATH: &'static str = SPEC.path;
+
+    /// The seconds of audio a whole transcript's `native` says Mistral
+    /// heard, as its usage reports them: none if it is another format's.
+    pub fn heard_seconds(native: &Native) -> Option<f64> {
+        let usage = native.fields::<Key>().get("usage")?;
+        usage.get("prompt_audio_seconds")?.as_f64()
+    }
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {

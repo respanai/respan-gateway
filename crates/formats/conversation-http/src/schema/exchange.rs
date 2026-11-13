@@ -8,7 +8,6 @@
 //! parameters ([`Schema::CARRIED`]).
 
 use respan_gateway_core::FaultKind;
-use std::sync::Arc;
 
 use respan_gateway_conversation::Usage;
 use respan_gateway_conversation::{Assembled, Input, Output};
@@ -26,6 +25,7 @@ use respan_gateway_http::{
 use respan_gateway_sse::event_data;
 use serde_json::{Map, Value};
 
+use super::Own;
 use super::errors::{answer, failure_json, said_error, says_error};
 use super::values::{shows, unwritable_content};
 use super::{Framing, Schema, StreamResponse};
@@ -131,7 +131,7 @@ impl<C: Schema> RequestEncoder<C> {
         }
         match &self.original {
             Some(original) => C::respell(original, &mut v),
-            None => C::translated(&mut v),
+            None => C::translated(chat, &mut v),
         }
         C::prepare_call(&mut v);
         out.extend_from_slice(&to_bytes(&v)?);
@@ -479,11 +479,11 @@ impl<D> Held<D> {
 }
 
 /// The events of a stream event that is not its format's JSON, as an
-/// [`Output::Native`] of `format` so filters read it; one with no data, such
-/// as a comment, says nothing.
-pub(crate) fn unreadable_event(format: &Arc<str>, raw: &Bytes, out: &mut Vec<Output>) {
+/// [`Output::Native`] of `C`; one with no data, such as a comment, says
+/// nothing.
+pub(crate) fn unreadable_event<C: Schema>(raw: &Bytes, out: &mut Vec<Output>) {
     if let Some(data) = event_data(raw) {
-        out.push(Output::native(format.clone(), data));
+        out.push(Output::Native(C::native(data)));
     }
 }
 

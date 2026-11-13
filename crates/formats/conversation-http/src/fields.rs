@@ -1,8 +1,95 @@
 //! JSON object helpers for formats that read a body's fields and write
 //! them back, keeping what they have no place for.
 
-use respan_gateway_core::{Details, Fault, NativeFields};
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+use base64::{Engine, alphabet, engine::general_purpose::STANDARD};
+use respan_gateway_conversation::{Media, MediaSource};
+use respan_gateway_core::{Details, Fault};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
+
+/// `media` as a URL: its own, or a data URL of its bytes.
+pub fn media_url(media: &Media) -> String {
+    match &media.source {
+        MediaSource::Url(url) => url.clone(),
+        MediaSource::Bytes(bytes) => {
+            format!("data:{};base64,{}", media.mime_type, STANDARD.encode(bytes))
+        }
+    }
+}
+
+/// Base64 decoding that accepts the data with or without its padding, and
+/// a last symbol whose unused bits are not zero.
+const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
+    let config = GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true);
+    GeneralPurpose::new(alphabet, config)
+}
+
+/// The base64 alphabets embedded data is read in, the standard one first.
+const EMBEDDED_BASE64: [GeneralPurpose; 2] =
+    [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
+
+/// The bytes of base64 `data` a body embeds, read with or without padding,
+/// in either alphabet, across the line breaks it may be wrapped at: what
+/// any provider reads, and more. `None` if it is not base64.
+pub fn base64_bytes(data: &str) -> Option<Vec<u8>> {
+    let data = match data.contains(|c: char| c.is_ascii_whitespace()) {
+        true => Cow::Owned(data.chars().filter(|c| !c.is_ascii_whitespace()).collect()),
+        false => Cow::Borrowed(data),
+    };
+    EMBEDDED_BASE64
+        .iter()
+        .find_map(|engine| engine.decode(data.as_bytes()).ok())
+}
+
+/// Why the data of a `data:` URL cannot be read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DataUrlError {
+    /// It has no `,` before its data, or no data after it.
+    NoData,
+    /// It says it is base64, and its data does not decode.
+    NotBase64,
+}
+
+impl DataUrlError {
+    /// What is wrong with the URL, to follow the name of the field holding it.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::NoData => "is a `data:` URL with no data",
+            Self::NotBase64 => "is not valid base64",
+        }
+    }
+}
+
+/// The media type and bytes of `url` if it is a `data:` URL (RFC 2397):
+/// base64 when a parameter of its header says so, in any case, and
+/// percent-encoded bytes otherwise, its data percent-decoded either way; its
+/// type is `text/plain` when it names none. `Ok(None)` for any other URL.
+pub fn data_url(url: &str) -> Result<Option<(String, Vec<u8>)>, DataUrlError> {
+    let Some(data_url) = url.strip_prefix("data:") else {
+        return Ok(None);
+    };
+    let (header, data) = data_url.split_once(',').ok_or(DataUrlError::NoData)?;
+    let mut params = header.split(';');
+    let mime = Some(params.next().unwrap_or_default().trim())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("text/plain");
+    let data = Cow::from(percent_encoding::percent_decode_str(data));
+    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
+        true => std::str::from_utf8(&data)
+            .ok()
+            .and_then(base64_bytes)
+            .ok_or(DataUrlError::NotBase64)?,
+        false => data.into_owned(),
+    };
+    if bytes.is_empty() {
+        return Err(DataUrlError::NoData);
+    }
+    Ok(Some((mime.to_owned(), bytes)))
+}
 
 /// The seconds since the Unix epoch, as a response's `created` says.
 pub fn unix_now() -> u64 {
@@ -33,25 +120,6 @@ pub fn merge_missing(base: &mut Map<String, Value>, more: &Map<String, Value>) {
 pub fn set(map: &mut Map<String, Value>, key: &str, value: Option<impl Into<Value>>) {
     if let Some(value) = value {
         map.insert(key.into(), value.into());
-    }
-}
-
-/// `fields` as the native of a value of `format`: none if empty.
-pub fn native_of(format: &str, fields: Map<String, Value>) -> Option<NativeFields> {
-    (!fields.is_empty()).then(|| NativeFields::new(format, fields))
-}
-
-/// The fields of `native` to write in `format`: all of them if they are
-/// its, none if there are none; another format's are refused, as only it
-/// knows what they mean.
-pub fn kept(format: &str, native: &Option<NativeFields>) -> Result<Map<String, Value>, Fault> {
-    match native {
-        Some(n) if &*n.format == format => Ok(n.fields.clone()),
-        Some(n) if !n.is_empty() => Err(Fault::bad_request(format!(
-            "fields of format {} cannot be written in {format}",
-            n.format
-        ))),
-        _ => Ok(Map::new()),
     }
 }
 

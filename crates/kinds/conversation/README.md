@@ -14,7 +14,11 @@ use respan_gateway_core::{ClientContext, Fault, Plugin, Response};
 
 The crate exports conversation types and helpers directly from its root. It
 is the kind's types alone, depending only on `respan-gateway-core`,
-`serde_json` and `bytes`, for plugins that need no I/O.
+`serde_json` and `bytes`, for plugins that need no I/O. With the `serde`
+feature a conversation's messages (`Message`, `Role`, `Content`, `Media`)
+are `Serialize` and `Deserialize`, for a host that keeps them, such as a
+shared store of the responses plugin. Natives are not kept: one is written as
+nothing and read back as none, one kept before as its format's JSON too.
 
 `Usage` is the token counts a provider reports: input, output, and the
 cached, cache-write and reasoning counts that are parts of them. A count
@@ -24,7 +28,9 @@ write, such as cache writes in Gemini.
 A reply is a sequence of events, the same for a stream and a whole body, and
 an `Output` is one such event, not a whole reply: `Output::Start`, then for each content block a `BlockStart`, its `Delta`s and a
 `BlockEnd`, with `Usage` increments, a `Finish` and `Native` (an event the kind
-has no form for, in its format's own JSON) among them. A `Delta` is a
+has no form for, in its format's own JSON) among them; `BlockFields` and
+`BlockNative` are a block's native fields and events, typed by the block they
+are of, so a plugin that renumbers blocks renumbers them too. A `Delta` is a
 `Delta::Text`, `Delta::Arguments` or `Delta::Reasoning`, of its block's own
 kind, so a plugin need not track what a block holds. An encoder collects the
 events into one body or writes them as a stream, so a plugin handles one shape;
@@ -44,30 +50,33 @@ Tools are typed too: a request's `Tool`s and `ToolChoice`, an assistant's
 content; `Message::is_plain` checks for a known role, text parts and no message
 native fields. Text-part native fields are allowed.
 
-What the kind has no form for stays as the format that decoded it has it, in optional
-`NativeFields` (a mandatory format ID and its fields) on an `Input`, `Message`, `Tool`
-or `Start`, or in a `Content::Native(NativeValue)` or `Output::Native(NativeValue)`; only that format writes
-it, and translating it is refused if it could change the answer.
+What the kind has no form for stays as the format that decoded it has it, in a
+`Native` on an `Input`, `Message`, `Tool` or `Start`, or a `Content::Native`,
+`Output::Native`, `Role::Native` or `Finish::Native`, opaque to every other
+format: what has meaning across formats belongs here.
 
 Input values are plain data: they keep nothing of the bytes they were
-decoded from, and compare by what they say. A request is always written
+decoded from, and compare by what they say, a native by which value it is. A request is always written
 again from its value, and a response from its events: a format's promise is
 that a request of its own round-trips.
 
 `Input.options: GenerationOptions` groups the output token limit, sampling
-(`temperature`, `top_p`, `top_k`), stop sequences, tool selection, parallel
-calls, structured-output requirements and `reasoning`.
+(`temperature`, `top_p`), stop sequences, tool selection, parallel
+calls, structured-output requirements, the service tier and `reasoning`.
+What few formats have stays in their own native: `top_k` (Anthropic's and
+Gemini's), `verbosity` and a JSON schema's `strict` (OpenAI's two formats),
+and Anthropic's effort `max`.
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
-`Minimal`, `Low`, `Medium`, `High`), a `budget_tokens` limit, and `summary`
+`Minimal`, `Low`, `Medium`, `High`, `XHigh`), a `budget_tokens` limit, and `summary`
 (whether the thinking is returned). Vendors state either an effort or a
-budget, and the two do not convert: a budget does not pick an effort, and an
-effort buys different thinking from different models. So an effort travels
-between formats that have efforts, a budget between formats that have budgets,
-only `Off` is both, and a format refuses the one it lacks (a plugin that wants
-one as the other decides it by its own policy, in a filter). A vendor's value
-the kind has no name for (such as an effort `xhigh`) stays native to its
-format.
+budget, and the two do not convert exactly: an effort buys different
+thinking from different models. So an effort travels between formats that
+have efforts, a budget between formats that have budgets, only `Off` is both,
+and a format that has only one writes the nearest of the other, by the
+budgets the gateway gives a Claude's efforts (a plugin that wants another policy sets
+the one the provider takes, in a filter). A vendor's value the kind has no
+name for (such as an effort `max`) stays native to its format.
 `Content` includes text, reasoning, tool calls/results, images, audio, documents,
 and native values. A `Media` has a MIME type, URL or bytes, optional name, and
 optional native fields. Formats do not fetch URLs.

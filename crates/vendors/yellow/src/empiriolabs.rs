@@ -4,7 +4,7 @@
 
 use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
@@ -17,7 +17,10 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::{image, speech};
-use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech};
+use respan_gateway_media_http::{
+    Natives,
+    openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
+};
 use respan_gateway_sse as sse;
 use serde_json::Value;
 
@@ -63,9 +66,9 @@ pub const VENDOR: Vendor = Vendor {
 /// unless asked to wait (`sync`), and an image at a signed URL of its own
 /// storage unless asked for its bytes: it is asked for both, unless the
 /// request says otherwise. An edit is a generation of its `image`s, each a
-/// URL or a data URL of its bytes; it takes no mask, which fails
-/// `bad_request` before sending. One it did not finish within its wait,
-/// about four minutes, it answers as a job, which fails. It streams no
+/// URL or a data URL of its bytes; it takes no mask, which is dropped. One
+/// it did not finish within its wait, about four minutes, it answers as a
+/// job, which fails. It streams no
 /// images, so it is not asked to; a client that asked still gets a stream,
 /// framed at the client edge.
 #[derive(Debug, Clone, Copy)]
@@ -87,20 +90,17 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request(
-            "EmpirioLabs AI edits an image with no mask",
-        ));
-    }
-    let mut fields = kept(OpenAiImages::NAME, &input.native)?;
-    fields.entry("sync").or_insert(true.into());
-    fields.entry("response_format").or_insert("b64_json".into());
-    if !input.images.is_empty() {
-        let images = input.images.iter().map(|m| Value::from(crate::linked(m)));
-        fields.insert("image".into(), images.collect::<Vec<_>>().into());
-    }
+    input.native = OpenAiImages::with_fields(&input.native, |fields| {
+        // WARN: EmpirioLabs AI edits take no mask; it is dropped.
+        fields.shift_remove("mask");
+        fields.entry("sync").or_insert(true.into());
+        fields.entry("response_format").or_insert("b64_json".into());
+        if !input.images.is_empty() {
+            let images = input.images.iter().map(|m| Value::from(media_url(m)));
+            fields.insert("image".into(), images.collect::<Vec<_>>().into());
+        }
+    });
     input.images.clear();
-    input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
 }
 
@@ -272,7 +272,6 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use respan_gateway_core::NativeFields;
     use serde_json::json;
 
     fn entry(id: &str, category: &str, endpoints: &[&str]) -> Value {
@@ -372,11 +371,7 @@ mod tests {
             sent.images.is_empty(),
             "an edit is a generation of its images"
         );
-        let fields = sent
-            .native
-            .as_ref()
-            .map(|n| n.fields.clone())
-            .unwrap_or_default();
+        let fields = OpenAiImages::fields(&sent.native);
         assert_eq!(fields["sync"], true);
         assert_eq!(fields["response_format"], "b64_json");
         assert_eq!(
@@ -385,20 +380,21 @@ mod tests {
         );
 
         let mut urls = image::Input::new("a fox");
-        let mut asked = serde_json::Map::new();
-        asked.insert("response_format".into(), "url".into());
-        urls.native = Some(NativeFields::new(OpenAiImages::NAME, asked));
+        let url = |f: &mut serde_json::Map<String, Value>| {
+            _ = f.insert("response_format".into(), "url".into())
+        };
+        urls.native = OpenAiImages::with_fields(&urls.native, url);
         taken_image(&mut urls).expect("taken");
-        let fields = urls
-            .native
-            .as_ref()
-            .map(|n| n.fields.clone())
-            .unwrap_or_default();
+        let fields = OpenAiImages::fields(&urls.native);
         assert_eq!(fields["response_format"], "url", "a request's own is kept");
 
         let mut masked = edit.clone();
-        masked.mask = Some(edit.images[0].clone());
-        assert!(taken_image(&mut masked).is_err());
+        let mask = json!({ "image_url": "https://x.test/m.png" });
+        masked.native =
+            OpenAiImages::with_fields(&masked.native, |f| _ = f.insert("mask".into(), mask));
+        taken_image(&mut masked).expect("taken");
+        let fields = OpenAiImages::fields(&masked.native);
+        assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 
     fn answer(status: u16, content_type: &str) -> ResponseHead {

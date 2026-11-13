@@ -6,24 +6,26 @@
 use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, bind_client, bind_provider, bytes_of, event_json, file_name,
-    foreign, invalid, is_true, json_bytes, kept, merge_missing, missing, native_of, post_to,
-    read_usage, rest_of, seconds_json, sends, set, sse_event, streams, take_number, take_string,
-    unreadable, usage_extras, whole_json, write_field, write_usage,
+    invalid, is_true, json_bytes, merge_missing, missing, post_to, read_usage, rest_of,
+    seconds_json, sends, set, sse_event, streams, take_number, take_string, unreadable,
+    usage_extras, whole_json, write_field, write_usage,
 };
 use crate::edge::ended_events;
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::transcription::{Delta, Input, Output, Segment, Task, Transcript, Word};
 use serde_json::{Map, Value};
 
 const NAME: &str = "openai-transcriptions";
+
+type Key = crate::Own<OpenAiTranscriptions>;
 const TRANSCRIPTIONS: &str = "/audio/transcriptions";
 const TRANSLATIONS: &str = "/audio/translations";
 
@@ -47,8 +49,7 @@ const TRANSLATIONS: &str = "/audio/translations";
 pub struct OpenAiTranscriptions;
 
 impl OpenAiTranscriptions {
-    /// The format's name, `openai-transcriptions`, which tags its native
-    /// fields.
+    /// The format's name, `openai-transcriptions`.
     pub const NAME: &'static str = NAME;
 }
 
@@ -117,7 +118,7 @@ fn decode_request(head: &RequestHead, form: &Form) -> Result<Input, Fault> {
     input.prompt = take_string(&mut map, "prompt")?;
     input.temperature = take_number(&mut map, "temperature")?;
     map.remove("stream");
-    input.native = native_of(NAME, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
@@ -142,7 +143,7 @@ fn post(
     set(&mut v, "language", input.language.clone());
     set(&mut v, "prompt", input.prompt.clone());
     set(&mut v, "temperature", input.temperature);
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, input.native.fields::<Key>());
     if stream {
         v.insert("stream".into(), true.into());
     }
@@ -180,16 +181,16 @@ fn decode_json(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     for s in v["segments"].as_array().into_iter().flatten() {
         let mut segment = Segment::new(time(&s["start"])?, time(&s["end"])?, text(&s["text"]));
         segment.speaker = s["speaker"].as_str().map(Into::into);
-        segment.native = native_of(NAME, rest_of(s, &["start", "end", "text", "speaker"]));
+        segment.native = Native::json::<Key>(rest_of(s, &["start", "end", "text", "speaker"]));
         transcript.segments.push(segment);
     }
     for w in v["words"].as_array().into_iter().flatten() {
         let mut word = Word::new(text(&w["word"]), time(&w["start"])?, time(&w["end"])?);
-        word.native = native_of(NAME, rest_of(w, &["word", "start", "end"]));
+        word.native = Native::json::<Key>(rest_of(w, &["word", "start", "end"]));
         transcript.words.push(word);
     }
     let typed = ["text", "language", "duration", "segments", "words", "usage"];
-    transcript.native = native_of(NAME, rest_of(&v, &typed));
+    transcript.native = Native::json::<Key>(rest_of(&v, &typed));
     out.push(Output::Transcript(transcript));
     read_usage_into(&v["usage"], out)
 }
@@ -229,7 +230,7 @@ fn read_usage_into(u: &Value, out: &mut Vec<Output>) -> Result<(), Fault> {
             extras
         }
     };
-    out.extend(usage_extras(NAME, extras).map(Output::Native));
+    out.extend(usage_extras::<Key>(extras).map(Output::Native));
     Ok(())
 }
 
@@ -241,17 +242,17 @@ fn stream_event(done: &mut bool, raw: &[u8], out: &mut Vec<Output>) -> Result<()
     match v["type"].as_str() {
         Some("transcript.text.delta") => {
             let mut delta = Delta::new(text(&v["delta"]));
-            delta.native = native_of(NAME, rest_of(&v, &["type", "delta"]));
+            delta.native = Native::json::<Key>(rest_of(&v, &["type", "delta"]));
             out.push(Output::Delta(delta));
         }
         Some("transcript.text.done") => {
             let mut transcript = Transcript::new(text(&v["text"]));
-            transcript.native = native_of(NAME, rest_of(&v, &["type", "text", "usage"]));
+            transcript.native = Native::json::<Key>(rest_of(&v, &["type", "text", "usage"]));
             out.push(Output::Transcript(transcript));
             *done = true;
             read_usage_into(&v["usage"], out)?;
         }
-        _ => out.push(Output::Native(NativeValue::new(NAME, v))),
+        _ => out.push(Output::Native(Native::json::<Key>(v))),
     }
     Ok(())
 }
@@ -293,30 +294,27 @@ struct Folded {
 }
 
 impl Folded {
-    /// Fold `event`; an event of another format is refused, and an event a
-    /// body has no place for is dropped.
-    fn push(&mut self, event: &Output) -> Result<(), Fault> {
+    /// Fold `event`; an event a body has no place for is dropped.
+    fn push(&mut self, event: &Output) {
         match event {
             Output::Delta(delta) => self.deltas.push_str(&delta.text),
             Output::Transcript(t) => self.transcript = Some(t.clone()),
             Output::Rendered(text) => self.rendered = Some(text.clone()),
             Output::Usage(u) => *self.tokens.get_or_insert_with(Usage::default) += u,
             Output::Seconds(s) => *self.seconds.get_or_insert(0.0) += s,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
             Output::Native(n) => {
-                if let Some(more) = as_usage_extras(&n.value) {
+                if let Some(more) = n.value::<Key>().and_then(as_usage_extras) {
                     merge_missing(&mut self.extras, more);
                 }
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn of(events: &[Output]) -> Result<Self, Fault> {
+    fn of(events: &[Output]) -> Self {
         let mut folded = Self::default();
-        events.iter().try_for_each(|e| folded.push(e))?;
-        Ok(folded)
+        events.iter().for_each(|e| folded.push(e));
+        folded
     }
 
     /// All of the transcript's text.
@@ -352,7 +350,7 @@ impl Folded {
 
 /// A whole JSON response of `events`.
 fn encode_json(events: &[Output]) -> Result<Bytes, Fault> {
-    let mut folded = Folded::of(events)?;
+    let mut folded = Folded::of(events);
     let mut body = Map::new();
     body.insert("text".into(), folded.text().into());
     let usage = folded.usage();
@@ -360,44 +358,44 @@ fn encode_json(events: &[Output]) -> Result<Bytes, Fault> {
         set(&mut body, "language", t.language.clone());
         set(&mut body, "duration", t.duration.map(seconds_json));
         if !t.segments.is_empty() {
-            let segments: Result<Vec<Value>, Fault> = t.segments.iter().map(segment_json).collect();
-            body.insert("segments".into(), segments?.into());
+            let segments: Vec<Value> = t.segments.iter().map(segment_json).collect();
+            body.insert("segments".into(), segments.into());
         }
         if !t.words.is_empty() {
-            let words: Result<Vec<Value>, Fault> = t.words.iter().map(word_json).collect();
-            body.insert("words".into(), words?.into());
+            let words: Vec<Value> = t.words.iter().map(word_json).collect();
+            body.insert("words".into(), words.into());
         }
     }
     set(&mut body, "usage", usage);
     if let Some(t) = &folded.transcript {
-        merge_missing(&mut body, &kept(NAME, &t.native)?);
+        merge_missing(&mut body, t.native.fields::<Key>());
     }
     json_bytes(&body)
 }
 
-fn segment_json(s: &Segment) -> Result<Value, Fault> {
+fn segment_json(s: &Segment) -> Value {
     let mut v = Map::new();
     v.insert("start".into(), s.start.into());
     v.insert("end".into(), s.end.into());
     v.insert("text".into(), s.text.clone().into());
     set(&mut v, "speaker", s.speaker.clone());
-    merge_missing(&mut v, &kept(NAME, &s.native)?);
-    Ok(v.into())
+    merge_missing(&mut v, s.native.fields::<Key>());
+    v.into()
 }
 
-fn word_json(w: &Word) -> Result<Value, Fault> {
+fn word_json(w: &Word) -> Value {
     let mut v = Map::new();
     v.insert("word".into(), w.word.clone().into());
     v.insert("start".into(), w.start.into());
     v.insert("end".into(), w.end.into());
-    merge_missing(&mut v, &kept(NAME, &w.native)?);
-    Ok(v.into())
+    merge_missing(&mut v, w.native.fields::<Key>());
+    v.into()
 }
 
 /// A response of `events` rendered as `format` asks: as the provider
 /// rendered it, else from the transcript.
 fn render(events: &[Output], format: &str) -> Result<String, Fault> {
-    let folded = Folded::of(events)?;
+    let folded = Folded::of(events);
     if let Some(rendered) = folded.rendered {
         return Ok(rendered);
     }
@@ -459,15 +457,19 @@ impl StreamEncoder {
                 let mut v = Map::new();
                 v.insert("type".into(), "transcript.text.delta".into());
                 v.insert("delta".into(), delta.text.clone().into());
-                merge_missing(&mut v, &kept(NAME, &delta.native)?);
+                merge_missing(&mut v, delta.native.fields::<Key>());
                 out.extend_from_slice(sse_event(&v.into()).as_bytes());
             }
-            Output::Native(n) if &*n.format == NAME && as_usage_extras(&n.value).is_none() => {
-                out.extend_from_slice(sse_event(&n.value).as_bytes());
+            Output::Native(n) => {
+                let v = n.value::<Key>().filter(|v| as_usage_extras(v).is_none());
+                if let Some(v) = v {
+                    out.extend_from_slice(sse_event(v).as_bytes());
+                }
             }
             _ => {}
         }
-        self.folded.push(event)
+        self.folded.push(event);
+        Ok(())
     }
 
     fn end_into(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
@@ -477,7 +479,7 @@ impl StreamEncoder {
         v.insert("text".into(), self.folded.text().into());
         set(&mut v, "usage", self.folded.usage());
         if let Some(t) = &self.folded.transcript {
-            merge_missing(&mut v, &kept(NAME, &t.native)?);
+            merge_missing(&mut v, t.native.fields::<Key>());
         }
         out.extend_from_slice(sse_event(&v.into()).as_bytes());
         Ok(())

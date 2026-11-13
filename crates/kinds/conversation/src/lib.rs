@@ -21,11 +21,13 @@
 //! response makes ([`Block::ToolCall`]), whose arguments stream as JSON text.
 //!
 //! What the kind has no form for stays as the format that decoded it has it
-//! ([`NativeFields`], [`Content::Native`], [`Output::Native`]); it is sent only in that
-//! format, and translating it is refused if it can change the answer.
+//! ([`Native`], as in [`Content::Native`] and [`Output::Native`]): only that
+//! format reads it, and another drops it: what has meaning across formats
+//! belongs here.
 //!
-//! Values are plain data: they say what they hold and compare by it. They
-//! keep nothing of the bytes they were decoded from.
+//! Values are plain data: they say what they hold and compare by it, a
+//! native by which value it is. They keep nothing of the bytes they were
+//! decoded from.
 //!
 //! Direction is gateway-wide: [`Input`] travels from client to provider;
 //! [`Output`] travels from provider to client, on either transport edge.
@@ -35,13 +37,28 @@
 
 use respan_gateway_core::Fault;
 
-use serde_json::{Map, Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
+use respan_gateway_core::Native;
 
 mod media;
 mod usage;
+/// How a native is kept: as nothing, and read back as none.
+// WARN: natives are not kept: one kept before reads back as none.
+#[cfg(feature = "serde")]
+mod dropped {
+    use respan_gateway_core::Native;
+    use serde::{Deserialize, Deserializer, Serializer, de::IgnoredAny};
+
+    pub(crate) fn serialize<S: Serializer>(_: &Native, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_unit()
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Native, D::Error> {
+        IgnoredAny::deserialize(d).map(|_| Native::default())
+    }
+}
 pub use media::{Media, MediaSource};
 pub use usage::Usage;
 
@@ -49,21 +66,25 @@ pub use usage::Usage;
 #[derive(Debug, Clone, Default, PartialEq)]
 #[non_exhaustive]
 pub struct GenerationOptions {
+    /// The processing tier asked for, as OpenAI names it.
+    // WARN: Anthropic, Gemini and Converse have tiers under fields of their
+    // own (Anthropic's names differ too); they drop it.
+    pub service_tier: Option<String>,
     /// Maximum generated tokens.
     pub max_output_tokens: Option<u64>,
     /// Sampling temperature.
     pub temperature: Option<f64>,
     /// Nucleus sampling cutoff.
     pub top_p: Option<f64>,
-    /// Sampling from the `top_k` likeliest tokens only.
-    pub top_k: Option<u64>,
     /// How hard the model thinks before it answers.
     pub reasoning: Option<Reasoning>,
     /// Stop sequences.
+    // WARN: Responses has none.
     pub stop: Vec<String>,
     /// Tool selection policy.
     pub tool_choice: Option<ToolChoice>,
     /// Whether parallel tool calls are allowed.
+    // WARN: Gemini and Converse cannot turn them off.
     pub parallel_tool_calls: Option<bool>,
     /// Required shape of the generated answer.
     pub response_format: Option<ResponseFormat>,
@@ -72,17 +93,19 @@ pub struct GenerationOptions {
 /// How much the model thinks before it answers, and whether it says so.
 ///
 /// A vendor states this as a named effort or as a token budget; the two do
-/// not convert (a budget does not pick an effort, and the same effort buys
-/// different thinking from different models), so a format that has only
-/// one refuses the other. Only [`Effort::Off`] is the same in both. A plugin
-/// that wants an effort as a budget decides it by its own policy, in a
-/// filter.
+/// not convert exactly (the same effort buys different thinking from
+/// different models), so a format that has only one writes the nearest of
+/// it, by the budgets the gateway gives a Claude's efforts. Only [`Effort::Off`] is
+/// the same in both. A plugin that wants another policy sets the one the
+/// provider takes, in a filter.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Reasoning {
     /// A named effort.
+    // WARN: Converse has none.
     pub effort: Option<Effort>,
     /// A limit on the thinking, in tokens.
+    // WARN: Chat and Responses have none.
     pub budget_tokens: Option<u64>,
     /// Whether the thinking is returned, summarized where the provider only
     /// summarizes it. `Some(false)` asks that it is withheld.
@@ -114,6 +137,7 @@ pub enum Effort {
     /// No thinking.
     Off,
     /// The least thinking.
+    // WARN: Anthropic has none.
     Minimal,
     /// Little thinking.
     Low,
@@ -122,9 +146,8 @@ pub enum Effort {
     /// Much thinking.
     High,
     /// More thinking than [`Effort::High`].
+    // WARN: Gemini has none.
     XHigh,
-    /// The most thinking.
-    Max,
 }
 
 /// A common structured-output requirement.
@@ -133,6 +156,7 @@ pub enum ResponseFormat {
     /// Ordinary text.
     Text,
     /// A JSON object, without a supplied schema.
+    // WARN: Anthropic and Converse have no such mode.
     JsonObject,
     /// JSON matching a named schema.
     JsonSchema {
@@ -142,8 +166,6 @@ pub enum ResponseFormat {
         description: Option<String>,
         /// JSON Schema definition.
         schema: Value,
-        /// Whether the provider must enforce the schema strictly.
-        strict: Option<bool>,
     },
 }
 
@@ -163,9 +185,8 @@ pub struct Input {
     pub tools: Vec<Tool>,
     /// The tools the provider runs itself while it answers.
     pub provider_tools: Vec<ProviderTool>,
-    /// The request's fields the kind has no place for, such as tools a
-    /// provider runs itself.
-    pub native: Option<NativeFields>,
+    /// The request's fields the kind has no place for, such as a seed.
+    pub native: Native,
 }
 
 impl Input {
@@ -201,15 +222,16 @@ pub fn set_model(
 
 /// One message of a conversation: its author and what it says.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub struct Message {
     /// Its author.
     pub role: Role,
     /// What it says, part by part.
     pub content: Vec<Content>,
-    /// The message's fields the kind has no place for, such as a name. A
-    /// [`Role::Native`] is in the format of `native`.
-    pub native: Option<NativeFields>,
+    /// The message's fields the kind has no place for, such as a name.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub native: Native,
 }
 
 impl Message {
@@ -218,7 +240,7 @@ impl Message {
         Self {
             role,
             content: vec![content.into()],
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -239,49 +261,38 @@ impl Message {
     /// a cache marker, do not change what they say).
     pub fn is_plain(&self) -> bool {
         let text = |c: &Content| matches!(c, Content::Text { .. });
-        !matches!(self.role, Role::Native { .. })
-            && self.native.as_ref().is_none_or(NativeFields::is_empty)
+        !matches!(self.role, Role::Native(_))
+            && self.native.is_empty()
             && self.content.iter().all(text)
     }
 }
 
 /// Who wrote a message.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Role {
     /// Instructions for the model.
     System,
     /// Instructions for the model with a developer's authority; a format that has no
     /// such role writes them as system.
+    // WARN: only OpenAI's formats have it; Anthropic, Gemini and Converse
+    // write it as system.
     Developer,
     /// The person or program using the model.
     User,
     /// The model.
     Assistant,
-    /// A role the kind has no form for, as `format` names it; only a call
+    /// A role the kind has no form for, as its format names it; only a call
     /// in that format can send it.
-    #[non_exhaustive]
-    Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The role, as that format names it.
-        name: String,
-    },
-}
-
-impl Role {
-    /// The role `name` of `format`, which the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, name: impl Into<String>) -> Self {
-        Role::Native {
-            format: format.into(),
-            name: name.into(),
-        }
-    }
+    #[cfg_attr(feature = "serde", serde(with = "dropped"))]
+    Native(Native),
 }
 
 /// A part of a message; a plugin that must see all of it refuses variants
 /// it does not know.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Content {
     /// Text.
@@ -291,18 +302,31 @@ pub enum Content {
         text: String,
         /// The part's fields the kind has no place for, such as a cache
         /// marker.
-        native: Option<NativeFields>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        native: Native,
     },
     /// Reasoning retained in conversation history.
     Reasoning {
         /// Reasoning text.
         text: String,
-        /// Native fields such as a provider signature.
-        native: Option<NativeFields>,
+        /// The part's fields the kind has no place for.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        native: Native,
     },
+    /// A provider's opaque signature over the part right before it, carried
+    /// back untouched.
+    // WARN: not every format can carry every signature: Anthropic, Bedrock
+    // and Responses sign only reasoning, Gemini any part, and Chat
+    // Completions only a call or a text, by Google's `extra_content`.
+    Signature(String),
+    /// Reasoning the provider withheld, as its opaque data, carried back
+    /// untouched.
+    // WARN: only Anthropic and Bedrock have a form for it.
+    Withheld(String),
     /// An image with a typed source and MIME type.
     Image(Media),
     /// Audio with a typed source and MIME type.
+    // WARN: Anthropic has no form for audio, and Responses takes none yet.
     Audio(Media),
     /// A document with a typed source and MIME type.
     Document(Media),
@@ -316,7 +340,8 @@ pub enum Content {
         /// Its arguments, as JSON text.
         arguments: String,
         /// The part's fields the kind has no place for.
-        native: Option<NativeFields>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        native: Native,
     },
     /// What a tool answered a call.
     #[non_exhaustive]
@@ -328,11 +353,13 @@ pub enum Content {
         /// Whether the call failed.
         is_error: bool,
         /// The part's fields the kind has no place for.
-        native: Option<NativeFields>,
+        #[cfg_attr(feature = "serde", serde(skip))]
+        native: Native,
     },
     /// A part the kind has no form for, such as a provider-run tool's
     /// block, as its format has it; only a call in that format can send it.
-    Native(NativeValue),
+    #[cfg_attr(feature = "serde", serde(with = "dropped"))]
+    Native(Native),
 }
 
 impl Content {
@@ -346,7 +373,7 @@ impl Content {
             id: id.into(),
             name: name.into(),
             arguments: arguments.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 
@@ -356,13 +383,8 @@ impl Content {
             id: id.into(),
             content,
             is_error,
-            native: None,
+            native: Native::default(),
         }
-    }
-
-    /// A part of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Content::Native(NativeValue::new(format, raw))
     }
 }
 
@@ -376,8 +398,11 @@ pub struct Tool {
     pub description: Option<String>,
     /// The JSON schema of its arguments.
     pub parameters: Value,
+    /// Whether its arguments must match the schema, `None` leaving it to the
+    /// format's default, which only a format with a default of its own says.
+    pub strict: Option<bool>,
     /// Its fields the kind has no place for, such as a cache marker.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Tool {
@@ -387,7 +412,8 @@ impl Tool {
             name: name.into(),
             description: None,
             parameters,
-            native: None,
+            strict: Some(false),
+            native: Native::default(),
         }
     }
 }
@@ -400,7 +426,7 @@ pub enum ProviderTool {
     /// format's `native`, which only that format sends.
     WebSearch {
         /// Its fields the kind has no place for.
-        native: Option<NativeFields>,
+        native: Native,
     },
 }
 
@@ -422,14 +448,17 @@ impl From<&str> for Content {
     fn from(text: &str) -> Self {
         Content::Text {
             text: text.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
 
 impl From<String> for Content {
     fn from(text: String) -> Self {
-        Content::Text { text, native: None }
+        Content::Text {
+            text,
+            native: Native::default(),
+        }
     }
 }
 
@@ -470,9 +499,37 @@ pub enum Output {
     Usage(Usage),
     /// Why the model stopped.
     Finish(Finish),
-    /// An event the kind has no form for, as `format` has it (pings,
-    /// signatures, provider-specific events). Sent only in that format.
-    Native(NativeValue),
+    /// The provider's opaque signature over block `block`
+    /// ([`Content::Signature`]), or, `None`, reasoning withheld
+    /// ([`Content::Withheld`]).
+    Signature {
+        /// The block it seals.
+        block: Option<u32>,
+        /// The signature, untouched.
+        data: String,
+    },
+    /// Fields of block `block` the kind has no place for, as their format
+    /// has them: a client of that format gets them with the block,
+    /// [`Assembled::replay`] keeps them on its part, and another format drops
+    /// them.
+    BlockFields {
+        /// The block they are of.
+        block: u32,
+        /// The fields.
+        native: Native,
+    },
+    /// An event about block `block` the kind has no form for, as its format
+    /// has it (a block of a tool the provider runs, an annotation): sent
+    /// only in that format, which names the block `block`.
+    BlockNative {
+        /// The block it is about, which only such events may carry.
+        block: u32,
+        /// The event.
+        native: Native,
+    },
+    /// An event the kind has no form for, as its format has it (pings,
+    /// provider-specific events). Sent only in that format.
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -485,7 +542,7 @@ pub struct Start {
     pub model: String,
     /// The response's fields the kind has no place for, such as a
     /// fingerprint.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 /// What a content block holds.
@@ -540,7 +597,7 @@ impl Start {
         Self {
             id: id.into(),
             model: model.into(),
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -585,6 +642,14 @@ impl Output {
         Output::BlockEnd { block }
     }
 
+    /// The provider's signature over `block`, or over reasoning withheld.
+    pub fn signature(block: Option<u32>, data: impl Into<String>) -> Self {
+        Output::Signature {
+            block,
+            data: data.into(),
+        }
+    }
+
     /// Usage the provider reports, as an increment.
     pub fn usage(usage: Usage) -> Self {
         Output::Usage(usage)
@@ -595,32 +660,27 @@ impl Output {
         Output::Finish(finish)
     }
 
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
+    /// Fields of block `block` the kind has no place for
+    /// ([`Output::BlockFields`]).
+    pub fn block_fields(block: u32, native: Native) -> Self {
+        Output::BlockFields { block, native }
     }
 
-    /// Fields of block `block` the kind has no place for, as `format` has
-    /// them, such as a signature: a client of `format` gets them back with
-    /// the block, [`Assembled::replay`] keeps them on its part, and another
-    /// format drops them. Read by [`block_fields`].
-    pub fn block_fields(
-        format: impl Into<FormatId>,
-        block: u32,
-        fields: Map<String, Value>,
-    ) -> Self {
-        Self::native(
-            format,
-            json!({ "type": BLOCK_FIELDS, "block": block, "fields": fields }),
-        )
+    /// An event about block `block` the kind has no form for
+    /// ([`Output::BlockNative`]).
+    pub fn block_native(block: u32, native: Native) -> Self {
+        Output::BlockNative { block, native }
     }
 
     /// Whether it is content: a start, a block event or a finish. Usage and
-    /// [`Output::Native`] are not.
+    /// natives are not.
     pub fn is_content(&self) -> bool {
         !matches!(
             self,
-            Output::Usage(_) | Output::Native(respan_gateway_core::NativeValue { .. })
+            Output::Usage(_)
+                | Output::BlockFields { .. }
+                | Output::BlockNative { .. }
+                | Output::Native(_)
         )
     }
 }
@@ -637,42 +697,24 @@ pub enum Finish {
     ToolUse,
     /// A safety filter.
     Filtered,
-    /// A reason the kind has no form for, as `format` names it; only a
+    /// A reason the kind has no form for, as its format names it; only a
     /// response in that format can say it, and another writes its
     /// `fallback`, if it has one.
     #[non_exhaustive]
     Native {
-        /// The format that names it.
-        format: FormatId,
-        /// The reason, as that format names it.
-        reason: String,
+        /// The reason, as its format names it.
+        native: Native,
         /// The kind's reason nearest to it, which another format writes.
         fallback: Option<Box<Finish>>,
     },
 }
 
 impl Finish {
-    /// The reason `reason` of `format`, which the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, reason: impl Into<String>) -> Self {
-        Finish::Native {
-            format: format.into(),
-            reason: reason.into(),
-            fallback: None,
-        }
-    }
-
-    /// The reason `reason` of `format`, which another format writes as
-    /// `fallback`.
-    pub fn native_or(
-        format: impl Into<FormatId>,
-        reason: impl Into<String>,
-        fallback: Finish,
-    ) -> Self {
-        Finish::Native {
-            format: format.into(),
-            reason: reason.into(),
-            fallback: Some(Box::new(fallback)),
-        }
+    /// A reason the kind has no form for, which another format writes as
+    /// `fallback`, if any.
+    pub fn native(native: Native, fallback: Option<Finish>) -> Self {
+        let fallback = fallback.map(Box::new);
+        Finish::Native { native, fallback }
     }
 }
 
@@ -695,8 +737,29 @@ pub struct AssembledBlock {
 pub enum AssembledItem {
     /// An assembled content block.
     Block(AssembledBlock),
+    /// A signature, over `block` or over reasoning withheld.
+    Signature {
+        /// The block it seals.
+        block: Option<u32>,
+        /// The signature.
+        data: String,
+    },
+    /// Fields of a block ([`Output::BlockFields`]).
+    BlockFields {
+        /// The block they are of.
+        block: u32,
+        /// The fields.
+        native: Native,
+    },
+    /// A format-specific event about a block ([`Output::BlockNative`]).
+    BlockNative {
+        /// The block it is about.
+        block: u32,
+        /// The event.
+        native: Native,
+    },
     /// A format-specific event, kept without interpretation.
-    Native(NativeValue),
+    Native(Native),
 }
 
 /// Response events collected for inspection or whole-body encoding.
@@ -722,11 +785,22 @@ impl Assembled {
         &self.items
     }
 
+    /// The provider's signature over block `block`, if it signed it.
+    pub fn signature(&self, block: u32) -> Option<&str> {
+        self.items.iter().find_map(|item| match item {
+            AssembledItem::Signature {
+                block: Some(b),
+                data,
+            } if *b == block => Some(data.as_str()),
+            _ => None,
+        })
+    }
+
     /// The content blocks, in the order they opened.
     pub fn blocks(&self) -> impl Iterator<Item = &AssembledBlock> {
         self.items.iter().filter_map(|item| match item {
             AssembledItem::Block(part) => Some(part),
-            AssembledItem::Native(..) => None,
+            _ => None,
         })
     }
 
@@ -740,36 +814,32 @@ impl Assembled {
 
     /// What the model said, as the assistant message holds it: its text,
     /// reasoning and tool calls in order, each with the fields its format kept
-    /// beside it.
+    /// beside it and its signatures after it.
     pub fn replay(&self) -> Vec<Content> {
-        let mut kept: HashMap<u32, NativeFields> = HashMap::new();
+        // A block's latest fields are what its format last said of it.
+        let mut kept: HashMap<u32, &Native> = HashMap::new();
         for item in self.items() {
-            let AssembledItem::Native(native) = item else {
-                continue;
-            };
-            let Some((block, fields)) = block_fields(&native.value) else {
-                continue;
-            };
-            let entry = kept
-                .entry(block)
-                .or_insert_with(|| NativeFields::new(native.format.clone(), Map::new()));
-            entry.fields.extend(fields.clone());
+            if let AssembledItem::BlockFields { block, native } = item {
+                kept.insert(*block, native);
+            }
         }
-        let native_of = |block: u32| kept.get(&block).filter(|n| !n.is_empty()).cloned();
+        let native_of = |block: u32| kept.get(&block).map(|n| (*n).clone()).unwrap_or_default();
         let mut parts = Vec::new();
         for item in self.items() {
             match item {
                 AssembledItem::Block(b) => {
                     let native = native_of(b.block);
+                    // A part a provider signed is kept for its signature, even empty.
+                    let signed = self.signature(b.block).is_some();
                     match &b.kind {
-                        Block::Text if !b.text.is_empty() => {
+                        Block::Text if !b.text.is_empty() || signed => {
                             let mut part = Content::from(b.text.clone());
                             if let Content::Text { native: n, .. } = &mut part {
                                 *n = native;
                             }
                             parts.push(part);
                         }
-                        Block::Reasoning if !b.text.is_empty() || native.is_some() => {
+                        Block::Reasoning if !b.text.is_empty() || !native.is_empty() || signed => {
                             parts.push(Content::Reasoning {
                                 text: b.text.clone(),
                                 native,
@@ -786,16 +856,11 @@ impl Assembled {
                         _ => {}
                     }
                 }
-                // Thinking the provider redacted is only a native block; it must
-                // be sent back as it came.
-                AssembledItem::Native(native) => {
-                    let block = &native.value["content_block"];
-                    if native.value["type"] == "content_block_start"
-                        && block["type"] == "redacted_thinking"
-                    {
-                        parts.push(Content::native(native.format.clone(), block.clone()));
-                    }
-                }
+                AssembledItem::Signature { block, data } => parts.push(match block {
+                    Some(_) => Content::Signature(data.clone()),
+                    None => Content::Withheld(data.clone()),
+                }),
+                _ => {}
             }
         }
         parts
@@ -836,12 +901,32 @@ impl Assembled {
             Output::BlockEnd { block } => self.open_part(*block)?.ended = true,
             Output::Usage(usage) => self.usage += usage,
             Output::Finish(finish) => self.finish = Some(finish.clone()),
-            Output::Native(respan_gateway_core::NativeValue { format, value: raw }) => {
-                self.items.push(AssembledItem::Native(NativeValue {
-                    format: format.clone(),
-                    value: raw.clone(),
-                }));
+            // A signature follows the block it seals; reasoning withheld, what came before.
+            Output::Signature { block, data } => {
+                if block.is_some_and(|b| self.part(b).is_none()) {
+                    return Err(malformed("a signature names a block that never opened"));
+                }
+                // After its block and the signatures it already has.
+                let sealed = |i: &_| match i {
+                    AssembledItem::Block(b) => Some(b.block) == *block,
+                    AssembledItem::Signature { block: b, .. } => b.is_some() && b == block,
+                    _ => false,
+                };
+                let at =
+                    (self.items.iter().rposition(sealed)).map_or(self.items.len(), |at| at + 1);
+                let (block, data) = (*block, data.clone());
+                self.items
+                    .insert(at, AssembledItem::Signature { block, data });
             }
+            Output::BlockFields { block, native } => self.items.push(AssembledItem::BlockFields {
+                block: *block,
+                native: native.clone(),
+            }),
+            Output::BlockNative { block, native } => self.items.push(AssembledItem::BlockNative {
+                block: *block,
+                native: native.clone(),
+            }),
+            Output::Native(native) => self.items.push(AssembledItem::Native(native.clone())),
         }
         Ok(())
     }
@@ -867,26 +952,6 @@ fn malformed(what: &str) -> Fault {
     Fault::upstream(format!("the response is malformed: {what}"))
 }
 
-/// The `type` of an [`Output::block_fields`] native.
-const BLOCK_FIELDS: &str = "block_fields";
-
-/// The block and fields of `raw`, if it is an [`Output::block_fields`]
-/// native's.
-pub fn block_fields(raw: &Value) -> Option<(u32, &Map<String, Value>)> {
-    if raw["type"] != BLOCK_FIELDS {
-        return None;
-    }
-    let block = u32::try_from(raw["block"].as_u64()?).ok()?;
-    Some((block, raw["fields"].as_object()?))
-}
-
-/// The block a native event names, by its `block`, or by `index` as a
-/// format's own block events name it; for a plugin that renumbers blocks.
-pub fn native_block(raw: &Value) -> Option<u32> {
-    let named = raw["index"].as_u64().or_else(|| raw["block"].as_u64());
-    u32::try_from(named?).ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,63 +964,107 @@ mod tests {
         Ok(all)
     }
 
+    #[cfg(feature = "serde")]
+    #[test]
+    fn a_message_is_read_back_as_it_was_kept() {
+        let native = Native::new(json!({"cache": "x"}));
+        let mut message = Message::new(Role::User, "hi");
+        message.content.extend([
+            Content::Reasoning {
+                text: "why".into(),
+                native: Native::default(),
+            },
+            Content::Signature("s".into()),
+            Content::tool_call("c1", "lookup", "{}"),
+            Content::tool_result("c1", vec![Content::from("42")], false),
+            Content::Image(Media::new(
+                "image/png",
+                MediaSource::Bytes(bytes::Bytes::from_static(b"png")),
+            )),
+            Content::Document(Media::new(
+                "application/pdf",
+                MediaSource::Url("https://x.test/a.pdf".into()),
+            )),
+        ]);
+        let mut natives = message.clone();
+        natives.native = native.clone();
+        if let Content::Reasoning { native: n, .. } = &mut natives.content[1] {
+            *n = native;
+        }
+        natives.content.push(Content::Native(Native::new(1)));
+        message.content.push(Content::Native(Native::default()));
+        // A native is not kept: it reads back as none.
+        let kept = serde_json::to_vec(&natives).expect("kept");
+        let back = serde_json::from_slice::<Message>(&kept).expect("read back");
+        assert_eq!(back, message);
+        // One kept as a format's JSON before reads back as none.
+        let old = json!({"format": "openai", "value": {"cache": "x"}});
+        let mut kept = serde_json::to_value(&message).expect("kept");
+        kept["native"] = old.clone();
+        kept["content"][1]["Reasoning"]["native"] = old.clone();
+        kept["content"][7]["Native"] = old;
+        kept["role"] = json!({"Native": {"format": "openai", "name": "critic"}});
+        let back = serde_json::from_value::<Message>(kept).expect("read back");
+        assert_eq!(
+            (back.role, back.content),
+            (Role::Native(Native::default()), message.content)
+        );
+    }
+
     #[test]
     fn plain_values_compare_by_what_they_say() {
         let a = Message::new(Role::User, "hi");
         let mut b = a.clone();
         assert_eq!(a, b);
-        b.native = Some(NativeFields::new(
-            "chat",
-            json!({"name": "x"})
-                .as_object()
-                .cloned()
-                .unwrap_or_default(),
-        ));
+        b.native = Native::new(json!({"name": "x"}));
         assert_ne!(a, b);
         assert!(a.is_plain() && !b.is_plain());
-        let tagged = Message::new(Role::native("chat", "tool"), "x");
+        let tagged = Message::new(Role::Native(Native::new("tool")), "x");
         assert!(!tagged.is_plain());
     }
 
     #[test]
     fn parts_roles_and_finishes_carry_their_format_and_extra() {
-        let marker = NativeFields::new(
-            "chat",
-            json!({"cache_control": 1})
-                .as_object()
-                .cloned()
-                .unwrap_or_default(),
-        );
+        struct Other;
         let mut cached = Message::new(Role::User, "hi");
         if let Content::Text { native, .. } = &mut cached.content[0] {
-            *native = Some(marker);
+            *native = Native::new(json!({"cache_control": 1}));
         }
         // A part's native does not change what it says.
         assert!(cached.is_plain());
         assert_ne!(cached, Message::new(Role::User, "hi"));
-        assert_eq!(
-            Role::native("chat", "critic"),
-            Role::native("chat", "critic")
+        // A native is the one value it holds, readable only as its type.
+        let critic = Native::new("critic");
+        assert_eq!(Role::Native(critic.clone()), Role::Native(critic.clone()));
+        assert_ne!(
+            Role::Native(critic.clone()),
+            Role::Native(Native::new("critic"))
         );
         assert_ne!(
-            Role::native("chat", "critic"),
-            Role::native("other", "critic")
+            Finish::native(Native::new("x"), None),
+            Finish::native(Native::new(Other), None)
         );
-        assert_ne!(Finish::native("a", "x"), Finish::native("b", "x"));
+        assert_eq!(critic.get::<&str>(), Some(&"critic"));
+        assert!(critic.get::<Other>().is_none());
+        assert!(Native::new(Other).get::<&str>().is_none());
     }
 
     #[test]
     fn events_fold_into_the_whole_answer() {
         let usage = Usage::new(3, 0);
+        let fields = Native::new(json!({"index": 0}));
         let all = fold(&[
             Output::start("r1", "m"),
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
+            Output::signature(None, "withheld"),
             Output::block_start(1, Block::Text),
             Output::text(1, "Hel"),
             Output::text(1, "lo"),
             Output::block_end(1),
+            Output::block_fields(2, fields.clone()),
             Output::block_start(
                 2,
                 Block::ToolCall {
@@ -965,8 +1074,10 @@ mod tests {
             ),
             Output::arguments(2, "{\"a\":"),
             Output::arguments(2, "1}"),
+            Output::signature(Some(2), "call"),
+            Output::signature(Some(2), "again"),
             Output::block_end(2),
-            Output::native("chat", json!({"type": "ping"})),
+            Output::Native(Native::new(json!({"type": "ping"}))),
             Output::usage(usage),
             Output::usage(usage),
             Output::finished(Finish::ToolUse),
@@ -989,12 +1100,31 @@ mod tests {
             ]
         );
         assert_eq!(all.text(), "Hello");
+        // Each signature follows the part it seals; reasoning withheld stays in place.
+        let mut call = Content::tool_call("t", "f", "{\"a\":1}");
+        if let Content::ToolCall { native, .. } = &mut call {
+            *native = fields;
+        }
+        let reasoning = Content::Reasoning {
+            text: "hm".into(),
+            native: Native::default(),
+        };
+        assert_eq!(
+            all.replay(),
+            [
+                reasoning,
+                Content::Signature("sig".into()),
+                Content::Withheld("withheld".into()),
+                Content::from("Hello"),
+                call,
+                Content::Signature("call".into()),
+                Content::Signature("again".into()),
+            ]
+        );
         assert_eq!(all.finish, Some(Finish::ToolUse));
         assert_eq!(all.usage.input_tokens, 6);
-        assert!(
-            matches!(all.items().last(), Some(AssembledItem::Native(respan_gateway_core::NativeValue { format: f, value: raw }))
-            if &**f == "chat" && **raw == json!({"type": "ping"}))
-        );
+        assert!(matches!(all.items().last(), Some(AssembledItem::Native(n))
+            if n.get::<Value>() == Some(&json!({"type": "ping"}))));
     }
 
     #[test]
@@ -1003,6 +1133,7 @@ mod tests {
         for events in [
             vec![Output::text(0, "x")],
             vec![Output::block_end(0)],
+            vec![Output::signature(Some(0), "s")],
             vec![text(), Output::block_end(0), Output::text(0, "x")],
             vec![text(), Output::block_end(0), Output::block_end(0)],
             vec![text(), Output::block_end(0), text()],
@@ -1028,7 +1159,7 @@ mod tests {
         let mut all = fold(&[
             Output::block_start(9, Block::Reasoning),
             Output::reasoning(9, "think"),
-            Output::native("native", signature.clone()),
+            Output::Native(Native::new(signature.clone())),
             Output::block_start(2, Block::Text),
             Output::text(2, "ans"),
             Output::reasoning(9, "ing"),
@@ -1038,10 +1169,8 @@ mod tests {
         .expect("interleaved response");
         assert!(matches!(&all.items()[0], AssembledItem::Block(p)
             if p.block == 9 && p.kind == Block::Reasoning && p.text == "thinking"));
-        assert!(
-            matches!(&all.items()[1], AssembledItem::Native(respan_gateway_core::NativeValue { format: f, value: raw })
-            if &**f == "native" && **raw == signature)
-        );
+        assert!(matches!(&all.items()[1], AssembledItem::Native(n)
+            if n.get::<Value>() == Some(&signature)));
         assert!(matches!(&all.items()[2], AssembledItem::Block(p)
             if p.block == 2 && p.kind == Block::Text && p.text == "answer"));
         assert_eq!(all.text(), "answer");
@@ -1084,6 +1213,6 @@ mod tests {
         assert!(Output::text(0, "x").is_content());
         assert!(Output::finished(Finish::Stop).is_content());
         assert!(!Output::usage(Usage::default()).is_content());
-        assert!(!Output::native("f", json!(1)).is_content());
+        assert!(!Output::Native(Native::new(1)).is_content());
     }
 }

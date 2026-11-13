@@ -3,7 +3,7 @@
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::{self, OpenAiChat};
-use respan_gateway_core::{Filter, NativeValue, Result};
+use respan_gateway_core::{Filter, Native, Result};
 use serde_json::{Map, Value, json};
 
 use respan_gateway_media_http::openai::{OpenAiSpeech, OpenAiTranscriptions};
@@ -62,7 +62,11 @@ impl XGroqUsage {
             out.push(Output::Usage(more));
         }
         if !extra.is_empty() {
-            out.push(Output::native(OpenAiChat::NAME, json!({ "usage": extra })));
+            let usage = |f: &mut Map<String, Value>| _ = f.insert("usage".into(), json!(extra));
+            out.push(Output::Native(OpenAiChat::with_fields(
+                &Native::default(),
+                usage,
+            )));
         }
         Ok(())
     }
@@ -78,29 +82,26 @@ impl Filter<Output> for XGroqUsage {
             }
             Output::Start(mut start) => {
                 self.report(out)?;
-                if let Some(native) = start
-                    .native
-                    .as_mut()
-                    .filter(|n| &*n.format == OpenAiChat::NAME)
-                {
-                    self.said = take_usage(&mut native.fields);
+                if !OpenAiChat::fields(&start.native).is_empty() {
+                    let said = &mut self.said;
+                    start.native =
+                        OpenAiChat::with_fields(&start.native, |f| *said = take_usage(f));
                 }
-                start.native = start.native.filter(|n| !n.is_empty());
                 // The chunk's own usage comes after its start.
                 out.push(Output::Start(start));
                 return Ok(());
             }
-            Output::Native(NativeValue { format, value }) if &*format == OpenAiChat::NAME => {
+            Output::Native(native) if !OpenAiChat::fields(&native).is_empty() => {
                 self.report(out)?;
-                let mut value = std::sync::Arc::unwrap_or_clone(value);
-                let response = value.get_mut("response").and_then(Value::as_object_mut);
+                let mut fields = OpenAiChat::fields(&native).clone();
+                let response = fields.get_mut("response").and_then(Value::as_object_mut);
                 if let Some(response) = response {
                     self.said = take_usage(response);
                     if response.is_empty() {
                         return self.report(out);
                     }
                 }
-                Output::native(format, value)
+                Output::Native(OpenAiChat::with_fields(&native, |f| *f = fields))
             }
             output => output,
         };

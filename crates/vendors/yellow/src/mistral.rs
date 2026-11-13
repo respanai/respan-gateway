@@ -3,15 +3,14 @@
 //! transcription.
 
 use base64::Engine as _;
-use respan_gateway_conversation_http::fields::{kept, native_of};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::speech;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiSpeech, OpenAiTranscriptions};
 use respan_gateway_realtime_ws::MistralRealtime;
 use serde_json::Value;
@@ -61,8 +60,7 @@ impl Dialect for Mistral {
     }
 
     fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
+        if !crate::json_answer(head) {
             return None;
         }
         let audio = HeaderValue::from_static("application/octet-stream");
@@ -83,9 +81,9 @@ fn taken(input: &mut speech::Input) -> Result<(), Fault> {
     let Some(voice) = input.voice.take() else {
         return Ok(());
     };
-    let mut fields = kept(OpenAiSpeech::NAME, &input.native)?;
-    fields.entry("voice_id").or_insert_with(|| voice.into());
-    input.native = native_of(OpenAiSpeech::NAME, fields);
+    input.native = OpenAiSpeech::with_fields(&input.native, |fields| {
+        fields.entry("voice_id").or_insert_with(|| voice.into());
+    });
     Ok(())
 }
 
@@ -141,8 +139,7 @@ mod tests {
         input.voice = Some("v".into());
         taken(&mut input).expect("taken");
         assert_eq!(input.voice, None);
-        let native = input.native.expect("native");
-        assert_eq!(native.fields["voice_id"], "v");
+        assert_eq!(OpenAiSpeech::fields(&input.native)["voice_id"], "v");
         let mut asked = speech::Input::new("hi");
         asked.speed = Some(1.5);
         assert!(taken(&mut asked).is_err());

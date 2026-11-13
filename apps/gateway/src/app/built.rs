@@ -13,6 +13,7 @@ use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_media::video::{LocateContent, VideoJobs};
 use respan_gateway_media_http::gemini::GeminiVeo;
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
 use respan_gateway_plugin_relay::Relay;
@@ -180,15 +181,23 @@ impl Built {
 
 /// Routing by the plan's routes, of each format, knowing each request's
 /// client key by name.
-fn routing(plan: &Plan, formats: &[KnownFormat]) -> Routing {
+fn routing(plan: &Plan, formats: &[KnownFormat], tool_loop: bool) -> Routing {
     let client = |cx: &respan_gateway_core::ClientContext| {
         let name = cx.extensions().get::<crate::auth::KeyName>();
         name.map(|n| n.0.clone())
     };
-    formats.iter().filter(|f| f.kind != kind::MCP).fold(
-        Routing::new(plan.routes.clone()).client(client),
-        |routing, f| routing.format(&f.name, f.kind, f.model.clone()),
-    )
+    let routing = Routing::new(plan.routes.clone()).client(client);
+    // The tool loop, after it, may offer any request tools.
+    let routing = match tool_loop {
+        true => routing.tools_added(),
+        false => routing,
+    };
+    formats
+        .iter()
+        .filter(|f| f.kind != kind::MCP)
+        .fold(routing, |routing, f| {
+            routing.format(&f.name, f.kind, f.model.clone())
+        })
 }
 
 /// The gateway with the binary's plugins, and what ends the sessions of the
@@ -218,10 +227,12 @@ fn with_plugins(
         })
         .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
         .collect();
-    // Veo serves a job's content only where the job says.
-    let veo = plan.upstreams.iter().flat_map(|u| &u.entries);
-    let veo = veo.filter(|e| e.format == GeminiVeo::NAME);
-    let locate = veo.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
+    // Veo serves a job's content only where the job says, and OpenRouter
+    // answers for one not finished as for one it never made.
+    let located = [GeminiVeo::NAME, OpenRouterVideos::NAME];
+    let located = (plan.upstreams.iter().flat_map(|u| &u.entries))
+        .filter(|e| located.contains(&e.format.as_str()));
+    let locate = located.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
     // The tool loop answers the request itself, so it comes after every plugin
     // that routes or edits it; what ends its sessions comes before them all.
     let tool_loop = config.plugins.tool_loop.as_ref().map(|config| {
@@ -250,7 +261,7 @@ fn with_plugins(
     };
     let gateway = gateway
         .plugin(Recorder::new(log.clone(), formats, names.clone()))
-        .plugin(routing(plan, formats))
+        .plugin(routing(plan, formats, tool_loop.is_some()))
         .plugin(mcp_router);
     let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
     // A provider without a key of its own gets the client's.

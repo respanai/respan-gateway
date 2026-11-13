@@ -1,6 +1,6 @@
 use respan_gateway_core::FaultKind;
-use respan_gateway_core::NativeFields;
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_core::Native;
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{
     AudioFormat, Cause, Input, Output, Purpose, Session, Status, ToolResult,
 };
@@ -144,7 +144,7 @@ fn a_client_event_is_read_as_the_kinds() {
         (audio.format, &audio.data[..]),
         (AudioFormat::ALAW, &[0, 1][..])
     );
-    assert_eq!(*native, None);
+    assert!(native.is_empty());
     // Written padded: the same audio.
     assert_eq!(sent(&events).expect("written")[1]["audio"], "AAE=");
     // A first frame of another event follows a session of the model alone.
@@ -158,16 +158,18 @@ fn a_session_of_nothing_but_its_model_is_no_frame() {
     let mut opening = Session::default();
     opening.model = Some("gpt-realtime".into());
     let session = Input::Session(opening);
-    let respond = Input::Respond { native: None };
+    let respond = Input::Respond {
+        native: Native::default(),
+    };
     // A session a plugin opens with says something: it is written, typed.
     let mut capped = Session::default();
-    capped.max_output_tokens = Some(100);
+    capped.instructions = Some("Be brief.".into());
     let written = sent(&[Input::Session(capped), session, respond]).expect("written");
     assert_eq!(
         written,
         [
             json!({"type": "session.update", "session": {"type": "realtime",
-                "max_output_tokens": 100}}),
+                "instructions": "Be brief."}}),
             json!({"type": "response.create"})
         ]
     );
@@ -200,13 +202,8 @@ fn a_tools_schema_names_its_types_as_openai_takes_them() {
 }
 
 #[test]
-fn another_formats_input_is_dropped_where_it_cannot_change_the_answer() {
-    let gemini = |v: Value| {
-        Some(NativeFields::new(
-            "gemini-live",
-            v.as_object().cloned().expect("object"),
-        ))
-    };
+fn another_formats_input_is_dropped() {
+    let gemini = Native::json::<()>;
     let shaped = Input::Respond {
         native: gemini(json!({"clientContent": {}})),
     };
@@ -214,30 +211,16 @@ fn another_formats_input_is_dropped_where_it_cannot_change_the_answer() {
         sent(&[shaped]).expect("written"),
         [json!({"type": "response.create"})]
     );
-    let start = Input::native(
-        "gemini-live",
-        json!({"realtimeInput": {"activityStart": {}}}),
-    );
+    let start = Input::Native(gemini(json!({"realtimeInput": {"activityStart": {}}})));
     assert_eq!(sent(&[start]).expect("written"), Vec::<Value>::new());
+    let video = Input::Native(gemini(json!({"realtimeInput": {"video": {}}})));
+    assert_eq!(sent(&[video]).expect("written"), Vec::<Value>::new());
     let mut sampled = Session::default();
+    sampled.voice = Some("alloy".into());
     sampled.native = gemini(json!({"setup": {"generationConfig": {"temperature": 0.2}}}));
-    for (event, field) in [
-        (
-            Input::Session(sampled),
-            "`setup.generationConfig.temperature`",
-        ),
-        (
-            Input::native("gemini-live", json!({"realtimeInput": {"video": {}}})),
-            "`realtimeInput.video`",
-        ),
-    ] {
-        let refused = sent(&[event]).expect_err("refused");
-        assert!(refused.is(FaultKind::Client), "{refused}");
-        assert_eq!(
-            refused.message(),
-            format!("{field} cannot be translated to openai-realtime")
-        );
-    }
+    let written = sent(&[Input::Session(sampled)]).expect("written");
+    assert!(written[0].get("setup").is_none(), "{written:?}");
+    assert_eq!(written[0]["session"]["audio"]["output"]["voice"], "alloy");
 }
 
 #[test]
@@ -247,7 +230,7 @@ fn audio_in_another_format_is_converted_to_the_sessions() {
             data: Bytes::from(data),
             format,
         },
-        native: None,
+        native: Native::default(),
     };
     let second: Vec<u8> = (0..16_000i16)
         .flat_map(|i| (i % 100).to_le_bytes())
@@ -301,7 +284,7 @@ fn every_server_event_is_written_back_as_it_came() {
         json!({"type": "response.done", "response": {"status": "failed",
             "status_details": {"type": "failed", "error": {"code": "x"}}}}),
         json!({"type": "response.done", "response": {"status": "incomplete",
-            "status_details": {"type": "incomplete", "reason": "something_new"}}}),
+            "status_details": {"type": "incomplete", "reason": "max_output_tokens"}}}),
         json!({"type": "error", "event_id": "s3", "error": {"type": "invalid_request_error",
             "code": "invalid_value", "message": "no", "param": null, "event_id": "e9"}}),
         json!({"type": "rate_limits.updated", "rate_limits": []}),
@@ -318,7 +301,10 @@ fn every_server_event_is_written_back_as_it_came() {
         statuses[..3],
         [&Status::Completed, &Status::Interrupted, &Status::Failed]
     );
-    assert!(matches!(statuses[3], Status::Native { reason, .. } if reason == "incomplete"));
+    assert!(
+        matches!(statuses[3], Status::Native { native, fallback, .. }
+        if native.value::<super::Key>() == Some(&json!("incomplete")) && **fallback == Status::Completed)
+    );
     let Output::Usage(used) = &events[12] else {
         panic!("{events:?}")
     };
@@ -365,30 +351,29 @@ fn usage_a_filter_edits_is_written_in_the_response_done() {
 fn a_response_of_another_format_is_told_of_as_openai_does() {
     let response = [
         Output::ResponseStart {
-            id: None,
-            native: None,
+            native: Native::default(),
         },
         Output::Audio {
             audio: respan_gateway_realtime::Audio {
                 data: Bytes::from_static(&[0; 4]),
                 format: AudioFormat::pcm16(24_000),
             },
-            native: None,
+            native: Native::default(),
         },
         Output::Transcript {
             text: "Hi.".into(),
-            native: None,
+            native: Native::default(),
         },
         Output::ToolCall {
             id: "c1".into(),
             name: "f".into(),
             arguments: "{}".into(),
-            native: None,
+            native: Native::default(),
         },
         Output::Usage(Default::default()),
         Output::ResponseDone {
             status: Status::Completed,
-            native: Some(NativeFields::new("gemini-live", Default::default())),
+            native: Native::json::<()>(json!({"x": 1})),
         },
     ];
     let written = heard(&response).expect("written");
@@ -432,9 +417,8 @@ fn a_response_of_another_format_is_told_of_as_openai_does() {
 fn an_error_is_written_as_openais() {
     let error = |cause| Output::Error {
         cause,
-        code: Some("another format's code".into()),
         message: "no".into(),
-        native: None,
+        native: Native::default(),
     };
     let written = heard(&[error(Cause::Invalid), error(Cause::Provider)]).expect("written");
     assert_eq!(
@@ -476,7 +460,7 @@ fn each_whole_transcript_is_an_item_of_its_own() {
     let transcript = |text: &str, complete| Output::InputTranscript {
         text: text.into(),
         complete,
-        native: None,
+        native: Native::default(),
     };
     let frames = heard(&[
         transcript("one", false),

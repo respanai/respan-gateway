@@ -1,52 +1,41 @@
 //! Reading a Responses request's input items as messages.
 
-use super::super::RESPONSES;
+use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
-use crate::schema::{INERT, NativeFieldsExt, native_fields, only, remainder, says, source_url};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
+use crate::schema::{
+    Own, data_media, only, remainder, says, source_url, unless_file_id, unreadable_media,
+};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
+use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
-
-/// The fields of `item` beyond `taken` as a native: its `id` and `status`
-/// under [`INERT`].
-fn item_fields(item: &Value, taken: &[&str]) -> Map<String, Value> {
-    let mut rest = remainder(item, taken);
-    let mut inert = Map::new();
-    for key in ["id", "status"] {
-        if let Some(value) = rest.shift_remove(key) {
-            inert.insert(key.into(), value);
-        }
-    }
-    if !inert.is_empty() {
-        rest.insert(INERT.into(), inert.into());
-    }
-    rest
-}
 
 /// A text part of `text` with these fields of its own.
 fn text_part(text: &str, fields: Map<String, Value>) -> Content {
     let mut part = Content::from(text);
     if let Content::Text { native, .. } = &mut part {
-        *native = native_fields(RESPONSES, fields);
+        *native = OpenAiResponses::native(fields);
     }
     part
 }
 
 /// A message content: a string, or parts.
-pub(in crate::responses) fn read_content(v: &Value) -> Vec<Content> {
-    match v {
+pub(in crate::responses) fn read_content(v: &Value) -> Result<Vec<Content>, Fault> {
+    Ok(match v {
         Value::String(text) => vec![Content::from(text.as_str())],
-        Value::Array(parts) => parts.iter().map(read_part).collect(),
+        Value::Array(parts) => parts.iter().map(read_part).collect::<Result<_, _>>()?,
         Value::Null => Vec::new(),
-        other => vec![Content::native(RESPONSES, other.clone())],
-    }
+        other => vec![Content::Native(OpenAiResponses::native(other.clone()))],
+    })
 }
 
-fn read_part(p: &Value) -> Content {
+fn read_part(p: &Value) -> Result<Content, Fault> {
     let part = match p["type"].as_str() {
         Some("input_text" | "output_text") => read_text(p),
-        _ => read_media(p),
+        _ => read_media(p)?,
     };
-    part.unwrap_or_else(|| Content::native(RESPONSES, p.clone()))
+    Ok(part.unwrap_or_else(|| Content::Native(OpenAiResponses::native(p.clone()))))
 }
 
 /// An `input_text` or `output_text` part; its fields that say something,
@@ -59,12 +48,13 @@ fn read_text(p: &Value) -> Option<Content> {
 }
 
 /// An image or file part the kind can say, whose other fields are its
-/// media's native.
-pub(super) fn read_media(p: &Value) -> Option<Content> {
-    let mut fields = match p["type"].as_str()? {
-        "input_image" => remainder(p, &["type", "image_url"]),
-        "input_file" => remainder(p, &["type", "file_data", "file_url", "filename"]),
-        _ => return None,
+/// media's native, `None` for one it has no form for; one whose `data:` URL
+/// does not decode is refused.
+pub(super) fn read_media(p: &Value) -> Result<Option<Content>, Fault> {
+    let mut fields = match p["type"].as_str() {
+        Some("input_image") => remainder(p, &["type", "image_url"]),
+        Some("input_file") => remainder(p, &["type", "file_data", "file_url", "filename"]),
+        _ => return Ok(None),
     };
     fields.retain(|_, v| !v.is_null());
     let mut media = if p["type"] == "input_image" {
@@ -72,49 +62,62 @@ pub(super) fn read_media(p: &Value) -> Option<Content> {
         if fields.get("detail") == Some(&json!("auto")) {
             fields.shift_remove("detail");
         }
-        let (mime, source) = source_url(p["image_url"].as_str()?, "image/*")?;
+        let Some(url) = p["image_url"].as_str() else {
+            return unless_file_id(p, "`image_url` or `file_id`");
+        };
+        let (mime, source) = source_url(url, "image/*", "`image_url`")?;
         Media::new(mime, source)
     } else {
         let (mime, source) = match (p["file_data"].as_str(), p["file_url"].as_str()) {
-            (Some(data), None) if data.starts_with("data:") => {
-                source_url(data, "application/octet-stream")?
+            (Some(data), None) => {
+                let field = "`file_data`";
+                let Some((mime, bytes)) = data_media(data, field)? else {
+                    return Err(unreadable_media(field, "must be a `data:` URL"));
+                };
+                (mime, MediaSource::Bytes(bytes.into()))
             }
             (None, Some(url)) => (
                 "application/octet-stream".into(),
                 MediaSource::Url(url.into()),
             ),
-            _ => return None,
+            (None, None) => return unless_file_id(p, "`file_data`, `file_url` or `file_id`"),
+            _ => return Ok(None),
         };
         let mut media = Media::new(mime, source);
         media.name = p["filename"].as_str().map(str::to_owned);
         media
     };
-    media.native = native_fields(RESPONSES, fields);
-    Some(match p["type"] == "input_image" {
+    media.native = OpenAiResponses::native(fields);
+    Ok(Some(match p["type"] == "input_image" {
         true => Content::Image(media),
         false => Content::Document(media),
-    })
+    }))
 }
 
 /// The request's `instructions` and `input` as messages.
-pub(in crate::responses) fn read_input(v: &Value, chat: &mut Input) {
+pub(in crate::responses) fn read_input(v: &Value, chat: &mut Input) -> Result<(), Fault> {
     if says(&v["instructions"]) {
         let mut system = Message::new(Role::System, "");
-        system.content = read_content(&v["instructions"]);
+        system.content = read_content(&v["instructions"])?;
         chat.messages.push(system);
     }
     match &v["input"] {
         Value::Null => {}
         Value::String(text) => chat.messages.push(Message::new(Role::User, text.as_str())),
-        Value::Array(items) => items.iter().for_each(|i| push_item(&mut chat.messages, i)),
+        Value::Array(items) => {
+            for item in items {
+                push_item(&mut chat.messages, item)?;
+            }
+        }
         other => chat.messages.push(opaque(other)),
     }
+    Ok(())
 }
 
 /// An item the kind has no form for.
 fn opaque(item: &Value) -> Message {
-    let mut message = Message::new(Role::native(RESPONSES, ITEM_ROLE), "");
-    message.content = vec![Content::native(RESPONSES, item.clone())];
+    let mut message = Message::new(Role::Native(OpenAiResponses::native(ITEM_ROLE)), "");
+    message.content = vec![Content::Native(OpenAiResponses::native(item.clone()))];
     message
 }
 
@@ -129,57 +132,56 @@ fn assistant(out: &mut Vec<Message>) -> &mut Message {
     &mut out[last]
 }
 
-fn push_item(out: &mut Vec<Message>, item: &Value) {
+fn push_item(out: &mut Vec<Message>, item: &Value) -> Result<(), Fault> {
     let kind = match item.get("type") {
         None | Some(Value::Null) => "message",
         Some(kind) => kind.as_str().unwrap_or_default(),
     };
     let done = match kind {
-        "message" => push_message(out, item),
+        "message" => push_message(out, item)?,
         "function_call" => push_call(out, item),
-        "function_call_output" => push_result(out, item),
+        "function_call_output" => push_result(out, item)?,
         "reasoning" => push_reasoning(out, item),
         _ => None,
     };
     if done.is_none() {
         out.push(opaque(item));
     }
+    Ok(())
 }
 
-fn push_message(out: &mut Vec<Message>, item: &Value) -> Option<()> {
-    let name = item["role"].as_str()?;
-    let mut content = read_content(&item["content"]);
-    let extras = item_fields(item, &["type", "role", "content"]);
+fn push_message(out: &mut Vec<Message>, item: &Value) -> Result<Option<()>, Fault> {
+    let Some(name) = item["role"].as_str() else {
+        return Ok(None);
+    };
+    let mut content = read_content(&item["content"])?;
+    let extras = remainder(item, &["type", "role", "content"]);
     match ROLES.value(name) {
         Some(Role::Assistant) => {
             // The item's own fields ride on its first text part.
             let first = content.iter_mut().find_map(|c| match c {
                 Content::Text { native, .. } => Some(native),
                 _ => None,
-            })?;
-            let mut fields = first.take().map(|n| n.fields).unwrap_or_default();
-            let mut item_level = Map::new();
-            for (key, value) in extras {
-                match key == INERT {
-                    true => fields.insert(key, value),
-                    false => item_level.insert(key, value),
-                };
+            });
+            let Some(first) = first else {
+                return Ok(None);
+            };
+            let mut fields = OpenAiResponses::fields(first).clone();
+            if !extras.is_empty() {
+                fields.insert(MESSAGE.into(), extras.into());
             }
-            if !item_level.is_empty() {
-                fields.insert(MESSAGE.into(), item_level.into());
-            }
-            *first = native_fields(RESPONSES, fields);
+            *first = OpenAiResponses::native(fields);
             assistant(out).content.extend(content);
         }
         role => {
-            let role = role.unwrap_or_else(|| Role::native(RESPONSES, name));
+            let role = role.unwrap_or_else(|| Role::Native(OpenAiResponses::native(name)));
             let mut message = Message::new(role, "");
             message.content = content;
-            message.native = native_fields(RESPONSES, extras);
+            message.native = OpenAiResponses::native(extras);
             out.push(message);
         }
     }
-    Some(())
+    Ok(Some(()))
 }
 
 fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
@@ -187,22 +189,24 @@ fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];
-        *native = native_fields(RESPONSES, item_fields(item, &taken));
+        *native = OpenAiResponses::native(remainder(item, &taken));
     }
     assistant(out).content.push(call);
     Some(())
 }
 
-fn push_result(out: &mut Vec<Message>, item: &Value) -> Option<()> {
-    let id = item["call_id"].as_str()?;
+fn push_result(out: &mut Vec<Message>, item: &Value) -> Result<Option<()>, Fault> {
+    let Some(id) = item["call_id"].as_str() else {
+        return Ok(None);
+    };
     let content = match &item["output"] {
-        Value::String(_) | Value::Array(_) => read_content(&item["output"]),
-        _ => return None,
+        Value::String(_) | Value::Array(_) => read_content(&item["output"])?,
+        _ => return Ok(None),
     };
     let mut result = Content::tool_result(id, content, false);
     if let Content::ToolResult { native, .. } = &mut result {
         let taken = ["type", "call_id", "output"];
-        *native = native_fields(RESPONSES, item_fields(item, &taken));
+        *native = OpenAiResponses::native(remainder(item, &taken));
     }
     let results = |m: &Message| {
         m.role == Role::User
@@ -219,7 +223,7 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             out.push(message);
         }
     }
-    Some(())
+    Ok(Some(()))
 }
 
 fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
@@ -230,12 +234,12 @@ fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
             _ => return None,
         }
     }
-    let native = native_fields(RESPONSES, item_fields(item, &["type", "summary"]));
+    let native = OpenAiResponses::native(remainder(item, &["type", "summary", SEALED]));
     let text = texts.join("\n\n");
-    assistant(out)
-        .content
-        .push(Content::Reasoning { text, native });
+    let content = &mut assistant(out).content;
+    content.push(Content::Reasoning { text, native });
+    if let Some(data) = item[SEALED].as_str() {
+        content.push(Content::Signature(data.into()));
+    }
     Some(())
 }
-
-// ------------------------------------------------------------------ writing

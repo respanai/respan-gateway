@@ -5,7 +5,7 @@
 use base64::Engine;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
-use respan_gateway_core::{ErrorCode, Fault, NativeFields};
+use respan_gateway_core::{ErrorCode, Fault};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value};
@@ -78,41 +78,18 @@ pub(crate) fn number(n: &u64) -> Option<Value> {
     Some((*n).into())
 }
 
-/// The fields of `rest`, a frame less what the kind took, as `format`'s;
-/// none if it says nothing more.
-pub(crate) fn native(format: &str, rest: Value) -> Option<NativeFields> {
-    match rest {
-        Value::Object(fields) if !fields.is_empty() => Some(NativeFields::new(format, fields)),
-        _ => None,
-    }
-}
-
 /// `v` with the fields of `native` it lacks, objects field by field: what
 /// the kind says takes precedence over what its format kept.
-pub(crate) fn merge(v: &mut Value, native: Option<&Map<String, Value>>) {
-    let (Some(v), Some(native)) = (v.as_object_mut(), native) else {
+pub(crate) fn merge(v: &mut Value, native: &Map<String, Value>) {
+    let Some(v) = v.as_object_mut() else {
         return;
     };
     for (key, value) in native {
         match (v.get_mut(key), value) {
-            (Some(had), Value::Object(more)) => merge(had, Some(more)),
+            (Some(had), Value::Object(more)) => merge(had, more),
             (Some(_), _) => {}
             (None, value) => _ = v.insert(key.clone(), value.clone()),
         }
-    }
-}
-
-/// The fields of `native` to write in `format`: none if there are none, and
-/// refused by `refuse` if they are another format's.
-pub(crate) fn own<'a>(
-    format: &str,
-    native: &'a Option<NativeFields>,
-    refuse: impl FnOnce() -> Fault,
-) -> Result<Option<&'a Map<String, Value>>, Fault> {
-    match native {
-        None => Ok(None),
-        Some(native) if *native.format == *format => Ok(Some(&native.fields)),
-        Some(_) => Err(refuse()),
     }
 }
 
@@ -179,7 +156,7 @@ mod tests {
     fn what_the_kind_says_wins_over_what_its_format_kept() {
         let mut v = json!({"a": {"b": 1}, "c": null});
         let native = json!({"a": {"b": 2, "d": 3}, "c": {"e": 4}, "f": 5});
-        merge(&mut v, native.as_object());
+        merge(&mut v, native.as_object().expect("an object"));
         assert_eq!(v, json!({"a": {"b": 1, "d": 3}, "c": null, "f": 5}));
     }
 

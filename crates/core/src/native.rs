@@ -1,53 +1,54 @@
-//! Explicitly format-specific data carried through the gateway.
+//! What only its own format reads: a value of a type private to that format.
 
+use std::any::Any;
+use std::fmt::{self, Debug};
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+/// What a value holds that only its own format reads: fields the kind has no
+/// place for, or a whole event or part it has no form for, as a value of a
+/// type private to that format. No other format can name the type, so none
+/// can read it: what has meaning across formats belongs in the kind.
+///
+/// It is never edited in place: a writer builds a new one in its place.
+/// Two are equal if both are empty, or both are the one value.
+#[derive(Clone, Default)]
+pub struct Native(Option<Arc<dyn Any + Send + Sync>>);
 
-/// Identity of a wire format, rather than a provider or deployment.
-pub type FormatId = Arc<str>;
-
-/// Additional semantic fields understood only by their originating format.
-/// A foreign encoder must translate these fields or refuse them; callers can
-/// explicitly remove them when they accept the loss of their meaning.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NativeFields {
-    /// The wire format that defines these fields.
-    pub format: FormatId,
-    /// Provider-format fields, excluding transport and decoder bookkeeping.
-    pub fields: Map<String, Value>,
-}
-
-impl NativeFields {
-    /// Fields belonging to a known wire format.
-    pub fn new(format: impl Into<FormatId>, fields: Map<String, Value>) -> Self {
-        Self {
-            format: format.into(),
-            fields,
-        }
+impl Native {
+    /// `value`, as its type's format holds it.
+    pub fn new<T: Any + Send + Sync>(value: T) -> Self {
+        Native(Some(Arc::new(value)))
     }
 
-    /// Whether no native fields remain.
+    /// The value it holds, if it is a `T`.
+    pub fn get<T: Any>(&self) -> Option<&T> {
+        self.0.as_deref()?.downcast_ref()
+    }
+
+    /// Whether it holds nothing, of any format.
     pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
+        self.0.is_none()
     }
 }
 
-/// An entire value whose meaning belongs to one wire format.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NativeValue {
-    /// The wire format that understands the value.
-    pub format: FormatId,
-    /// The value, shared when requests or events are cloned.
-    pub value: Arc<Value>,
+impl Debug for Native {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(if self.is_empty() {
+            "Native"
+        } else {
+            "Native(..)"
+        })
+    }
 }
 
-impl NativeValue {
-    /// Preserve a value together with the identity needed to encode it safely.
-    pub fn new(format: impl Into<FormatId>, value: impl Into<Value>) -> Self {
-        Self {
-            format: format.into(),
-            value: Arc::new(value.into()),
+impl PartialEq for Native {
+    fn eq(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            _ => false,
         }
     }
 }
+
+impl Eq for Native {}

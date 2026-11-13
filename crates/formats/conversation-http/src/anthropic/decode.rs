@@ -1,40 +1,44 @@
 //! Anthropic Messages, streamed or whole, as events: the decoder.
 
+use crate::anthropic::AnthropicMessages;
 use crate::schema::{
-    Totals, ended, error_event, native_fields, says, says_error, unreadable_event,
-    unsupported_fields,
+    Own, Totals, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Output, Start};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
-use super::{ANTHROPIC, extra_usage, finish_of, usage_of};
+use super::{extra_usage, finish_of, usage_of};
 
 /// Decodes events and whole bodies of Anthropic Messages into events, as
 /// the module says.
 #[derive(Debug)]
 pub struct AnthropicDecoder {
-    name: Arc<str>,
     totals: Totals,
     done: bool,
     /// The usage fields with no unit that were last said, to say them once.
     usage_extra: Map<String, Value>,
     /// The indexes of blocks the kind has no form for: all their events are
-    /// [`Output::Native`].
+    /// [`Output::BlockNative`].
     others: Vec<u32>,
+    /// The indexes of `redacted_thinking` blocks: a signature alone, whose
+    /// other events say nothing.
+    withheld: Vec<u32>,
+    /// The signature of the block streaming, so far.
+    signature: String,
 }
 
 impl Default for AnthropicDecoder {
     fn default() -> Self {
         Self {
-            name: Arc::from(ANTHROPIC),
             totals: Totals::default(),
             done: false,
             usage_extra: Map::new(),
             others: Vec::new(),
+            withheld: Vec::new(),
+            signature: String::new(),
         }
     }
 }
@@ -49,8 +53,13 @@ pub(super) fn event_of(kind: &str, index: u32, fields: Value) -> Value {
 }
 
 impl AnthropicDecoder {
+    /// An event the kind has no form for: a block's if it names one.
     fn other(&self, v: Value, out: &mut Vec<Output>) {
-        out.push(Output::native(self.name.clone(), v));
+        let block = v["index"].as_u64().and_then(|i| u32::try_from(i).ok());
+        out.push(match block {
+            Some(block) => Output::block_native(block, AnthropicMessages::native(v)),
+            None => Output::Native(AnthropicMessages::native(v)),
+        });
     }
 
     /// The events of a message: its start and usage so far.
@@ -69,7 +78,7 @@ impl AnthropicDecoder {
             m["id"].as_str().unwrap_or_default(),
             m["model"].as_str().unwrap_or_default(),
         );
-        start.native = native_fields(ANTHROPIC, unsupported_fields(m, &known, &[]));
+        start.native = AnthropicMessages::native(unsupported_fields(m, &known, &[]));
         out.push(Output::Start(start));
         let usage = self.totals.increment(&usage_of(&m["usage"])?);
         if !usage.is_empty() {
@@ -122,16 +131,21 @@ impl AnthropicDecoder {
                 let thinking = b["thinking"].as_str().filter(|t| !t.is_empty());
                 out.extend(thinking.map(|t| Output::reasoning(block, t)));
                 // A stream's start has an empty one; its delta says it.
-                if b["signature"].as_str().is_some_and(|s| !s.is_empty()) {
-                    self.signature(block, &b["signature"], out);
+                if let Some(s) = b["signature"].as_str().filter(|s| !s.is_empty()) {
+                    out.push(Output::signature(Some(block), s));
                 }
+            }
+            Some("redacted_thinking") if b["data"].is_string() => {
+                let data = b["data"].as_str().unwrap_or_default();
+                out.push(Output::signature(None, data));
+                self.withheld.push(block);
             }
             _ => self.opaque(block, event, out),
         }
     }
 
     /// The fields of block `b` the kind has no place for, beyond its `known`
-    /// ones, as one `Native` before the block opens, which the encoder merges
+    /// ones, as its `BlockFields` before the block opens, which the encoder merges
     /// into the block's start.
     fn fields(&self, block: u32, b: &Value, known: &[&str], out: &mut Vec<Output>) {
         let rest = b.as_object().into_iter().flatten();
@@ -142,14 +156,8 @@ impl AnthropicDecoder {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         if !rest.is_empty() {
-            out.push(Output::block_fields(self.name.clone(), block, rest));
+            out.push(Output::block_fields(block, AnthropicMessages::native(rest)));
         }
-    }
-
-    /// Reasoning's `signature`, which its block carries back, as its fields.
-    fn signature(&self, block: u32, signature: &Value, out: &mut Vec<Output>) {
-        let fields = Map::from_iter([("signature".to_owned(), signature.clone())]);
-        out.push(Output::block_fields(self.name.clone(), block, fields));
     }
 
     fn opaque(&mut self, block: u32, event: Value, out: &mut Vec<Output>) {
@@ -192,7 +200,7 @@ impl AnthropicDecoder {
             return Ok(());
         }
         let Some(v) = event_json(&raw) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<AnthropicMessages>(&raw, out);
             return Ok(());
         };
         if says_error(&v) || v["type"] == "error" {
@@ -203,6 +211,9 @@ impl AnthropicDecoder {
             .and_then(|i| u32::try_from(i).ok())
             .unwrap_or(0);
         let opaque = self.others.contains(&block);
+        if self.withheld.contains(&block) && v["type"] == "content_block_stop" {
+            return Ok(());
+        }
         match v["type"].as_str() {
             Some("message_start") => self.message(&v["message"], out)?,
             Some("content_block_start") => self.open(block, &v["content_block"], v.clone(), out),
@@ -215,11 +226,18 @@ impl AnthropicDecoder {
                         out.push(Output::arguments(block, text("partial_json")))
                     }
                     Some("thinking_delta") => out.push(Output::reasoning(block, text("thinking"))),
-                    Some("signature_delta") => self.signature(block, &delta["signature"], out),
+                    // A signature may come in pieces; it is said whole at the end.
+                    Some("signature_delta") => self.signature.push_str(text("signature")),
                     _ => self.other(v, out),
                 }
             }
-            Some("content_block_stop") if !opaque => out.push(Output::block_end(block)),
+            Some("content_block_stop") if !opaque => {
+                let signature = std::mem::take(&mut self.signature);
+                if !signature.is_empty() {
+                    out.push(Output::signature(Some(block), signature));
+                }
+                out.push(Output::block_end(block));
+            }
             Some("message_delta") => {
                 let usage = self.totals.increment(&usage_of(&v["usage"])?);
                 if !usage.is_empty() {
@@ -248,6 +266,9 @@ impl AnthropicDecoder {
             let start = event_of("content_block_start", block, json!({ "content_block": b }));
             let before = out.len();
             self.open(block, b, start, out);
+            if self.withheld.contains(&block) {
+                continue;
+            }
             let opaque = self.others.contains(&block);
             let stop = match opaque {
                 true => event_of("content_block_stop", block, json!({})),

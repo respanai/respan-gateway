@@ -1,11 +1,12 @@
 //! A session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
 
-use super::NAME;
-use crate::json::{self, at, remove, set, string, take, text};
+use super::Key;
+use crate::json::{at, remove, set, string, take, text};
 
 const MODEL: &[&str] = &["session", "model"];
 const FORMAT: &[&str] = &["session", "audio_format"];
@@ -20,7 +21,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.model = take(v, MODEL, string, text);
     s.input_audio = take_format(v);
     s.input_transcription = Some(true);
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 
@@ -37,8 +38,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (s.voice.is_some(), "a voice"),
         (s.output_audio.is_some(), "output audio"),
         (s.tools.is_some(), "tools"),
-        (s.tool_choice.is_some(), "a tool choice"),
-        (s.max_output_tokens.is_some(), "an output limit"),
         (s.input_transcription == Some(false), "no transcription"),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {

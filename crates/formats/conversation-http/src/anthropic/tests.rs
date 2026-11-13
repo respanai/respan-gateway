@@ -1,9 +1,12 @@
 use super::*;
+use crate::anthropic::AnthropicMessages;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
 
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
-use respan_gateway_conversation::ToolChoice;
-use respan_gateway_core::NativeFields;
+use crate::openai::OpenAiChat;
+use respan_gateway_conversation::{MediaSource, ToolChoice};
 use respan_gateway_http::http::{HeaderValue, header::CONTENT_TYPE};
 
 /// The events of `events`, each decoded in turn.
@@ -123,12 +126,11 @@ fn an_edited_tool_call_and_result_keep_their_blocks() {
             { "type": "tool_result", "tool_use_id": "t1", "content": "bob@x.io is Bob" },
         ] },
     ]});
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert_eq!(
-        chat.tools[0].native.fields().get("cache_control"),
+        AnthropicMessages::fields(&chat.tools[0].native).get("cache_control"),
         Some(&marker)
     );
-    assert_eq!(chat.tools[0].native.format(), Some(ANTHROPIC));
     assert_eq!(
         chat.options.tool_choice,
         Some(ToolChoice::Tool("lookup".into()))
@@ -188,7 +190,7 @@ fn the_metadata_user_id_is_the_user() {
     let body = json!({ "model": "c", "max_tokens": 5,
         "metadata": { "user_id": "bob@x.io" },
         "messages": [{ "role": "user", "content": "hi" }] });
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert_eq!(chat.user.as_deref(), Some("bob@x.io"));
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body.clone()));
     let redacted = written(body.clone(), |c| c.user = Some("[x]".into()));
@@ -233,7 +235,12 @@ fn input_usage_counts_cache_reads_and_writes() {
 fn stream_usage_is_counted_once_and_thinking_is_reasoning() {
     let out = decode(&[
         "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"model\":\"c\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n",
-        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n",
+        "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"x\"}}\n\n",
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hm\"}}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"si\"}}\n\n",
+        "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"g\"}}\n\n",
+        "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
         "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":5,\"output_tokens\":7}}\n\n",
     ]);
     let mut total = Usage::default();
@@ -244,7 +251,9 @@ fn stream_usage_is_counted_once_and_thinking_is_reasoning() {
     }
     assert_eq!(total.input_tokens, 5);
     assert_eq!(total.output_tokens, 7);
-    assert!(out.contains(&Output::reasoning(0, "hm")));
+    assert!(out.contains(&Output::reasoning(1, "hm")));
+    // A signature in pieces is one.
+    assert!(out.contains(&Output::signature(Some(1), "sig")));
 }
 
 #[test]
@@ -256,13 +265,15 @@ fn an_event_it_cannot_read_is_content_filters_see() {
         ": a comment\n\n",
     ]);
     // A comment says nothing; the others are events of this format.
-    assert_eq!(
-        out,
-        [
-            Output::native(ANTHROPIC, json!({ "type": "future", "text": "secret" })),
-            Output::native(ANTHROPIC, "not json"),
-            Output::native(ANTHROPIC, json!({ "type": "ping" })),
-        ]
+    assert_same::<AnthropicMessages>(
+        &out,
+        &[
+            Output::Native(AnthropicMessages::native(
+                json!({ "type": "future", "text": "secret" }),
+            )),
+            Output::Native(AnthropicMessages::native("not json")),
+            Output::Native(AnthropicMessages::native(json!({ "type": "ping" }))),
+        ],
     );
     assert!(out.iter().all(|r| !r.is_content()));
 }
@@ -294,8 +305,13 @@ fn a_system_message_goes_in_the_system_prompt_only_before_the_conversation() {
     let v = v.unwrap_or_default();
     assert_eq!(v["system"], "be brief");
     assert_eq!(v["messages"], json!([{ "role": "user", "content": "hi" }]));
+    // A later one is a user's, which Anthropic joins to the turn before it.
     chat.messages.push(Message::new(Role::System, "later"));
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
+    let v = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        v.unwrap_or_default()["messages"][1],
+        json!({ "role": "user", "content": "later" })
+    );
 }
 
 #[test]
@@ -359,19 +375,38 @@ fn a_later_inline_system_message_is_refused_by_anthropic() {
 }
 
 #[test]
-fn a_temperature_above_1_is_refused() {
+fn a_temperature_above_1_is_1_and_beside_thinking_dropped() {
+    use respan_gateway_conversation::Reasoning;
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.temperature = Some(1.5);
-    assert!(AnthropicMessages.encode_request(&chat).is_err());
-    chat.options.temperature = Some(1.0);
-    assert!(AnthropicMessages.encode_request(&chat).is_ok());
+    let sent = |chat: &Input| AnthropicMessages.encode_request(chat).map(Value::from);
+    assert_eq!(
+        sent(&chat).ok().map(|v| v["temperature"].clone()),
+        Some(json!(1.0))
+    );
+    chat.options.temperature = Some(0.5);
+    chat.options.top_p = Some(0.9);
+    chat.options.max_output_tokens = Some(800);
+    chat.options.reasoning = Some(Reasoning::budget(500));
+    let v = sent(&chat).unwrap_or_default();
+    assert_eq!((v.get("temperature"), v.get("top_p")), (None, None));
+    assert_eq!(v["max_tokens"], 1824);
+    assert_eq!(
+        v["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 1024 })
+    );
 }
 
 #[test]
 fn an_empty_turn_but_the_last_is_dropped() {
+    use respan_gateway_conversation::{Media, MediaSource};
+    // A turn of audio alone says nothing in Anthropic, too.
+    let mut audio = Message::new(Role::Assistant, "");
+    let wav = Media::new("audio/wav", MediaSource::Bytes(Bytes::from_static(b"RIFF")));
+    audio.content = vec![Content::Audio(wav)];
     let chat = Input::new([
         Message::new(Role::User, "hi"),
-        Message::new(Role::Assistant, ""),
+        audio,
         Message::new(Role::User, "again"),
         Message::new(Role::Assistant, ""),
     ]);
@@ -404,14 +439,14 @@ fn a_system_prompt_with_cache_markers_is_written_as_it_is() {
     let edited = written(body.clone(), |c| c.messages[1].content = vec!["HI".into()]);
     assert_eq!(edited.map(|v| v["system"].clone()).ok(), Some(system));
     // A part with a marker is text, with the marker in its own native.
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert!(chat.messages[0].is_plain());
     let Content::Text { text, native, .. } = &chat.messages[0].content[0] else {
         panic!("{:?}", chat.messages[0].content);
     };
     assert_eq!(text, "the repo");
     assert_eq!(
-        native.fields().get("cache_control"),
+        AnthropicMessages::fields(native).get("cache_control"),
         Some(&json!({ "type": "ephemeral" }))
     );
     assert_eq!(chat.messages[0].content[1], Content::from("be brief"));
@@ -457,6 +492,7 @@ fn a_whole_response_decodes_into_events_per_block() {
         "id": "m", "type": "message", "role": "assistant", "model": "c",
         "content": [
             { "type": "thinking", "thinking": "hm", "signature": "sig" },
+            { "type": "redacted_thinking", "data": "hidden" },
             { "type": "text", "text": "ok" },
             { "type": "tool_use", "id": "t", "name": "f", "input": { "a": 1 } },
             { "type": "text", "text": "cited", "citations": [{ "type": "char_location" }] },
@@ -466,7 +502,6 @@ fn a_whole_response_decodes_into_events_per_block() {
     });
     let events = decode_body(&v);
     let fields = |v: Value| v.as_object().cloned().unwrap_or_default();
-    let signature = fields(json!({ "signature": "sig" }));
     let cited = fields(json!({ "citations": [{ "type": "char_location" }] }));
     let mut totals = Output::usage(Usage {
         input_tokens: 2,
@@ -475,28 +510,30 @@ fn a_whole_response_decodes_into_events_per_block() {
     if let Output::Usage(u) = &mut totals {
         u.output_tokens += 1;
     }
-    assert_eq!(
-        events,
-        [
+    assert_same::<AnthropicMessages>(
+        &events,
+        &[
             Output::start("m", "c"),
             totals,
             Output::block_start(0, Block::Reasoning),
             Output::reasoning(0, "hm"),
-            Output::block_fields(ANTHROPIC, 0, signature),
+            Output::signature(Some(0), "sig"),
             Output::block_end(0),
-            Output::block_start(1, Block::Text),
-            Output::text(1, "ok"),
-            Output::block_end(1),
-            Output::block_start(2, call("t", "f")),
-            Output::arguments(2, "{\"a\":1}"),
+            // Thinking withheld is a signature alone.
+            Output::signature(None, "hidden"),
+            Output::block_start(2, Block::Text),
+            Output::text(2, "ok"),
             Output::block_end(2),
-            // What the kind has no place for comes before the block opens.
-            Output::block_fields(ANTHROPIC, 3, cited),
-            Output::block_start(3, Block::Text),
-            Output::text(3, "cited"),
+            Output::block_start(3, call("t", "f")),
+            Output::arguments(3, "{\"a\":1}"),
             Output::block_end(3),
+            // What the kind has no place for comes before the block opens.
+            Output::block_fields(4, AnthropicMessages::native(cited)),
+            Output::block_start(4, Block::Text),
+            Output::text(4, "cited"),
+            Output::block_end(4),
             Output::finished(Finish::ToolUse),
-        ]
+        ],
     );
     // Written again, the whole body is what it was.
     let again = body_of(&events).expect("a body");
@@ -730,22 +767,27 @@ fn a_text_block_with_citations_is_text_with_its_fields_and_events() {
         "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
     ]);
     assert_eq!(out.len(), 5);
-    assert!(matches!(&out[0], Output::Native(NativeValue { .. })));
+    assert!(matches!(&out[0], Output::BlockFields { block: 0, .. }));
     assert_eq!(out[1], Output::block_start(0, Block::Text));
     assert_eq!(out[2], Output::text(0, "x"));
     // And written as it is, in this format.
     let stream = stream_of(&out).expect("a stream");
     assert!(stream.contains("citations_delta"), "{stream}");
+    // Behind reasoning withheld, as in a tool loop's later step, the citation
+    // names the text's index on the wire.
+    let behind = [&[Output::signature(None, "w")][..], &out].concat();
+    let events = stream_events(&stream_of(&behind).expect("a stream"));
+    let cited = |e: &Value| e["delta"]["type"] == "citations_delta" && e["index"] == 1;
+    assert!(events.iter().any(cited), "{events:?}");
 }
 
 #[test]
 fn an_event_of_another_format_is_dropped() {
     // Even one that carries content: only a client of that format could
     // read it.
-    let foreign = Output::native(
-        "openai-chat",
+    let foreign = Output::Native(OpenAiChat::native(
         json!({ "choices": [{ "index": 1, "delta": { "content": "B" } }] }),
-    );
+    ));
     let stream = stream_of(std::slice::from_ref(&foreign)).expect("a stream");
     assert!(!stream.contains("\"B\""), "{stream}");
     let body = body_of(&[foreign]).expect("a body");
@@ -767,8 +809,10 @@ fn an_event_the_format_cannot_write_fails() {
 #[test]
 fn a_text_part_that_says_more_keeps_it_in_its_extra_and_is_still_plain() {
     let part = json!({ "type": "text", "text": "hi", "citations": [{ "type": "c" }] });
-    let chat = AnthropicMessages.decode_json(&json!({ "model": "m", "max_tokens": 1,
-        "messages": [{ "role": "user", "content": [part] }] }));
+    let chat = AnthropicMessages
+        .decode_json(&json!({ "model": "m", "max_tokens": 1,
+        "messages": [{ "role": "user", "content": [part] }] }))
+        .expect("read");
     assert!(chat.messages[0].is_plain());
     assert_eq!(chat.messages[0].text(), "hi");
     let again = AnthropicMessages.encode_request(&chat).map(Value::from);
@@ -933,14 +977,8 @@ fn extra_fields_of_the_message_survive_in_the_same_format() {
         panic!("{events:?}");
     };
     assert_eq!(
-        start.native,
-        Some(NativeFields::new(
-            ANTHROPIC,
-            json!({ "container": { "id": "k" } })
-                .as_object()
-                .cloned()
-                .unwrap_or_default()
-        ))
+        AnthropicMessages::value(&start.native),
+        Some(&json!({ "container": { "id": "k" } }))
     );
     assert_eq!(
         body_of(&events).expect("a body")["container"],
@@ -1048,7 +1086,7 @@ fn a_large_content_edit_keeps_every_part_as_it_was_without_matching_them() {
             })
         })
         .collect();
-    let mut content = decode_content::<AnthropicMessages>(&old);
+    let mut content = decode_content::<AnthropicMessages>(&old).expect("read");
     content[5_000] = Content::from("edited");
     let written = encode_content::<AnthropicMessages>(&content).expect("content");
     assert_eq!(written.as_array().expect("an array").len(), 10_000);
@@ -1062,7 +1100,7 @@ fn large_content_in_another_order_is_written_in_that_order() {
     let old: Value = (0..1_000)
         .map(|n| json!({"type": "text", "text": n.to_string()}))
         .collect();
-    let was = decode_content::<AnthropicMessages>(&old);
+    let was = decode_content::<AnthropicMessages>(&old).expect("read");
     let now: Vec<_> = was.iter().rev().cloned().collect();
     let written = encode_content::<AnthropicMessages>(&now).expect("content");
     let reversed: Vec<Value> = old
@@ -1077,11 +1115,10 @@ fn large_content_in_another_order_is_written_in_that_order() {
 
 #[test]
 fn every_output_effort_is_the_kinds_and_reaches_openai() {
-    use crate::openai::OpenAiChat;
-    for name in ["low", "medium", "high", "xhigh", "max"] {
+    for name in ["low", "medium", "high", "xhigh"] {
         let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": name },
             "messages": [{ "role": "user", "content": "hi" }] });
-        let chat = AnthropicMessages.decode_json(&v);
+        let chat = AnthropicMessages.decode_json(&v).expect("read");
         assert!(chat.native.is_empty(), "{name}");
         let back = AnthropicMessages.encode_request(&chat).map(Value::from);
         assert_eq!(
@@ -1093,5 +1130,292 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
             sent.ok().map(|v| v["reasoning_effort"].clone()),
             Some(json!(name))
         );
+    }
+    // `max` is Anthropic's own: written back, dropped by OpenAI.
+    let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": "max" },
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let chat = AnthropicMessages.decode_json(&v).expect("read");
+    assert!(chat.options.reasoning.is_none());
+    let back = AnthropicMessages.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        back.ok().map(|v| v["output_config"].clone()),
+        Some(json!({ "effort": "max" }))
+    );
+    let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+    assert!(sent.is_ok_and(|v| v.get("reasoning_effort").is_none()));
+}
+
+#[test]
+fn a_chats_json_output_is_written_as_anthropic_takes_it() {
+    let chat = |format: Value| {
+        OpenAiChat
+            .decode_json(&json!({
+                "messages": [{ "role": "user", "content": "JSON please" }],
+                "response_format": format,
+            }))
+            .expect("read")
+    };
+    // A JSON object without a schema asks for nothing the prompt does not.
+    let sent = AnthropicMessages
+        .encode_request(&chat(json!({ "type": "json_object" })))
+        .expect("written");
+    assert!(sent.get("output_config").is_none(), "{sent:?}");
+    // A wrapper's description and strictness are dropped, and the schema's
+    // constraints become its descriptions.
+    let format = json!({ "type": "json_schema", "json_schema": {
+        "name": "r", "description": "a reply", "strict": false,
+        "schema": { "type": "object", "properties": { "tags": { "type": "array", "maxItems": 2 } } },
+    } });
+    let back = OpenAiChat.encode_request(&chat(format.clone()));
+    assert_eq!(
+        back.ok().map(|v| v["response_format"].clone()),
+        Some(format.clone())
+    );
+    let sent = AnthropicMessages
+        .encode_request(&chat(format))
+        .expect("written");
+    assert_eq!(
+        sent["output_config"],
+        json!({ "format": { "type": "json_schema", "schema": { "type": "object", "properties": {
+            "tags": { "description": "Note: maximum number of items: 2.", "type": "array" },
+        } } } })
+    );
+}
+
+#[test]
+fn a_chats_effort_thinks_as_its_claude_does() {
+    let sent = |model: &str, extra: Value| {
+        let mut body = json!({ "model": model, "reasoning_effort": "high",
+            "messages": [{ "role": "user", "content": "hi" }] });
+        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+            body.extend(extra.clone());
+        }
+        let chat = OpenAiChat
+            .decode_request(Bytes::from(body.to_string()))
+            .expect("chat");
+        let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+        AnthropicMessages::translated(&chat, &mut v);
+        AnthropicMessages::prepare_call(&mut v);
+        Value::Object(v)
+    };
+    // Adaptive, beside the effort, from Claude 4.6.
+    for model in ["claude-sonnet-4-6", "claude-opus-5", "claude-sonnet-5"] {
+        let v = sent(model, json!({}));
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{model}");
+        assert_eq!(v["output_config"], json!({ "effort": "high" }), "{model}");
+    }
+    // A budget in its place before, with room to answer.
+    for model in [
+        "claude-sonnet-4-5-20250929",
+        "claude-3-7-sonnet-latest",
+        "claude-opus-4-1-20250805",
+    ] {
+        let v = sent(model, json!({}));
+        assert_eq!(
+            v["thinking"],
+            json!({ "type": "enabled", "budget_tokens": 4096 }),
+            "{model}"
+        );
+        assert!(v.get("output_config").is_none(), "{model}");
+        assert_eq!(v["max_tokens"], 4096 + DEFAULT_MAX_TOKENS, "{model}");
+    }
+    // Claude 3 thinks not at all.
+    let v = sent("claude-3-5-haiku-latest", json!({}));
+    assert!(v.get("thinking").is_none() && v.get("output_config").is_none());
+    // A call that already thinks, and another model, stay as written.
+    let thinking = json!({ "type": "enabled", "budget_tokens": 2048 });
+    let mut v = json!({ "model": "claude-sonnet-4-5", "max_tokens": 9, "thinking": thinking,
+        "output_config": { "effort": "high" } });
+    let written = v.clone();
+    if let Some(call) = v.as_object_mut() {
+        AnthropicMessages::translated(&Input::default(), call);
+    }
+    assert_eq!(v, written);
+    // Sent, a call has only the thinking its Claude takes, however it was set.
+    let fit = |model: &str, extra: Value| {
+        let mut v = json!({ "model": model, "messages": [{ "role": "user", "content": "hi" }] });
+        if let (Some(call), Some(extra)) = (v.as_object_mut(), extra.as_object()) {
+            call.extend(extra.clone());
+            AnthropicMessages::prepare_call(call);
+        }
+        v
+    };
+    let budget = |n: u64| json!({ "type": "enabled", "budget_tokens": n });
+    let v = fit("claude-opus-4-7", json!({ "thinking": budget(2048) }));
+    assert_eq!(v["thinking"], json!({ "type": "adaptive" }));
+    assert_eq!(v["output_config"], json!({ "effort": "medium" }));
+    let named = json!({ "thinking": budget(9000), "output_config": { "effort": "xhigh" } });
+    let v = fit("claude-fable-5-2", named);
+    assert_eq!(v["output_config"], json!({ "effort": "xhigh" }));
+    let v = fit(
+        "claude-sonnet-5-5",
+        json!({ "thinking": { "type": "disabled" } }),
+    );
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["output_config"], json!({ "effort": "low" }));
+    let off = json!({ "thinking": { "type": "disabled" } });
+    assert_eq!(
+        fit("claude-opus-4-7", off.clone())["thinking"],
+        off["thinking"]
+    );
+    // A tool loop's turn without its thinking, or a forced tool, drops it.
+    let call = json!({ "type": "tool_use", "id": "c1", "name": "f", "input": {} });
+    let result = json!({ "type": "tool_result", "tool_use_id": "c1", "content": "ok" });
+    let looped = json!({ "thinking": budget(2048), "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": [call] },
+        { "role": "user", "content": [result] },
+    ] });
+    assert!(fit("claude-sonnet-4-5", looped).get("thinking").is_none());
+    let forced = json!({ "thinking": budget(2048), "tool_choice": { "type": "any" } });
+    let v = fit("claude-sonnet-4-5", forced.clone());
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["tool_choice"], json!({ "type": "any" }));
+    // A Claude that refuses to force a tool chooses `auto`, and thinks.
+    let v = fit("claude-opus-5-5", forced);
+    assert_eq!(v["tool_choice"], json!({ "type": "auto" }));
+    assert_eq!(v["thinking"], json!({ "type": "adaptive" }));
+    let v = sent("kimi-k2", json!({}));
+    assert!(v.get("thinking").is_none());
+    assert_eq!(v["output_config"], json!({ "effort": "high" }));
+}
+
+#[test]
+fn a_chats_reasoning_object_is_dropped_for_anthropic() {
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning": { "effort": "high" },
+        }))
+        .expect("read");
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert!(sent.get("reasoning").is_none());
+    assert_eq!(
+        OpenAiChat.encode_request(&chat).expect("written")["reasoning"],
+        json!({ "effort": "high" })
+    );
+}
+
+/// The call a chat `body` to `model` becomes for Claude, with the thinking a
+/// translated effort adds.
+fn claude_call(model: &str, body: Value) -> Value {
+    let mut chat = json!({ "model": model, "reasoning_effort": "low",
+        "messages": [{ "role": "user", "content": "hi" }] });
+    if let (Some(chat), Some(body)) = (chat.as_object_mut(), body.as_object()) {
+        chat.extend(body.clone());
+    }
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(chat.to_string()))
+        .expect("chat");
+    let mut v = AnthropicMessages.encode_request(&chat).expect("written");
+    AnthropicMessages::translated(&chat, &mut v);
+    AnthropicMessages::prepare_call(&mut v);
+    Value::Object(v)
+}
+
+#[test]
+fn a_chats_effort_adds_no_thinking_beside_what_anthropic_refuses_with_it() {
+    let tool = json!([{ "type": "function", "function": { "name": "f", "parameters": { "type": "object" } } }]);
+    let calls =
+        json!([{ "id": "c1", "type": "function", "function": { "name": "f", "arguments": "{}" } }]);
+    let refused = [
+        json!({ "temperature": 0.2 }),
+        json!({ "top_p": 0.5 }),
+        json!({ "tools": tool, "tool_choice": "required" }),
+        json!({ "tools": tool, "tool_choice": { "type": "function", "function": { "name": "f" } } }),
+        // A tool loop whose turn of the assistant's has no thinking to open with.
+        json!({ "tools": tool, "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+        ] }),
+        // A last turn of the assistant's to continue.
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "The answer is" },
+        ] }),
+    ];
+    for extra in refused {
+        // Claude 4.6 and later keeps the effort alone.
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert!(v.get("thinking").is_none(), "{extra}: {v}");
+        assert_eq!(v["output_config"], json!({ "effort": "low" }), "{extra}");
+        // A budgeted Claude has no effort of its own to keep.
+        let v = claude_call("claude-sonnet-4-5", extra.clone());
+        assert!(
+            v.get("thinking").is_none() && v.get("output_config").is_none(),
+            "{extra}: {v}"
+        );
+    }
+    // A temperature of 1, an auto choice, or a finished tool loop think.
+    for extra in [
+        json!({ "temperature": 1.0, "top_p": 0.95 }),
+        json!({ "tools": tool, "tool_choice": "auto" }),
+        json!({ "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": null, "tool_calls": calls },
+            { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+            { "role": "assistant", "content": "done" },
+            { "role": "user", "content": "thanks" },
+        ] }),
+    ] {
+        let v = claude_call("claude-sonnet-4-6", extra.clone());
+        assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{extra}: {v}");
+    }
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |block: Value| {
+        let body = json!({"max_tokens": 1, "messages": [{"role": "user", "content": [block]}]});
+        AnthropicMessages.decode_request(Bytes::from(body.to_string()))
+    };
+    let image = |data: &str| json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}});
+    let result =
+        |block: Value| json!({"type": "tool_result", "tool_use_id": "t", "content": [block]});
+    let hello = |mime: &'static str| Ok((mime, b"hello".to_vec()));
+    let cases = [
+        (image("aGVsbG8"), hello("image/png")),
+        (
+            json!({"type": "document", "source": {"type": "text", "media_type": "text/plain", "data": "hello"}}),
+            hello("text/plain"),
+        ),
+        (result(image("-_8=")), Ok(("image/png", vec![0xfb, 0xff]))),
+        (
+            image("not*base64!"),
+            Err("`source.data` is not valid base64"),
+        ),
+        (
+            result(image("not*base64!")),
+            Err("`source.data` is not valid base64"),
+        ),
+        (
+            json!({"type": "image", "source": {"type": "base64", "data": "aGVsbG8="}}),
+            Err("`source.media_type` is required"),
+        ),
+    ];
+    let media = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => (m.mime_type.clone(), bytes.to_vec()),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => (m.mime_type.clone(), bytes.to_vec()),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Ok((mime, expected))) => {
+                assert_eq!(media(&chat), (mime.to_owned(), expected), "{said}")
+            }
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
     }
 }

@@ -10,14 +10,15 @@
 //!   `native` holds the response's other fields (`created`, `system_fingerprint`,
 //!   `service_tier`, a vendor's own object, ...) as the chunk has them.
 //! - Blocks are numbered in the order they open. The first choice's
-//!   `reasoning_content`, `content` and each `tool_calls` entry (by its
+//!   `reasoning_content` (else `reasoning`), `content` and each `tool_calls` entry (by its
 //!   `index`, else by its `id`) open a [`Block::Reasoning`], a
 //!   [`Block::Text`] and a [`Block::ToolCall`] on their first non-empty
 //!   delta, or, for a call, on the entry that names its `id` and `name`.
 //!   Opening any block ends the reasoning or text block that is open; tool
 //!   calls stay open, as they interleave. `reasoning_content` is no field
 //!   of OpenAI's own: it is where every OpenAI-compatible vendor that
-//!   reasons says it (DeepSeek, vLLM, ...).
+//!   reasons says it (DeepSeek, vLLM, ...); `reasoning` is its alias
+//!   (vLLM, Groq, Cerebras, OpenRouter).
 //! - A `finish_reason`, or the end of the stream, ends every block still
 //!   open, in the order they opened, and a finish gives a [`Output::Finish`].
 //! - `usage` gives a [`Output::Usage`] of what it adds to the totals
@@ -29,7 +30,7 @@
 //!
 //! What a response says beyond the spec, or that the kind has no form for,
 //! is kept as this format's own (`openai-chat`), where it appeared, so a
-//! plugin can read it and a client of this format gets it back:
+//! vendor's dialect can read it and a client of this format gets it back:
 //!
 //! - The response's own fields: the first chunk's in the start's `native`;
 //!   those a later chunk changes, after its usage, as one
@@ -59,22 +60,24 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, NativeFieldsExt, Schema, UsageFields, check_usage, count, decode_message,
-    merge_details, merge_fields, merge_into, native_fields, parse_effort, set, stop_json,
-    take_native, tidy, unix_now, unsupported_fields, untranslatable, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, edit_native,
+    merge_details, merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json,
+    take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
     Role, Usage,
 };
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo};
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
+use std::borrow::Cow;
+use std::marker::PhantomData;
 
 use decode::OpenAiDecoder;
-use encode::{Chunks, call_fields_of, call_json, envelope, merge_call, merge_choice};
+use encode::{Chunks, call_json, envelope, merge_call, merge_choice};
 use request::{
     read_openai_message, read_openai_tools, read_response_format, write_openai_message,
     write_openai_tools, write_reasoning, write_response_format,
@@ -83,12 +86,61 @@ use request::{
 /// The wire format's name ([`Schema::NAME`]).
 pub(crate) const OPENAI: &str = "openai-chat";
 
+/// Where Google's Chat Completions keeps a part's thought signature, the
+/// only one Chat has a place for: a call's on its `tool_calls` entry, a
+/// text's on the message.
+const SIGNED: &str = "extra_content";
+
+/// Sign `v`, a call or a message, with `signature`, as [`SIGNED`] says.
+// WARN: an `extra_content` or `google` that is no object is left unsigned.
+fn sign(v: &mut Value, signature: &str) {
+    let Some(v) = v.as_object_mut() else {
+        return;
+    };
+    let extra = v.entry(SIGNED).or_insert_with(|| json!({}));
+    let google = (extra.as_object_mut()).map(|e| e.entry("google").or_insert_with(|| json!({})));
+    if let Some(google) = google.and_then(Value::as_object_mut) {
+        google.insert("thought_signature".into(), signature.into());
+    }
+}
+
+/// The signature `fields` hold as [`SIGNED`] says, taken out of them.
+fn take_signature(fields: &mut Map<String, Value>) -> Option<String> {
+    let extra = fields.get_mut(SIGNED)?;
+    let google = extra.get_mut("google")?.as_object_mut()?;
+    let signature = google.get("thought_signature")?.as_str()?.to_owned();
+    google.shift_remove("thought_signature");
+    if google.is_empty() {
+        extra.as_object_mut().map(|e| e.shift_remove("google"));
+    }
+    if extra.as_object().is_some_and(Map::is_empty) {
+        fields.shift_remove(SIGNED);
+    }
+    Some(signature)
+}
+
 /// OpenAI Chat Completions, `openai-chat`: a `POST` to any path ending in
 /// `/chat/completions`. The provider's base URL includes the version, such
 /// as `https://api.openai.com/v1`. It reads OpenAI's fields; what else a
 /// vendor sends stays native, as the module says.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiChat;
+
+/// The `type` an OpenAI error body writes beside its `code`, as a hint on
+/// a fault ([`Fault::with`]), such as `invalid_request_error` beside
+/// `context_length_exceeded`. Without it, the body writes the code in both.
+/// Both OpenAI formats read it, Chat Completions and Responses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorType(pub Cow<'static, str>);
+
+/// The `type` of `fault`'s OpenAI error body: its [`ErrorType`], else its
+/// code.
+pub(crate) fn error_type(fault: &Fault) -> &str {
+    match fault.get() {
+        Some(ErrorType(error_type)) => error_type,
+        None => fault.code(),
+    }
+}
 
 /// The counts of a usage object `u` of this format, and its fields beside
 /// them; `Err` for a count that is no count.
@@ -99,7 +151,7 @@ pub fn read_usage(u: &Value) -> Result<(Usage, Map<String, Value>), Fault> {
 /// JSON fields.
 type Fields = Map<String, Value>;
 
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, OpenAiChat> = Names(
     &[
         ("stop", Finish::Stop),
         ("length", Finish::Length),
@@ -109,7 +161,7 @@ const FINISH: Names<Finish> = Names(
         // Sent by OpenAI-shaped resellers of Anthropic models; read, never written.
         ("refusal", Finish::Filtered),
     ],
-    OPENAI,
+    PhantomData,
 );
 
 impl Format<ClientIo, Input, Output> for OpenAiChat {
@@ -144,14 +196,15 @@ impl Format<ProviderIo, Output, Input> for OpenAiChat {
     }
 }
 
-/// Keys a conversation has a place for, or that change no output; `user`
-/// too, when it is a string.
-/// A request's fields only OpenAI acts on, which another provider drops.
-const OPENAI_ONLY: &[&str] = &["store", "metadata", "prompt_cache_key", "safety_identifier"];
-
-/// Token probabilities asked for beside the answer, which change nothing in
-/// it: a provider without them answers the same, only without them.
-const ANSWER_EXTRAS: &[&str] = &["logprobs", "top_logprobs"];
+/// Several choices cannot be represented as conversation events.
+fn check_choice_count(n: &Value) -> Result<(), Fault> {
+    if n.as_f64().is_some_and(|n| n > 1.0 && n.fract() == 0.0) {
+        return Err(Fault::bad_request(
+            "several choices (n > 1) cannot be represented",
+        ));
+    }
+    Ok(())
+}
 
 const KNOWN: &[&str] = &[
     "model",
@@ -180,7 +233,7 @@ const ROLES: Names<Role> = Names(
         ("user", Role::User),
         ("assistant", Role::Assistant),
     ],
-    OPENAI,
+    PhantomData,
 );
 
 /// OpenAI Chat counts no cache writes of its own; another provider's, part
@@ -214,7 +267,11 @@ impl Schema for OpenAiChat {
         self.decoder().body(v, out)
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        check_choice_count(&v["n"])
+    }
+
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         // The larger of both spellings, so the limit read bounds what any
         // provider enforces.
@@ -232,49 +289,37 @@ impl Schema for OpenAiChat {
             _ => Vec::new(),
         };
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_fields(OPENAI, unsupported_fields(v, KNOWN, INERT));
+        chat.native = OpenAiChat::native(unsupported_fields(v, KNOWN, INERT));
         if chat.user.is_some() {
-            chat.native.fields_mut(OPENAI).shift_remove("user");
+            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
         }
-        // OpenAI's own: whether it keeps the completion, its tags for it,
-        // and hints for its cache and abuse checks. Another provider keeps
-        // nothing and needs no hint, so drops them; and the extras it has
-        // no place for.
-        for key in OPENAI_ONLY.iter().chain(ANSWER_EXTRAS) {
-            if let Some(value) = chat.native.fields_mut(OPENAI).shift_remove(*key) {
-                let fields = chat.native.fields_mut(OPENAI);
-                let inert = fields
-                    .entry(crate::schema::INERT)
-                    .or_insert_with(|| json!({}));
-                inert[*key] = value;
-            }
-        }
+        chat.options.service_tier = take_text::<OpenAiChat>(&mut chat, "service_tier");
         for m in v["messages"].as_array().into_iter().flatten() {
-            let mut message = decode_message::<Self>(m, &ROLES);
+            let mut message = decode_message::<Self>(m, &ROLES)?;
             read_openai_message(m, &mut message);
-            tidy(&mut message);
+            tidy::<OpenAiChat>(&mut message);
             chat.messages.push(message);
         }
         read_openai_tools(v, &mut chat);
-        chat.native = native_fields(OPENAI, std::mem::take(chat.native.fields_mut(OPENAI)));
         read_response_format(v, &mut chat);
         chat.options.reasoning =
-            take_native(&mut chat, "reasoning_effort", |e| parse_effort(e.as_str()?))
-                .map(Reasoning::effort);
-        chat
+            take_native::<OpenAiChat, _>(&mut chat.native, "reasoning_effort", |e| {
+                parse_effort(e.as_str()?)
+            })
+            .map(Reasoning::effort);
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        // Several choices cannot be represented as events.
-        let several = |n: &Value| n.as_u64().is_some_and(|n| n > 1);
-        if chat.native.format() == Some(OPENAI)
-            && chat.native.fields().get("n").is_some_and(several)
-        {
-            return Err(Fault::bad_request(
-                "several choices (n > 1) cannot be represented",
-            ));
+        if let Some(n) = OpenAiChat::fields(&chat.native).get("n") {
+            check_choice_count(n)?;
         }
         let mut v = Map::new();
+        set(
+            &mut v,
+            "service_tier",
+            chat.options.service_tier.clone().map(Into::into),
+        );
         let mut messages = Vec::new();
         for m in &chat.messages {
             messages.extend(write_openai_message(m, &ROLES)?);
@@ -296,13 +341,10 @@ impl Schema for OpenAiChat {
         set(&mut v, "user", chat.user.clone().map(Into::into));
         set(&mut v, "response_format", write_response_format(chat));
         set(&mut v, "reasoning_effort", write_reasoning(chat)?);
-        if chat.options.top_k.is_some() {
-            return Err(untranslatable("top_k in OpenAI Chat"));
-        }
         Ok(v)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 
@@ -331,10 +373,9 @@ impl Schema for OpenAiChat {
             .items()
             .iter()
             .filter_map(|item| match item {
-                AssembledItem::Native(NativeValue {
-                    format: f,
-                    value: raw,
-                }) if **f == *OPENAI => call_fields_of(raw),
+                AssembledItem::BlockFields { block, native } => {
+                    Some((*block, OpenAiChat::fields(native)))
+                }
                 _ => None,
             })
             .collect();
@@ -344,8 +385,11 @@ impl Schema for OpenAiChat {
                 Block::ToolCall { id, name } => {
                     let arguments = if p.text.is_empty() { "{}" } else { &p.text };
                     let mut call = call_json(None, Some(id), Some(name), arguments);
-                    for (_, entry, function) in fields.iter().filter(|(b, ..)| *b == p.block) {
-                        merge_call(&mut call, entry, function);
+                    for (_, more) in fields.iter().filter(|(b, _)| *b == p.block) {
+                        merge_call(&mut call, more);
+                    }
+                    if let Some(s) = whole.signature(p.block) {
+                        sign(&mut call, s);
                     }
                     Some(call)
                 }
@@ -355,6 +399,15 @@ impl Schema for OpenAiChat {
         let mut message = json!({ "role": "assistant", "content": text });
         if !reasoning.is_empty() {
             message["reasoning_content"] = reasoning.into();
+        }
+        // WARN: Chat has no place for a signature over reasoning, or alone; it is dropped here, silently.
+        let text_signature = whole
+            .blocks()
+            .filter(|p| p.kind == Block::Text)
+            .filter_map(|p| whole.signature(p.block))
+            .last();
+        if let Some(s) = text_signature {
+            sign(&mut message, s);
         }
         if !calls.is_empty() {
             if text.is_empty() {
@@ -371,22 +424,22 @@ impl Schema for OpenAiChat {
             "finish_reason": FINISH.reason(finish)?,
         })];
         for item in whole.items() {
-            let AssembledItem::Native(NativeValue { format, value: raw }) = item else {
+            // Another format's goes: only a client of that format could read it.
+            let AssembledItem::Native(n) = item else {
                 continue;
             };
-            if &**format == OPENAI && call_fields_of(raw).is_some() {
+            let Some(raw) = OpenAiChat::value(n) else {
                 continue;
-            }
-            if let (true, Some(fields)) = (&**format == OPENAI, usage_fields(raw)) {
+            };
+            if let Some(fields) = usage_fields(raw) {
                 usage_more.extend(fields.clone());
                 continue;
             }
-            if let (true, Some(fields)) = (&**format == OPENAI, response_of(raw)) {
+            if let Some(fields) = response_of(raw) {
                 merge_into(&mut response, fields);
                 continue;
             }
-            // Another format's goes: only a client of that format could read it.
-            if let (true, Some(more)) = (&**format == OPENAI, raw["choices"].as_array()) {
+            if let Some(more) = raw["choices"].as_array() {
                 more.iter().for_each(|c| merge_choice(&mut choices, c));
             }
         }
@@ -403,8 +456,7 @@ impl Schema for OpenAiChat {
 
     fn error_body(fault: &Fault) -> Value {
         let code = fault.code();
-        let error =
-            json!({ "message": fault.message(), "type": code, "param": null, "code": code });
+        let error = json!({ "message": fault.message(), "type": error_type(fault), "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
 
@@ -444,7 +496,7 @@ fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/prompt_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/prompt_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/completion_tokens_details/reasoning_tokens")?;
-    Ok(usage)
+    Ok(parts_within_totals(usage))
 }
 
 /// What a usage object `u` says that has no unit: vendor fields, and

@@ -14,13 +14,15 @@
 //!   whole body's blocks are the same events, one delta each.
 //! - `message_delta`'s `stop_reason` is the [`Output::Finish`]; `usage` of
 //!   `message_start` and `message_delta` are [`Output::Usage`] increments.
-//! - A block's fields the kind has no place for, its `signature` (a
-//!   `signature_delta`) among them, are its [`Output::block_fields`].
-//! - What else the kind has no form for is a [`Output::Native`] of this
-//!   format, as the stream event that carries it: `ping`, a block
-//!   of another type (and its deltas and stop), citations, a `stop_sequence`
-//!   (as a `message_delta`), an event of an unknown type. In a whole body a
-//!   block of another type is a `content_block_start` of the whole block.
+//! - A block's fields the kind has no place for are its
+//!   [`Output::BlockFields`].
+//! - What else the kind has no form for is a native of this format, as the
+//!   stream event that carries it: an [`Output::BlockNative`] if it has an
+//!   `index` (a block of another type, its deltas and stop, citations), else
+//!   an [`Output::Native`] (`ping`, a `stop_sequence` as a `message_delta`,
+//!   an event of an unknown type). The block's number is the `index` written.
+//!   In a whole body a block of another type is a `content_block_start` of
+//!   the whole block.
 //!   `message_stop` ends the stream.
 //!
 //! Encoders do the reverse. A stream's blocks are written one at a time, as
@@ -30,37 +32,38 @@
 
 mod decode;
 mod encode;
+mod output_schema;
 mod request;
 #[cfg(test)]
 mod tests;
 
 use crate::schema::{
-    Asked, Keep, Names, NativeFieldsExt, Schema, UsageFields, arguments_object, check_usage, count,
-    decode_content, decode_message, encode_content, encode_message, kept_fields, merge_details,
-    merge_fields, merge_into, native_fields, own_fields, says, set, stop_json, unsupported_fields,
-    unwritable_content, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
+    decode_content, decode_message, edit_native, encode_content, encode_message, merge_details,
+    merge_fields, merge_into, merge_missing, own_fields, says, sealed, set, stop_json,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
-    block_fields,
 };
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, NativeValue};
+use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::{ClientIo, Encoder, ProviderIo, http};
 use respan_gateway_http::{Connect, KeyIn, Upstream};
 use serde_json::{Map, Value, json};
+use std::marker::PhantomData;
 
 use decode::AnthropicDecoder;
 use encode::EventStream;
+pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
 use request::{
-    read_effort, read_output, read_thinking, read_tools_of, write_output, write_thinking,
-    write_tools,
+    read_effort, read_output, read_thinking, read_tools_of, signed, write_output, write_tools,
 };
 
 /// The `max_tokens` of a translated request without one, as it is required.
 const DEFAULT_MAX_TOKENS: u64 = 4096;
 
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, AnthropicMessages> = Names(
     &[
         ("end_turn", Finish::Stop),
         ("stop_sequence", Finish::Stop),
@@ -68,16 +71,18 @@ const FINISH: Names<Finish> = Names(
         ("tool_use", Finish::ToolUse),
         ("refusal", Finish::Filtered),
     ],
-    ANTHROPIC,
+    PhantomData,
 );
 
 /// A reason as a [`Finish`]: a full context window is the token limit to
 /// another format.
 fn finish_of(reason: &str) -> Finish {
     match reason {
-        "model_context_window_exceeded" => Finish::native_or(ANTHROPIC, reason, Finish::Length),
+        "model_context_window_exceeded" => {
+            Finish::native(AnthropicMessages::native(reason), Some(Finish::Length))
+        }
         // A tool loop Anthropic paused, such as a long web search: incomplete.
-        "pause_turn" => Finish::native_or(ANTHROPIC, reason, Finish::Length),
+        "pause_turn" => Finish::native(AnthropicMessages::native(reason), Some(Finish::Length)),
         _ => FINISH.finish(reason),
     }
 }
@@ -143,7 +148,6 @@ const KNOWN: &[&str] = &[
     "max_tokens",
     "temperature",
     "top_p",
-    "top_k",
     "stop_sequences",
     "stream",
     "metadata",
@@ -157,7 +161,7 @@ const ROLES: Names<Role> = Names(
         ("user", Role::User),
         ("assistant", Role::Assistant),
     ],
-    ANTHROPIC,
+    PhantomData,
 );
 
 /// Whether a message is instructions: Anthropic has one system prompt for a
@@ -167,37 +171,39 @@ fn is_system(m: &Message) -> bool {
 }
 
 /// The parts of the leading system messages, as the system prompt, and
-/// the rest; a later system message is refused.
-fn split_system(chat: &Input) -> Result<(Vec<Content>, &[Message]), Fault> {
+/// the rest, where a later system message is a user's.
+// WARN: a system message's own fields have no place in the prompt; dropped.
+fn split_system(chat: &Input) -> (Vec<Content>, &[Message]) {
     let lead = chat.messages.iter().take_while(|m| is_system(m)).count();
     let (system, rest) = chat.messages.split_at(lead);
-    if rest.iter().any(is_system) {
-        return Err(Fault::bad_request(
-            "Anthropic has no place for a system message after the conversation starts",
-        ));
-    }
-    if !system.iter().all(unsaid) {
-        return Err(Fault::bad_request(
-            "Anthropic's system prompt has no place for a message's other fields",
-        ));
-    }
     let parts = system.iter().flat_map(|m| m.content.iter().cloned());
-    Ok((parts.collect(), rest))
+    (parts.collect(), rest)
 }
 
-/// `m` as Anthropic takes it: without reasoning it did not sign, which it
-/// refuses and lets an earlier turn leave out, and without empty text parts
-/// if it says something else, such as a tool call.
+/// `m` as Anthropic takes it: its signed reasoning a `thinking` block,
+/// without reasoning it did not sign, which it refuses and lets an earlier
+/// turn leave out, and without empty text parts if it says something else,
+/// such as a tool call.
 fn writable(m: &Message) -> std::borrow::Cow<'_, Message> {
-    let unsigned = |c: &Content| match c {
-        Content::Reasoning { native, .. } => {
-            native.format() != Some(ANTHROPIC) || !native.fields().contains_key("signature")
-        }
-        _ => false,
-    };
     let mut m = std::borrow::Cow::Borrowed(m);
-    if m.content.iter().any(unsigned) {
-        m.to_mut().content.retain(|c| !unsigned(c));
+    if m.content
+        .iter()
+        .any(|c| matches!(c, Content::Reasoning { .. } | Content::Signature(_)))
+    {
+        let content = sealed(&m.content)
+            .filter_map(|(part, signature)| match part {
+                Content::Reasoning { text, native } => {
+                    let mut block =
+                        json!({ "type": "thinking", "thinking": text, "signature": signature? });
+                    merge_missing(&mut block, AnthropicMessages::fields(native).clone());
+                    Some(Content::Native(AnthropicMessages::native(block)))
+                }
+                // WARN: Anthropic signs only thinking; another part's signature is dropped here, silently.
+                Content::Signature(_) => None,
+                part => Some(part.clone()),
+            })
+            .collect();
+        m.to_mut().content = content;
     }
     let empty = |c: &Content| matches!(c, Content::Text { text, .. } if text.is_empty());
     if m.content.iter().any(empty) && !m.content.iter().all(empty) {
@@ -213,11 +219,9 @@ fn is_empty(m: &Message) -> bool {
     m.content.iter().all(empty) && unsaid(m)
 }
 
-/// Whether a message's fields are none Anthropic writes or refuses.
+/// Whether a message's fields are none Anthropic writes.
 fn unsaid(m: &Message) -> bool {
-    let what = |_: &str| String::new();
-    let kept = kept_fields(ANTHROPIC, &m.native, what, Keep::CACHE_MARKER);
-    kept.is_ok_and(|f| f.is_empty())
+    AnthropicMessages::fields(&m.native).is_empty()
 }
 
 /// Anthropic counts no reasoning apart from the output.
@@ -236,6 +240,17 @@ impl Schema for AnthropicMessages {
     const OWN: &'static [&'static str] = &["metadata", "output_config", "thinking"];
     type Decoding = AnthropicDecoder;
 
+    /// A client of another format names its reasoning by an effort alone:
+    /// Claude thinks as its model does for it (`effort_thinking`).
+    fn translated(_: &Input, v: &mut Map<String, Value>) {
+        effort_thinking(v);
+    }
+
+    /// Claude is sent only the thinking its model takes (`fit_thinking`).
+    fn prepare_call(v: &mut Map<String, Value>) {
+        fit_thinking(v);
+    }
+
     fn decoder(&self) -> AnthropicDecoder {
         AnthropicDecoder::default()
     }
@@ -244,7 +259,7 @@ impl Schema for AnthropicMessages {
         self.decoder().body(v, out)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 
@@ -270,12 +285,11 @@ impl Schema for AnthropicMessages {
     }
 
     /// The system prompt becomes a leading system message.
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.options.max_output_tokens = v["max_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
-        chat.options.top_k = v["top_k"].as_u64();
         chat.options.stop = v["stop_sequences"]
             .as_array()
             .into_iter()
@@ -283,7 +297,7 @@ impl Schema for AnthropicMessages {
             .filter_map(|s| s.as_str().map(Into::into))
             .collect();
         chat.user = v["metadata"]["user_id"].as_str().map(Into::into);
-        chat.native = native_fields(ANTHROPIC, unsupported_fields(v, KNOWN, &[]));
+        chat.native = AnthropicMessages::native(unsupported_fields(v, KNOWN, &[]));
         // Metadata beside the user id is kept for this format to write again.
         let others = v["metadata"].as_object().into_iter().flatten();
         let others: Map<String, Value> = others
@@ -291,50 +305,37 @@ impl Schema for AnthropicMessages {
             .map(|(k, x)| (k.clone(), x.clone()))
             .collect();
         if !others.is_empty() {
-            chat.native
-                .fields_mut(ANTHROPIC)
-                .insert("metadata".into(), others.into());
+            edit_native::<Self, _>(&mut chat.native, |f| {
+                f.insert("metadata".into(), others.into())
+            });
         }
         if says(&v["system"]) {
             let mut system = Message::new(Role::System, "");
-            system.content = decode_content::<Self>(&v["system"]);
+            system.content = decode_content::<Self>(&v["system"])?;
             chat.messages.push(system);
         }
         for m in v["messages"].as_array().into_iter().flatten() {
-            chat.messages.push(decode_message::<Self>(m, &ROLES));
+            let mut message = decode_message::<Self>(m, &ROLES)?;
+            signed(&mut message, &m["content"]);
+            chat.messages.push(message);
         }
         read_tools_of(v, &mut chat);
-        chat.native = native_fields(ANTHROPIC, std::mem::take(chat.native.fields_mut(ANTHROPIC)));
         read_output(v, &mut chat);
         read_thinking(&mut chat);
         read_effort(&mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let (system, rest) = split_system(chat)?;
-        if rest.is_empty() {
-            return Err(Fault::bad_request(
-                "Anthropic needs at least one user or assistant message",
-            ));
-        }
-        if chat.options.temperature.is_some_and(|t| t > 1.0) {
-            return Err(Fault::bad_request(
-                "Anthropic's temperature is at most 1, so a higher one cannot be translated",
-            ));
-        }
-        let thinking = write_thinking(chat)?;
+        let (system, rest) = split_system(chat);
+        let thinking = write_thinking(chat);
         // Anthropic's `max_tokens` must exceed the thinking budget.
         let budget = thinking.as_ref().and_then(|t| t["budget_tokens"].as_u64());
-        let default = match budget {
-            Some(budget) if budget >= DEFAULT_MAX_TOKENS => {
-                budget.saturating_add(DEFAULT_MAX_TOKENS)
-            }
-            _ => DEFAULT_MAX_TOKENS,
-        };
         let mut v = Map::new();
-        let max_tokens = chat.options.max_output_tokens.unwrap_or(default);
-        v.insert("max_tokens".into(), max_tokens.into());
+        let o = &chat.options;
+        let max = o.max_output_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+        let (max_tokens, temperature, top_p) = claude_sampling(o, Some(max), budget);
+        v.insert("max_tokens".into(), max_tokens.unwrap_or(max).into());
         set(
             &mut v,
             "system",
@@ -351,35 +352,27 @@ impl Schema for AnthropicMessages {
             .enumerate()
             .filter(|(i, m)| *i == last || !is_empty(m));
         let messages = kept.map(|(_, m)| encode_message::<Self>(&m, &ROLES));
-        let messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        let mut messages: Vec<Value> = messages.collect::<Result<_, _>>()?;
+        // WARN: a message whose every part was dropped is left out.
+        messages.retain(|m| m["content"] != json!([]));
+        if messages.is_empty() {
+            return Err(Fault::bad_request(
+                "Anthropic needs at least one user or assistant message",
+            ));
+        }
         v.insert("messages".into(), messages.into());
-        set(
-            &mut v,
-            "temperature",
-            chat.options.temperature.map(Into::into),
-        );
-        set(&mut v, "top_p", chat.options.top_p.map(Into::into));
-        set(&mut v, "top_k", chat.options.top_k.map(Into::into));
+        set(&mut v, "temperature", temperature.map(Into::into));
+        set(&mut v, "top_p", top_p.map(Into::into));
         set(&mut v, "stop_sequences", stop_json(&chat.options.stop));
         let mut metadata = Value::Object(Map::new());
         if let Some(user) = &chat.user {
             metadata["user_id"] = user.as_str().into();
         }
-        let own = chat.native.format() == Some(ANTHROPIC);
-        if let Some(more) = chat
-            .native
-            .fields()
+        if let Some(more) = Self::fields(&chat.native)
             .get("metadata")
             .and_then(Value::as_object)
         {
-            merge_fields(
-                &mut metadata,
-                &more
-                    .iter()
-                    .filter(|_| own)
-                    .map(|(k, x)| (k.clone(), x.clone()))
-                    .collect(),
-            );
+            merge_fields(&mut metadata, more);
         }
         let empty = metadata.as_object().is_none_or(Map::is_empty);
         set(&mut v, "metadata", (!empty).then_some(metadata));
@@ -410,7 +403,13 @@ impl Schema for AnthropicMessages {
                     let block = match &part.kind {
                         Block::Text if part.text.is_empty() => continue,
                         Block::Text => json!({ "type": "text", "text": part.text }),
-                        Block::Reasoning => json!({ "type": "thinking", "thinking": part.text }),
+                        Block::Reasoning => {
+                            let mut b = json!({ "type": "thinking", "thinking": part.text });
+                            if let Some(s) = whole.signature(part.block) {
+                                b["signature"] = s.into();
+                            }
+                            b
+                        }
                         Block::ToolCall { id, name } => {
                             let input =
                                 arguments_object(&part.text).map_err(|_| unwritable_content())?;
@@ -425,40 +424,39 @@ impl Schema for AnthropicMessages {
                     at.push((part.block, content.len()));
                     content.push(block);
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if **format == *ANTHROPIC && block_fields(raw).is_some() =>
-                {
-                    let Some((block, more)) = block_fields(raw) else {
-                        continue;
-                    };
-                    // A block placed takes them now, as a signature after it.
-                    match at.iter().find(|(b, _)| *b == block) {
-                        Some((_, place)) => merge_fields(&mut content[*place], more),
-                        None => fields.push((block, more.clone())),
+                AssembledItem::Signature { block: None, data } => {
+                    content.push(json!({ "type": "redacted_thinking", "data": data }));
+                }
+                // WARN: Anthropic signs only thinking; another block's signature is dropped here, silently.
+                AssembledItem::Signature { .. } => {}
+                AssembledItem::BlockFields { block, native } if Self::value(native).is_some() => {
+                    let native = Self::fields(native);
+                    match at.iter().find(|(b, _)| b == block) {
+                        Some((_, place)) => merge_fields(&mut content[*place], native),
+                        None => fields.push((*block, native.clone())),
                     }
                 }
-                AssembledItem::Native(NativeValue { format, value: raw })
-                    if **format == *ANTHROPIC =>
-                {
-                    let place = raw["index"]
-                        .as_u64()
-                        .and_then(|i| u32::try_from(i).ok())
-                        .and_then(|i| at.iter().find(|(b, _)| *b == i))
-                        .map(|(_, place)| *place);
+                AssembledItem::Native(n) if Self::value(n).is_some() => {
+                    let raw = Self::value(n).unwrap_or_default();
+                    match raw["type"].as_str() {
+                        Some("ping") => {}
+                        Some("message_delta") => stop.add(raw),
+                        // WARN: an event of a type a body has no place for is dropped.
+                        _ => {}
+                    }
+                }
+                AssembledItem::BlockNative { block, native } if Self::value(native).is_some() => {
+                    let raw = Self::value(native).unwrap_or_default();
+                    let place = at.iter().find(|(b, _)| b == block).map(|(_, place)| *place);
                     match (raw["type"].as_str(), place) {
                         (Some("content_block_start"), _) => {
-                            let index = raw["index"].as_u64().and_then(|i| u32::try_from(i).ok());
-                            at.extend(index.map(|i| (i, content.len())));
+                            at.push((*block, content.len()));
                             content.push(raw["content_block"].clone());
                         }
-                        (Some("content_block_stop" | "ping"), _) => {}
-                        (Some("message_delta"), _) => stop.add(raw),
+                        (Some("content_block_stop"), _) => {}
                         (Some("content_block_delta"), Some(place)) => {
                             let delta = &raw["delta"];
                             match delta["type"].as_str() {
-                                Some("signature_delta") => {
-                                    content[place]["signature"] = delta["signature"].clone();
-                                }
                                 Some("citations_delta") => {
                                     let cites = &mut content[place]["citations"];
                                     if !cites.is_array() {
@@ -475,14 +473,16 @@ impl Schema for AnthropicMessages {
                                         None => input.push((place, json.to_owned())),
                                     }
                                 }
-                                _ => return Err(unwritable_content()),
+                                // WARN: a delta a body has no place for is dropped.
+                                _ => {}
                             }
                         }
-                        _ => return Err(unwritable_content()),
+                        // WARN: so is an event of a block that never started.
+                        _ => {}
                     }
                 }
                 // Another format's: only a client of that format could read it.
-                AssembledItem::Native(_) => {}
+                _ => {}
             }
         }
         for (place, text) in input {
@@ -499,7 +499,7 @@ impl Schema for AnthropicMessages {
         body.insert("type".into(), "message".into());
         body.insert("role".into(), "assistant".into());
         body.insert("model".into(), model.into());
-        body.extend(own_fields(whole.start.as_ref(), ANTHROPIC));
+        body.extend(own_fields::<AnthropicMessages>(whole.start.as_ref()));
         body.insert("content".into(), content.into());
         body.insert("stop_reason".into(), stop.reason(finish)?.into());
         let sequence = stop.delta.get("stop_sequence").cloned();

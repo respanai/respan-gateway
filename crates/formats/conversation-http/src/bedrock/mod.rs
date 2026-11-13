@@ -12,21 +12,22 @@
 //!
 //! The leading system messages are the `system` blocks. `messages` are the
 //! rest, a message of the role before it joined to that one, as Converse needs
-//! the roles to alternate, and a blank text left out; a part, tool or
-//! system block with a cache marker (Anthropic's `cache_control`) is
-//! followed by a `cachePoint`. A part is a `text`,
-//! an `image` or `document` (bytes only: a URL is refused, as the format has
-//! no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
+//! the roles to alternate, and a blank text left out. A part is a `text`,
+//! an `image`, `audio` or `document` (bytes only: one by URL is dropped, as
+//! the format has no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
 //! one), or `reasoningContent` that Bedrock signed or redacted, which is the
 //! only reasoning sent back. `inferenceConfig` has `maxTokens`,
 //! `temperature`, `topP` and `stopSequences`; `toolConfig` the tools and the
 //! choice (`auto`, `any`, or one `tool`); `outputConfig` a JSON schema the
-//! answer keeps to. A reasoning budget is
-//! `additionalModelRequestFields.thinking`, and `Off` its disabling.
+//! answer keeps to. A Claude's reasoning is its `thinking` and
+//! `output_config` in `additionalModelRequestFields`, as the Anthropic writer
+//! writes them for its model, a forced tool choice it refuses `auto`.
 //!
-//! Refused as having no field: `top_k`, an effort, JSON without a schema, an
-//! end user's id, one tool call at a time, audio, a system message after
-//! the conversation starts, and the fields of another format.
+//! What Converse has no field for is dropped (JSON without a schema, one
+//! tool call at a time, media by URL or of a type it lacks) or mapped to
+//! its nearest: a system message after the conversation starts a user's.
+//! An end user's id and the fields of another format, Anthropic's
+//! `cache_control` among them, are dropped.
 //!
 //! # Responses as events
 //!
@@ -37,7 +38,8 @@
 //! - `output.message.content` blocks are numbered as Converse numbers them:
 //!   `text` is a `lock::Text`, `toolUse` a `lock::ToolCall` whose input
 //!   is one arguments delta, and `reasoningContent` a `lock::Reasoning`
-//!   with its `signature` or `redactedContent` as the block's fields. A
+//!   and its `signature` an [`Output::Signature`] over it; `redactedContent`
+//!   alone is one over no block, reasoning withheld. A
 //!   stream sends no start for text or reasoning: the first delta opens it.
 //! - `stopReason` is the [`Output::Finish`]: `end_turn` and `stop_sequence`
 //!   a stop, `tool_use`, `max_tokens`, and `content_filtered` and
@@ -46,7 +48,8 @@
 //!   input.
 //! - What else a response says (`metrics`, `trace`, `serviceTier`, the
 //!   model's own response fields), and a block of another type (a citation,
-//!   a guard), is an [`Output::Native`], which another format drops.
+//!   a guard), is an [`Output::Native`] (a block's, an
+//!   [`Output::BlockNative`]), which another format drops.
 //!
 //! A failure in the stream (`:message-type` `exception` or `error`) is an
 //! upstream fault of its type; a stream that ends before `messageStop`, or
@@ -57,13 +60,14 @@ mod request;
 #[cfg(test)]
 mod tests;
 
-use crate::schema::{Asked, Framing, Names, Schema, native_fields, rest_of, unwritable_content};
+use crate::schema::{Asked, Framing, Names, Own, Schema, rest_of, unwritable_content};
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Role};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream};
 use serde_json::{Map, Value, json};
+use std::marker::PhantomData;
 
 use decode::ConverseDecoder;
 use request::{split_system, write_config, write_messages, write_tools};
@@ -73,10 +77,10 @@ const BEDROCK: &str = "bedrock-converse";
 
 const ROLES: Names<Role> = Names(
     &[("user", Role::User), ("assistant", Role::Assistant)],
-    BEDROCK,
+    PhantomData,
 );
 
-const FINISH: Names<Finish> = Names(
+const FINISH: Names<Finish, BedrockConverse> = Names(
     &[
         ("end_turn", Finish::Stop),
         ("stop_sequence", Finish::Stop),
@@ -84,15 +88,19 @@ const FINISH: Names<Finish> = Names(
         ("tool_use", Finish::ToolUse),
         ("content_filtered", Finish::Filtered),
     ],
-    BEDROCK,
+    PhantomData,
 );
 
 /// A reason as a [`Finish`]: a guardrail's intervention filters the answer, a
 /// full context window is the token limit.
 fn finish_of(reason: &str) -> Finish {
     match reason {
-        "guardrail_intervened" => Finish::native_or(BEDROCK, reason, Finish::Filtered),
-        "model_context_window_exceeded" => Finish::native_or(BEDROCK, reason, Finish::Length),
+        "guardrail_intervened" => {
+            Finish::native(BedrockConverse::native(reason), Some(Finish::Filtered))
+        }
+        "model_context_window_exceeded" => {
+            Finish::native(BedrockConverse::native(reason), Some(Finish::Length))
+        }
         _ => FINISH.finish(reason),
     }
 }
@@ -158,6 +166,18 @@ const DOCUMENTS: &[(&str, &str)] = &[
     ("md", "text/markdown"),
 ];
 
+/// The audio formats Converse takes, by media type.
+const AUDIO: &[(&str, &str)] = &[
+    ("mp3", "audio/mpeg"),
+    ("wav", "audio/wav"),
+    ("wav", "audio/x-wav"),
+    ("flac", "audio/flac"),
+    ("ogg", "audio/ogg"),
+    ("webm", "audio/webm"),
+    ("aac", "audio/aac"),
+    ("m4a", "audio/mp4"),
+];
+
 /// The Converse format of a media type in `table`.
 fn format_of(table: &[(&'static str, &str)], mime: &str) -> Option<&'static str> {
     table.iter().find(|(_, m)| *m == mime).map(|(f, _)| *f)
@@ -181,8 +201,8 @@ impl Schema for BedrockConverse {
         self.decoder().body(v, out)
     }
 
-    fn decode_part(_: &Value) -> Option<Content> {
-        None
+    fn decode_part(_: &Value) -> Result<Option<Content>, Fault> {
+        Ok(None)
     }
 
     fn encode_part(_: &Content) -> Result<Value, Fault> {
@@ -195,9 +215,8 @@ impl Schema for BedrockConverse {
 
     /// The model is in the path, not in the body.
     fn encode_request(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let keep = crate::schema::Keep::default();
-        let in_the_request = |key: &str| format!("'{key}' in the request");
-        let mut native = crate::schema::kept_fields(BEDROCK, &chat.native, in_the_request, keep)?;
+        let chat = &*crate::schema::own_shapes::<Self>(chat);
+        let mut native = BedrockConverse::fields(&chat.native).clone();
         let mut v = self.encode_json(chat)?;
         // The model's own fields beside the reasoning written from the kind.
         let fields = "additionalModelRequestFields";
@@ -226,7 +245,7 @@ impl Schema for BedrockConverse {
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        let (system, rest) = split_system(chat)?;
+        let (system, rest) = split_system(chat);
         let messages = write_messages(rest)?;
         if messages.is_empty() {
             return Err(Fault::bad_request(
@@ -244,10 +263,10 @@ impl Schema for BedrockConverse {
     }
 
     /// Not read: the request stays native, so only Bedrock is sent it.
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
-        chat.native = native_fields(BEDROCK, rest_of(v, &[]));
-        chat
+        chat.native = BedrockConverse::native(rest_of(v, &[]));
+        Ok(chat)
     }
 
     fn encode_whole(&self, _: &Assembled) -> Result<Value, Fault> {

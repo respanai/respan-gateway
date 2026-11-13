@@ -19,43 +19,10 @@ use respan_gateway_http::{ClientIo, ProviderIo};
 use respan_gateway_realtime::{AudioFormat, Input, Modality, Output, Session};
 use respan_gateway_ws::WsTransport;
 
-use serde_json::Value;
-
-use crate::foreign::{Drop, Harmless};
 use crate::session::{self, Spec};
 
 const NAME: &str = SPEC.name;
-
-/// What of Gemini Live's own natives another format may drop: its
-/// transcription settings, context compression and voice detection's
-/// sensitivities, and the shape of the message a client's event came in;
-/// the start of the user's activity, which a format's voice detection or
-/// its next commit implies, and the end of its audio stream.
-pub(crate) const HARMLESS: Harmless = Harmless {
-    session: &[
-        "setup.contextWindowCompression",
-        "setup.inputAudioTranscription",
-        "setup.outputAudioTranscription",
-    ],
-    vad: &[
-        "startOfSpeechSensitivity",
-        "endOfSpeechSensitivity",
-        "disabled",
-    ],
-    message: &[],
-    event: &["clientContent", "realtimeInput.activityStart", "name"],
-    input: |event| {
-        let first = |v: &Value| v.as_object()?.keys().next().cloned();
-        match event.get("realtimeInput").and_then(first) {
-            Some(field) if field == "activityStart" || field == "audioStreamEnd" => {
-                (Drop::Always, format!("realtimeInput.{field}"))
-            }
-            Some(field) => (Drop::Never, format!("realtimeInput.{field}")),
-            None => (Drop::Never, first(event).unwrap_or_default()),
-        }
-    },
-    said: |_| false,
-};
+pub(crate) type Key = crate::Own<GeminiLive>;
 
 /// What a session's writer to its provider and reader of it share.
 #[derive(Debug, Default)]
@@ -83,7 +50,6 @@ pub(crate) const SPEC: Spec = Spec {
     protocol: None,
     binary_text: true,
     transcribes: false,
-    harmless: Some(&HARMLESS),
 };
 
 /// Gemini Live: a `GET` upgrade to a path ending in the Live API's endpoint,
@@ -101,13 +67,13 @@ pub(crate) const SPEC: Spec = Spec {
 /// ends, stays native, so a relay to Gemini keeps what every message says.
 ///
 /// To a client of another format it says what the Live API cannot: a
-/// session opened before its setup, an update that changes nothing, and
+/// session opened before its setup, a later session, and
 /// the end of a response the client cancelled, whose rest it drops.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiLive;
 
 impl GeminiLive {
-    /// The format's name, `gemini-live`, which tags its native events.
+    /// The format's name, `gemini-live`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;

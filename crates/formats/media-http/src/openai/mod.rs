@@ -37,19 +37,18 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{
-    self, kept, merge_missing, native_of, rest_of, set, unix_now,
+    self, base64_bytes, merge_missing, rest_of, set, unix_now,
 };
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
-use respan_gateway_core::{Connection, ErrorCode, Fault, NativeValue};
+use respan_gateway_core::{Connection, ErrorCode, Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
-    self, HeaderMap, HeaderValue, StatusCode, request::Parts as RequestHead,
-    response::Parts as ResponseHead,
+    self, HeaderMap, HeaderValue, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{ClientIo, Encoder, ProviderIo, raw::Original};
+use respan_gateway_http::{ClientIo, Encoder, ProviderIo, native::Json, raw::Original};
 use serde_json::{Map, Value, json};
 use std::sync::LazyLock;
 
@@ -296,26 +295,16 @@ fn write_usage(usage: &Usage) -> Map<String, Value> {
 }
 
 /// The fields of a usage object the kind has no place for, as an event of
-/// `format`, `{"usage": {..}}`, which its encoders write into the usage they
-/// write; none if there are none.
-fn usage_extras(format: &str, extras: Map<String, Value>) -> Option<NativeValue> {
-    (!extras.is_empty()).then(|| NativeValue::new(format, json!({ "usage": extras })))
+/// the format `K` names, `{"usage": {..}}`, which its encoders write into
+/// the usage they write; none if there are none.
+fn usage_extras<K: 'static>(extras: Map<String, Value>) -> Option<Native> {
+    (!extras.is_empty()).then(|| Native::json::<K>(json!({ "usage": extras })))
 }
 
 /// The usage fields of an event [`usage_extras`] made.
 fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
     let o = v.as_object().filter(|o| o.len() == 1)?;
     o.get("usage")?.as_object()
-}
-
-/// An event of another format than `format`, which it cannot write.
-fn foreign(format: &str, native: &NativeValue) -> Fault {
-    Fault::new(format!(
-        "an event of format {} cannot be written in {format}",
-        native.format
-    ))
-    .with(ErrorCode("untranslatable".into()))
-    .with(respan_gateway_http_faults::Status(StatusCode::BAD_GATEWAY))
 }
 
 /// Bytes as base64.
@@ -325,7 +314,7 @@ fn b64(bytes: &[u8]) -> String {
 
 /// Base64 `text` as bytes.
 fn unb64(text: &str) -> Option<Bytes> {
-    STANDARD.decode(text.trim()).ok().map(Bytes::from)
+    base64_bytes(text).map(Bytes::from)
 }
 
 /// `v` as JSON bytes.
@@ -525,7 +514,7 @@ mod tests {
     #[test]
     fn a_fault_is_written_in_openais_error_schema() {
         let mut head = http::Response::new(()).into_parts().0;
-        head.status = StatusCode::BAD_REQUEST;
+        head.status = http::StatusCode::BAD_REQUEST;
         let request = http::Request::new(Bytes::new());
         let body = refusal(&missing("prompt"), &request, &mut head);
         let v: Value = serde_json::from_slice(&body).unwrap_or_default();

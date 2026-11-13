@@ -11,18 +11,20 @@ pub mod deepseek;
 pub mod empiriolabs;
 pub mod fireworks;
 pub mod groq;
+pub mod minimax;
 pub mod mistral;
 pub mod openrouter;
 pub mod perplexity;
+pub mod phonic;
 pub mod together;
 pub mod vllm;
 pub mod xai;
 
-use base64::Engine as _;
-use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_vendor_kit::Vendor;
+use respan_gateway_http::content::content_type;
+use respan_gateway_http::http::response::Parts as ResponseHead;
+use respan_gateway_vendor_kit::{BoxFuture, Models, Vendor, VendorProvider};
 use serde_json::{Map, Value};
 
 /// Every yellow vendor.
@@ -33,6 +35,7 @@ pub const ALL: &[&Vendor] = &[
     &openrouter::VENDOR,
     &xai::VENDOR,
     &mistral::VENDOR,
+    &minimax::VENDOR,
     &together::VENDOR,
     &fireworks::VENDOR,
     &azure::VENDOR,
@@ -42,7 +45,14 @@ pub const ALL: &[&Vendor] = &[
     &perplexity::VENDOR,
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
+    &phonic::VENDOR,
 ];
+
+/// No models, for a vendor that lists none: Bedrock's are its account's,
+/// and Phonic has no list of its own.
+fn no_models(_: &VendorProvider) -> BoxFuture<'_, Models> {
+    Box::pin(async { Ok(Vec::new()) })
+}
 
 /// A call's JSON without its field `key`.
 fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
@@ -56,14 +66,9 @@ fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
         .map_err(unwritten)
 }
 
-/// An image as a URL: its own, or a data URL of its bytes.
-fn linked(media: &Media) -> String {
-    match &media.source {
-        MediaSource::Url(url) => url.clone(),
-        MediaSource::Bytes(bytes) => format!(
-            "data:{};base64,{}",
-            media.mime_type,
-            base64::engine::general_purpose::STANDARD.encode(bytes)
-        ),
-    }
+/// Whether an answer is a success in JSON, which a dialect may read whole.
+fn json_answer(head: &ResponseHead) -> bool {
+    let essence = content_type(head).and_then(|t| t.split(';').next());
+    head.status.is_success()
+        && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
 }

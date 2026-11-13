@@ -27,11 +27,10 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use respan_gateway_core::futures::{FutureExt, StreamExt, TryStreamExt};
 use respan_gateway_core::{
-    ClientContext, ErrorCode, EventStream, Fault, Gateway, NativeFields, Plugin, Provider,
-    Response, async_trait,
+    ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
 use respan_gateway_realtime::{Input, Output, Session, Status, Turns};
-use respan_gateway_realtime_ws::GeminiLive;
+use respan_gateway_realtime_ws::{GeminiLive, Natives};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 
@@ -120,7 +119,11 @@ fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
     let active = budget.active("turn");
     match event {
         Input::Session(setup) => configure(setup, model)?,
-        Input::Native(native) if native.value["realtimeInput"].get("activityStart").is_some() => {
+        Input::Native(native)
+            if GeminiLive::fields(native)
+                .get("realtimeInput")
+                .is_some_and(|v| v.get("activityStart").is_some()) =>
+        {
             budget.begin("turn")?
         }
         Input::Respond { .. } | Input::ToolResult(_) if !active => budget.begin("turn")?,
@@ -151,10 +154,7 @@ fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
             "model is outside the configured budget policy",
         ));
     }
-    let native = setup
-        .native
-        .get_or_insert_with(|| NativeFields::new(GeminiLive::NAME, Default::default()));
-    let mut kept = Value::Object(std::mem::take(&mut native.fields));
+    let mut kept = Value::Object(GeminiLive::fields(&setup.native).clone());
     if CONFIGURATION
         .iter()
         .any(|path| kept.pointer(path).is_some_and(|v| !v.is_object()))
@@ -162,11 +162,11 @@ fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
         return Err(Fault::bad_request("setup configuration must be an object"));
     }
     kept["setup"]["proactivity"]["proactiveAudio"] = false.into();
+    kept["setup"]["generationConfig"]["maxOutputTokens"] = OUTPUT.into();
     if let Value::Object(kept) = kept {
-        native.fields = kept;
+        setup.native = GeminiLive::with_fields(&setup.native, |f| *f = kept);
     }
     setup.model = Some(model.to_owned());
-    setup.max_output_tokens = u64::try_from(OUTPUT).ok();
     setup.turns = Some(Turns::Manual);
     Ok(())
 }

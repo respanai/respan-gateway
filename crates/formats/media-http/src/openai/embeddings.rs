@@ -1,22 +1,23 @@
 //! OpenAI Embeddings: `POST /embeddings` (JSON), answered whole in JSON.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, foreign, invalid, json_bytes,
-    kept, merge_missing, missing, native_of, post_to, rest_of, sends, set, take_count, take_string,
-    unb64, unreadable, whole_json,
+    Fields, Form, as_usage_extras, b64, bind_client, bind_provider, invalid, json_bytes,
+    merge_missing, missing, post_to, rest_of, sends, set, take_count, take_string, unb64,
+    unreadable, whole_json,
 };
 use respan_gateway_conversation::Usage;
-use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole};
+use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
 use serde_json::{Map, Value};
 
 const NAME: &str = "openai-embeddings";
+
+type Key = crate::Own<OpenAiEmbeddings>;
 const EMBEDDINGS: &str = "/embeddings";
 
 /// OpenAI Embeddings, as OpenAI or a compatible vendor serves it: a `POST`
@@ -34,7 +35,7 @@ const EMBEDDINGS: &str = "/embeddings";
 pub struct OpenAiEmbeddings;
 
 impl OpenAiEmbeddings {
-    /// The format's name, `openai-embeddings`, which tags its native fields.
+    /// The format's name, `openai-embeddings`.
     pub const NAME: &'static str = NAME;
 }
 
@@ -84,19 +85,13 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     let mut input = Input::new(read_items(&items)?);
     input.model = take_string(&mut map, "model")?;
     input.dimensions = take_count(&mut map, "dimensions")?;
-    input.user = take_string(&mut map, "user")?;
-    input.native = native_of(NAME, map);
+    input.native = Native::json::<Key>(map);
     Ok(input)
 }
 
-/// The items of a request's `input`.
+/// The items of a request's `input`: its texts, else, as token ids or
+/// parts, the format's own, as it came; a list of token lists is one each.
 fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
-    let bad = || {
-        invalid(
-            "input",
-            "must be a string, or an array of strings, tokens or parts",
-        )
-    };
     let items = match v {
         Value::String(text) => vec![Item::Text(text.clone())],
         Value::Array(all) if all.iter().all(Value::is_string) => all
@@ -104,28 +99,17 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
             .filter_map(Value::as_str)
             .map(|text| Item::Text(text.to_owned()))
             .collect(),
-        Value::Array(all) if !all.is_empty() && all.iter().all(Value::is_object) => {
-            vec![Item::Parts(all.clone())]
-        }
         Value::Array(all) if all.iter().all(Value::is_array) => all
             .iter()
-            .map(|ids| token_ids(ids).map(Item::Tokens))
-            .collect::<Option<_>>()
-            .ok_or_else(bad)?,
-        Value::Array(_) => vec![Item::Tokens(token_ids(v).ok_or_else(bad)?)],
-        _ => return Err(bad()),
+            .map(|ids| Item::Native(Native::json::<Key>(ids.clone())))
+            .collect(),
+        Value::Array(_) => vec![Item::Native(Native::json::<Key>(v.clone()))],
+        _ => return Err(invalid("input", "must be a string or an array")),
     };
     match items.is_empty() {
         true => Err(invalid("input", "must not be empty")),
         false => Ok(items),
     }
-}
-
-/// The token ids of an array `v`.
-fn token_ids(v: &Value) -> Option<Vec<u32>> {
-    let ids = v.as_array()?.iter();
-    ids.map(|id| id.as_u64().and_then(|id| u32::try_from(id).ok()))
-        .collect()
 }
 
 /// The call of `input`, in JSON.
@@ -135,8 +119,7 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     set(&mut v, "model", input.model.clone());
     v.insert("input".into(), items_json(&input.items)?);
     set(&mut v, "dimensions", input.dimensions);
-    set(&mut v, "user", input.user.clone());
-    merge_missing(&mut v, &kept(NAME, &input.native)?);
+    merge_missing(&mut v, input.native.fields::<Key>());
     Ok(sends(json_bytes(&v)?))
 }
 
@@ -144,8 +127,8 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 fn items_json(items: &[Item]) -> Result<Value, Fault> {
     let item = |item: &Item| match item {
         Item::Text(text) => Value::from(text.clone()),
-        Item::Tokens(ids) => Value::from(ids.clone()),
-        Item::Parts(parts) => Value::from(parts.clone()),
+        // WARN: another format's item has no form here; it is sent as null.
+        Item::Native(n) => n.value::<Key>().cloned().unwrap_or_default(),
         _ => Value::Null,
     };
     if let [only] = items {
@@ -155,7 +138,7 @@ fn items_json(items: &[Item]) -> Result<Value, Fault> {
     match items.windows(2).all(same) {
         true => Ok(items.iter().map(item).collect::<Vec<_>>().into()),
         false => Err(Fault::bad_request(
-            "an input cannot mix texts, tokens and parts",
+            "an input cannot mix texts with tokens or parts",
         )),
     }
 }
@@ -169,13 +152,13 @@ fn read_response() -> Box<dyn Decoder<Output>> {
 fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
     let mut start = Start::new(v["model"].as_str().map(Into::into));
-    start.native = native_of(NAME, rest_of(&v, &["object", "data", "model", "usage"]));
+    start.native = Native::json::<Key>(rest_of(&v, &["object", "data", "model", "usage"]));
     out.push(Output::Start(start));
     for (at, item) in v["data"].as_array().into_iter().flatten().enumerate() {
         let index = item["index"].as_u64().and_then(|i| u32::try_from(i).ok());
         let vector = vector_of(&item["embedding"])?;
         let mut embedding = Embedding::new(index.unwrap_or(at as u32), vector);
-        embedding.native = native_of(NAME, rest_of(item, &["object", "index", "embedding"]));
+        embedding.native = Native::json::<Key>(rest_of(item, &["object", "index", "embedding"]));
         out.push(Output::Embedding(embedding));
     }
     if v["usage"].is_object() {
@@ -187,7 +170,7 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         };
         out.push(Output::Usage(Usage::new(count("prompt_tokens")?, 0)));
         let extras = rest_of(&v["usage"], &["prompt_tokens", "total_tokens"]);
-        out.extend(super::usage_extras(NAME, extras).map(Output::Native));
+        out.extend(super::usage_extras::<Key>(extras).map(Output::Native));
     }
     Ok(())
 }
@@ -252,14 +235,13 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
                 item.insert("object".into(), "embedding".into());
                 item.insert("index".into(), e.index.into());
                 item.insert("embedding".into(), vector_json(&e.vector, base64));
-                merge_missing(&mut item, &kept(NAME, &e.native)?);
+                merge_missing(&mut item, e.native.fields::<Key>());
                 data.push(Value::Object(item));
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) if &*n.format != NAME => return Err(foreign(NAME, n)),
             // A body has no place for another event.
             Output::Native(n) => {
-                if let Some(more) = as_usage_extras(&n.value) {
+                if let Some(more) = n.value::<Key>().and_then(as_usage_extras) {
                     merge_missing(&mut extras, more);
                 }
             }
@@ -284,7 +266,7 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
         body.insert("usage".into(), u.into());
     }
     if let Some(start) = start {
-        merge_missing(&mut body, &kept(NAME, &start.native)?);
+        merge_missing(&mut body, start.native.fields::<Key>());
     }
     json_bytes(&body)
 }
@@ -301,8 +283,10 @@ mod tests {
 
     #[test]
     fn every_form_of_input_is_read_and_written_back() {
-        let tokens = |ids: &[u32]| Item::Tokens(ids.to_vec());
         let text = |t: &str| Item::Text(t.to_owned());
+        let native = |v: &Value| vec![Item::Native(Native::json::<Key>(v.clone()))];
+        let (tokens, lists) = (json!([1, 2]), json!([[1], [2, 3]]));
+        let parts = json!([{"type": "image", "url": "u"}]);
         let cases = [
             (json!("a"), vec![text("a")], json!("a")),
             (json!(["a"]), vec![text("a")], json!("a")),
@@ -311,33 +295,35 @@ mod tests {
                 vec![text("a"), text("b")],
                 json!(["a", "b"]),
             ),
-            (json!([1, 2]), vec![tokens(&[1, 2])], json!([1, 2])),
+            (tokens.clone(), native(&tokens), tokens),
             (
-                json!([[1], [2, 3]]),
-                vec![tokens(&[1]), tokens(&[2, 3])],
-                json!([[1], [2, 3]]),
+                lists.clone(),
+                [json!([1]), json!([2, 3])]
+                    .iter()
+                    .flat_map(native)
+                    .collect(),
+                lists,
             ),
+            (parts.clone(), native(&parts), parts),
         ];
         for (asked, read, written) in cases {
             let read_back = items(asked.clone()).expect("items");
-            assert_eq!(read_back, read, "{asked}");
+            // Its natives say what they hold as they are written back.
+            assert_eq!(format!("{read_back:?}"), format!("{read:?}"), "{asked}");
             assert_eq!(items_json(&read_back).expect("input"), written);
         }
     }
 
     #[test]
     fn an_input_of_no_items_or_odd_ones_is_refused() {
-        for asked in [
-            json!([]),
-            json!(7),
-            json!([1, "a"]),
-            json!([-1]),
-            json!([[1], "a"]),
-        ] {
+        for asked in [json!([]), json!(7)] {
             let refused = items(asked.clone());
             assert!(refused.is_err_and(|f| f.is(FaultKind::Client)), "{asked}");
         }
-        let mixed = [Item::Text("a".into()), Item::Tokens(vec![1])];
+        let mixed = [
+            Item::Text("a".into()),
+            Item::Native(Native::json::<Key>(json!([1]))),
+        ];
         assert!(items_json(&mixed).is_err());
     }
 

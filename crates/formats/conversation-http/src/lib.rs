@@ -10,16 +10,15 @@
 //! - [`bedrock`]: Amazon Bedrock's Converse.
 //!
 //! A format is its spec: what a provider sends beyond it is kept native, at
-//! the place it appeared, for a plugin to read (each module says where), or
-//! for a vendor's dialect of it ([`respan_gateway_http::dialect`]). What is
-//! native to one format reaches only a client of that format: another
-//! drops it from a response.
+//! the place it appeared (each module says where), opaque to every other
+//! format: only it, and a vendor's dialect of it
+//! ([`respan_gateway_http::dialect`]) through its [`Schema`] door, read it.
+//! What is native to one format reaches only a client of that format:
+//! another drops it from a response.
 
 pub mod fields;
 mod schema;
-pub use schema::{
-    Asked, Framing, INERT, Schema, StreamResponse, merge_details, read_provider_error,
-};
+pub use schema::{Asked, Framing, Schema, StreamResponse, merge_details, read_provider_error};
 
 pub mod anthropic;
 pub mod bedrock;

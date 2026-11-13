@@ -1,4 +1,8 @@
 use super::*;
+use crate::anthropic::AnthropicMessages;
+use crate::gemini::GeminiGenerate;
+use crate::openai::OpenAiChat;
+use crate::schema::{Own, Schema};
 use respan_gateway_core::Fault;
 
 use super::encode::reason_of;
@@ -7,7 +11,7 @@ use respan_gateway_conversation::Delta;
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
-use respan_gateway_conversation::{Content, Role, ToolChoice};
+use respan_gateway_conversation::{Content, Media, MediaSource, Role, ToolChoice};
 
 /// The responses of `chunks`, each decoded in turn.
 fn decode(chunks: &[Value]) -> Result<Vec<Output>, Fault> {
@@ -56,7 +60,7 @@ fn uri(path: &str) -> http::Uri {
 }
 
 fn written(body: Value, edit: impl FnOnce(&mut Input)) -> Result<Value, Fault> {
-    let mut chat = GeminiGenerate.decode_json(&body);
+    let mut chat = GeminiGenerate.decode_json(&body).expect("read");
     edit(&mut chat);
     Ok(GeminiGenerate.encode_request(&chat)?.into())
 }
@@ -135,7 +139,7 @@ fn a_request_reads_as_the_conversation_it_says_and_writes_back() {
         "generationConfig": { "temperature": 0.5, "topP": 0.9, "maxOutputTokens": 50,
             "stopSequences": ["END"], "candidateCount": 1 },
     });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     assert!(chat.native.is_empty(), "{:?}", chat.native);
     assert_eq!(chat.messages[0].role, Role::System);
     assert_eq!(chat.messages[0].text(), "be brief");
@@ -154,7 +158,12 @@ fn a_request_reads_as_the_conversation_it_says_and_writes_back() {
     assert!(is_synthetic(id));
     assert_eq!(name, "weather");
     assert_eq!(arguments, r#"{"city":"Paris"}"#);
-    assert_eq!(native.fields().get("thoughtSignature"), Some(&json!("sig")));
+    assert!(native.is_empty());
+    // Its signature is the part after it.
+    assert_eq!(
+        chat.messages[2].content[2],
+        Content::Signature("sig".into())
+    );
     // The result finds its call by name.
     let Content::ToolResult {
         id: answered,
@@ -230,8 +239,8 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
         "toolConfig": { "functionCallingConfig": { "mode": "VALIDATED" } },
         "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });
-    let chat = GeminiGenerate.decode_json(&body);
-    let native = chat.native.fields();
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
+    let native = GeminiGenerate::fields(&chat.native);
     for key in ["safetySettings", "tools", "toolConfig", "generationConfig"] {
         assert!(native.contains_key(key), "{key}");
     }
@@ -251,13 +260,22 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
 }
 
 #[test]
+fn a_wildcard_type_is_not_sent() {
+    let image = Media::new("image/*", MediaSource::Url("u".into()));
+    assert_eq!(
+        media_part(&image),
+        json!({ "fileData": { "fileUri": "u" } })
+    );
+}
+
+#[test]
 fn media_reads_by_its_mime_type_and_writes_as_it_came() {
     let body = json!({ "contents": [{ "role": "user", "parts": [
         { "inlineData": { "mimeType": "image/png", "data": "aGk=" } },
         { "inlineData": { "mimeType": "audio/wav", "data": "aGk=" } },
         { "fileData": { "mimeType": "application/pdf", "fileUri": "https://x/y.pdf" } },
     ] }] });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     let parts = &chat.messages[0].content;
     assert!(matches!(parts[0], Content::Image(..)));
     assert!(matches!(parts[1], Content::Audio(..)));
@@ -295,13 +313,43 @@ fn results_of_one_turn_are_one_content_and_name_their_tools() {
             { "functionResponse": { "name": "one", "response": { "k": 1 }, "id": "call_a" } },
         ])
     );
-    // A result of an unknown call is refused.
+    // A result of an unknown call is named by its id.
     chat.messages.push({
         let mut m = respan_gateway_conversation::Message::new(Role::User, "");
         m.content = vec![Content::tool_result("nope", vec!["x".into()], false)];
         m
     });
-    assert!(GeminiGenerate.encode_request(&chat).is_err());
+    let v = GeminiGenerate.encode_request(&chat).expect("a request");
+    assert_eq!(
+        v["contents"][2]["parts"][2]["functionResponse"]["name"],
+        "nope"
+    );
+    // A Responses turn's text drops its fields, and images and documents are `parts`.
+    let annotated = json!([{ "type": "file_citation", "file_id": "f" }]);
+    let text = |t: &str| json!({ "type": "input_text", "text": t, "annotations": annotated });
+    let body = json!({ "model": "m", "input": [
+        { "role": "user", "content": "go" },
+        { "type": "function_call", "call_id": "a", "name": "run", "arguments": "{}" },
+        { "type": "function_call", "call_id": "b", "name": "run", "arguments": "{}" },
+        { "type": "function_call_output", "call_id": "a", "output": [text("a chart"),
+            { "type": "input_image", "image_url": "data:image/png;base64,iVBORw==" },
+            { "type": "input_file", "file_data": "data:application/pdf;base64,JVBERi0=", "filename": "r.pdf" }] },
+        { "type": "function_call_output", "call_id": "b", "output": [text(r#"{"ok":true}"#)] },
+    ] });
+    let chat = crate::responses::OpenAiResponses
+        .decode_json(&body)
+        .expect("read");
+    let written = GeminiGenerate.encode_request(&chat).expect("written");
+    assert_eq!(
+        written["contents"][2]["parts"],
+        json!([
+            { "functionResponse": { "name": "run", "id": "a", "response": { "output": "a chart" }, "parts": [
+                { "inlineData": { "mimeType": "image/png", "data": "iVBORw==" } },
+                { "inlineData": { "mimeType": "application/pdf", "data": "JVBERi0=", "displayName": "r.pdf" } },
+            ] } },
+            { "functionResponse": { "name": "run", "id": "b", "response": { "ok": true } } },
+        ])
+    );
 }
 
 #[test]
@@ -310,7 +358,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
     let body = json!({ "contents": [{ "parts": [{ "text": "x" }] }],
         "generationConfig": { "responseMimeType": "application/json",
             "responseSchema": { "type": "OBJECT", "properties": { "a": { "type": "INTEGER" } } } } });
-    let chat = GeminiGenerate.decode_json(&body);
+    let chat = GeminiGenerate.decode_json(&body).expect("read");
     assert!(chat.native.is_empty());
     assert_eq!(
         chat.options.response_format,
@@ -318,7 +366,6 @@ fn structured_output_is_a_mime_type_and_a_schema() {
             name: "response".into(),
             description: None,
             schema: schema.clone(),
-            strict: Some(true),
         })
     );
     let back = written(body, |_| {}).expect("a request");
@@ -329,7 +376,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
     );
     let json_object = json!({ "contents": [{ "parts": [{ "text": "x" }] }],
         "generationConfig": { "responseMimeType": "application/json" } });
-    let chat = GeminiGenerate.decode_json(&json_object);
+    let chat = GeminiGenerate.decode_json(&json_object).expect("read");
     assert_eq!(
         chat.options.response_format,
         Some(respan_gateway_conversation::ResponseFormat::JsonObject)
@@ -337,26 +384,35 @@ fn structured_output_is_a_mime_type_and_a_schema() {
 }
 
 #[test]
-fn what_gemini_cannot_say_is_refused_not_dropped() {
+fn what_gemini_cannot_say_is_dropped_or_its_nearest() {
     let one = json!({ "contents": [{ "parts": [{ "text": "x" }] }] });
     let refused = |edit: fn(&mut Input)| written(one.clone(), edit).is_err();
-    assert!(refused(|c| c.user = Some("u".into())));
-    assert!(refused(|c| c.options.parallel_tool_calls = Some(false)));
+    let body = |edit: fn(&mut Input)| written(one.clone(), edit).expect("written");
+    assert_eq!(body(|c| c.user = Some("u".into())), body(|_| {}));
+    assert_eq!(
+        body(|c| c.options.parallel_tool_calls = Some(false)),
+        body(|_| {})
+    );
     assert!(refused(|c| c.messages.clear()));
-    assert!(refused(|c| {
-        let mut m = respan_gateway_conversation::Message::new(Role::System, "late");
-        m.role = Role::System;
+    // A message of what Gemini drops alone is left out.
+    let withheld = |c: &mut Input| {
+        let mut m = respan_gateway_conversation::Message::new(Role::Assistant, "");
+        m.content = vec![Content::Withheld("w".into())];
         c.messages.push(m);
-    }));
-    assert!(refused(
-        |c| c.messages[0].role = Role::native("anthropic-messages", "x")
-    ));
+    };
+    assert_eq!(body(withheld), body(|_| {}));
+    let late = body(|c| {
+        let m = respan_gateway_conversation::Message::new(Role::System, "late");
+        c.messages.push(m);
+    });
+    assert_eq!(
+        late["contents"][1],
+        json!({ "role": "user", "parts": [{ "text": "late" }] })
+    );
     assert!(!refused(|c| c.options.parallel_tool_calls = Some(true)));
-    // Another format's native fields are refused, own ones kept.
-    assert!(refused(|c| {
-        c.native
-            .fields_mut("openai-chat")
-            .insert("seed".into(), 1.into());
+    // Another format's native fields are dropped.
+    assert!(!refused(|c| {
+        c.native = OpenAiChat::with_fields(&c.native, |f| _ = f.insert("seed".into(), 1.into()));
     }));
 }
 
@@ -444,6 +500,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     let chunk = json!({ "candidates": [{ "content": { "role": "model", "parts": [
         { "text": "ok" },
         { "functionCall": { "name": "f", "args": { "a": 1 } }, "thoughtSignature": "s" },
+        { "text": "", "thoughtSignature": "t" },
     ] }, "finishReason": "STOP" }], "responseId": "r" });
     let events = decode(std::slice::from_ref(&chunk)).expect("events");
     let call = events.iter().find_map(|e| match e {
@@ -456,17 +513,54 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     assert_eq!(call, Some(("gemini_call_r_1".into(), "f".into())));
     assert!(events.contains(&Output::finished(Finish::ToolUse)));
     assert!(events.contains(&Output::arguments(1, r#"{"a":1}"#)));
-    // The signature is kept for this format; another drops it.
-    let fields = events.iter().find_map(|e| match e {
-        Output::Native(n) if n.value["type"] == "block_fields" => Some(Value::clone(&n.value)),
-        _ => None,
-    });
+    // Each signature is the kind's, over its part's block.
+    assert!(events.contains(&Output::signature(Some(1), "s")));
+    assert!(events.contains(&Output::signature(Some(2), "t")));
+    assert_eq!(decode_body(&chunk), events);
+
+    // A Chat client has them in `extra_content`: the call's on its entry, the
+    // text's on the message, whole and streamed.
+    let google = |s: &str| json!({ "google": { "thought_signature": s } });
+    let chat = crate::openai::OpenAiChat;
+    let mut whole = Assembled::default();
+    events
+        .iter()
+        .try_for_each(|e| whole.push(e))
+        .expect("events");
+    let message = chat.encode_whole(&whole).expect("a body")["choices"][0]["message"].take();
+    assert_eq!(message["extra_content"], google("t"));
+    assert_eq!(message["tool_calls"][0]["extra_content"], google("s"));
+    let (mut stream, mut frames) = (chat.stream_encoder(Asked::default()), Vec::new());
+    events
+        .iter()
+        .try_for_each(|e| stream.encode(e, &mut frames))
+        .expect("a stream");
+    let text: String = frames.iter().map(|f| String::from_utf8_lossy(f)).collect();
+    let deltas: Vec<Value> = text
+        .split("\n\n")
+        .filter_map(|e| serde_json::from_str(e.strip_prefix("data: ")?).ok())
+        .map(|c: Value| c["choices"][0]["delta"].clone())
+        .collect();
+    assert!(
+        deltas.contains(&json!({ "extra_content": google("t") })),
+        "{text}"
+    );
+    let call = deltas.iter().find(|d| d["tool_calls"][0]["id"].is_string());
     assert_eq!(
-        fields,
-        Some(json!({ "type": "block_fields", "block": 1, "fields": { "thoughtSignature": "s" } }))
+        call.map(|d| &d["tool_calls"][0]["extra_content"]),
+        Some(&google("s"))
     );
 
-    assert_eq!(decode_body(&chunk), events);
+    // Sent back, the client's are its parts' again.
+    let turn = json!({ "model": "gemini-3-pro", "messages": [
+        { "role": "user", "content": "go" }, message,
+    ] });
+    let back = GeminiGenerate
+        .encode_request(&chat.decode_json(&turn).expect("read"))
+        .expect("a request");
+    let parts = &Value::from(back)["contents"][1]["parts"];
+    assert_eq!(parts[0]["thoughtSignature"], "t");
+    assert_eq!(parts[1]["thoughtSignature"], "s");
 }
 
 #[test]
@@ -592,15 +686,14 @@ fn a_stream_is_written_a_response_per_delta_and_a_last_with_the_finish() {
 
 #[test]
 fn what_another_format_says_is_dropped_and_what_none_can_is_refused() {
-    let alien = Output::native("anthropic-messages", json!({ "type": "x" }));
+    let alien = Output::Native(AnthropicMessages::native(json!({ "type": "x" })));
     let stream = stream_of(std::slice::from_ref(&alien)).expect("a stream");
     assert!(!stream.contains("\"x\""), "{stream}");
     let body = body_of(&[alien]).expect("a body");
     assert!(!body.to_string().contains("\"x\""), "{body}");
-    let video = Output::native(
-        GEMINI,
+    let video = Output::Native(GeminiGenerate::native(
         json!({ "type": "part", "part": { "executableCode": {} } }),
-    );
+    ));
     assert!(stream_of(std::slice::from_ref(&video)).is_ok());
     // A cache write cannot be said.
     let mut usage = Usage::new(5, 1);
@@ -668,24 +761,122 @@ fn a_json_array_element_joins_the_data_lines_of_its_event() {
 }
 
 #[test]
-fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_refused() {
+fn a_thinking_level_gemini_lacks_stays_native_and_the_kinds_is_its_highest() {
     use respan_gateway_conversation::{Effort, Reasoning};
     for level in ["minimal", "low", "medium", "high"] {
         let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
             "generationConfig": { "thinkingConfig": { "thinkingLevel": level } } });
-        let chat = GeminiGenerate.decode_json(&v);
+        let chat = GeminiGenerate.decode_json(&v).expect("read");
         assert!(chat.options.reasoning.is_some(), "{level}");
         assert_eq!(written(v.clone(), |_| {}).ok(), Some(v), "{level}");
     }
     let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }],
         "generationConfig": { "thinkingConfig": { "thinkingLevel": "max" } } });
-    assert!(GeminiGenerate.decode_json(&v).options.reasoning.is_none());
+    assert!(
+        GeminiGenerate
+            .decode_json(&v)
+            .expect("read")
+            .options
+            .reasoning
+            .is_none()
+    );
     assert_eq!(written(v.clone(), |_| {}).ok(), Some(v));
-    for effort in [Effort::XHigh, Effort::Max] {
-        let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
-        let sent = written(one, |c| {
-            c.options.reasoning = Some(Reasoning::effort(effort))
-        });
-        assert!(sent.is_err(), "{effort:?}");
+    let one = json!({ "contents": [{ "role": "user", "parts": [{ "text": "x" }] }] });
+    let sent = written(one, |c| {
+        c.options.reasoning = Some(Reasoning::effort(Effort::XHigh))
+    });
+    assert_eq!(
+        sent.ok().map(|v| v["generationConfig"].clone()),
+        Some(json!({ "thinkingConfig": { "thinkingLevel": "high" } }))
+    );
+}
+
+/// What a chat's `reasoning_effort` of `effort` to `model` asks of Gemini's
+/// thinking, as a translated call writes it.
+fn effort_thinking(model: &str, effort: &str) -> Result<Value, Fault> {
+    let body = json!({ "model": model, "reasoning_effort": effort,
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let chat = crate::openai::OpenAiChat.decode_request(Bytes::from(body.to_string()))?;
+    let mut v = GeminiGenerate.encode_request(&chat)?;
+    GeminiGenerate::translated(&chat, &mut v);
+    Ok(Value::Object(v)["generationConfig"]["thinkingConfig"].clone())
+}
+
+#[test]
+fn a_chats_effort_is_the_thinking_its_gemini_has() {
+    let budget = |n: u64, shown: bool| json!({ "thinkingBudget": n, "includeThoughts": shown });
+    let level = |l: &str, shown: bool| json!({ "thinkingLevel": l, "includeThoughts": shown });
+    let cases = [
+        ("gemini-2.5-flash-lite", "none", budget(0, false)),
+        ("gemini-2.5-flash-lite", "minimal", budget(512, true)),
+        ("gemini-2.5-flash", "minimal", budget(1, true)),
+        ("gemini-2.5-pro", "minimal", budget(128, true)),
+        ("gemini-2.5-flash-lite", "low", budget(1024, true)),
+        ("gemini-2.5-flash-lite", "medium", budget(2048, true)),
+        ("gemini-2.5-flash-lite", "high", budget(4096, true)),
+        ("gemini-3.5-flash-lite", "none", level("low", false)),
+        ("gemini-3.5-flash-lite", "minimal", level("low", true)),
+        ("gemini-3.5-flash-lite", "low", level("low", true)),
+        ("gemini-3.5-flash-lite", "medium", level("high", true)),
+        ("gemini-3.5-flash-lite", "high", level("high", true)),
+        ("gemini-3-flash-preview", "none", level("minimal", false)),
+        ("gemini-3-flash-preview", "minimal", level("minimal", true)),
+        ("gemini-3-flash-preview", "medium", level("medium", true)),
+        ("gemini-3.1-pro-preview", "minimal", level("low", true)),
+        ("gemini-3.1-pro-preview", "medium", level("medium", true)),
+        ("gemini-2.0-flash", "high", Value::Null),
+    ];
+    for (model, effort, want) in cases {
+        assert_eq!(
+            effort_thinking(model, effort).ok(),
+            Some(want),
+            "{model} {effort}"
+        );
+    }
+    assert_eq!(
+        effort_thinking("gemini-2.5-flash", "xhigh").ok(),
+        Some(budget(4096, true))
+    );
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |part: Value| {
+        let body = json!({"contents": [{"role": "user", "parts": [part]}]});
+        GeminiGenerate.decode_request(Bytes::from(body.to_string()))
+    };
+    let inline = |data: &str| json!({"inlineData": {"mimeType": "image/png", "data": data}});
+    let cases = [
+        (inline("aGVsbG8"), Ok(b"hello".to_vec())),
+        (
+            inline("not*base64!"),
+            Err("`inlineData.data` is not valid base64"),
+        ),
+        (
+            json!({"inlineData": {"data": "aGVsbG8="}}),
+            Err("`inlineData.mimeType` is required"),
+        ),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Ok(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
     }
 }

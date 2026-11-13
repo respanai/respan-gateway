@@ -6,9 +6,7 @@
 //! The input's items are the conversation's messages: consecutive items an
 //! assistant produced (messages, function calls, reasoning) are one assistant
 //! message, and consecutive function call outputs are one user message of
-//! results. A message item's `id` and `status` are inert (kept under
-//! [`INERT`], dropped by any other format); on an assistant message the item's
-//! other fields are under `message`, on the first text part, which opens a new
+//! results. On an assistant message the item's fields are under `message`, on the first text part, which opens a new
 //! message item when it carries them. An item the kind has no form for is a
 //! message of the native role `item`, holding the item as a native part.
 
@@ -21,11 +19,11 @@ pub(super) use settings::{
     decode_part, encode_part, read_format, read_reasoning, read_tools, write_format,
     write_reasoning, write_tools,
 };
-pub(super) use write::write_input;
+pub(super) use write::{INSTRUCTIONS, write_input};
 
-use super::RESPONSES;
 use crate::schema::Names;
 use respan_gateway_conversation::Role;
+use std::marker::PhantomData;
 
 /// Roles an input message can have.
 const ROLES: Names<Role> = Names(
@@ -35,12 +33,11 @@ const ROLES: Names<Role> = Names(
         ("user", Role::User),
         ("assistant", Role::Assistant),
     ],
-    RESPONSES,
+    PhantomData,
 );
 
 /// The role of a message that holds an item the kind has no form for.
 const ITEM_ROLE: &str = "item";
 
-/// The key of an assistant message item's fields beyond its inert ones, on
-/// its first text part.
+/// The key of an assistant message item's fields, on its first text part.
 const MESSAGE: &str = "message";

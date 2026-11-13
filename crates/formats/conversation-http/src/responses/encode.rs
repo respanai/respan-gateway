@@ -1,15 +1,16 @@
 //! Events as Responses, whole or streamed: the encoders.
 
-use super::{
-    ANNOTATION, RESPONSE_FIELDS, RESPONSES, USAGE, USAGE_FIELDS, response_body, status_of,
-};
+use super::decode::SEALED;
+use super::{RESPONSE_FIELDS, USAGE, USAGE_FIELDS, response_body, status_of};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Gate, block_fields, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    Gate, Own, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
 };
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Encoder, raw::RawReply};
 use respan_gateway_sse::event;
@@ -98,21 +99,24 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
     let mut annotations: Vec<(u32, Value)> = Vec::new();
     let (mut usage_more, mut changed) = (Map::new(), Map::new());
     for item in whole.items() {
-        let AssembledItem::Native(NativeValue { format, value: raw }) = item else {
-            continue;
-        };
-        if **format != *RESPONSES {
-            continue;
-        }
-        if let Some((block, more)) = block_fields(raw) {
-            fields.push((block, more.clone()));
-        } else if raw["type"] == ANNOTATION {
-            let block = raw["block"].as_u64().and_then(|b| u32::try_from(b).ok());
-            annotations.extend(block.map(|b| (b, raw["annotation"].clone())));
-        } else if let Some(more) = fields_only(raw, USAGE_FIELDS) {
-            merge_into(&mut usage_more, more);
-        } else if let Some(more) = fields_only(raw, RESPONSE_FIELDS) {
-            merge_into(&mut changed, more);
+        match item {
+            AssembledItem::BlockFields { block, native }
+                if OpenAiResponses::value(native).is_some() =>
+            {
+                fields.push((*block, OpenAiResponses::fields(native).clone()));
+            }
+            AssembledItem::BlockNative { block, native } => {
+                annotations.extend(OpenAiResponses::value(native).map(|v| (*block, v.clone())));
+            }
+            AssembledItem::Native(n) => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
+                if let Some(more) = fields_only(raw, USAGE_FIELDS) {
+                    merge_into(&mut usage_more, more);
+                } else if let Some(more) = fields_only(raw, RESPONSE_FIELDS) {
+                    merge_into(&mut changed, more);
+                }
+            }
+            _ => {}
         }
     }
     let id = whole
@@ -135,6 +139,9 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     .iter()
                     .filter(mine)
                     .for_each(|(_, f)| merge_into(&mut more, f));
+                if let (Block::Reasoning, Some(s)) = (&part.kind, whole.signature(part.block)) {
+                    more.insert(SEALED.into(), s.into());
+                }
                 let cites: Vec<Value> = annotations
                     .iter()
                     .filter(|(b, _)| *b == part.block)
@@ -152,18 +159,20 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
                     &more,
                 )?);
             }
-            AssembledItem::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
+            // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
+            AssembledItem::Signature { .. } => {}
+            AssembledItem::Native(n) if OpenAiResponses::value(n).is_some() => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
                 match raw["type"].as_str() {
                     Some("response.output_item.done") => output.push(raw["item"].clone()),
                     // The rest of an item is in its done event, or in a block.
                     Some(t) if t.starts_with("response.") => {}
-                    Some(ANNOTATION | USAGE_FIELDS | RESPONSE_FIELDS) => {}
-                    _ if block_fields(raw).is_some() => {}
+                    Some(USAGE_FIELDS | RESPONSE_FIELDS) => {}
                     _ => return Err(unwritable_content()),
                 }
             }
             // Another format's: only a client of that format could read it.
-            AssembledItem::Native(_) => {}
+            _ => {}
         }
     }
     let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
@@ -520,10 +529,14 @@ impl Events {
         annotation: &Value,
         out: &mut BytesMut,
     ) -> Result<(), Fault> {
-        let slot = self.find(block)?;
-        if slot.kind != Block::Text || slot.ended {
-            return Err(unwritable_content());
-        }
+        // WARN: an annotation of a block missing, ended or not text is dropped.
+        let Some(slot) = self
+            .find(block)
+            .ok()
+            .filter(|s| s.kind == Block::Text && !s.ended)
+        else {
+            return Ok(());
+        };
         let n = slot.annotations.len();
         slot.annotations.push(annotation.clone());
         if let Some(index) = slot.index {
@@ -611,26 +624,33 @@ impl Events {
                 self.finish = Some(finish.clone());
                 self.begin(out);
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *RESPONSES => {
-                if let Some((block, fields)) = block_fields(raw) {
-                    // Fields of a block that is open join its item: they are the
-                    // done item's.
-                    match self.blocks.iter_mut().find(|b| b.block == block) {
-                        Some(slot) => merge_into(&mut slot.fields, fields),
-                        None => self.fields.push((block, fields.clone())),
-                    }
-                } else if raw["type"] == ANNOTATION {
-                    let block = raw["block"].as_u64().and_then(|b| u32::try_from(b).ok());
-                    self.annotate(
-                        block.ok_or_else(unwritable_content)?,
-                        &raw["annotation"],
-                        out,
-                    )?;
-                } else if let Some(fields) = fields_only(raw, USAGE_FIELDS) {
+            // WARN: Responses signs only reasoning, and has no form for reasoning withheld; another signature is dropped here, silently.
+            Output::Signature { block, data } => {
+                let slot = self.blocks.iter_mut().find(|b| Some(b.block) == *block);
+                if let Some(slot) = slot.filter(|s| s.kind == Block::Reasoning) {
+                    slot.fields.insert(SEALED.into(), data.as_str().into());
+                }
+            }
+            Output::BlockFields { block, native } if OpenAiResponses::value(native).is_some() => {
+                // Fields of a block that is open join its item: they are the
+                // done item's.
+                let native = OpenAiResponses::fields(native);
+                match self.blocks.iter_mut().find(|b| b.block == *block) {
+                    Some(slot) => merge_into(&mut slot.fields, native),
+                    None => self.fields.push((*block, native.clone())),
+                }
+            }
+            Output::BlockNative { block, native } if OpenAiResponses::value(native).is_some() => {
+                let raw = OpenAiResponses::value(native).unwrap_or_default();
+                self.annotate(*block, raw, out)?;
+            }
+            Output::Native(n) if OpenAiResponses::value(n).is_some() => {
+                let raw = OpenAiResponses::value(n).unwrap_or_default();
+                if let Some(fields) = fields_only(raw, USAGE_FIELDS) {
                     merge_into(&mut self.usage_more, fields);
                 } else if let Some(fields) = fields_only(raw, RESPONSE_FIELDS) {
                     merge_into(&mut self.changed, fields);
-                } else if let Value::String(data) = &**raw {
+                } else if let Value::String(data) = raw {
                     // An event that could not be read, as it came.
                     out.extend_from_slice(event(None, data).as_bytes());
                 } else {
@@ -638,7 +658,7 @@ impl Events {
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())
@@ -649,14 +669,19 @@ impl Events {
             return self.terminate(out);
         };
         // What the provider finished before it broke off is kept.
-        if self.finish.is_some() {
+        let is_finished = self.finish.is_some();
+        if is_finished {
             self.terminate(out)?;
         }
         let raw = f
             .get::<RawReply>()
             .map(|r| String::from_utf8_lossy(r.0.body()).into_owned());
         let said = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
-        match said.filter(|v| v["type"].is_string()) {
+        let said = said.filter(|v| v["type"].is_string());
+        let is_failed = said
+            .as_ref()
+            .is_some_and(|v| v["type"] == "response.failed");
+        match said {
             Some(v) => {
                 let name = v["type"].as_str().map(str::to_owned);
                 out.extend_from_slice(event(name.as_deref(), &v).as_bytes());
@@ -671,7 +696,25 @@ impl Events {
                 self.emit(out, v);
             }
         }
+        // SDKs raise on `error` and stop reading; a client that reads only the
+        // terminal event learns of the failure from this one. A stream has one.
+        if !is_finished && !is_failed {
+            self.fail(f, out);
+        }
         Ok(())
+    }
+
+    /// Writes the terminal event of a response that failed.
+    fn fail(&mut self, f: &Fault, out: &mut BytesMut) {
+        if !self.began {
+            self.created = unix_now();
+        }
+        let mut response = self.response("failed", None, false);
+        response["error"] = json!({ "code": f.code(), "message": f.message() });
+        self.emit(
+            out,
+            json!({ "type": "response.failed", "response": response }),
+        );
     }
 }
 

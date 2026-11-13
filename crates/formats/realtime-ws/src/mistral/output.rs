@@ -2,12 +2,12 @@
 //! read at the provider's edge, and the kind's written to a client as
 //! Mistral's.
 
-use respan_gateway_core::Fault;
-use respan_gateway_http::bytes::Bytes;
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{Cause, Output, Session, Usage};
 use serde_json::{Value, json};
 
-use super::{NAME, session};
+use super::{Key, session};
 use crate::foreign;
 use crate::json::{self, at, count, merge, number, remove, string, take, text};
 
@@ -21,7 +21,7 @@ impl Provider {
             .map_err(|_| Fault::upstream("a provider's event is not JSON"))?;
         match decode(&v) {
             Some(events) => out.extend(events),
-            None => out.push(Output::native(NAME, v)),
+            None => out.push(Output::Native(Native::json::<Key>(v))),
         }
         Ok(())
     }
@@ -48,7 +48,7 @@ fn decode(v: &Value) -> Option<Vec<Output>> {
             events
         }
         "error" => {
-            let code = take(rest, &["error", "code"], count, number);
+            let code = at(rest, &["error", "code"]).and_then(count);
             let message = match at(rest, &["error", "message"]) {
                 Some(Value::String(message)) => message.clone(),
                 Some(other) => other.to_string(),
@@ -61,9 +61,8 @@ fn decode(v: &Value) -> Option<Vec<Output>> {
             };
             vec![Output::Error {
                 cause,
-                code: code.map(|c| c.to_string()),
                 message,
-                native: json::native(NAME, std::mem::take(rest)),
+                native: Native::json::<Key>(std::mem::take(rest)),
             }]
         }
         _ => return None,
@@ -75,7 +74,7 @@ fn transcript(text: String, complete: bool, rest: &mut Value) -> Output {
     Output::InputTranscript {
         text,
         complete,
-        native: json::native(NAME, std::mem::take(rest)),
+        native: Native::json::<Key>(std::mem::take(rest)),
     }
 }
 
@@ -110,7 +109,7 @@ pub(super) struct Client {
 
 impl Client {
     pub(super) fn write(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
-        let Some(event) = foreign::strip(NAME, event)? else {
+        let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
         if let Some(v) = self.encode(&event) {
@@ -149,23 +148,15 @@ impl Client {
                 return None;
             }
             Output::Error {
-                code,
-                message,
+                message, native, ..
+            } => (
+                json!({"type": "error", "error": {"message": message}}),
                 native,
-                ..
-            } => {
-                let mut v = json!({"type": "error", "error": {"message": message}});
-                if let Some(code) = code {
-                    v["error"]["code"] = code
-                        .parse::<u64>()
-                        .map_or(code.as_str().into(), Value::from);
-                }
-                (v, native)
-            }
-            Output::Native(native) => return Some(Value::clone(&native.value)),
+            ),
+            Output::Native(native) => return native.value::<Key>().cloned(),
             _ => return None,
         };
-        merge(&mut v, native.as_ref().map(|n| &n.fields));
+        merge(&mut v, native.fields::<Key>());
         Some(v)
     }
 }

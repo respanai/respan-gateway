@@ -25,15 +25,19 @@ events.
 
 The helpers the formats share (messages and parts, the `native` fields a
 value keeps for its own format, usage totals and the faults of what cannot be
-written) are private to this crate. Each format names its own inert events
-(`Schema::is_inert`): those another format drops in translation. How a provider's error body reads,
+written) are private to this crate. How a provider's error body reads,
 leniently, as compatible servers send it, is public, `read_provider_error`,
 for the HTTP formats of other JSON kinds, such as the media kinds'.
 
-What a format has no form for stays native to it (`NativeFields`,
-`Content::Native`, `Output::Native`), is written only by that format, and is
-refused in translation where it could change the answer. A call to a
-provider of the client's own format carries the client's spec headers and
+What a format has no form for stays native to it (a `Native` only it, or
+code that names it through `Schema::fields` and `Schema::with_fields`, reads), is written
+only by that format, and is dropped by another, silently: what has meaning
+beyond its format belongs in the kind. Media a format's reader finds and
+cannot decode, such as base64 that is not, is not kept native: the request is
+refused with a 400 before any provider is called. Base64 is read with or
+without padding, in either alphabet, across line breaks, and a `data:` URL's
+data may be percent-encoded. A message whose every part a format drops is left out. A call
+to a provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.
 
@@ -41,21 +45,30 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 
 `openai::OpenAiChat`: a `POST` to a path ending in `/chat/completions`; its
 provider base URL includes the version, such as `https://api.openai.com/v1`.
+A Chat Completions request with `n > 1` is refused before the provider
+is called, including when the selected provider speaks another format.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
-appeared, so a relay in this format sends it back and a plugin can read it
-(the module docs give each shape): the response's own fields in the start's
+appeared, so a relay in this format sends it back and a vendor's dialect
+can read it (the module docs give each shape): the response's own fields in the start's
 `native`, or, when a later chunk changes them, as a native
 `{"response": {..}}`; a choice's and its message's or delta's as a native
 `{"choices": [..]}`; usage's own as a native `{"usage": {..}}`. A vendor's
 departures from the spec, such as reasoning in `reasoning_content`, are its
 plugins' in the [vendors crate](../../vendors/README.md), which read
-these. Reasoning has no field in this format, and is refused, as is media
-in a tool result.
+these. Reasoning has no field in this format, and is dropped; media in a tool
+result leads the message after the results. A part Chat has no form for
+(audio but WAV or MP3, a document by URL) is dropped.
 
 A block is any number unique in a response, such as a plugin's own: both
 formats' encoders write blocks in the order they open.
+
+An error body is `{"error": {"message", "type", "param", "code"}}`, its
+`code` the fault's. Its `type` is the fault's `openai::ErrorType`, a hint
+for the class of error (`invalid_request_error` beside
+`context_length_exceeded`), else the code; `responses::OpenAiResponses`
+writes the same.
 
 ## Anthropic Messages
 
@@ -95,16 +108,17 @@ response whole), one item at a time, with the ids, `output_index`,
 `content_index` and `sequence_number` the kind has no place for made when
 another provider answered.
 
-What the kind has no form for stays native and is refused in translation:
+What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
 them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
 code interpreter, MCP) and the items they make, refusals, and annotations. A
-relay in this format sends them back. The ids and statuses of items, and a
-function tool's default `strict`, are inert: any other format drops them, and
-a tool another format sent is written with `strict: false`, as it is not the
-Responses default. Stop sequences and a failed tool result have no form in a
-request, and log probabilities are not carried. The module docs say it all.
+relay in this format sends them back. A function tool's `strict` is the kind's:
+a tool that does not say it keeps the Responses default, and a tool another
+format sent is written with `strict: false`. Stop sequences have no form in a
+request, and log probabilities are not carried. A failed tool result, which
+neither Responses nor Chat Completions can flag, is written as its output led
+by `Error: `. The module docs say it all.
 
 ## Google Gemini
 
@@ -125,24 +139,24 @@ tool call and its result. Gemini names a result by its tool, not by an id:
 a call without an `id` is given one of the format's own (`gemini_call_..`),
 which its result finds by name and which Gemini never sees; writing a
 request, a result finds its tool by the call's id. A result's `response`
-object is its text as JSON; an object written stays one, other text goes
-under `output` (`error` for a failure). The results of one turn are one
-content. Tool declarations take `parameters` (OpenAPI types in upper case)
-or `parametersJsonSchema`, and are written as the latter; `toolConfig` is the
-tool choice (`ANY` with one allowed name is a named tool); `generationConfig`
-gives the output limit, `temperature`, `topP`, stop sequences and structured
-output (`responseMimeType` with a schema).
+object is its text as JSON; an object written stays one, other text goes under
+`output` (`error` for a failure), and images and documents are its `parts`. The
+results of one turn are one content. Tool declarations take `parameters`
+(OpenAPI types in upper case) or `parametersJsonSchema`, and are written as the
+latter; `toolConfig` is the tool choice (`ANY` with one allowed name is a named
+tool); `generationConfig` gives the output limit, `temperature`, `topP`, stop
+sequences and structured output (`responseMimeType` with a schema).
 
-What the kind has no form for stays native and is refused in another format:
+What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
 [reasoning](#reasoning-and-sampling) maps, and other `generationConfig` fields, tools Google runs (`googleSearch`), a `toolConfig`
-beyond the choice, video parts. A part's `thoughtSignature` is the one native
-field another format drops, as it only hints at the thinking behind the part
-(Gemini 3 needs one on a function call in the history: written for one,
-the first call of each turn without one takes Google's documented
-placeholder).
-Writing, a request for several candidates, one tool call at a time and an end
-user's id are refused.
+beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
+on a function call in the history: written for one, the first call of each turn
+without one takes Google's documented placeholder).
+Writing drops an end user's id, one tool call at a time and a schema's
+description, and refuses a request for several candidates. A system message
+after the conversation starts is a user's turn, as it is in Anthropic and
+Converse.
 
 A response's first candidate is the events: consecutive text parts one text
 block, a function call a tool block (its arguments whole), `STOP` a tool use
@@ -162,31 +176,45 @@ Bedrock API key as a bearer token. The model is escaped whole into the path,
 so a profile's id or an ARN is one segment. A stream is the AWS event stream
 (`respan-gateway-eventstream`), not SSE; an `exception` message in it is an
 upstream fault of its type. The module says how each part, option and event
-maps; what Converse has no field for is refused.
+maps; what Converse has no field for is dropped, or written as its nearest.
 
 ## Reasoning and sampling
 
-`Input.options.reasoning` and `top_k` are the kind's; each format reads and
-writes them as below. A value the kind has no form for (an unknown effort, a
+`Input.options.reasoning` is the kind's; each format reads and
+writes it as below. `top_k` is Anthropic's and Gemini's own, and dropped
+elsewhere. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
-to its own format unchanged, and is refused in another.
+to its own format unchanged, and is dropped by another.
 
 | Kind | OpenAI Chat | Responses | Anthropic | Gemini | Bedrock |
 | --- | --- | --- | --- | --- | --- |
-| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}` | `thinkingBudget: 0` | `thinking: {type: "disabled"}` |
-| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | refused |
-| `effort: XHigh/Max` | `reasoning_effort: "xhigh"/"max"` | `reasoning.effort` | `output_config.effort` | refused | refused |
-| `budget_tokens: n` | refused | refused | `thinking: {type: "enabled", budget_tokens: n}` | `thinkingBudget: n` | `thinking: {type: "enabled", budget_tokens: n}` |
-| `summary: true` | refused | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
-| `summary: false` | (nothing) | (no summary) | refused | `includeThoughts: false` | refused |
-| `top_k: n` | refused | refused | `top_k` | `generationConfig.topK` | refused |
+| `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}`, the least effort where refused (below) | `thinkingBudget: 0` | as Anthropic's for a Claude, else dropped |
+| `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | as Anthropic's for a Claude, else dropped |
+| `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
+| `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), on Claude 4.6+ adaptive at the nearest effort | `thinkingBudget: n` | as Anthropic's for a Claude, else dropped |
+| `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
+| `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
 
-An effort and a budget do not convert, so each travels only to a format that
-has it (see the [kind](../../kinds/conversation/README.md)); asking for both
-at once is refused everywhere but Anthropic. Anthropic's rules of thinking
-hold beside a budget: one under 1024, a temperature but 1, or `top_k` is
-refused, and a default `max_tokens` exceeds the budget. Gemini levels are
-read in either case and written in lower case.
+An effort and a budget do not convert exactly (see the
+[kind](../../kinds/conversation/README.md)): a format that has only one
+writes the nearest, by the budgets the gateway gives a Claude's efforts
+(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192; a budget is at most
+`high`). Asked for both at once, a format writes the one it takes, the
+effort if it takes either. A Claude on Converse is written as Anthropic
+writes it, in `additionalModelRequestFields`. Claude 4.6 and later think
+adaptively to an effort (`thinking: {type: "adaptive"}`) and 3.7 to 4.5 to a
+budget, so a translated effort is the one its model takes. Beside a budget,
+Anthropic drops a temperature but 1 and a `top_p` under 0.95, and its
+`max_tokens` exceeds the budget (a smaller one is raised by it); a Claude
+on Converse thinks to its effort before that, and drops them beside adaptive
+thinking too. Claude is sent no thinking it refuses: none beside a forced
+tool, and, to a budget, none beside another temperature or `top_p`, a
+`top_k`, an assistant's last turn, or a tool loop's assistant turn that does
+not open with its thinking. Opus and Sonnet 5.5, Fable and Mythos refuse
+`disabled`: it is the least effort there. Opus and Sonnet 5.5, and Fable and
+Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
+`auto`.
+Gemini levels are read in either case and written in lower case.
 
 ## Finish
 

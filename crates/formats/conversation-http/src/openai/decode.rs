@@ -1,7 +1,8 @@
 //! OpenAI Chat, streamed or whole, as events: the decoder.
 
+use crate::openai::OpenAiChat;
 use crate::schema::{
-    Totals, ended, error_event, native_fields, remainder, says, says_error, unreadable_event,
+    Own, Totals, ended, error_event, remainder, says, says_error, unreadable_event,
     unsupported_fields,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start};
@@ -9,17 +10,14 @@ use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_data;
 use serde_json::{Map, Value, json};
-use std::sync::Arc;
 
 use super::encode::rekey;
-use super::{FINISH, Fields, OPENAI, extra_usage, usage_of};
+use super::{FINISH, Fields, SIGNED, extra_usage, take_signature, usage_of};
 
 /// Decodes chunks and whole bodies of OpenAI Chat into events, as the
 /// module says.
 #[derive(Debug)]
 pub struct OpenAiDecoder {
-    /// The format of what the kind has no form for: [`OPENAI`].
-    name: Arc<str>,
     totals: Totals,
     started: bool,
     /// The vendor fields of the usage last said, to say them once.
@@ -52,7 +50,7 @@ struct Opened {
 /// What a block of a response is made of, in OpenAI's terms.
 #[derive(Debug, PartialEq)]
 enum Key {
-    /// `reasoning_content`.
+    /// `reasoning_content`, else `reasoning`.
     Reasoning,
     Text,
     /// The tool call numbered so by `index`.
@@ -62,7 +60,6 @@ enum Key {
 impl OpenAiDecoder {
     pub(super) fn new() -> Self {
         Self {
-            name: Arc::from(OPENAI),
             totals: Totals::default(),
             started: false,
             usage_extra: Map::new(),
@@ -87,10 +84,11 @@ struct Call {
     /// for, even null or empty ones.
     entry: Map<String, Value>,
     function: Map<String, Value>,
+    signature: Option<String>,
 }
 
 /// The fields of tool call `block` the kind has no place for, the entry's,
-/// and its function's under `function`, as its [`Output::block_fields`]:
+/// and its function's under `function`, as its [`Output::BlockFields`]:
 /// before the call's block opens.
 fn call_fields(block: u32, entry: &Fields, function: &Fields) -> Option<Output> {
     if entry.is_empty() && function.is_empty() {
@@ -100,7 +98,7 @@ fn call_fields(block: u32, entry: &Fields, function: &Fields) -> Option<Output> 
     if !function.is_empty() {
         fields.insert("function".into(), Value::Object(function.clone()));
     }
-    Some(Output::block_fields(OPENAI, block, fields))
+    Some(Output::block_fields(block, OpenAiChat::native(fields)))
 }
 
 impl OpenAiDecoder {
@@ -192,7 +190,7 @@ impl OpenAiDecoder {
             let model = v["model"].as_str().unwrap_or_default();
             let mut start = Start::new(id, model);
             self.said = std::mem::take(&mut self.early);
-            start.native = native_fields(OPENAI, self.said.clone());
+            start.native = OpenAiChat::native(self.said.clone());
             out.push(Output::Start(start));
         }
         let u = &v["usage"];
@@ -203,24 +201,22 @@ impl OpenAiDecoder {
         }
         let native = extra_usage(u);
         if !native.is_empty() && native != self.usage_extra {
-            out.push(Output::native(
-                self.name.clone(),
+            out.push(Output::Native(OpenAiChat::native(
                 json!({ "usage": native }),
-            ));
+            )));
             self.usage_extra = native;
         }
         if !changed.is_empty() {
             let response = json!({ "response": changed });
-            out.push(Output::native(self.name.clone(), response));
+            out.push(Output::Native(OpenAiChat::native(response)));
         }
         // What the kind has no form for goes first, so a chunk that cannot be
         // translated fails before any of it is written.
         for choice in v["choices"].as_array().into_iter().flatten() {
             if choice_index(choice) != 0 {
-                out.push(Output::native(
-                    self.name.clone(),
+                out.push(Output::Native(OpenAiChat::native(
                     json!({ "choices": [rekey(choice, "delta")] }),
-                ));
+                )));
             }
         }
         let Some(first) = first_choice(v) else {
@@ -229,18 +225,27 @@ impl OpenAiDecoder {
         let body = &first[key];
         let calls = tool_calls(body);
         if let Some(rest) = choice_leftovers(first, key, calls.is_some()) {
-            out.push(Output::native(
-                self.name.clone(),
+            out.push(Output::Native(OpenAiChat::native(
                 json!({ "choices": [rest] }),
-            ));
+            )));
         }
-        let reasoning = body["reasoning_content"].as_str();
+        let reasoning = body["reasoning_content"].as_str().filter(|t| !t.is_empty());
+        let reasoning = reasoning.or_else(|| body["reasoning"].as_str());
         if let Some(text) = reasoning.filter(|t| !t.is_empty()) {
             let delta = Delta::Reasoning(text.into());
             self.say(Key::Reasoning, Block::Reasoning, delta, out);
         }
         if let Some(text) = body["content"].as_str().filter(|t| !t.is_empty()) {
             self.say(Key::Text, Block::Text, Delta::Text(text.into()), out);
+        }
+        // A text's signature is the message's, even on a last empty text.
+        if let Some(s) = body[SIGNED]["google"]["thought_signature"].as_str() {
+            let text = self.blocks.iter().rposition(|b| b.key == Key::Text);
+            let block = match text.and_then(|at| u32::try_from(at).ok()) {
+                Some(block) => block,
+                None => self.open(Key::Text, Block::Text, out),
+            };
+            out.push(Output::signature(Some(block), s));
         }
         for call in calls.into_iter().flatten() {
             let key = Key::Call(self.call_index(&call));
@@ -257,6 +262,7 @@ impl OpenAiDecoder {
                     ));
                 }
             };
+            out.extend(call.signature.map(|s| Output::signature(Some(block), s)));
             if !call.arguments.is_empty() {
                 out.push(Output::arguments(block, call.arguments));
             }
@@ -293,7 +299,7 @@ impl OpenAiDecoder {
             .and_then(|d| serde_json::from_str::<Value>(d).ok());
         let chunk = |v: &Value| v["choices"].is_array() || !v["usage"].is_null() || says_error(v);
         let Some(v) = v.filter(chunk) else {
-            unreadable_event(&self.name, &raw, out);
+            unreadable_event::<OpenAiChat>(&raw, out);
             return Ok(());
         };
         if says_error(&v) {
@@ -364,11 +370,13 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
             continue;
         }
         let mut body = Map::new();
+        let alias = x["reasoning_content"].as_str().is_none_or(str::is_empty);
         for (field, y) in x.as_object().into_iter().flatten() {
             let text = y.is_string() || y.is_null();
             let ours = match field.as_str() {
                 "role" => true,
                 "content" | "reasoning_content" => text,
+                "reasoning" => text && alias,
                 "tool_calls" => typed,
                 _ => false,
             };
@@ -376,6 +384,7 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
                 body.insert(field.clone(), y.clone());
             }
         }
+        take_signature(&mut body);
         if !body.is_empty() {
             rest.insert("delta".into(), body.into());
         }
@@ -406,11 +415,13 @@ fn tool_calls(body: &Value) -> Option<Vec<Call>> {
             None => None,
         };
         let start = c["id"].as_str().zip(function["name"].as_str());
+        let mut entry = remainder(c, &["index", "id", "type", "function"]);
         Some(Call {
+            signature: take_signature(&mut entry),
             index,
             start: start.map(|(id, name)| (id.to_owned(), name.to_owned())),
             arguments: arguments.to_owned(),
-            entry: remainder(c, &["index", "id", "type", "function"]),
+            entry,
             function: remainder(function, &["name", "arguments"]),
         })
     };
