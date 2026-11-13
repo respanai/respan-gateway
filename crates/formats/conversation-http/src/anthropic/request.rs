@@ -173,19 +173,19 @@ fn read_media(v: &Value) -> Result<Option<Content>, Fault> {
         return Ok(None);
     }
     let source = &v["source"];
-    let (mut mime, src, known) = match source["type"].as_str() {
-        Some("base64") => {
+    let (mut mime, src, known) = match required_str(&source["type"], "`source.type`")? {
+        "base64" => {
             let mime = required_str(&source["media_type"], "`source.media_type`")?;
             let bytes = base64_field(&source["data"], "`source.data`")?;
             let src = MediaSource::Bytes(bytes.into());
             (mime.to_owned(), src, &["type", "media_type", "data"][..])
         }
-        Some("url") => {
+        "url" => {
             let url = required_str(&source["url"], "`source.url`")?;
             let src = MediaSource::Url(url.into());
             ("image/*".to_owned(), src, &["type", "url"][..])
         }
-        Some("text") if v["type"] == "document" => {
+        "text" if v["type"] == "document" => {
             let mime = required_str(&source["media_type"], "`source.media_type`")?;
             let text = required_str(&source["data"], "`source.data`")?;
             let src = MediaSource::Bytes(text.as_bytes().to_vec().into());

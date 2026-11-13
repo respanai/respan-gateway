@@ -206,8 +206,8 @@ fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
             )
         }
         _ => {
-            let (Some(mime), Some(uri)) = (data["mimeType"].as_str(), data["fileUri"].as_str())
-            else {
+            let uri = required_str(&data["fileUri"], "`fileData.fileUri`")?;
+            let Some(mime) = data["mimeType"].as_str() else {
                 return Ok(None);
             };
             (mime, MediaSource::Url(uri.into()), &["mimeType", "fileUri"])

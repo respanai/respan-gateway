@@ -4,7 +4,9 @@ use super::super::decode::SEALED;
 use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
-use crate::schema::{Own, data_media, only, remainder, says, source_url, unreadable_media};
+use crate::schema::{
+    Own, data_media, only, remainder, says, source_url, unless_file_id, unreadable_media,
+};
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
@@ -61,7 +63,7 @@ pub(super) fn read_media(p: &Value) -> Result<Option<Content>, Fault> {
             fields.shift_remove("detail");
         }
         let Some(url) = p["image_url"].as_str() else {
-            return Ok(None);
+            return unless_file_id(p, "`image_url` or `file_id`");
         };
         let (mime, source) = source_url(url, "image/*", "`image_url`")?;
         Media::new(mime, source)
@@ -78,6 +80,7 @@ pub(super) fn read_media(p: &Value) -> Result<Option<Content>, Fault> {
                 "application/octet-stream".into(),
                 MediaSource::Url(url.into()),
             ),
+            (None, None) => return unless_file_id(p, "`file_data`, `file_url` or `file_id`"),
             _ => return Ok(None),
         };
         let mut media = Media::new(mime, source);

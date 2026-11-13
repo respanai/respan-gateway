@@ -46,6 +46,16 @@ pub(crate) fn required_str<'a>(value: &'a Value, field: &str) -> Result<&'a str,
         .ok_or_else(|| unreadable_media(field, "is required"))
 }
 
+/// The part of a media `holder` that names no source of its own: one that
+/// names a file by `file_id` is a form the kind cannot carry, `None`; one
+/// that names nothing is refused, as `wanted` says.
+pub(crate) fn unless_file_id(holder: &Value, wanted: &str) -> Result<Option<Content>, Fault> {
+    match holder["file_id"].is_null() {
+        true => Err(unreadable_media(wanted, "is required")),
+        false => Ok(None),
+    }
+}
+
 /// The bytes of the base64 in `value`, the client's `field`; a field that is
 /// missing, or whose base64 does not decode, is refused.
 pub(crate) fn base64_field(value: &Value, field: &str) -> Result<Vec<u8>, Fault> {

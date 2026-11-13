@@ -10,7 +10,7 @@ use crate::schema::{
     FAILED_RESULT_PREFIX, Names, Own, base64_field, data_media, decode_tools, each_tool,
     edit_native, effort_for, effort_name, encode_content, encode_message, merge_fields,
     merge_missing, only, read_search, remainder, required_str, rest_of, set, source_url,
-    take_strict, unreadable_media, untranslatable, write_search,
+    take_strict, unless_file_id, unreadable_media, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -351,7 +351,7 @@ pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
                 return Ok(None);
             }
             let Some(data) = file["file_data"].as_str() else {
-                return Ok(None);
+                return unless_file_id(file, "`file.file_data` or `file.file_id`");
             };
             let field = "`file.file_data`";
             let Some((mime, bytes)) = data_media(data, field)? else {
