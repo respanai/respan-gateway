@@ -30,8 +30,10 @@ use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, na
 use respan_gateway_http::{Connect, Upstream};
 use serde_json::{Map, Value, json};
 
+mod gemini;
 mod openai;
 
+pub use gemini::GeminiDecisions;
 pub use openai::OpenAiDecisions;
 
 /// What only format `F` of this crate reads of a value: no other crate can name it.
@@ -94,7 +96,10 @@ impl Format<ClientIo, Input, Output> for Decisions {
                 let mut head = reply.head();
                 let json = HeaderValue::from_static("application/json");
                 head.headers.insert(CONTENT_TYPE, json);
-                Ok(reply.write(head, Box::new(All::new(|e: &[Output]| encode_response(e)))))
+                let request = reply.request().body().clone();
+                let encoder =
+                    All::new(move |e: &[Output]| encode_response(e, &Asked::new(&request)));
+                Ok(reply.write(head, Box::new(encoder)))
             },
         ))
     }
@@ -135,6 +140,16 @@ impl Format<ProviderIo, Output, Input> for Decisions {
             },
             |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
         ))
+    }
+}
+
+/// A refusal of media evidence, which only Gemini's format has a form for.
+fn refuse_media(input: &Input, format: &str) -> Result<(), Fault> {
+    match gemini::media_of(input) {
+        Some(media) => Err(Fault::bad_request(format!(
+            "{format} cannot take {media} evidence"
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -211,6 +226,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
 
 /// The call of `input`.
 fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
+    refuse_media(input, NAME)?;
     let mut questions = Map::new();
     for q in &input.questions {
         if let Ask::Native(native) = &q.ask
@@ -266,7 +282,7 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     start.native = Native::json::<Key>(rest_of(&v, &["model", "answers", "usage"]));
     out.push(Output::Start(start));
     for (id, a) in answers {
-        match decode_answer(id, a) {
+        match decode_answer::<Key>(id, a) {
             Some(answer) => out.push(Output::Answer(answer)),
             None => out.push(Output::Native(Native::json::<Key>(
                 json!({ "answers": { id: a } }),
@@ -294,8 +310,9 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     Ok(())
 }
 
-/// Answer `id`, if `a` is of a type the kind has a form for.
-fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
+/// Answer `id`, if `a` is of a type the kind has a form for, its other
+/// fields format `K`'s own.
+fn decode_answer<K: 'static>(id: &str, a: &Value) -> Option<Answer> {
     let number = |key: &str| a[key].as_f64();
     let (verdict, taken): (_, &[&str]) = match a["type"].as_str()? {
         "noul" => (Verdict::Noul(number("noul")?), &["noul"]),
@@ -326,12 +343,51 @@ fn decode_answer(id: &str, a: &Value) -> Option<Answer> {
     let mut answer = Answer::new(id, verdict);
     answer.confidence = number("confidence");
     let taken = [&["type", "confidence"], taken].concat();
-    answer.native = Native::json::<Key>(rest_of(a, &taken));
+    answer.native = Native::json::<K>(rest_of(a, &taken));
     Some(answer)
 }
 
-/// A whole response of `events`.
-fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
+/// The questions of a client's request, read from its body when an answer needs them.
+struct Asked<'a> {
+    body: &'a [u8],
+    questions: std::cell::OnceCell<Value>,
+}
+
+impl<'a> Asked<'a> {
+    fn new(body: &'a [u8]) -> Self {
+        Self {
+            body,
+            questions: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// The levels the score question `id` asked.
+    fn levels(&self, id: &str) -> Option<&Vec<Value>> {
+        let questions = self.questions.get_or_init(|| {
+            let mut request: Value = serde_json::from_slice(self.body).unwrap_or_default();
+            request
+                .get_mut("questions")
+                .map(Value::take)
+                .unwrap_or_default()
+        });
+        questions[id]["criteria"].as_array()
+    }
+}
+
+/// A score's `legend` unless it has one: the levels its question asked, by position.
+fn add_legend(v: &mut Map<String, Value>, answer: &Answer, asked: &Asked) {
+    if !matches!(answer.verdict, Verdict::Score { .. }) || v.contains_key("legend") {
+        return;
+    }
+    if let Some(levels) = asked.levels(&answer.id) {
+        let legend = levels.iter().enumerate();
+        let legend = legend.map(|(i, level)| (i.to_string(), level.clone()));
+        v.insert("legend".into(), Value::Object(legend.collect()));
+    }
+}
+
+/// A whole response of `events` to a client that asked the questions `asked`.
+fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
     let (mut body, mut answers, mut usage, mut extras) = (Map::new(), Map::new(), None, Map::new());
     for event in events {
         match event {
@@ -340,7 +396,9 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
                 merge_missing(&mut body, start.native.fields::<Key>());
             }
             Output::Answer(answer) => {
-                answers.insert(answer.id.clone(), encode_answer(answer)?.into());
+                let mut written = encode_answer::<Key>(answer)?;
+                add_legend(&mut written, answer, asked);
+                answers.insert(answer.id.clone(), written.into());
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             Output::Native(n) => {
@@ -366,8 +424,8 @@ fn encode_response(events: &[Output]) -> Result<Bytes, Fault> {
     to_bytes(&body)
 }
 
-/// An answer as the contract writes it.
-fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
+/// An answer as the contract writes it, with format `K`'s own fields.
+fn encode_answer<K: 'static>(answer: &Answer) -> Result<Map<String, Value>, Fault> {
     let mut v = Map::new();
     match &answer.verdict {
         Verdict::Noul(p) => {
@@ -401,7 +459,7 @@ fn encode_answer(answer: &Answer) -> Result<Map<String, Value>, Fault> {
         }
     }
     set(&mut v, "confidence", answer.confidence);
-    merge_missing(&mut v, answer.native.fields::<Key>());
+    merge_missing(&mut v, answer.native.fields::<K>());
     Ok(v)
 }
 
@@ -516,8 +574,22 @@ mod tests {
             Output::Answer(Answer { verdict: Verdict::Score { probabilities, .. }, .. })
                 if probabilities == &[0.1, 0.1, 0.8])));
         let written: Value =
-            serde_json::from_slice(&encode_response(&events).expect("body")).unwrap_or_default();
+            serde_json::from_slice(&encode_response(&events, &Asked::new(b"{}")).expect("body"))
+                .unwrap_or_default();
         assert_eq!(written, raw);
+        let score = Verdict::Score {
+            score: 1.7,
+            probabilities: vec![0.1, 0.1, 0.8],
+        };
+        let asked = json!({"questions": {"urgency": {"type": "score", "criteria": ["Can wait", "This week", "Today"]}}});
+        let asked = asked.to_string();
+        let others = [Output::Answer(Answer::new("urgency", score))];
+        let written = encode_response(&others, &Asked::new(asked.as_bytes())).expect("body");
+        let written: Value = serde_json::from_slice(&written).unwrap_or_default();
+        assert_eq!(
+            written["answers"]["urgency"]["legend"],
+            raw["answers"]["urgency"]["legend"]
+        );
     }
 
     #[test]

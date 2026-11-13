@@ -5,6 +5,7 @@
 | Format | Endpoint | Served by |
 | --- | --- | --- |
 | `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`) |
+| `gemini-decisions` (`GeminiDecisions`) | `POST /v1beta/decisions` in the standalone gateway | Gemini (`vendor = "gemini"`) |
 | `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`) and Fireworks (`vendor = "fireworks"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`); or any compatible base URL |
 
 A provider is called at `/decisions`. A vendor that departs from the
@@ -45,3 +46,29 @@ standalone gateway serves them at `/openai/v1/decisions`, beside `decisions`.
   a `decisions` client gets the rest of its answers without it.
 - Azure (`vendor = "azure"`) serves it in its dialect: the key in `api-key`,
   called at `/decisions` under the configured v1 base.
+
+`GeminiDecisions`, named `gemini-decisions`: Google's contract, evidence as
+`input` and questions as a map, as `decisions` has them. Its clients are
+served at `/v1beta/decisions`, and a provider is called at `/decisions` under
+a base URL with the version, the key in `x-goog-api-key`.
+
+- A question is `{"type", "instructions", "criteria"}` and an answer
+  `{"type", "confidence", ..}` as `decisions` has them, but a `noul`'s
+  criteria are `{"true_description", "false_description"}`, `instructions`
+  are required, a score's answer has a `legend`, and `input` is a text, a
+  content block or a list of blocks. A response has no `model`, and its
+  `usage` is `total_input_tokens` and `total_output_tokens`, read as the
+  kind's usage, beside token counts the kind has no place for, which are
+  written back to a client of this format. A request Google's input filters
+  block is a 400 with their reason.
+- Adjacent text blocks are one text, the kind's `state`, and an empty
+  choice description is none. Media blocks (an image, audio, video or a
+  document) are this format's own, so a `decisions` or `openai-decisions`
+  provider refuses a request that has any, 400, before a call; a
+  `decisions` client's request is called with its `state` as a text, JSON
+  as its text. A `noul`'s criteria stay with the format that read them, so
+  they are dropped between formats, and a question of a type the kind has no
+  form for is kept and dropped as in `decisions`.
+- A client of this format is answered with a `confidence` and a score's
+  `legend` that the provider gave none of, as Google defines them: the
+  probability of the top outcome, and the levels as the client asked them.
