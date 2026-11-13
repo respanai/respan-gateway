@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
     Own, arguments_object, base64_field, edit_native, effort_name, merge_fields, merge_missing,
-    parse_effort, remainder, sealed, set, unreadable_media, untranslatable, write_search,
+    parse_effort, remainder, required_str, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -197,9 +197,7 @@ fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
     let data = &p[which];
     let (mime, source, known): (&str, MediaSource, &[&str]) = match which {
         "inlineData" => {
-            let mime = data["mimeType"]
-                .as_str()
-                .ok_or_else(|| unreadable_media("`inlineData.mimeType`", "is required"))?;
+            let mime = required_str(&data["mimeType"], "`inlineData.mimeType`")?;
             let bytes = base64_field(&data["data"], "`inlineData.data`")?;
             (
                 mime,

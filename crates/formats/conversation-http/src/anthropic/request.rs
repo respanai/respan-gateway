@@ -5,8 +5,8 @@
 
 use crate::schema::{
     EFFORT_BUDGETS, arguments_object, base64_field, decode_content, decode_tools, each_tool,
-    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of,
-    set, take_native, unreadable_media, untranslatable, write_search,
+    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder,
+    required_str, rest_of, set, take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -135,22 +135,19 @@ pub(crate) fn signed(m: &mut Message, content: &Value) {
 }
 
 /// A part the kind has a form for: an image or a document, reasoning, or a
-/// tool block.
+/// tool block, `None` for one it has no form for.
 pub(crate) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
-    read_part(p).transpose()
-}
-
-/// [`decode_part`], with `None` for a part the kind has no form for.
-fn read_part(p: &Value) -> Option<Result<Content, Fault>> {
-    match p["type"].as_str()? {
-        "image" | "document" => read_media(p).transpose(),
-        "thinking" => Some(Ok(Content::Reasoning {
-            text: p["thinking"].as_str()?.into(),
+    Ok(match p["type"].as_str() {
+        Some("image" | "document") => read_media(p)?,
+        Some("thinking") => p["thinking"].as_str().map(|text| Content::Reasoning {
+            text: text.into(),
             native: AnthropicMessages::native(remainder(p, &["type", "thinking", "signature"])),
-        })),
-        "redacted_thinking" => Some(Ok(Content::Withheld(p["data"].as_str()?.into()))),
-        _ => tool_part(p),
-    }
+        }),
+        Some("redacted_thinking") => p["data"]
+            .as_str()
+            .map(|data| Content::Withheld(data.into())),
+        _ => tool_part(p).transpose()?,
+    })
 }
 
 /// A part of the kind's as Anthropic writes it.
@@ -169,8 +166,8 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
 const PLAIN_TEXT: &str = "text/plain";
 
 /// An image or document block, if the kind can say its source: its other
-/// fields are its media's `native`. One whose base64 is missing or does not
-/// decode is refused.
+/// fields are its media's `native`. One whose source misses its data, or
+/// whose base64 does not decode, is refused.
 fn read_media(v: &Value) -> Result<Option<Content>, Fault> {
     if v.get("title").is_some_and(|v| !v.is_string()) {
         return Ok(None);
@@ -178,28 +175,19 @@ fn read_media(v: &Value) -> Result<Option<Content>, Fault> {
     let source = &v["source"];
     let (mut mime, src, known) = match source["type"].as_str() {
         Some("base64") => {
-            let mime = source["media_type"].as_str().ok_or_else(|| {
-                unreadable_media("`source.media_type`", "is required for base64 data")
-            })?;
+            let mime = required_str(&source["media_type"], "`source.media_type`")?;
             let bytes = base64_field(&source["data"], "`source.data`")?;
             let src = MediaSource::Bytes(bytes.into());
             (mime.to_owned(), src, &["type", "media_type", "data"][..])
         }
         Some("url") => {
-            let Some(url) = source["url"].as_str() else {
-                return Ok(None);
-            };
-            (
-                "image/*".to_owned(),
-                MediaSource::Url(url.into()),
-                &["type", "url"][..],
-            )
+            let url = required_str(&source["url"], "`source.url`")?;
+            let src = MediaSource::Url(url.into());
+            ("image/*".to_owned(), src, &["type", "url"][..])
         }
         Some("text") if v["type"] == "document" => {
-            let mime = source["media_type"].as_str().unwrap_or(PLAIN_TEXT);
-            let Some(text) = source["data"].as_str() else {
-                return Ok(None);
-            };
+            let mime = required_str(&source["media_type"], "`source.media_type`")?;
+            let text = required_str(&source["data"], "`source.data`")?;
             let src = MediaSource::Bytes(text.as_bytes().to_vec().into());
             (mime.to_owned(), src, &["type", "media_type", "data"][..])
         }

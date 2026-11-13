@@ -1331,7 +1331,7 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         ),
         (
             json!({"type": "image", "source": {"type": "base64", "data": "aGVsbG8="}}),
-            Err("`source.media_type` is required for base64 data"),
+            Err("`source.media_type` is required"),
         ),
     ];
     let media = |chat: &Input| match chat.messages[0].content.first() {

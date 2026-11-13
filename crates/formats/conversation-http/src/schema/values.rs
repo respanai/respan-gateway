@@ -38,13 +38,19 @@ pub(crate) fn unreadable_media(field: &str, what: &str) -> Fault {
     Fault::bad_request(format!("{field} {what}"))
 }
 
+/// The string in `value`, the client's `field`; one that is missing is
+/// refused.
+pub(crate) fn required_str<'a>(value: &'a Value, field: &str) -> Result<&'a str, Fault> {
+    value
+        .as_str()
+        .ok_or_else(|| unreadable_media(field, "is required"))
+}
+
 /// The bytes of the base64 in `value`, the client's `field`; a field that is
 /// missing, or whose base64 does not decode, is refused.
 pub(crate) fn base64_field(value: &Value, field: &str) -> Result<Vec<u8>, Fault> {
-    let text = value
-        .as_str()
-        .ok_or_else(|| unreadable_media(field, "is required"))?;
-    base64_bytes(text).ok_or_else(|| unreadable_media(field, "is not valid base64"))
+    base64_bytes(required_str(value, field)?)
+        .ok_or_else(|| unreadable_media(field, "is not valid base64"))
 }
 
 /// The media type and bytes of `url`, the client's `field`, if it is a

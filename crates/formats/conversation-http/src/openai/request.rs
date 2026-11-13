@@ -9,8 +9,8 @@ use crate::fields::media_url;
 use crate::schema::{
     FAILED_RESULT_PREFIX, Names, Own, base64_field, data_media, decode_tools, each_tool,
     edit_native, effort_for, effort_name, encode_content, encode_message, merge_fields,
-    merge_missing, only, read_search, remainder, rest_of, set, source_url, take_strict,
-    unreadable_media, untranslatable, write_search,
+    merge_missing, only, read_search, remainder, required_str, rest_of, set, source_url,
+    take_strict, unreadable_media, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -317,10 +317,8 @@ pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
     let (kind, mime, source, mut fields, name) = match v["type"].as_str() {
         Some("image_url") => {
             let image = &v["image_url"];
-            let Some(url) = image["url"].as_str() else {
-                return Ok(None);
-            };
-            let (mime, src) = source_url(url, "image/*", "`image_url.url`")?;
+            let field = "`image_url.url`";
+            let (mime, src) = source_url(required_str(&image["url"], field)?, "image/*", field)?;
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
             if !nested.is_empty() {
@@ -331,10 +329,7 @@ pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
         Some("input_audio") => {
             let audio = &v["input_audio"];
             let field = "`input_audio.format`";
-            let format = audio["format"]
-                .as_str()
-                .ok_or_else(|| unreadable_media(field, "is required"))?
-                .to_ascii_lowercase();
+            let format = required_str(&audio["format"], field)?.to_ascii_lowercase();
             let subtype = match format.as_str() {
                 "wav" => "wav",
                 "mp3" => "mpeg",

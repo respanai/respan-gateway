@@ -72,10 +72,7 @@ pub fn data_url(url: &str) -> Result<Option<(String, Vec<u8>)>, DataUrlError> {
     let Some(data_url) = url.strip_prefix("data:") else {
         return Ok(None);
     };
-    let (header, data) = data_url
-        .split_once(',')
-        .filter(|(_, data)| !data.is_empty())
-        .ok_or(DataUrlError::NoData)?;
+    let (header, data) = data_url.split_once(',').ok_or(DataUrlError::NoData)?;
     let mut params = header.split(';');
     let mime = Some(params.next().unwrap_or_default().trim())
         .filter(|m| !m.is_empty())
@@ -88,6 +85,9 @@ pub fn data_url(url: &str) -> Result<Option<(String, Vec<u8>)>, DataUrlError> {
             .ok_or(DataUrlError::NotBase64)?,
         false => data.into_owned(),
     };
+    if bytes.is_empty() {
+        return Err(DataUrlError::NoData);
+    }
     Ok(Some((mime.to_owned(), bytes)))
 }
 
