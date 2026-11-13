@@ -1166,7 +1166,7 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         ),
         (
             message(json!({"type": "input_file", "file_data": "aGVsbG8="})),
-            Err("`file_data` must be a base64 `data:` URL"),
+            Err("`file_data` must be a `data:` URL"),
         ),
     ];
     let bytes = |chat: &Input| match chat.messages[0].content.first() {

@@ -13,12 +13,11 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
-use respan_gateway_http::content::base64_bytes;
 use serde_json::{Map, Value, json};
 
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    Own, arguments_object, edit_native, effort_name, merge_fields, merge_missing, not_base64,
+    Own, arguments_object, base64_field, edit_native, effort_name, merge_fields, merge_missing,
     parse_effort, remainder, sealed, set, unreadable_media, untranslatable, write_search,
 };
 
@@ -193,32 +192,29 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Result<
 }
 
 /// An `inlineData` or `fileData` part, if the kind can say it; one whose
-/// `data` does not decode is refused.
+/// `data` is missing or does not decode is refused.
 fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
-    read_media_part(p, which).transpose()
-}
-
-/// [`read_media`], with `None` for a part the kind has no form for.
-fn read_media_part(p: &Value, which: &str) -> Option<Result<Content, Fault>> {
     let data = &p[which];
-    let mime = data["mimeType"].as_str();
-    let (source, known): (MediaSource, &[&str]) = match which {
+    let (mime, source, known): (&str, MediaSource, &[&str]) = match which {
         "inlineData" => {
-            if mime.is_none() {
-                let refused = unreadable_media("`inlineData.mimeType`", "is required");
-                return Some(Err(refused));
-            }
-            let Some(bytes) = base64_bytes(data["data"].as_str()?) else {
-                return Some(Err(not_base64("`inlineData.data`")));
-            };
-            (MediaSource::Bytes(bytes.into()), &["mimeType", "data"])
+            let mime = data["mimeType"]
+                .as_str()
+                .ok_or_else(|| unreadable_media("`inlineData.mimeType`", "is required"))?;
+            let bytes = base64_field(&data["data"], "`inlineData.data`")?;
+            (
+                mime,
+                MediaSource::Bytes(bytes.into()),
+                &["mimeType", "data"],
+            )
         }
-        _ => (
-            MediaSource::Url(data["fileUri"].as_str()?.into()),
-            &["mimeType", "fileUri"],
-        ),
+        _ => {
+            let (Some(mime), Some(uri)) = (data["mimeType"].as_str(), data["fileUri"].as_str())
+            else {
+                return Ok(None);
+            };
+            (mime, MediaSource::Url(uri.into()), &["mimeType", "fileUri"])
+        }
     };
-    let mime = mime?;
     let mut fields = remainder(p, &[which]);
     let nested = remainder(data, known);
     if !nested.is_empty() {
@@ -226,12 +222,12 @@ fn read_media_part(p: &Value, which: &str) -> Option<Result<Content, Fault>> {
     }
     let mut media = Media::new(mime, source);
     media.native = GeminiGenerate::native(fields);
-    match mime.split('/').next()? {
-        "image" => Some(Ok(Content::Image(media))),
-        "audio" => Some(Ok(Content::Audio(media))),
-        "video" => None,
-        _ => Some(Ok(Content::Document(media))),
-    }
+    Ok(match mime.split('/').next() {
+        Some("image") => Some(Content::Image(media)),
+        Some("audio") => Some(Content::Audio(media)),
+        Some("video") => None,
+        _ => Some(Content::Document(media)),
+    })
 }
 
 /// The messages `chat` has after its leading system ones, and the

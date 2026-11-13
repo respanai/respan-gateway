@@ -5,11 +5,10 @@
 use super::{is_segment, refusal};
 use crate::edge::{bind_provider, sends};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::invalid;
+use respan_gateway_conversation_http::fields::{base64_bytes, invalid};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::base64_bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderValue, Method, Uri, request::Parts as RequestHead, response::Parts as ResponseHead,

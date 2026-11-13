@@ -4,8 +4,8 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    EFFORT_BUDGETS, arguments_object, decode_content, decode_tools, each_tool, edit_native,
-    effort_for, encode_content, merge_missing, not_base64, only, read_search, remainder, rest_of,
+    EFFORT_BUDGETS, arguments_object, base64_field, decode_content, decode_tools, each_tool,
+    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder, rest_of,
     set, take_native, unreadable_media, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
@@ -16,7 +16,6 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
-use respan_gateway_http::content::base64_bytes;
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::AnthropicMessages;
@@ -144,7 +143,7 @@ pub(crate) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
 /// [`decode_part`], with `None` for a part the kind has no form for.
 fn read_part(p: &Value) -> Option<Result<Content, Fault>> {
     match p["type"].as_str()? {
-        "image" | "document" => read_media(p),
+        "image" | "document" => read_media(p).transpose(),
         "thinking" => Some(Ok(Content::Reasoning {
             text: p["thinking"].as_str()?.into(),
             native: AnthropicMessages::native(remainder(p, &["type", "thinking", "signature"])),
@@ -170,47 +169,47 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
 const PLAIN_TEXT: &str = "text/plain";
 
 /// An image or document block, if the kind can say its source: its other
-/// fields are its media's `native`. One whose base64 does not decode is
-/// refused.
-fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
+/// fields are its media's `native`. One whose base64 is missing or does not
+/// decode is refused.
+fn read_media(v: &Value) -> Result<Option<Content>, Fault> {
     if v.get("title").is_some_and(|v| !v.is_string()) {
-        return None;
+        return Ok(None);
     }
     let source = &v["source"];
-    let (mut mime, src) = match source["type"].as_str()? {
-        "base64" => {
-            let Some(mime) = source["media_type"].as_str() else {
-                let field = "`source.media_type`";
-                return Some(Err(unreadable_media(field, "is required for base64 data")));
-            };
-            let Some(bytes) = base64_bytes(source["data"].as_str()?) else {
-                return Some(Err(not_base64("`source.data`")));
-            };
-            (mime.to_owned(), MediaSource::Bytes(bytes.into()))
+    let (mut mime, src, known) = match source["type"].as_str() {
+        Some("base64") => {
+            let mime = source["media_type"].as_str().ok_or_else(|| {
+                unreadable_media("`source.media_type`", "is required for base64 data")
+            })?;
+            let bytes = base64_field(&source["data"], "`source.data`")?;
+            let src = MediaSource::Bytes(bytes.into());
+            (mime.to_owned(), src, &["type", "media_type", "data"][..])
         }
-        "url" => (
-            "image/*".to_owned(),
-            MediaSource::Url(source["url"].as_str()?.into()),
-        ),
-        "text" if v["type"] == "document" => {
-            let mime = source["media_type"].as_str().unwrap_or(PLAIN_TEXT);
-            let text = source["data"].as_str()?;
+        Some("url") => {
+            let Some(url) = source["url"].as_str() else {
+                return Ok(None);
+            };
             (
-                mime.to_owned(),
-                MediaSource::Bytes(text.as_bytes().to_vec().into()),
+                "image/*".to_owned(),
+                MediaSource::Url(url.into()),
+                &["type", "url"][..],
             )
         }
-        _ => return None,
+        Some("text") if v["type"] == "document" => {
+            let mime = source["media_type"].as_str().unwrap_or(PLAIN_TEXT);
+            let Some(text) = source["data"].as_str() else {
+                return Ok(None);
+            };
+            let src = MediaSource::Bytes(text.as_bytes().to_vec().into());
+            (mime.to_owned(), src, &["type", "media_type", "data"][..])
+        }
+        _ => return Ok(None),
     };
     let image = v["type"] == "image";
     if !image && mime == "image/*" {
         mime = "application/pdf".into();
     }
     let mut fields = remainder(v, &["type", "source", "title"]);
-    let known = match source["type"].as_str() {
-        Some("url") => &["type", "url"][..],
-        _ => &["type", "media_type", "data"][..],
-    };
     let nested = remainder(source, known);
     if !nested.is_empty() {
         fields.insert("source".into(), nested.into());
@@ -218,7 +217,7 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
     let mut media = Media::new(mime, src);
     media.name = v["title"].as_str().map(str::to_owned);
     media.native = AnthropicMessages::native(fields);
-    Some(Ok(match image {
+    Ok(Some(match image {
         true => Content::Image(media),
         false => Content::Document(media),
     }))
@@ -228,18 +227,16 @@ fn read_media(v: &Value) -> Option<Result<Content, Fault>> {
 /// Anthropic has no field for, is dropped.
 fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
     let native = AnthropicMessages::fields(&media.native).clone();
-    let text = match &media.source {
-        MediaSource::Bytes(bytes) if kind == "document" && media.mime_type.starts_with("text/") => {
-            std::str::from_utf8(bytes).ok()
-        }
-        _ => None,
-    };
-    let source = match (&media.source, text) {
-        (_, Some(text)) => json!({"type":"text","media_type":PLAIN_TEXT,"data":text}),
-        (MediaSource::Url(url), _) => json!({"type":"url","url":url}),
-        (MediaSource::Bytes(bytes), _) => {
-            json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
-        }
+    let source = match &media.source {
+        MediaSource::Url(url) => json!({"type":"url","url":url}),
+        MediaSource::Bytes(bytes) => match std::str::from_utf8(bytes) {
+            Ok(text) if kind == "document" && media.mime_type.starts_with("text/") => {
+                json!({"type":"text","media_type":PLAIN_TEXT,"data":text})
+            }
+            _ => {
+                json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
+            }
+        },
     };
     let mut v = json!({"type":kind,"source":source});
     if let Some(name) = media.name.as_ref().filter(|_| kind == "document") {

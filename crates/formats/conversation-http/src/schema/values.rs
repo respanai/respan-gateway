@@ -2,13 +2,12 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields;
+use crate::fields::{self, base64_bytes, data_url};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
 use respan_gateway_core::{ErrorCode, Fault, Native};
-use respan_gateway_http::content::{DataUrlError, data_url};
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http_faults::Status;
 use serde_json::{Map, Value};
@@ -34,33 +33,38 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
 }
 
 /// The refusal of a request whose `field`, as its format names it, holds
-/// media no provider would read: base64 that does not decode, or what else
-/// `what` says.
+/// media no provider would read, as `what` says.
 pub(crate) fn unreadable_media(field: &str, what: &str) -> Fault {
     Fault::bad_request(format!("{field} {what}"))
 }
 
-/// [`unreadable_media`] for base64 that does not decode.
-pub(crate) fn not_base64(field: &str) -> Fault {
-    unreadable_media(field, "is not valid base64")
+/// The bytes of the base64 in `value`, the client's `field`; a field that is
+/// missing, or whose base64 does not decode, is refused.
+pub(crate) fn base64_field(value: &Value, field: &str) -> Result<Vec<u8>, Fault> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| unreadable_media(field, "is required"))?;
+    base64_bytes(text).ok_or_else(|| unreadable_media(field, "is not valid base64"))
+}
+
+/// The media type and bytes of `url`, the client's `field`, if it is a
+/// `data:` URL ([`data_url`]); `None` for any other URL. One with no data,
+/// or whose base64 does not decode, is refused.
+pub(crate) fn data_media(url: &str, field: &str) -> Result<Option<(String, Vec<u8>)>, Fault> {
+    data_url(url).map_err(|e| unreadable_media(field, e.reason()))
 }
 
 /// The media type and source of `url`, the client's `field`: the bytes of a
-/// `data:` URL ([`data_url`]), else the URL, of type `fallback`. One with no
-/// data, or whose base64 does not decode, is refused.
+/// `data:` URL ([`data_media`]), else the URL, of type `fallback`.
 pub(crate) fn source_url(
     url: &str,
     fallback: &str,
     field: &str,
 ) -> Result<(String, MediaSource), Fault> {
-    match data_url(url) {
-        None => Ok((fallback.into(), MediaSource::Url(url.into()))),
-        Some(Ok((mime, bytes))) => Ok((mime, MediaSource::Bytes(bytes.into()))),
-        Some(Err(DataUrlError::NoData)) => {
-            Err(unreadable_media(field, "is a `data:` URL with no data"))
-        }
-        Some(Err(_)) => Err(not_base64(field)),
-    }
+    Ok(match data_media(url, field)? {
+        Some((mime, bytes)) => (mime, MediaSource::Bytes(bytes.into())),
+        None => (fallback.into(), MediaSource::Url(url.into())),
+    })
 }
 
 /// A request body that is not a JSON object.

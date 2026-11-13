@@ -10,12 +10,11 @@ use super::{
     unreadable, usage_extras, whole_json, write_field, write_usage,
 };
 use respan_gateway_conversation::{Media, MediaSource, Usage};
-use respan_gateway_conversation_http::fields::media_url;
+use respan_gateway_conversation_http::fields::{data_url, media_url};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
-use respan_gateway_http::content::{DataUrlError, data_url};
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Sse, Whole, native::Json};
@@ -150,18 +149,8 @@ fn linked(v: &Value, param: &str) -> Result<Media, Fault> {
     let url = v["image_url"]
         .as_str()
         .ok_or_else(|| invalid(param, "must name an image_url"))?;
-    match data_url(url) {
-        Some(Ok((mime, bytes))) => return Ok(Media::new(mime, MediaSource::Bytes(bytes.into()))),
-        Some(Err(DataUrlError::NoData)) => {
-            return Err(invalid(param, "is a `data:` URL with no data"));
-        }
-        Some(Err(_)) => {
-            return Err(invalid(
-                param,
-                "holds a `data:` URL that is not valid base64",
-            ));
-        }
-        None => {}
+    if let Some((mime, bytes)) = data_url(url).map_err(|e| invalid(param, e.reason()))? {
+        return Ok(Media::new(mime, MediaSource::Bytes(bytes.into())));
     }
     let path = url.split(['?', '#']).next().unwrap_or_default();
     let mime = mime_of(None, path, &[]);
