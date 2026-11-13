@@ -3,7 +3,10 @@
 //! faults of what cannot be written, and small JSON helpers.
 
 use crate::fields;
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::Engine;
+use base64::alphabet;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
@@ -33,17 +36,62 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
-/// The media type and source of a URL: the data of a `data:` URL, else the
-/// URL, of type `fallback`.
-pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSource)> {
-    match url.strip_prefix("data:") {
-        Some(data) => {
-            let (mime, data) = data.split_once(";base64,")?;
-            let bytes = STANDARD.decode(data).ok()?;
-            Some((mime.into(), MediaSource::Bytes(bytes.into())))
-        }
-        None => Some((fallback.into(), MediaSource::Url(url.into()))),
-    }
+/// Base64 decoding that accepts the data with or without its padding, and
+/// a last symbol whose unused bits are not zero.
+const fn lenient(alphabet: &'static alphabet::Alphabet) -> GeneralPurpose {
+    let config = GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true);
+    GeneralPurpose::new(alphabet, config)
+}
+
+/// The base64 alphabets embedded data is read in, the standard one first.
+const DATA_URL_BASE64: [GeneralPurpose; 2] =
+    [lenient(&alphabet::STANDARD), lenient(&alphabet::URL_SAFE)];
+
+/// Base64 a request embeds that does not decode.
+#[derive(Debug)]
+pub(crate) struct NotBase64;
+
+/// The refusal of a request whose `field`, as its format names it, holds
+/// base64 that does not decode: no provider would read the part.
+pub(crate) fn not_base64(field: &str) -> Fault {
+    Fault::bad_request(format!("{field} is not valid base64"))
+}
+
+/// The bytes of base64 `data` a request embeds, read with or without
+/// padding, in either alphabet, across the line breaks a client may have
+/// wrapped it at: what any provider reads, and more.
+pub(crate) fn base64_bytes(data: &str) -> Result<Vec<u8>, NotBase64> {
+    let data = match data.contains(|c: char| c.is_ascii_whitespace()) {
+        true => Cow::Owned(data.chars().filter(|c| !c.is_ascii_whitespace()).collect()),
+        false => Cow::Borrowed(data),
+    };
+    DATA_URL_BASE64
+        .iter()
+        .find_map(|engine| engine.decode(data.as_bytes()).ok())
+        .ok_or(NotBase64)
+}
+
+/// The media type and source of a URL: the bytes of a `data:` URL, else the
+/// URL, of type `fallback`. A `data:` URL (RFC 2397) is base64 when a
+/// parameter of its header says so, in any case, and percent-encoded bytes
+/// otherwise; its type is `text/plain` when it names none.
+pub(crate) fn source_url(url: &str, fallback: &str) -> Result<(String, MediaSource), NotBase64> {
+    let Some(data_url) = url.strip_prefix("data:") else {
+        return Ok((fallback.into(), MediaSource::Url(url.into())));
+    };
+    let (header, data) = data_url.split_once(',').ok_or(NotBase64)?;
+    let mut params = header.split(';');
+    let mime = Some(params.next().unwrap_or_default().trim())
+        .filter(|m| !m.is_empty())
+        .unwrap_or("text/plain");
+    let data = Cow::from(percent_decode_str(data));
+    let bytes = match params.any(|p| p.trim().eq_ignore_ascii_case("base64")) {
+        true => base64_bytes(std::str::from_utf8(&data).map_err(|_| NotBase64)?)?,
+        false => data.into_owned(),
+    };
+    Ok((mime.into(), MediaSource::Bytes(bytes.into())))
 }
 
 /// A request body that is not a JSON object.
@@ -286,13 +334,16 @@ pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fa
 }
 
 /// Content of format `C` as parts: a string is one text part.
-pub(crate) fn decode_content<C: Schema>(v: &Value) -> Vec<Content> {
-    match v {
+pub(crate) fn decode_content<C: Schema>(v: &Value) -> Result<Vec<Content>, Fault> {
+    Ok(match v {
         Value::String(text) => vec![Content::from(text.as_str())],
-        Value::Array(parts) => parts.iter().map(decode_any_part::<C>).collect(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(decode_any_part::<C>)
+            .collect::<Result<_, _>>()?,
         Value::Null => Vec::new(),
         other => vec![Content::Native(C::native(other.clone()))],
-    }
+    })
 }
 
 /// A part as format `C` has it: text, a part in that format only, or what
@@ -314,11 +365,11 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
 /// What the format reads of a part as the kind's ([`Schema::decode_part`]); a
 /// text part, whose other fields, such as a cache marker, are its `native`;
 /// or other content, which only a call in the format it is in can send.
-fn decode_any_part<C: Schema>(p: &Value) -> Content {
-    if let Some(part) = C::decode_part(p) {
-        return part;
+fn decode_any_part<C: Schema>(p: &Value) -> Result<Content, Fault> {
+    if let Some(part) = C::decode_part(p)? {
+        return Ok(part);
     }
-    match (p["type"].as_str(), p["text"].as_str()) {
+    Ok(match (p["type"].as_str(), p["text"].as_str()) {
         (Some("text"), Some(text)) => {
             let fields = p.as_object().into_iter().flatten();
             let fields = fields.filter(|(k, v)| *k != "type" && *k != "text" && says(v));
@@ -330,12 +381,12 @@ fn decode_any_part<C: Schema>(p: &Value) -> Content {
             part
         }
         _ => Content::Native(C::native(p.clone())),
-    }
+    })
 }
 
 /// A message of format `C` as a conversation keeps it: its other fields in
 /// its `native`.
-pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Message {
+pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Result<Message, Fault> {
     let name = m["role"].as_str().unwrap_or_default();
     let role = roles
         .value(name)
@@ -343,10 +394,10 @@ pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Messa
     let fields = m.as_object().into_iter().flatten();
     let fields = fields.filter(|(k, v)| *k != "role" && *k != "content" && says(v));
     let mut message = Message::new(role, "");
-    message.content = decode_content::<C>(&m["content"]);
+    message.content = decode_content::<C>(&m["content"])?;
     let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
     message.native = C::native(fields);
-    message
+    Ok(message)
 }
 
 /// Leave a message no `native` if it says nothing the kind has no form for.

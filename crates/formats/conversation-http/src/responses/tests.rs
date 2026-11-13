@@ -7,13 +7,15 @@ use respan_gateway_core::Native;
 use crate::anthropic::AnthropicMessages;
 use crate::fields::rest_of;
 use crate::openai::OpenAiChat;
-use respan_gateway_conversation::{Block, Message, ResponseFormat, Role, Tool, ToolChoice};
+use respan_gateway_conversation::{
+    Block, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
+};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::{Decoder, Sse};
 use respan_gateway_sse::event_json;
 
 fn decode_request(v: &Value) -> Input {
-    let mut chat = OpenAiResponses.decode_json(v);
+    let mut chat = OpenAiResponses.decode_json(v).expect("read");
     chat.model = v["model"].as_str().map(Into::into);
     chat
 }
@@ -1055,13 +1057,15 @@ fn every_named_effort_is_the_kinds_and_written_as_it_came() {
 
 #[test]
 fn a_chats_system_message_is_an_input_item_and_only_instructions_are_instructions() {
-    let chat = OpenAiChat.decode_json(&json!({
-        "messages": [
-            { "role": "system", "content": "Answer in JSON." },
-            { "role": "user", "content": "hi" },
-        ],
-        "response_format": { "type": "json_object" },
-    }));
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "messages": [
+                { "role": "system", "content": "Answer in JSON." },
+                { "role": "user", "content": "hi" },
+            ],
+            "response_format": { "type": "json_object" },
+        }))
+        .expect("read");
     let v = OpenAiResponses.encode_request(&chat).expect("a request");
     assert!(v.get("instructions").is_none(), "{v:?}");
     assert_eq!(
@@ -1100,10 +1104,12 @@ fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
 
 #[test]
 fn a_chats_service_tier_is_said_in_responses_and_its_verbosity_is_its_own() {
-    let chat = OpenAiChat.decode_json(&json!({
-        "model": "m", "messages": [{ "role": "user", "content": "hi" }],
-        "service_tier": "flex", "verbosity": "low",
-    }));
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "model": "m", "messages": [{ "role": "user", "content": "hi" }],
+            "service_tier": "flex", "verbosity": "low",
+        }))
+        .expect("read");
     let sent = OpenAiResponses.encode_request(&chat).expect("written");
     assert_eq!(sent["service_tier"], "flex");
     assert!(sent.get("text").is_none(), "{sent:?}");
@@ -1131,4 +1137,48 @@ fn a_providers_parts_beyond_their_totals_stay_within_them() {
     assert_eq!(usage.cached_input_tokens, 15);
     assert_eq!(usage.cache_write_input_tokens, 0);
     assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |item: Value| {
+        let body = json!({"model": "m", "input": [item]});
+        OpenAiResponses.decode_request(Bytes::from(body.to_string()))
+    };
+    let image = |url: &str| json!({"type": "input_image", "image_url": url});
+    let message = |part: Value| json!({"role": "user", "content": [part]});
+    let output =
+        |part: Value| json!({"type": "function_call_output", "call_id": "c", "output": [part]});
+    let hello = Some(b"hello".to_vec());
+    let cases = [
+        (
+            message(image("data:image/png;base64,aGVs\nbG8")),
+            hello.clone(),
+        ),
+        (output(image("data:image/png;base64,aGVsbG8=")), hello),
+        (message(image("data:image/png;base64,not*base64!")), None),
+        (output(image("data:image/png;base64,not*base64!")), None),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
+    }
 }

@@ -32,7 +32,11 @@ for the HTTP formats of other JSON kinds, such as the media kinds'.
 What a format has no form for stays native to it (a `Native` only it, or
 code that names it through `Schema::fields` and `Schema::with_fields`, reads), is written
 only by that format, and is dropped by another, silently: what has meaning
-beyond its format belongs in the kind. A message whose every part a format drops is left out. A call
+beyond its format belongs in the kind. Media a format's reader finds and
+cannot decode, such as base64 that is not, is not kept native: the request is
+refused with a 400 before any provider is called. Base64 is read with or
+without padding, in either alphabet, across line breaks, and a `data:` URL's
+data may be percent-encoded. A message whose every part a format drops is left out. A call
 to a provider of the client's own format carries the client's spec headers and
 query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 `?beta=true`): the request round-trips, and no bytes of it are reused.

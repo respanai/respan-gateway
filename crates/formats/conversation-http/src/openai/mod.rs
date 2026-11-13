@@ -271,7 +271,7 @@ impl Schema for OpenAiChat {
         check_choice_count(&v["n"])
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         // The larger of both spellings, so the limit read bounds what any
         // provider enforces.
@@ -295,7 +295,7 @@ impl Schema for OpenAiChat {
         }
         chat.options.service_tier = take_text::<OpenAiChat>(&mut chat, "service_tier");
         for m in v["messages"].as_array().into_iter().flatten() {
-            let mut message = decode_message::<Self>(m, &ROLES);
+            let mut message = decode_message::<Self>(m, &ROLES)?;
             read_openai_message(m, &mut message);
             tidy::<OpenAiChat>(&mut message);
             chat.messages.push(message);
@@ -307,7 +307,7 @@ impl Schema for OpenAiChat {
                 parse_effort(e.as_str()?)
             })
             .map(Reasoning::effort);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
@@ -344,7 +344,7 @@ impl Schema for OpenAiChat {
         Ok(v)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 

@@ -201,7 +201,7 @@ impl Schema for OpenAiResponses {
         self.decoder().body(v, out)
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.options.max_output_tokens = v["max_output_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
@@ -216,13 +216,13 @@ impl Schema for OpenAiResponses {
             let instructions = request::INSTRUCTIONS.into();
             edit_native::<Self, _>(&mut chat.native, |f| f.insert(instructions, true.into()));
         }
-        request::read_input(v, &mut chat);
+        request::read_input(v, &mut chat)?;
         request::read_tools(v, &mut chat);
         edit_native::<Self, _>(&mut chat.native, |_| {});
         request::read_format(v, &mut chat);
         chat.options.service_tier = crate::schema::take_text::<Self>(&mut chat, "service_tier");
         request::read_reasoning(&mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
@@ -252,7 +252,7 @@ impl Schema for OpenAiResponses {
         Ok(v)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 

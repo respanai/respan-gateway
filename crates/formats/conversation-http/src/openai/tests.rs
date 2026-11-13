@@ -319,7 +319,7 @@ fn openai_chat_reads_reasoning_content_and_relays_a_vendors_field() {
     let body = json!({ "model": "m", "messages": [
         { "role": "assistant", "content": "ok", "reasoning_content": "hm" },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(chat.messages[0].content, [Content::from("ok")]);
     assert_eq!(
         OpenAiChat::fields(&chat.messages[0].native).get("reasoning_content"),
@@ -929,7 +929,7 @@ fn an_edited_tool_call_and_result_are_written_into_the_request() {
         { "role": "assistant", "content": null, "tool_calls": [call] },
         { "role": "tool", "tool_call_id": "c1", "content": "bob@x.io is Bob" },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(
         chat.messages[1].content,
         [Content::tool_call(
@@ -1025,7 +1025,7 @@ fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "name": "alice", "content": "hi" },
     ], "tools": [{ "type": "function", "function": { "name": "f" } }], "seed": 7 });
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(
         OpenAiChat::fields(&chat.native).get("seed"),
         Some(&json!(7))
@@ -1047,7 +1047,7 @@ fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
 fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
     let body = json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }],
         "logprobs": true, "top_logprobs": 3 });
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     // To Anthropic it is sent without them, not refused.
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     let sent = sent.unwrap_or_default();
@@ -1060,12 +1060,14 @@ fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
 #[test]
 fn several_choices_are_refused_as_a_bad_request() {
     let body = json!({ "model": "m", "messages": [], "n": 2 });
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(OpenAiChat::fields(&chat.native).get("n"), Some(&json!(2)));
     let refused = OpenAiChat.encode_request(&chat).err();
     assert!(refused.is_some_and(|f| f.is(respan_gateway_core::FaultKind::Client)));
     // One choice is the default, and says nothing.
-    let one = OpenAiChat.decode_json(&json!({ "model": "m", "messages": [], "n": 1 }));
+    let one = OpenAiChat
+        .decode_json(&json!({ "model": "m", "messages": [], "n": 1 }))
+        .expect("read");
     assert!(one.native.is_empty());
 }
 
@@ -1073,7 +1075,7 @@ fn several_choices_are_refused_as_a_bad_request() {
 fn the_user_field_is_read_redacted_and_translated() {
     let body = json!({ "model": "m", "user": "bob@x.io",
         "messages": [{ "role": "user", "content": "hi" }] });
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(chat.user.as_deref(), Some("bob@x.io"));
     assert!(chat.native.is_empty());
     // Kept as it came, or changed or removed by a plugin.
@@ -1089,13 +1091,15 @@ fn the_user_field_is_read_redacted_and_translated() {
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     let sent = sent.unwrap_or_default();
     assert_eq!(sent["metadata"], json!({ "user_id": "bob@x.io" }));
-    let back = OpenAiChat.encode_request(&AnthropicMessages.decode_json(&sent));
+    let back = OpenAiChat.encode_request(&AnthropicMessages.decode_json(&sent).expect("read"));
     assert_eq!(
         back.ok().map(|v| v["user"].clone()),
         Some(json!("bob@x.io"))
     );
     // A user that is not a string is not the kind's: it stays in `native`.
-    let odd = OpenAiChat.decode_json(&json!({ "user": 7, "messages": [] }));
+    let odd = OpenAiChat
+        .decode_json(&json!({ "user": 7, "messages": [] }))
+        .expect("read");
     assert_eq!(
         (odd.user, OpenAiChat::fields(&odd.native).get("user")),
         (None, Some(&json!(7)))
@@ -1121,7 +1125,11 @@ fn a_plugin_that_removes_tools_sends_the_request_without_them() {
 fn the_limit_is_read_as_the_larger_spelling_and_written_canonically() {
     let v = json!({ "max_tokens": 100_000, "max_completion_tokens": 10, "messages": [] });
     assert_eq!(
-        OpenAiChat.decode_json(&v).options.max_output_tokens,
+        OpenAiChat
+            .decode_json(&v)
+            .expect("read")
+            .options
+            .max_output_tokens,
         Some(100_000)
     );
     for (limits, want) in [
@@ -1154,7 +1162,8 @@ fn the_limit_is_read_as_the_larger_spelling_and_written_canonically() {
     }
     // Another format writes its own spelling.
     let chat = OpenAiChat
-        .decode_json(&json!({ "max_tokens": 7, "messages": [{"role":"user","content":"hi"}] }));
+        .decode_json(&json!({ "max_tokens": 7, "messages": [{"role":"user","content":"hi"}] }))
+        .expect("read");
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(sent.map(|v| v["max_tokens"].clone()).ok(), Some(json!(7)));
 }
@@ -1184,7 +1193,7 @@ fn keys_set_to_null_say_nothing() {
         { "role": "user", "name": null, "content": "hi" },
         { "role": "assistant", "content": "yo", "refusal": null },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert!(chat.native.is_empty(), "{:?}", chat.native);
     assert_eq!(chat.messages.len(), 2);
     assert!(chat.messages.iter().all(Message::is_plain));
@@ -1232,7 +1241,7 @@ fn what_a_message_cannot_hold_is_kept_where_it_is() {
         { "role": "user", "content": [{ "type": "text", "text": "what is this?" }, image] },
         tool,
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(chat.messages[0].text(), "what is this?");
     // A tool message is a user message of one result.
     assert_eq!(chat.messages[1].role, Role::User);
@@ -1366,7 +1375,7 @@ fn an_edit_keeps_messages_a_conversation_cannot_hold() {
         removed.map(|v| v["messages"].clone()).ok(),
         Some(json!([{ "role": "user", "content": "hi" }]))
     );
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     let image = json!({ "type": "image", "source": { "type": "url", "url": "u" } });
     assert_eq!(
@@ -1380,9 +1389,11 @@ fn an_edit_keeps_messages_a_conversation_cannot_hold() {
 fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
     let pdf = json!({ "type": "document", "source": { "type": "base64",
         "media_type": "application/pdf", "data": "JVBERi0=" } });
-    let mut chat = OpenAiChat.decode_json(&json!({ "model": "m", "messages": [
+    let mut chat = OpenAiChat
+        .decode_json(&json!({ "model": "m", "messages": [
         { "role": "user", "content": [{ "type": "text", "text": "read" },
-            { "type": "file", "file": { "file_data": "x" } }] }] }));
+            { "type": "file", "file": { "file_data": "x" } }] }] }))
+        .expect("read");
     // A part in OpenAI's shape does not reach Anthropic.
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
@@ -1416,7 +1427,7 @@ fn what_is_already_in_the_targets_format_crosses_and_the_rest_is_dropped() {
 fn fields_in_another_format_are_not_written_into_a_request() {
     let body = json!({ "model": "m", "messages": [{ "role": "user", "content": "hi" }],
         "tools": [{ "type": "function", "function": { "name": "f" } }] });
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     let thinking = json!({ "thinking": { "type": "enabled" } });
     let fields = thinking.as_object().cloned().unwrap_or_default();
     let mut foreign = chat.clone();
@@ -1530,10 +1541,12 @@ fn streamed_refusals_and_logprobs_join_in_a_whole_body() {
 
 #[test]
 fn reasoning_in_a_request_is_dropped_but_anthropics_thinking() {
-    let mut chat = OpenAiChat.decode_json(&json!({ "model": "m", "messages": [
-        { "role": "user", "content": "hi" },
-        { "role": "assistant", "content": "ok" },
-    ]}));
+    let mut chat = OpenAiChat
+        .decode_json(&json!({ "model": "m", "messages": [
+            { "role": "user", "content": "hi" },
+            { "role": "assistant", "content": "ok" },
+        ]}))
+        .expect("read");
     chat.messages[1].content.insert(
         0,
         Content::Reasoning {
@@ -1774,7 +1787,7 @@ fn efforts_above_high_are_written_verbatim_or_as_the_nearest() {
     let (name, effort) = ("xhigh", Effort::XHigh);
     let body = json!({ "model": "m", "max_tokens": 64, "reasoning_effort": name,
         "messages": [{ "role": "user", "content": "hi" }] });
-    let mut chat = OpenAiChat.decode_json(&body);
+    let mut chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(
         chat.options.reasoning.as_ref().and_then(|r| r.effort),
         Some(effort)
@@ -1844,7 +1857,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
             assistant,
             { "role": "user", "content": "more" },
         ]});
-        let chat = OpenAiChat.decode_json(&body);
+        let chat = OpenAiChat.decode_json(&body).expect("read");
         let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
         let input = sent.map(|v| v["input"][1].clone()).ok();
         assert_eq!(
@@ -1871,7 +1884,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "content": "hi", "cache_control": { "type": "ephemeral" } },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     let fields = OpenAiChat::fields(&chat.messages[0].native);
     assert_eq!(
         fields.get("cache_control"),
@@ -1894,7 +1907,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
             { "id": "t", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
         { "role": "tool", "tool_call_id": "t", "name": "f", "content": "42" },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     assert!(OpenAiResponses.encode_request(&chat).is_ok());
     assert!(AnthropicMessages.encode_request(&chat).is_ok());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
@@ -1914,7 +1927,7 @@ fn a_messages_vendor_fields_are_dropped_by_another_format_and_kept_by_this_one()
         { "role": "assistant", "content": null, "tool_calls": [
             { "id": "v", "type": "function", "function": { "name": "f", "arguments": "{}" } }] },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     // Chat to Chat, each signature is written back where it was read.
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
     let sent = GeminiGenerate.encode_request(&chat).map(Value::from);
@@ -1977,7 +1990,7 @@ fn a_reply_sent_back_as_history_crosses_to_another_format() {
           "provider_specific_fields": { "x": 1 } },
         { "role": "tool", "tool_call_id": "t", "content": "42" },
     ]});
-    let chat = OpenAiChat.decode_json(&body);
+    let chat = OpenAiChat.decode_json(&body).expect("read");
     let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
     assert_eq!(
         sent.map(|v| v["input"][1]["type"].clone()).ok(),
@@ -2001,4 +2014,53 @@ fn a_providers_reasoning_beyond_its_output_stays_within_it() {
     .expect("read");
     assert_eq!((usage.reasoning_tokens, usage.output_tokens), (76, 76));
     assert!(check_usage(&usage, USAGE).is_ok());
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |part: Value| {
+        let body = json!({"model": "m", "messages": [{"role": "user", "content": [part]}]});
+        OpenAiChat.decode_request(Bytes::from(body.to_string()))
+    };
+    let image = |url: &str| json!({"type": "image_url", "image_url": {"url": url}});
+    let audio =
+        |data: &str| json!({"type": "input_audio", "input_audio": {"data": data, "format": "wav"}});
+    let file = |data: &str| json!({"type": "file", "file": {"file_data": data}});
+    let hello = Some(b"hello".to_vec());
+    let cases = [
+        (image("data:image/png;base64,aGVsbG8"), hello.clone()),
+        (image("data:image/png;BASE64,aGVs%0AbG8="), hello.clone()),
+        (image("data:image/png;base64;x=y,aGVsbG9="), hello.clone()),
+        (
+            image("data:image/svg+xml,%3Csvg%2F%3E"),
+            Some(b"<svg/>".to_vec()),
+        ),
+        (audio("aGVsbG8"), hello.clone()),
+        (file("data:application/pdf;base64,aGVsbG8="), hello),
+        (image("data:image/png;base64,not*base64!"), None),
+        (audio("not*base64!"), None),
+        (file("data:application/pdf;base64,%%%"), None),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
+    }
 }

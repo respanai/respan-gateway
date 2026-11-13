@@ -6,7 +6,7 @@ use crate::schema::{Own, Schema};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 
 use crate::openai::OpenAiChat;
-use respan_gateway_conversation::ToolChoice;
+use respan_gateway_conversation::{MediaSource, ToolChoice};
 use respan_gateway_http::http::{HeaderValue, header::CONTENT_TYPE};
 
 /// The events of `events`, each decoded in turn.
@@ -126,7 +126,7 @@ fn an_edited_tool_call_and_result_keep_their_blocks() {
             { "type": "tool_result", "tool_use_id": "t1", "content": "bob@x.io is Bob" },
         ] },
     ]});
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert_eq!(
         AnthropicMessages::fields(&chat.tools[0].native).get("cache_control"),
         Some(&marker)
@@ -190,7 +190,7 @@ fn the_metadata_user_id_is_the_user() {
     let body = json!({ "model": "c", "max_tokens": 5,
         "metadata": { "user_id": "bob@x.io" },
         "messages": [{ "role": "user", "content": "hi" }] });
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert_eq!(chat.user.as_deref(), Some("bob@x.io"));
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body.clone()));
     let redacted = written(body.clone(), |c| c.user = Some("[x]".into()));
@@ -379,7 +379,7 @@ fn a_system_prompt_with_cache_markers_is_written_as_it_is() {
     let edited = written(body.clone(), |c| c.messages[1].content = vec!["HI".into()]);
     assert_eq!(edited.map(|v| v["system"].clone()).ok(), Some(system));
     // A part with a marker is text, with the marker in its own native.
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages.decode_json(&body).expect("read");
     assert!(chat.messages[0].is_plain());
     let Content::Text { text, native, .. } = &chat.messages[0].content[0] else {
         panic!("{:?}", chat.messages[0].content);
@@ -749,8 +749,10 @@ fn an_event_the_format_cannot_write_fails() {
 #[test]
 fn a_text_part_that_says_more_keeps_it_in_its_extra_and_is_still_plain() {
     let part = json!({ "type": "text", "text": "hi", "citations": [{ "type": "c" }] });
-    let chat = AnthropicMessages.decode_json(&json!({ "model": "m", "max_tokens": 1,
-        "messages": [{ "role": "user", "content": [part] }] }));
+    let chat = AnthropicMessages
+        .decode_json(&json!({ "model": "m", "max_tokens": 1,
+        "messages": [{ "role": "user", "content": [part] }] }))
+        .expect("read");
     assert!(chat.messages[0].is_plain());
     assert_eq!(chat.messages[0].text(), "hi");
     let again = AnthropicMessages.encode_request(&chat).map(Value::from);
@@ -1024,7 +1026,7 @@ fn a_large_content_edit_keeps_every_part_as_it_was_without_matching_them() {
             })
         })
         .collect();
-    let mut content = decode_content::<AnthropicMessages>(&old);
+    let mut content = decode_content::<AnthropicMessages>(&old).expect("read");
     content[5_000] = Content::from("edited");
     let written = encode_content::<AnthropicMessages>(&content).expect("content");
     assert_eq!(written.as_array().expect("an array").len(), 10_000);
@@ -1038,7 +1040,7 @@ fn large_content_in_another_order_is_written_in_that_order() {
     let old: Value = (0..1_000)
         .map(|n| json!({"type": "text", "text": n.to_string()}))
         .collect();
-    let was = decode_content::<AnthropicMessages>(&old);
+    let was = decode_content::<AnthropicMessages>(&old).expect("read");
     let now: Vec<_> = was.iter().rev().cloned().collect();
     let written = encode_content::<AnthropicMessages>(&now).expect("content");
     let reversed: Vec<Value> = old
@@ -1056,7 +1058,7 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
     for name in ["low", "medium", "high", "xhigh"] {
         let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": name },
             "messages": [{ "role": "user", "content": "hi" }] });
-        let chat = AnthropicMessages.decode_json(&v);
+        let chat = AnthropicMessages.decode_json(&v).expect("read");
         assert!(chat.native.is_empty(), "{name}");
         let back = AnthropicMessages.encode_request(&chat).map(Value::from);
         assert_eq!(
@@ -1072,7 +1074,7 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
     // `max` is Anthropic's own: written back, dropped by OpenAI.
     let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": "max" },
         "messages": [{ "role": "user", "content": "hi" }] });
-    let chat = AnthropicMessages.decode_json(&v);
+    let chat = AnthropicMessages.decode_json(&v).expect("read");
     assert!(chat.options.reasoning.is_none());
     let back = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
@@ -1086,10 +1088,12 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
 #[test]
 fn a_chats_json_output_is_written_as_anthropic_takes_it() {
     let chat = |format: Value| {
-        OpenAiChat.decode_json(&json!({
-            "messages": [{ "role": "user", "content": "JSON please" }],
-            "response_format": format,
-        }))
+        OpenAiChat
+            .decode_json(&json!({
+                "messages": [{ "role": "user", "content": "JSON please" }],
+                "response_format": format,
+            }))
+            .expect("read")
     };
     // A JSON object without a schema asks for nothing the prompt does not.
     let sent = AnthropicMessages
@@ -1218,10 +1222,12 @@ fn a_chats_effort_thinks_as_its_claude_does() {
 
 #[test]
 fn a_chats_reasoning_object_is_dropped_for_anthropic() {
-    let chat = OpenAiChat.decode_json(&json!({
-        "messages": [{ "role": "user", "content": "hi" }],
-        "reasoning": { "effort": "high" },
-    }));
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "messages": [{ "role": "user", "content": "hi" }],
+            "reasoning": { "effort": "high" },
+        }))
+        .expect("read");
     let sent = AnthropicMessages.encode_request(&chat).expect("written");
     assert!(sent.get("reasoning").is_none());
     assert_eq!(
@@ -1295,5 +1301,45 @@ fn a_chats_effort_adds_no_thinking_beside_what_anthropic_refuses_with_it() {
     ] {
         let v = claude_call("claude-sonnet-4-6", extra.clone());
         assert_eq!(v["thinking"], json!({ "type": "adaptive" }), "{extra}: {v}");
+    }
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |block: Value| {
+        let body = json!({"max_tokens": 1, "messages": [{"role": "user", "content": [block]}]});
+        AnthropicMessages.decode_request(Bytes::from(body.to_string()))
+    };
+    let image = |data: &str| json!({"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": data}});
+    let result =
+        |block: Value| json!({"type": "tool_result", "tool_use_id": "t", "content": [block]});
+    let hello = Some(b"hello".to_vec());
+    let cases = [
+        (image("aGVsbG8"), hello.clone()),
+        (result(image("-_8=")), Some(vec![0xfb, 0xff])),
+        (image("not*base64!"), None),
+        (result(image("not*base64!")), None),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Some(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), None) => assert!(fault.message().contains("not valid base64"), "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
     }
 }

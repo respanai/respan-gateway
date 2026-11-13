@@ -83,7 +83,7 @@ mod tests {
             { "role": "user", "content": "hi" },
             { "role": "assistant", "content": "ok", "reasoning_content": "hm" },
         ]});
-        let mut input = OpenAiChat.decode_json(&body);
+        let mut input = OpenAiChat.decode_json(&body).expect("read");
         write_reasoning(&mut input).expect("written");
         let sent = OpenAiChat.encode_request(&input).map(Value::from);
         let message = sent.map(|v| v["messages"][1].clone()).ok();

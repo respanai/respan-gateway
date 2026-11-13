@@ -17,8 +17,8 @@ use serde_json::{Map, Value, json};
 
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
-    Own, arguments_object, edit_native, effort_name, merge_fields, merge_missing, parse_effort,
-    remainder, sealed, set, untranslatable, write_search,
+    Own, arguments_object, base64_bytes, edit_native, effort_name, merge_fields, merge_missing,
+    not_base64, parse_effort, remainder, sealed, set, untranslatable, write_search,
 };
 
 /// The id a call of Gemini's without one is given: its position, so that its
@@ -55,7 +55,7 @@ impl Calls {
 }
 
 /// A request body's `contents` and `systemInstruction` as messages.
-pub(super) fn read_messages(v: &Value, chat: &mut Input) {
+pub(super) fn read_messages(v: &Value, chat: &mut Input) -> Result<(), Fault> {
     if let Some(system) = v.get("systemInstruction").filter(|s| !s.is_null()) {
         let mut message = Message::new(Role::System, "");
         message.content = Vec::new();
@@ -63,7 +63,7 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
         match system {
             Value::String(text) => message.content.push(Content::from(text.as_str())),
             system => {
-                message.content = read_parts(&system["parts"], 0, &mut calls);
+                message.content = read_parts(&system["parts"], 0, &mut calls)?;
                 let rest = remainder(system, &["parts", "role"]);
                 message.native = GeminiGenerate::native(rest);
             }
@@ -77,17 +77,18 @@ pub(super) fn read_messages(v: &Value, chat: &mut Input) {
             .value(name)
             .unwrap_or_else(|| Role::Native(GeminiGenerate::native(name)));
         let mut message = Message::new(role, "");
-        message.content = read_parts(&m["parts"], at, &mut calls);
+        message.content = read_parts(&m["parts"], at, &mut calls)?;
         message.native = GeminiGenerate::native(remainder(m, &["role", "parts"]));
         chat.messages.push(message);
     }
+    Ok(())
 }
 
-fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Vec<Content> {
+fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Result<Vec<Content>, Fault> {
     let parts = parts.as_array().into_iter().flatten();
     let mut out = Vec::new();
     for (at, p) in parts.enumerate() {
-        let part = read_part(p, message, at, calls);
+        let part = read_part(p, message, at, calls)?;
         let signed = !matches!(part, Content::Native(_));
         out.push(part);
         // A part's signature is a signature after it.
@@ -95,12 +96,12 @@ fn read_parts(parts: &Value, message: usize, calls: &mut Calls) -> Vec<Content> 
             out.push(Content::Signature(s.into()));
         }
     }
-    out
+    Ok(out)
 }
 
 /// A part as the kind's, or, if the kind has no form for all of it, as
 /// this format's own.
-fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content {
+fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Result<Content, Fault> {
     let own = || Content::Native(GeminiGenerate::native(p.clone()));
     let payloads = [
         "text",
@@ -114,17 +115,17 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
         .copied()
         .filter(|k| p.get(*k).is_some())
         .collect();
-    let [which] = which[..] else { return own() };
+    let [which] = which[..] else { return Ok(own()) };
     let part_fields = |known: &[&str]| GeminiGenerate::native(remainder(p, known));
-    match which {
+    Ok(match which {
         "text" => {
             let Some(text) = p["text"].as_str() else {
-                return own();
+                return Ok(own());
             };
             let thought = match &p["thought"] {
                 Value::Null | Value::Bool(false) => false,
                 Value::Bool(true) => true,
-                _ => return own(),
+                _ => return Ok(own()),
             };
             let native = part_fields(&["text", "thought", SIGNATURE]);
             match thought {
@@ -141,18 +142,18 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
                 }
             }
         }
-        "inlineData" | "fileData" => read_media(p, which).unwrap_or_else(own),
+        "inlineData" | "fileData" => read_media(p, which)?.unwrap_or_else(own),
         "functionCall" => {
             let call = &p["functionCall"];
             let clean = call["args"].is_object() || call["args"].is_null();
             let (Some(name), true) = (call["name"].as_str(), clean) else {
-                return own();
+                return Ok(own());
             };
             if !call.as_object().is_some_and(|o| {
                 o.keys()
                     .all(|k| matches!(k.as_str(), "name" | "args" | "id"))
             }) {
-                return own();
+                return Ok(own());
             }
             let id = match call["id"].as_str() {
                 Some(id) => id.to_owned(),
@@ -177,7 +178,7 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
             });
             let name = response["name"].as_str();
             let (Some(name), true, true) = (name, clean, response["response"].is_object()) else {
-                return own();
+                return Ok(own());
             };
             let id = calls.id_of(response["id"].as_str(), name);
             let said = Content::from(response["response"].to_string());
@@ -187,16 +188,25 @@ fn read_part(p: &Value, message: usize, at: usize, calls: &mut Calls) -> Content
             }
             part
         }
-    }
+    })
 }
 
-/// An `inlineData` or `fileData` part, if the kind can say it.
-fn read_media(p: &Value, which: &str) -> Option<Content> {
+/// An `inlineData` or `fileData` part, if the kind can say it; one whose
+/// `data` does not decode is refused.
+fn read_media(p: &Value, which: &str) -> Result<Option<Content>, Fault> {
+    read_media_part(p, which).transpose()
+}
+
+/// [`read_media`], with `None` for a part the kind has no form for.
+fn read_media_part(p: &Value, which: &str) -> Option<Result<Content, Fault>> {
     let data = &p[which];
     let mime = data["mimeType"].as_str()?;
     let (source, known): (MediaSource, &[&str]) = match which {
         "inlineData" => (
-            MediaSource::Bytes(STANDARD.decode(data["data"].as_str()?).ok()?.into()),
+            match base64_bytes(data["data"].as_str()?) {
+                Ok(bytes) => MediaSource::Bytes(bytes.into()),
+                Err(_) => return Some(Err(not_base64("`inlineData.data`"))),
+            },
             &["mimeType", "data"],
         ),
         _ => (
@@ -212,10 +222,10 @@ fn read_media(p: &Value, which: &str) -> Option<Content> {
     let mut media = Media::new(mime, source);
     media.native = GeminiGenerate::native(fields);
     match mime.split('/').next()? {
-        "image" => Some(Content::Image(media)),
-        "audio" => Some(Content::Audio(media)),
+        "image" => Some(Ok(Content::Image(media))),
+        "audio" => Some(Ok(Content::Audio(media))),
         "video" => None,
-        _ => Some(Content::Document(media)),
+        _ => Some(Ok(Content::Document(media))),
     }
 }
 

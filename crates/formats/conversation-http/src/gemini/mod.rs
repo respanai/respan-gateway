@@ -256,11 +256,7 @@ fn is_segment(model: &str) -> bool {
 impl GeminiGenerate {
     /// A call's request: its body, and the model its path names.
     fn decode_call(&self, head: &RequestHead, raw: Bytes) -> Result<Input, Fault> {
-        let v = match serde_json::from_slice::<Value>(&raw) {
-            Ok(v) if v.is_object() => v,
-            _ => return Err(Fault::bad_request("request body is not a JSON object")),
-        };
-        let mut chat = self.decode_json(&v);
+        let mut chat = self.decode_request(raw)?;
         chat.model = call_of(&head.uri).map(|(model, _)| model);
         Ok(chat)
     }
@@ -353,8 +349,8 @@ impl Schema for GeminiGenerate {
         Box::new(JsonArray::new(encoder))
     }
 
-    fn decode_part(_: &Value) -> Option<respan_gateway_conversation::Content> {
-        None
+    fn decode_part(_: &Value) -> Result<Option<respan_gateway_conversation::Content>, Fault> {
+        Ok(None)
     }
 
     fn encode_part(_: &respan_gateway_conversation::Content) -> Result<Value, Fault> {
@@ -365,14 +361,14 @@ impl Schema for GeminiGenerate {
         Box::new(EventStream::default())
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         let rest = crate::schema::unsupported_fields(v, KNOWN, &[]);
         chat.native = GeminiGenerate::native(rest);
-        read_messages(v, &mut chat);
+        read_messages(v, &mut chat)?;
         read_tools(v, &mut chat);
         read_config(v, &mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {

@@ -201,8 +201,8 @@ impl Schema for BedrockConverse {
         self.decoder().body(v, out)
     }
 
-    fn decode_part(_: &Value) -> Option<Content> {
-        None
+    fn decode_part(_: &Value) -> Result<Option<Content>, Fault> {
+        Ok(None)
     }
 
     fn encode_part(_: &Content) -> Result<Value, Fault> {
@@ -263,10 +263,10 @@ impl Schema for BedrockConverse {
     }
 
     /// Not read: the request stays native, so only Bedrock is sent it.
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.native = BedrockConverse::native(rest_of(v, &[]));
-        chat
+        Ok(chat)
     }
 
     fn encode_whole(&self, _: &Assembled) -> Result<Value, Fault> {
