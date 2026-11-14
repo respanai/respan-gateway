@@ -270,16 +270,50 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     Ok(v)
 }
 
+/// What a contract of this crate names differently in a response.
+struct Wire {
+    /// The format's name.
+    name: &'static str,
+    /// Whether the body names its `model`, which is the response's.
+    model: bool,
+    /// The usage keys of the input and output token counts.
+    input_tokens: &'static str,
+    output_tokens: &'static str,
+    /// Whether usage carries a `total_tokens` the kind has no place for.
+    total_tokens: bool,
+}
+
+/// The contract of `decisions`.
+const WIRE: Wire = Wire {
+    name: NAME,
+    model: true,
+    input_tokens: "input_tokens",
+    output_tokens: "output_tokens",
+    total_tokens: false,
+};
+
 /// The events of a provider's whole answer.
 fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v: Value = serde_json::from_slice(&raw).unwrap_or_default();
+    read_response(&v, &WIRE, out)
+}
+
+/// The events of the response `v` of a contract named by `wire`.
+fn read_response(v: &Value, wire: &Wire, out: &mut Vec<Output>) -> Result<(), Fault> {
     let Some(answers) = v["answers"].as_object() else {
         return Err(Fault::upstream(format!(
-            "the provider's success is not a response of {NAME}"
+            "the provider's success is not a response of {}",
+            wire.name
         )));
     };
-    let mut start = Start::new(v["model"].as_str().map(Into::into));
-    start.native = Native::json::<Key>(rest_of(&v, &["model", "answers", "usage"]));
+    let model = v["model"].as_str().filter(|_| wire.model);
+    let mut start = Start::new(model.map(Into::into));
+    let taken: &[&str] = if wire.model {
+        &["model", "answers", "usage"]
+    } else {
+        &["answers", "usage"]
+    };
+    start.native = Native::json::<Key>(rest_of(v, taken));
     out.push(Output::Start(start));
     for (id, a) in answers {
         match decode_answer::<Key>(id, a) {
@@ -297,10 +331,10 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
             }),
         };
         out.push(Output::Usage(Usage::new(
-            count("input_tokens")?,
-            count("output_tokens")?,
+            count(wire.input_tokens)?,
+            count(wire.output_tokens)?,
         )));
-        let extras = rest_of(&v["usage"], &["input_tokens", "output_tokens"]);
+        let extras = rest_of(&v["usage"], &[wire.input_tokens, wire.output_tokens]);
         if !extras.is_empty() {
             out.push(Output::Native(Native::json::<Key>(
                 json!({ "usage": extras }),
@@ -374,6 +408,15 @@ impl<'a> Asked<'a> {
     }
 }
 
+/// A score level as text: a text itself, or the `label` of a level that is an object.
+fn level_text(level: &Value) -> Option<&Value> {
+    match level {
+        Value::String(_) => Some(level),
+        l if l["label"].is_string() => Some(&l["label"]),
+        _ => None,
+    }
+}
+
 /// A score's `legend` unless it has one: the levels its question asked, by position.
 fn add_legend(v: &mut Map<String, Value>, answer: &Answer, asked: &Asked) {
     if !matches!(answer.verdict, Verdict::Score { .. }) || v.contains_key("legend") {
@@ -381,24 +424,38 @@ fn add_legend(v: &mut Map<String, Value>, answer: &Answer, asked: &Asked) {
     }
     if let Some(levels) = asked.levels(&answer.id) {
         let legend = levels.iter().enumerate();
-        let legend = legend.map(|(i, level)| (i.to_string(), level.clone()));
+        let legend =
+            legend.map(|(i, level)| (i.to_string(), level_text(level).unwrap_or(level).clone()));
         v.insert("legend".into(), Value::Object(legend.collect()));
     }
 }
 
 /// A whole response of `events` to a client that asked the questions `asked`.
 fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
+    write_response(events, &WIRE, |answer| {
+        let mut written = encode_answer::<Key>(answer)?;
+        add_legend(&mut written, answer, asked);
+        Ok(written)
+    })
+}
+
+/// A whole response of `events` of a contract named by `wire`, its answers written by `answer`.
+fn write_response(
+    events: &[Output],
+    wire: &Wire,
+    answer: impl Fn(&Answer) -> Result<Map<String, Value>, Fault>,
+) -> Result<Bytes, Fault> {
     let (mut body, mut answers, mut usage, mut extras) = (Map::new(), Map::new(), None, Map::new());
     for event in events {
         match event {
             Output::Start(start) => {
-                set(&mut body, "model", start.model.clone());
+                if wire.model {
+                    set(&mut body, "model", start.model.clone());
+                }
                 merge_missing(&mut body, start.native.fields::<Key>());
             }
-            Output::Answer(answer) => {
-                let mut written = encode_answer::<Key>(answer)?;
-                add_legend(&mut written, answer, asked);
-                answers.insert(answer.id.clone(), written.into());
+            Output::Answer(a) => {
+                answers.insert(a.id.clone(), answer(a)?.into());
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             Output::Native(n) => {
@@ -416,9 +473,13 @@ fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
     body.insert("answers".into(), answers.into());
     if let Some(usage) = usage {
         let mut u = Map::new();
-        u.insert("input_tokens".into(), usage.input_tokens.into());
-        u.insert("output_tokens".into(), usage.output_tokens.into());
+        u.insert(wire.input_tokens.into(), usage.input_tokens.into());
+        u.insert(wire.output_tokens.into(), usage.output_tokens.into());
         merge_missing(&mut u, &extras);
+        if wire.total_tokens {
+            let total = usage.input_tokens + usage.output_tokens;
+            u.entry("total_tokens").or_insert_with(|| total.into());
+        }
         body.insert("usage".into(), u.into());
     }
     to_bytes(&body)
@@ -515,6 +576,21 @@ mod tests {
             matches!(&input.questions[1].ask, Ask::Choice { options } if options[0].1.is_none())
         );
         assert_eq!(Value::Object(encode_request(&input).expect("call")), raw);
+        let score = Verdict::Score {
+            score: 0.5,
+            probabilities: vec![0.5, 0.5],
+        };
+        let body = raw.to_string();
+        let written = encode_response(
+            &[Output::Answer(Answer::new("urgency", score))],
+            &Asked::new(body.as_bytes()),
+        )
+        .expect("body");
+        let written: Value = serde_json::from_slice(&written).unwrap_or_default();
+        assert_eq!(
+            written["answers"]["urgency"]["legend"],
+            json!({"0": "Low", "1": "High"})
+        );
     }
 
     #[test]

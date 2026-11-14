@@ -568,8 +568,8 @@ mod tests {
 
     #[test]
     fn media_evidence_of_another_format_is_refused() {
-        let own = json!({"input": [{"type": "image", "data": "aGk="}]});
-        let Value::Object(own) = own else { return };
+        let mut own = Map::new();
+        own.insert("input".into(), json!([{"type": "image", "data": "aGk="}]));
         let mut input = Input::new(json!("s"), vec![Question::new("q", Ask::Noul)]);
         input.native = Native::json::<crate::Own<crate::GeminiDecisions>>(own);
         assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));

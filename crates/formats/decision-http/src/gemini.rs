@@ -160,9 +160,12 @@ fn decode_request(raw: &[u8]) -> Result<Input, Fault> {
         .remove("input")
         .ok_or_else(|| invalid("input", "is required"))?;
     let (state, media) = read_input(evidence)?;
-    let Some(Value::Object(questions)) = map.remove("questions").filter(|q| q != &json!({})) else {
+    let Some(Value::Object(questions)) = map.remove("questions") else {
         return Err(invalid("questions", "must be an object of questions"));
     };
+    if questions.is_empty() {
+        return Err(invalid("questions", "must be an object of questions"));
+    }
     let questions = questions.into_iter().map(|(id, q)| decode_question(id, q));
     let mut input = Input::new(state, questions.collect::<Result<Vec<_>, _>>()?);
     input.model = match map.remove("model") {
@@ -276,10 +279,10 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
                 ("choice", Some(Value::Object(options.collect())))
             }
             Ask::Score { levels } => {
-                let levels = levels.iter().map(|l| match l {
-                    Value::String(_) => Ok(l.clone()),
-                    l if l["label"].is_string() => Ok(l["label"].clone()),
-                    _ => Err(refused("a level has no text")),
+                let levels = levels.iter().map(|l| {
+                    level_text(l)
+                        .cloned()
+                        .ok_or_else(|| refused("a level has no text"))
                 });
                 ("score", Some(levels.collect::<Result<Value, _>>()?))
             }
@@ -316,19 +319,27 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     let own = input.native.fields::<Key>();
     if let Some(Value::Array(blocks)) = own.get("input") {
         let sent: String = blocks.iter().filter_map(text_of).collect();
-        let blocks: Vec<Value> = match input.state.as_str() == Some(sent.as_str()) {
-            true => blocks.clone(),
-            false => {
-                let text = json!({"type": "text", "text": v["input"]});
-                let media = blocks.iter().filter(|b| text_of(b).is_none());
-                std::iter::once(text).chain(media.cloned()).collect()
-            }
+        let blocks: Vec<Value> = if input.state.as_str() == Some(sent.as_str()) {
+            blocks.clone()
+        } else {
+            let text = json!({"type": "text", "text": v["input"]});
+            let media = blocks.iter().filter(|b| text_of(b).is_none());
+            std::iter::once(text).chain(media.cloned()).collect()
         };
         v.insert("input".into(), blocks.into());
     }
     merge_missing(&mut v, own);
     Ok(v)
 }
+
+/// The contract of Google's decisions: its usage keys and no `model`.
+const WIRE: Wire = Wire {
+    name: GEMINI,
+    model: false,
+    input_tokens: "total_input_tokens",
+    output_tokens: "total_output_tokens",
+    total_tokens: true,
+};
 
 /// The events of a provider's whole answer.
 fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
@@ -339,76 +350,12 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         let said = said.map_or_else(|| format!("the input was blocked: {reason}"), str::to_owned);
         return Err(Fault::bad_request(said));
     }
-    let Some(answers) = v["answers"].as_object() else {
-        return Err(Fault::upstream(format!(
-            "the provider's success is not a response of {GEMINI}"
-        )));
-    };
-    let mut start = Start::new(None);
-    start.native = Native::json::<Key>(rest_of(&v, &["answers", "usage"]));
-    out.push(Output::Start(start));
-    for (id, a) in answers {
-        match decode_answer::<Key>(id, a) {
-            Some(answer) => out.push(Output::Answer(answer)),
-            None => out.push(Output::Native(Native::json::<Key>(
-                json!({ "answers": { id: a } }),
-            ))),
-        }
-    }
-    if v["usage"].is_object() {
-        let count = |key: &str| match &v["usage"][key] {
-            Value::Null => Ok(0),
-            n => n.as_u64().ok_or_else(|| {
-                Fault::upstream(format!("a usage count is not a whole number: {n}"))
-            }),
-        };
-        out.push(Output::Usage(Usage::new(
-            count("total_input_tokens")?,
-            count("total_output_tokens")?,
-        )));
-        let extras = rest_of(&v["usage"], &["total_input_tokens", "total_output_tokens"]);
-        if !extras.is_empty() {
-            out.push(Output::Native(Native::json::<Key>(
-                json!({ "usage": extras }),
-            )));
-        }
-    }
-    Ok(())
+    read_response(&v, &WIRE, out)
 }
 
 /// A whole response of `events` to a client that asked the questions `asked`.
 fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
-    let (mut body, mut answers, mut usage, mut extras) = (Map::new(), Map::new(), None, Map::new());
-    for event in events {
-        match event {
-            Output::Start(start) => merge_missing(&mut body, start.native.fields::<Key>()),
-            Output::Answer(answer) => {
-                answers.insert(answer.id.clone(), answer_value(answer, asked)?.into());
-            }
-            Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
-            Output::Native(n) => {
-                let n = n.value::<Key>().unwrap_or_default();
-                if let Some(more) = n["answers"].as_object() {
-                    merge_missing(&mut answers, more);
-                }
-                if let Some(more) = n["usage"].as_object() {
-                    merge_missing(&mut extras, more);
-                }
-            }
-            _ => {}
-        }
-    }
-    body.insert("answers".into(), answers.into());
-    if let Some(usage) = usage {
-        let mut u = Map::new();
-        u.insert("total_input_tokens".into(), usage.input_tokens.into());
-        u.insert("total_output_tokens".into(), usage.output_tokens.into());
-        merge_missing(&mut u, &extras);
-        let total = usage.input_tokens + usage.output_tokens;
-        u.entry("total_tokens").or_insert_with(|| total.into());
-        body.insert("usage".into(), u.into());
-    }
-    to_bytes(&body)
+    write_response(events, &WIRE, |answer| answer_value(answer, asked))
 }
 
 /// An answer as Google writes it: its `confidence` and a score's `legend`
@@ -416,14 +363,15 @@ fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
 /// probabilities and the levels the client asked.
 fn answer_value(answer: &Answer, asked: &Asked) -> Result<Map<String, Value>, Fault> {
     let mut v = encode_answer::<Key>(answer)?;
-    let top = |ps: &mut dyn Iterator<Item = f64>| ps.fold(0.0, f64::max);
     if !v.contains_key("confidence") {
         let confidence = match &answer.verdict {
             Verdict::Noul(p) => p.max(1.0 - p),
             Verdict::Choice { probabilities, .. } => {
-                top(&mut probabilities.iter().map(|(_, p)| *p))
+                (probabilities.iter().map(|(_, p)| *p)).fold(0.0, f64::max)
             }
-            Verdict::Score { probabilities, .. } => top(&mut probabilities.iter().copied()),
+            Verdict::Score { probabilities, .. } => {
+                probabilities.iter().copied().fold(0.0, f64::max)
+            }
             _ => return Ok(v),
         };
         v.insert("confidence".into(), confidence.into());
