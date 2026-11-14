@@ -60,7 +60,7 @@ mod dropped {
     }
 }
 pub use media::{Media, MediaSource};
-pub use usage::Usage;
+pub use usage::{Totals, Usage};
 
 /// Provider-neutral generation settings, independent of response framing.
 #[derive(Debug, Clone, Default, PartialEq)]

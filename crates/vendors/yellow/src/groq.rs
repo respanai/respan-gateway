@@ -1,6 +1,6 @@
 //! Groq: Chat Completions, transcriptions and speech.
 
-use respan_gateway_conversation::{Input, Output, Usage};
+use respan_gateway_conversation::{Input, Output, Totals};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::{self, OpenAiChat};
 use respan_gateway_core::{Filter, Native, Result};
@@ -45,7 +45,7 @@ impl Dialect for Groq {
 /// chunk's own `usage` has passed: as `usage` counts when both say it.
 #[derive(Default)]
 struct XGroqUsage {
-    reported: Usage,
+    reported: Totals,
     /// The usage `x_groq` said last, until the chunk's own has passed.
     said: Option<Value>,
 }
@@ -56,9 +56,8 @@ impl XGroqUsage {
             return Ok(());
         };
         let (total, extra) = openai::read_usage(&said)?;
-        let more = total.saturating_sub(&self.reported);
+        let more = self.reported.increment(&total);
         if !more.is_empty() {
-            self.reported += &more;
             out.push(Output::Usage(more));
         }
         if !extra.is_empty() {

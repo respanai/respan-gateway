@@ -77,7 +77,7 @@ mod tests;
 use crate::openai::error_type;
 use crate::schema::{
     Asked, Own, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -286,7 +286,7 @@ pub(crate) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/input_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/input_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/output_tokens_details/reasoning_tokens")?;
-    Ok(parts_within_totals(usage))
+    Ok(usage)
 }
 
 /// What a usage object `u` says that has no unit.
