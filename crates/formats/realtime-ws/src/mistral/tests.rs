@@ -1,6 +1,6 @@
 use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::{Encoder, native::Json};
+use respan_gateway_http::{Decoder, Encoder, native::Json};
 use respan_gateway_realtime::{
     Audio, AudioFormat, Cause, Input, Output, Purpose, Session, Turns, Vad,
 };
@@ -22,7 +22,7 @@ fn sent(events: &[Input]) -> Result<Vec<Value>, Fault> {
 }
 
 fn outputs(frames: &[Value]) -> Vec<Output> {
-    let mut provider = output::Provider;
+    let mut provider = output::Provider::default();
     let mut events = Vec::new();
     for frame in frames {
         provider
@@ -254,6 +254,25 @@ fn an_error_says_its_cause() {
 }
 
 #[test]
+fn an_error_with_nothing_transcribed_fails_the_session_at_its_end() {
+    let error = Bytes::from(
+        json!({"type": "error", "error": {"message": "bad", "code": 3051}}).to_string(),
+    );
+    let done = Bytes::from(json!({"type": "transcription.done", "text": "Hi"}).to_string());
+    let ending = |frames: &[&Bytes]| {
+        let mut provider = output::Provider::default();
+        let mut out = Vec::new();
+        for frame in frames {
+            provider.read((*frame).clone(), &mut out).expect("read");
+        }
+        provider.end(Ok(()), &mut out)
+    };
+    assert_eq!(ending(&[&error]).expect_err("fails").message(), "bad");
+    assert!(ending(&[&done, &error]).is_ok());
+    assert!(ending(&[]).is_ok());
+}
+
+#[test]
 fn what_the_kind_has_no_form_for_stays_native() {
     let language = json!({"type": "transcription.language", "audio_language": "en"});
     let segment = json!({"type": "transcription.segment", "text": "a", "start": 0.0, "end": 1.0});
@@ -270,7 +289,7 @@ fn what_the_kind_has_no_form_for_stays_native() {
 #[test]
 fn a_frame_that_is_not_json_fails_upstream() {
     let mut events = Vec::new();
-    let fault = output::Provider
+    let fault = output::Provider::default()
         .read(Bytes::from_static(b"nope"), &mut events)
         .expect_err("not JSON");
     assert_eq!(fault.code(), "upstream");
