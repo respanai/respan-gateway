@@ -3,7 +3,7 @@
 //! Mistral's.
 
 use respan_gateway_core::{Fault, Native};
-use respan_gateway_http::{bytes::Bytes, native::Json};
+use respan_gateway_http::{Decoder, bytes::Bytes, native::Json};
 use respan_gateway_realtime::{Cause, Output, Session, Usage};
 use serde_json::{Value, json};
 
@@ -11,19 +11,59 @@ use super::{Key, session};
 use crate::foreign;
 use crate::json::{self, at, count, merge, number, remove, string, take, text};
 
-/// A provider's events as the kind's.
-#[derive(Debug)]
-pub(super) struct Provider;
+/// A provider's events as the kind's. A session that ends after an error
+/// frame with no transcript read fails with it; one that transcribed
+/// anything ends well.
+#[derive(Debug, Default)]
+pub(super) struct Provider {
+    /// The cause and message of the last error frame, if one was read.
+    failed: Option<(Cause, String)>,
+    /// Whether any transcript was read.
+    is_served: bool,
+}
 
 impl Provider {
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         let v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("a provider's event is not JSON"))?;
         match decode(&v) {
-            Some(events) => out.extend(events),
+            Some(events) => {
+                for event in &events {
+                    match event {
+                        Output::InputTranscript { .. } => self.is_served = true,
+                        Output::Error { cause, message, .. } => {
+                            self.failed = Some((*cause, message.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+                out.extend(events);
+            }
             None => out.push(Output::Native(Native::json::<Key>(v))),
         }
         Ok(())
+    }
+}
+
+impl Decoder<Output> for Provider {
+    fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+        self.read(raw, out)
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, _out: &mut Vec<Output>) -> Result<(), Fault> {
+        match (end, self.failed.take()) {
+            (Ok(()), Some((cause, message))) if !self.is_served => {
+                let message = match message.is_empty() {
+                    true => "the provider reported an error".to_owned(),
+                    false => message,
+                };
+                Err(match cause {
+                    Cause::Invalid => Fault::bad_request(message),
+                    _ => Fault::upstream(message),
+                })
+            }
+            (end, _) => end,
+        }
     }
 }
 
