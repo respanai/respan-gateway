@@ -33,7 +33,9 @@ type Key = crate::Own<GeminiDecisions>;
 /// a `noul`, and a question or answer of a type the kind has no form for,
 /// are kept and written back as `decisions` keeps them. An answer's
 /// `confidence`, when a provider gives none, is the probability of its top
-/// outcome, as Google defines it.
+/// outcome, as Google defines it. A request of another format with an image
+/// in its evidence, or instructions that are not text, is refused, 400,
+/// before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiDecisions;
 
@@ -252,8 +254,21 @@ fn instructions_text(instructions: Value) -> Option<Value> {
     }
 }
 
+/// Whether `state` holds an `input_image` part of another format's user
+/// messages, which Google would be sent as text, not as an image.
+fn has_image_part(state: &Value) -> bool {
+    let parts = (state.as_array().into_iter().flatten())
+        .filter_map(|message| message["content"].as_array())
+        .flatten();
+    parts.into_iter().any(|part| part["type"] == "input_image")
+}
+
 /// The call of `input`.
 fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
+    if has_image_part(&input.state) {
+        let what = "input_image evidence";
+        return Err(Fault::bad_request(format!("{GEMINI} cannot take {what}")));
+    }
     let mut questions = Map::new();
     for q in &input.questions {
         if let Ask::Native(native) = &q.ask
@@ -293,6 +308,8 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
         let Some(instructions) = q.instructions.clone() else {
             return Err(refused("it has no instructions"));
         };
+        let instructions = instructions_text(instructions)
+            .ok_or_else(|| refused("its instructions are not text"))?;
         let mut v = Map::new();
         v.insert("type".into(), kind.into());
         v.insert("instructions".into(), instructions);
@@ -482,6 +499,25 @@ mod tests {
         );
         let texts = json!([{"type": "text", "text": "a "}, {"type": "text", "text": "b"}]);
         assert_eq!(read_input(texts).expect("text").0, json!("a b"));
+    }
+
+    #[test]
+    fn evidence_or_instructions_of_another_format_google_would_get_as_json_are_not_sent() {
+        // The state OpenAI's decoder keeps of a user message with an image URL.
+        let state = json!([{"role": "user", "content": [
+            {"type": "input_image", "image_url": "https://example.com/a.png"}]}]);
+        let mut question = Question::new("q", Ask::Noul);
+        question.instructions = Some(json!("i"));
+        let input = Input::new(state, vec![question]);
+        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+        let blocks = json!([{"type": "text", "text": "Is it "}, {"type": "text", "text": "spam?"}]);
+        let asking = |i: Value| json!({"state": "s", "questions": {"q": {"type": "noul", "instructions": i}}});
+        let input = crate::decode_request(asking(blocks).to_string().as_bytes()).expect("input");
+        let sent = encode_request(&input).map(|v| v["questions"]["q"]["instructions"].clone());
+        assert_eq!(sent.expect("call"), json!("Is it spam?"));
+        let image = json!([{"type": "image", "data": "aGk="}]);
+        let input = crate::decode_request(asking(image).to_string().as_bytes()).expect("input");
+        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
     }
 
     #[test]
