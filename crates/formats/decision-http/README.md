@@ -67,8 +67,8 @@ a base URL with the version, the key in `x-goog-api-key`.
   provider refuses a request that has any, 400, before a call; a
   `decisions` client's request is called with its `state` as a text, JSON
   as its text. An `openai-decisions` client's user messages are called as a
-  text, or as content blocks when one holds an image given as a `data:`
-  URL; an image at a URL, and instructions that are not text, are refused,
+  text, or as content blocks when one holds an image given as a base64
+  `data:` URL; an image otherwise, and instructions that are not text, are refused,
   400, before a call. A `noul`'s criteria stay with the format that read them, so
   they are dropped between formats, and a question of a type the kind has no
   form for is kept and dropped as in `decisions`.

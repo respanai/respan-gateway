@@ -35,7 +35,7 @@ type Key = crate::Own<GeminiDecisions>;
 /// `confidence`, when a provider gives none, is the probability of its top
 /// outcome, as Google defines it. A request of `openai-decisions` has its
 /// user messages sent as text, or as content blocks when one holds an
-/// image given as a `data:` URL; an image at a URL, or question
+/// image given as a base64 `data:` URL; an image otherwise, or question
 /// instructions that are not text, are refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiDecisions;
@@ -259,7 +259,10 @@ fn instructions_text(instructions: Value) -> Option<Value> {
 /// messages as text, or as content blocks if one holds an image; other JSON
 /// as its text, as Google asks of structured data.
 fn evidence_of(state: &Value) -> Result<Value, Fault> {
-    let Some(messages) = state.as_array().filter(|_| openai::is_evidence(state)) else {
+    let Some(messages) = state
+        .as_array()
+        .filter(|messages| !messages.is_empty() && openai::is_evidence(state))
+    else {
         return Ok(match state {
             Value::String(_) => state.clone(),
             other => other.to_string().into(),
@@ -272,27 +275,33 @@ fn evidence_of(state: &Value) -> Result<Value, Fault> {
             blocks.push(json!({"type": "text", "text": "\n"}));
         }
         let content = &message["content"];
-        let parts = content.as_array().map(Vec::as_slice).unwrap_or_default();
-        let parts = if content.is_string() {
-            std::slice::from_ref(content)
-        } else {
-            parts
+        let parts = match content {
+            Value::String(_) => std::slice::from_ref(content),
+            _ => content.as_array().map_or(&[][..], Vec::as_slice),
         };
         for part in parts {
             blocks.push(match part["image_url"].as_str() {
                 // OpenAI's image part carries no mime type, which Google's `uri` form expects.
                 Some(url) => {
-                    let (mime, data) = (url.strip_prefix("data:"))
-                        .and_then(|rest| rest.split_once(";base64,"))
-                        .ok_or_else(|| {
-                            let what = "an image at a URL, only one as a data: URL";
-                            Fault::bad_request(format!("{GEMINI} cannot take {what}"))
-                        })?;
+                    let inline = url.strip_prefix("data:").and_then(|rest| {
+                        let (params, data) = rest.split_once(',')?;
+                        let mime = params.strip_suffix(";base64")?.split(';').next()?;
+                        (!mime.is_empty() && !data.is_empty()).then_some((mime, data))
+                    });
+                    let (mime, data) = inline.ok_or_else(|| {
+                        let what = "an image only as a base64 data: URL with a mime type";
+                        Fault::bad_request(format!("{GEMINI} takes {what}"))
+                    })?;
                     json!({"type": "image", "data": data, "mime_type": mime})
                 }
                 None => json!({"type": "text", "text": part.get("text").unwrap_or(part)}),
             });
         }
+    }
+    if blocks.is_empty() {
+        return Err(Fault::bad_request(format!(
+            "{GEMINI} cannot take empty evidence"
+        )));
     }
     if blocks.iter().all(|b| b["type"] == "text") {
         let text: String = blocks.iter().filter_map(text_of).collect();
@@ -552,6 +561,20 @@ mod tests {
                 {"type": "text", "text": "hi"},
                 {"type": "image", "data": "aGk=", "mime_type": "image/png"}])
         );
+        let params = image("data:image/png;charset=x;base64,aGk=");
+        assert_eq!(
+            sent(user(json!([params]))).expect("call")[0]["mime_type"],
+            "image/png"
+        );
+        for url in [
+            "data:;base64,aGk=",
+            "data:image/png;base64,",
+            "data:image/svg+xml,<svg/>",
+        ] {
+            assert!(sent(user(json!([image(url)]))).is_err());
+        }
+        assert!(sent(user(json!([]))).is_err());
+        assert_eq!(sent(json!([])).expect("call"), json!("[]"));
         let remote = sent(user(json!([image("https://example.com/a.png")])));
         assert!(remote.is_err_and(|f| f.is(FaultKind::Client)));
         let record = json!([{"content": [{"type": "input_image", "sku": "1"}]}]);
