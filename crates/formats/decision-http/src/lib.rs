@@ -272,53 +272,49 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
 
 /// What a contract of this crate names differently in a response.
 struct Wire {
-    /// The format's name.
-    name: &'static str,
-    /// Whether the body names its `model`, which is the response's.
-    model: bool,
     /// The usage keys of the input and output token counts.
     input_tokens: &'static str,
     output_tokens: &'static str,
+    /// Whether a response is written with its `model`.
+    model: bool,
     /// Whether usage carries a `total_tokens` the kind has no place for.
     total_tokens: bool,
 }
 
 /// The contract of `decisions`.
 const WIRE: Wire = Wire {
-    name: NAME,
-    model: true,
     input_tokens: "input_tokens",
     output_tokens: "output_tokens",
+    model: true,
     total_tokens: false,
 };
 
 /// The events of a provider's whole answer.
 fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v: Value = serde_json::from_slice(&raw).unwrap_or_default();
-    read_response(&v, &WIRE, out)
+    read_response::<Key>(&v, &WIRE, NAME, out)
 }
 
-/// The events of the response `v` of a contract named by `wire`.
-fn read_response(v: &Value, wire: &Wire, out: &mut Vec<Output>) -> Result<(), Fault> {
+/// The events of the response `v` of the contract `name`, as `wire` has it,
+/// its other fields format `K`'s own.
+fn read_response<K: 'static>(
+    v: &Value,
+    wire: &Wire,
+    name: &str,
+    out: &mut Vec<Output>,
+) -> Result<(), Fault> {
     let Some(answers) = v["answers"].as_object() else {
         return Err(Fault::upstream(format!(
-            "the provider's success is not a response of {}",
-            wire.name
+            "the provider's success is not a response of {name}"
         )));
     };
-    let model = v["model"].as_str().filter(|_| wire.model);
-    let mut start = Start::new(model.map(Into::into));
-    let taken: &[&str] = if wire.model {
-        &["model", "answers", "usage"]
-    } else {
-        &["answers", "usage"]
-    };
-    start.native = Native::json::<Key>(rest_of(v, taken));
+    let mut start = Start::new(v["model"].as_str().map(Into::into));
+    start.native = Native::json::<K>(rest_of(v, &["model", "answers", "usage"]));
     out.push(Output::Start(start));
     for (id, a) in answers {
-        match decode_answer::<Key>(id, a) {
+        match decode_answer::<K>(id, a) {
             Some(answer) => out.push(Output::Answer(answer)),
-            None => out.push(Output::Native(Native::json::<Key>(
+            None => out.push(Output::Native(Native::json::<K>(
                 json!({ "answers": { id: a } }),
             ))),
         }
@@ -336,7 +332,7 @@ fn read_response(v: &Value, wire: &Wire, out: &mut Vec<Output>) -> Result<(), Fa
         )));
         let extras = rest_of(&v["usage"], &[wire.input_tokens, wire.output_tokens]);
         if !extras.is_empty() {
-            out.push(Output::Native(Native::json::<Key>(
+            out.push(Output::Native(Native::json::<K>(
                 json!({ "usage": extras }),
             )));
         }
@@ -432,15 +428,16 @@ fn add_legend(v: &mut Map<String, Value>, answer: &Answer, asked: &Asked) {
 
 /// A whole response of `events` to a client that asked the questions `asked`.
 fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
-    write_response(events, &WIRE, |answer| {
+    write_response::<Key>(events, &WIRE, |answer| {
         let mut written = encode_answer::<Key>(answer)?;
         add_legend(&mut written, answer, asked);
         Ok(written)
     })
 }
 
-/// A whole response of `events` of a contract named by `wire`, its answers written by `answer`.
-fn write_response(
+/// A whole response of `events` as `wire` has it, its answers written by
+/// `answer`, with format `K`'s own fields.
+fn write_response<K: 'static>(
     events: &[Output],
     wire: &Wire,
     answer: impl Fn(&Answer) -> Result<Map<String, Value>, Fault>,
@@ -452,14 +449,14 @@ fn write_response(
                 if wire.model {
                     set(&mut body, "model", start.model.clone());
                 }
-                merge_missing(&mut body, start.native.fields::<Key>());
+                merge_missing(&mut body, start.native.fields::<K>());
             }
             Output::Answer(a) => {
                 answers.insert(a.id.clone(), answer(a)?.into());
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             Output::Native(n) => {
-                let n = n.value::<Key>().unwrap_or_default();
+                let n = n.value::<K>().unwrap_or_default();
                 if let Some(more) = n["answers"].as_object() {
                     merge_missing(&mut answers, more);
                 }

@@ -332,12 +332,11 @@ fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
     Ok(v)
 }
 
-/// The contract of Google's decisions: its usage keys and no `model`.
+/// The contract of Google's decisions: its usage keys, and no `model` written.
 const WIRE: Wire = Wire {
-    name: GEMINI,
-    model: false,
     input_tokens: "total_input_tokens",
     output_tokens: "total_output_tokens",
+    model: false,
     total_tokens: true,
 };
 
@@ -350,12 +349,12 @@ fn decode_response(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         let said = said.map_or_else(|| format!("the input was blocked: {reason}"), str::to_owned);
         return Err(Fault::bad_request(said));
     }
-    read_response(&v, &WIRE, out)
+    read_response::<Key>(&v, &WIRE, GEMINI, out)
 }
 
 /// A whole response of `events` to a client that asked the questions `asked`.
 fn encode_response(events: &[Output], asked: &Asked) -> Result<Bytes, Fault> {
-    write_response(events, &WIRE, |answer| answer_value(answer, asked))
+    write_response::<Key>(events, &WIRE, |answer| answer_value(answer, asked))
 }
 
 /// An answer as Google writes it: its `confidence` and a score's `legend`
@@ -428,6 +427,16 @@ mod tests {
         let written = encode_response(&events, &Asked::new(body.as_bytes())).expect("body");
         let written: Value = serde_json::from_slice(&written).unwrap_or_default();
         assert_eq!(written, response());
+        let mut extra = response();
+        extra["answers"]["is_damaged"]["extra"] = json!(1);
+        let mut events = Vec::new();
+        decode_response(Bytes::from(extra.to_string()), &mut events).expect("events");
+        let to_gemini = encode_response(&events, &Asked::new(body.as_bytes())).expect("body");
+        let to_gemini: Value = serde_json::from_slice(&to_gemini).unwrap_or_default();
+        assert_eq!(to_gemini["answers"]["is_damaged"]["extra"], 1);
+        let to_decisions = crate::encode_response(&events, &Asked::new(b"{}")).expect("body");
+        let to_decisions: Value = serde_json::from_slice(&to_decisions).unwrap_or_default();
+        assert_eq!(to_decisions["answers"]["is_damaged"].get("extra"), None);
     }
 
     #[test]
