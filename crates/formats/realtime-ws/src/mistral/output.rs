@@ -16,8 +16,8 @@ use crate::json::{self, at, count, merge, number, remove, string, take, text};
 /// anything ends well.
 #[derive(Debug, Default)]
 pub(super) struct Provider {
-    /// The message of the last error frame, if one was read.
-    failed: Option<String>,
+    /// The cause and message of the last error frame, if one was read.
+    failed: Option<(Cause, String)>,
     /// Whether any transcript was read.
     is_served: bool,
 }
@@ -31,7 +31,9 @@ impl Provider {
                 for event in &events {
                     match event {
                         Output::InputTranscript { .. } => self.is_served = true,
-                        Output::Error { message, .. } => self.failed = Some(message.clone()),
+                        Output::Error { cause, message, .. } => {
+                            self.failed = Some((*cause, message.clone()));
+                        }
                         _ => {}
                     }
                 }
@@ -50,7 +52,16 @@ impl Decoder<Output> for Provider {
 
     fn end(&mut self, end: Result<(), Fault>, _out: &mut Vec<Output>) -> Result<(), Fault> {
         match (end, self.failed.take()) {
-            (Ok(()), Some(message)) if !self.is_served => Err(Fault::upstream(message)),
+            (Ok(()), Some((cause, message))) if !self.is_served => {
+                let message = match message.is_empty() {
+                    true => "the provider reported an error".to_owned(),
+                    false => message,
+                };
+                Err(match cause {
+                    Cause::Invalid => Fault::bad_request(message),
+                    _ => Fault::upstream(message),
+                })
+            }
             (end, _) => end,
         }
     }

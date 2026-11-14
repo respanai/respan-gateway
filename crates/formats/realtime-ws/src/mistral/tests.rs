@@ -1,4 +1,4 @@
-use respan_gateway_core::{Fault, Native};
+use respan_gateway_core::{Fault, FaultKind, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::{Decoder, Encoder, native::Json};
 use respan_gateway_realtime::{
@@ -268,6 +268,10 @@ fn an_error_with_nothing_transcribed_fails_the_session_at_its_end() {
         provider.end(Ok(()), &mut out)
     };
     assert_eq!(ending(&[&error]).expect_err("fails").message(), "bad");
+    let invalid = Bytes::from(json!({"type": "error", "error": {"code": 422}}).to_string());
+    let fault = ending(&[&invalid]).expect_err("fails");
+    assert_eq!(fault.kind(), FaultKind::Client);
+    assert!(!fault.message().is_empty());
     assert!(ending(&[&done, &error]).is_ok());
     assert!(ending(&[]).is_ok());
 }
