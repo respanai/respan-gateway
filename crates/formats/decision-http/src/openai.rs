@@ -223,7 +223,7 @@ fn ids(questions: &[Value]) -> Vec<String> {
 
 /// Whether `v` is evidence: a text, or user messages of text and image
 /// parts, each image at a URL.
-fn is_evidence(v: &Value) -> bool {
+pub(crate) fn is_evidence(v: &Value) -> bool {
     let part = |p: &Value| match p["type"].as_str() {
         Some("input_text") => p["text"].is_string(),
         Some("input_image") => p["image_url"].is_string() && p.get("file_id").is_none(),
