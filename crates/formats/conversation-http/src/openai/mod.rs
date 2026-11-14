@@ -61,8 +61,8 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, edit_native,
-    merge_details, merge_fields, merge_into, parse_effort, parts_within_totals, set, stop_json,
-    take_native, take_text, tidy, unix_now, unsupported_fields, usage_extra,
+    merge_details, merge_fields, merge_into, parse_effort, set, stop_json, take_native, take_text,
+    tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -496,7 +496,7 @@ fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/prompt_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/prompt_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/completion_tokens_details/reasoning_tokens")?;
-    Ok(parts_within_totals(usage))
+    Ok(usage)
 }
 
 /// What a usage object `u` says that has no unit: vendor fields, and

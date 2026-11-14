@@ -2,8 +2,8 @@
 
 use super::{RESPONSE_FIELDS, USAGE_FIELDS, extra_usage, response_fields, usage_of};
 use crate::responses::OpenAiResponses;
-use crate::schema::{Own, Totals, ended, error_event, rest_of, says, says_error, unreadable_event};
-use respan_gateway_conversation::{Block, Finish, Output, Start};
+use crate::schema::{Own, ended, error_event, rest_of, says, says_error, unreadable_event};
+use respan_gateway_conversation::{Block, Finish, Output, Start, Totals};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;

@@ -2,9 +2,9 @@
 
 use crate::anthropic::AnthropicMessages;
 use crate::schema::{
-    Own, Totals, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
+    Own, ended, error_event, says, says_error, unreadable_event, unsupported_fields,
 };
-use respan_gateway_conversation::{Block, Output, Start};
+use respan_gateway_conversation::{Block, Output, Start, Totals};
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
