@@ -1,6 +1,6 @@
-//! Google's Gemini API: Chat Completions and embeddings at its
-//! OpenAI-compatible base, and its own API beside it: `generateContent`,
-//! for chats and images, Gemini Live, Veo and decisions.
+//! Google's Gemini API: Chat Completions at its OpenAI-compatible base, and
+//! its own API beside it: `generateContent`, for chats and images, Gemini
+//! Live, Veo, embeddings and decisions.
 
 use respan_gateway_conversation::{Content, Input, Output, Role};
 use respan_gateway_conversation_http::Schema;
@@ -10,8 +10,7 @@ use serde_json::Value;
 
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
-use respan_gateway_media_http::openai::OpenAiEmbeddings;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
@@ -19,7 +18,7 @@ use respan_gateway_vendor_kit::{
     built_wrong, http, json as body_json, models,
 };
 
-/// Its own API: `generateContent`, Veo and decisions.
+/// Its own API: `generateContent`, Veo, embeddings and decisions.
 const API: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 /// Where Live is: its origin, as Live's path is whole.
@@ -43,7 +42,7 @@ pub const VENDOR: Vendor = Vendor {
         (&GeminiImages, Some(API)),
         (&GeminiVeo, Some(API)),
         (&GeminiDecisions, Some(API)),
-        (&OpenAiEmbeddings, Some(OPENAI_API)),
+        (&GeminiEmbeddings, Some(API)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
