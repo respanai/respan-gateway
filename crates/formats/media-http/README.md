@@ -175,6 +175,18 @@ generation, as a provider only, its key a bearer token. Its job ids start
 - Another format's operation, such as OpenAI's remix, delete, list or
   thumbnail, is refused, 400 `unsupported`, before any call.
 
+`gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
+models on `POST /models/{model}:batchEmbedContents`, as a provider only, its
+key in `x-goog-api-key`.
+
+- Every text is one request of the batch, one part each; `dimensions` is
+  each request's `outputDimensionality`.
+- Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
+  some models only (not `gemini-embedding-001`); its OpenAI-compatible
+  endpoint reports none.
+- Token ids and parts are refused, 400, before the call; other fields of
+  another format, such as an end user's id, are dropped.
+
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.
