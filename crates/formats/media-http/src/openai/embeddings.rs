@@ -5,6 +5,7 @@ use super::{
     merge_missing, missing, post_to, rest_of, sends, set, take_count, take_string, unb64,
     unreadable, whole_json,
 };
+use crate::edge::floats;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{data_url, media_url};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
@@ -27,16 +28,19 @@ const EMBEDDINGS: &str = "/embeddings";
 /// to a path ending in `/embeddings`.
 ///
 /// The input is a text, a list of texts, a list of token ids, a list of
-/// those, or parts: a list of objects of `content`, each a list of parts, or
-/// one list of parts (`text`, `image_url`, `input_video`, `input_audio`,
-/// `input_file`), read as [`Item::Parts`] of texts and media, one vector
-/// each, written back as it was read (else as `{"content": [..]}`); any
-/// other list is relayed as written. The input tokens of a modality, if the provider counts them, are written as
-/// `usage.prompt_tokens_details.{modality}_tokens`. A vector
-/// is decoded from a list of numbers or from base64 (little-endian `f32`s),
-/// whichever the provider answers, and written as the client's
-/// `encoding_format` asks, `float` unless it says `base64`. The field is
-/// relayed to the provider as the client wrote it.
+/// those, or a list of objects of `content`, each a list of parts (`text`,
+/// `image_url`, `input_audio`, `input_video`, `input_file`), read as an
+/// [`Item::Parts`] of texts and media, one vector each, and written back
+/// as it was read; any other list is relayed as written. Parts of another
+/// format are written as `{"content": [..]}`, or as a text if they are one.
+///
+/// A usage's `prompt_tokens_details` are the input tokens of each
+/// [`Modality`], as `text_tokens`, `image_tokens`, `audio_tokens`,
+/// `video_tokens` and `file_tokens`. A vector is decoded from a list of
+/// numbers or from base64 (little-endian `f32`s), whichever the provider
+/// answers, and written as the client's `encoding_format` asks, `float`
+/// unless it says `base64`. The field is relayed to the provider as the
+/// client wrote it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiEmbeddings;
 
@@ -95,8 +99,9 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     Ok(input)
 }
 
-/// The items of a request's `input`: its texts, else, as token ids or
-/// parts, the format's own, as it came; a list of token lists is one each.
+/// The items of a request's `input`: its texts, or its parts
+/// ([`parts_items`]), else, as token ids or another list, the format's own,
+/// as it came; a list of token lists is one each.
 fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
     let items = match v {
         Value::String(text) => vec![Item::Text(text.clone())],
@@ -120,108 +125,69 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
     }
 }
 
-/// The items of a list of parts: one of them if it is a list of parts, else
-/// one each for the texts and `content` lists in it, each kept as written. `None` if any is of a
-/// form the kind has none for.
+/// The items of a list of objects of `content`, each a list of parts, as
+/// it was written. `None` if any of the list is of another form.
 fn parts_items(all: &[Value]) -> Option<Vec<Item>> {
-    let parts = |list: &[Value]| list.iter().map(part).collect::<Option<Vec<_>>>();
-    let item_of = |list: &[Value], written: &Value| {
-        let mut item = Parts::new(parts(list)?);
-        item.native = Native::json::<Key>(written.clone());
+    let item = |v: &Value| {
+        let list = v["content"].as_array().filter(|list| !list.is_empty())?;
+        let mut item = Parts::new(list.iter().map(part).collect::<Option<Vec<_>>>()?);
+        item.native = Native::json::<Key>(v.clone());
         Some(Item::Parts(item))
-    };
-    if all.iter().all(|p| p.get("type").is_some()) {
-        let written = Value::Array(all.to_vec());
-        return Some(vec![item_of(all, &written)?]);
-    }
-    let item = |v: &Value| match (v, &v["content"]) {
-        (Value::String(text), _) | (_, Value::String(text)) => Some(Item::Text(text.clone())),
-        (_, Value::Array(list)) if !list.is_empty() => item_of(list, v),
-        _ => None,
     };
     all.iter().map(item).collect()
 }
 
-/// A client's part: a text, or media of a known type with its bytes, or
-/// its URL. The part as it came is kept to be written back.
+/// A client's part: a text, or media by a `data:` URL, an `https` URL, or
+/// base64 of the `format` it names. An image at a URL is of any type.
 fn part(p: &Value) -> Option<Part> {
     let kind = p["type"].as_str()?;
-    if kind == "text" {
-        return Some(Part::Text(p["text"].as_str()?.to_owned()));
-    }
-    let family = match kind {
-        "image_url" | "image" => "image",
-        "input_video" | "video_url" | "video" => "video",
-        "input_audio" | "audio" => "audio",
-        "input_file" | "file" => "application",
+    let (family, key) = match kind {
+        "text" => return Some(Part::Text(p["text"].as_str()?.to_owned())),
+        "image_url" => ("image", "url"),
+        "input_audio" => ("audio", "data"),
+        "input_video" => ("video", "data"),
+        "input_file" => ("application", "data"),
         _ => return None,
     };
-    let inner = &p[kind];
-    let fields = if inner.is_object() { inner } else { p };
-    let source = inner.as_str().or_else(|| {
-        let keys = ["url", "data", "file_data", "file_url"];
-        keys.iter().find_map(|k| fields[k].as_str())
-    })?;
-    let named = ["mime_type", "format"]
-        .iter()
-        .find_map(|k| fields[k].as_str());
-    let named = named.map(|n| match n.contains('/') {
-        true => n.to_owned(),
-        false => format!("{family}/{n}"),
-    });
+    let source = p[kind][key].as_str()?;
+    let named = || Some(format!("{family}/{}", p[kind]["format"].as_str()?));
     let (mime, source) = match data_url(source).ok()? {
-        Some((mime, bytes)) => {
-            let mime = named.filter(|_| mime == "text/plain").unwrap_or(mime);
-            (mime, MediaSource::Bytes(bytes.into()))
-        }
-        None if source.starts_with("https://") => {
-            let mime = named.or_else(|| mime_of_url(source))?;
-            (mime, MediaSource::Url(source.to_owned()))
-        }
-        None => (named?, MediaSource::Bytes(unb64(source)?)),
+        Some((mime, bytes)) => (mime, MediaSource::Bytes(bytes.into())),
+        None if kind == "image_url" => ("image/*".to_owned(), MediaSource::Url(source.into())),
+        None if source.starts_with("https://") => (named()?, MediaSource::Url(source.into())),
+        None => (named()?, MediaSource::Bytes(unb64(source)?)),
     };
-    let mut media = Media::new(mime, source);
-    media.native = Native::json::<Key>(p.clone());
-    Some(Part::Media(media))
+    Some(Part::Media(Media::new(mime, source)))
 }
 
-/// The media type a URL's file extension names.
-fn mime_of_url(url: &str) -> Option<String> {
-    let path = url.split(['?', '#']).next()?;
-    let mime = match path.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "webp" => "image/webp",
-        "mp4" => "video/mp4",
-        "mov" => "video/quicktime",
-        "webm" => "video/webm",
-        "mp3" => "audio/mp3",
-        "wav" => "audio/wav",
-        "pdf" => "application/pdf",
-        _ => return None,
-    };
-    Some(mime.to_owned())
-}
-
-/// A part as the client wrote it, else as a part of its media type.
-fn part_json(part: &Part) -> Value {
+/// A part of another format, as a part of its media type.
+fn part_json(part: &Part) -> Result<Value, Fault> {
     let media = match part {
-        Part::Text(text) => return json!({ "type": "text", "text": text }),
+        Part::Text(text) => return Ok(json!({ "type": "text", "text": text })),
         Part::Media(media) => media,
-        _ => return Value::Null,
+        _ => return Err(Fault::bad_request("an input has a part of no form here")),
     };
-    if let Some(written) = media.native.value::<Key>() {
-        return written.clone();
-    }
     let url = media_url(media);
     let (family, format) = media.mime_type.split_once('/').unwrap_or_default();
-    match family {
-        "image" => json!({ "type": "image_url", "image_url": { "url": url } }),
-        "video" => json!({ "type": "input_video",
-            "input_video": { "data": url, "format": format } }),
-        "audio" => json!({ "type": "input_audio",
-            "input_audio": { "data": url, "format": format } }),
-        _ => json!({ "type": "input_file", "input_file": { "file_data": url } }),
+    let kind = match family {
+        "image" => return Ok(json!({ "type": "image_url", "image_url": { "url": url } })),
+        "audio" => "input_audio",
+        "video" => "input_video",
+        _ => "input_file",
+    };
+    Ok(json!({ "type": kind, kind: { "data": url, "format": format } }))
+}
+
+/// The text of an item that is one: a text, or parts of another format that
+/// are one text.
+fn text_of(item: &Item) -> Option<&str> {
+    match item {
+        Item::Text(text) => Some(text),
+        Item::Parts(p) if p.native.value::<Key>().is_none() => match &p.parts[..] {
+            [Part::Text(text)] => Some(text),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -236,34 +202,36 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     Ok(sends(json_bytes(&v)?))
 }
 
-/// The `input` of items: one as it is, several as a list of one kind.
+/// The `input` of items: one as it is, several as a list of one kind; with
+/// parts among them, a list of objects of `content`.
 fn items_json(items: &[Item]) -> Result<Value, Fault> {
-    if items.iter().any(|i| matches!(i, Item::Parts(_))) {
+    let parts = |item: &Item| matches!(item, Item::Parts(_)) && text_of(item).is_none();
+    if items.iter().any(parts) {
         let written = |item: &Item| match item {
-            Item::Text(text) => Ok(Value::from(text.clone())),
-            Item::Parts(p) => Ok(match p.native.value::<Key>() {
-                Some(written) => written.clone(),
-                None => json!({ "content": p.parts.iter().map(part_json).collect::<Vec<_>>() }),
-            }),
+            Item::Text(text) => Ok(json!({ "content": [{ "type": "text", "text": text }] })),
+            Item::Parts(p) => match p.native.value::<Key>() {
+                Some(written) => Ok(written.clone()),
+                None => {
+                    let parts = p.parts.iter().map(part_json);
+                    Ok(json!({ "content": parts.collect::<Result<Vec<_>, _>>()? }))
+                }
+            },
             _ => Err(Fault::bad_request("an input cannot mix parts with tokens")),
         };
         let all = items.iter().map(written).collect::<Result<Vec<_>, _>>()?;
-        return Ok(match &all[..] {
-            [only @ Value::Array(_)] => only.clone(),
-            _ => all.into(),
-        });
+        return Ok(all.into());
     }
-    let item = |item: &Item| match item {
-        Item::Text(text) => Value::from(text.clone()),
+    let item = |item: &Item| match (text_of(item), item) {
+        (Some(text), _) => Value::from(text),
         // WARN: another format's item has no form here; it is sent as null.
-        Item::Native(n) => n.value::<Key>().cloned().unwrap_or_default(),
-        _ => Value::Null,
+        (None, Item::Native(n)) => n.value::<Key>().cloned().unwrap_or_default(),
+        (None, _) => Value::Null,
     };
     if let [only] = items {
         return Ok(item(only));
     }
-    let same = |pair: &[Item]| std::mem::discriminant(&pair[0]) == std::mem::discriminant(&pair[1]);
-    match items.windows(2).all(same) {
+    let texts = |pair: &[Item]| text_of(&pair[0]).is_some() == text_of(&pair[1]).is_some();
+    match items.windows(2).all(texts) {
         true => Ok(items.iter().map(item).collect::<Vec<_>>().into()),
         false => Err(Fault::bad_request(
             "an input cannot mix texts with tokens or parts",
@@ -297,7 +265,18 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
             }),
         };
         out.push(Output::Usage(Usage::new(count("prompt_tokens")?, 0)));
-        let extras = rest_of(&v["usage"], &["prompt_tokens", "total_tokens"]);
+        let mut extras = rest_of(&v["usage"], &["prompt_tokens", "total_tokens"]);
+        if let Some(Value::Object(details)) = extras.get_mut(DETAILS) {
+            for (name, modality) in MODALITIES {
+                if let Some(n) = details.get(name).and_then(Value::as_u64) {
+                    details.remove(name);
+                    out.push(Output::InputTokens(modality, n));
+                }
+            }
+            if details.is_empty() {
+                extras.remove(DETAILS);
+            }
+        }
         out.extend(super::usage_extras::<Key>(extras).map(Output::Native));
     }
     Ok(())
@@ -343,25 +322,20 @@ fn vector_json(vector: &[f32], base64: bool) -> Value {
         let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
         return b64(&bytes).into();
     }
-    // A number as its shortest `f32` text, not as the `f64` it widens to.
-    let number = |f: &f32| {
-        f.to_string()
-            .parse::<f64>()
-            .map_or(Value::Null, Value::from)
-    };
-    vector.iter().map(number).collect::<Vec<_>>().into()
+    floats(vector)
 }
 
-/// The name of a modality in a usage's `prompt_tokens_details`.
-fn modality_name(modality: Modality) -> &'static str {
-    match modality {
-        Modality::Image => "image",
-        Modality::Audio => "audio",
-        Modality::Video => "video",
-        Modality::Document => "document",
-        _ => "text",
-    }
-}
+/// A usage's input tokens by modality.
+const DETAILS: &str = "prompt_tokens_details";
+
+/// The modalities a usage's `prompt_tokens_details` count, by its names.
+const MODALITIES: [(&str, Modality); 5] = [
+    ("text_tokens", Modality::Text),
+    ("image_tokens", Modality::Image),
+    ("audio_tokens", Modality::Audio),
+    ("video_tokens", Modality::Video),
+    ("file_tokens", Modality::Document),
+];
 
 /// A whole response of `events`.
 fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
@@ -380,9 +354,11 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
             Output::InputTokens(modality, n) => {
-                let key = format!("{}_tokens", modality_name(*modality));
-                let seen = details.get(&key).and_then(Value::as_u64).unwrap_or(0);
-                details.insert(key, seen.saturating_add(*n).into());
+                // A modality the details have no name for is left out.
+                if let Some((name, _)) = MODALITIES.iter().find(|(_, m)| m == modality) {
+                    let seen = details.get(*name).and_then(Value::as_u64).unwrap_or(0);
+                    details.insert((*name).into(), seen.saturating_add(*n).into());
+                }
             }
             // A body has no place for another event.
             Output::Native(n) => {
@@ -408,7 +384,7 @@ fn encode_whole(events: &[Output], base64: bool) -> Result<Bytes, Fault> {
                 .into(),
         );
         if !details.is_empty() {
-            u.insert("prompt_tokens_details".into(), details.into());
+            u.insert(DETAILS.into(), details.into());
         }
         merge_missing(&mut u, &extras);
         body.insert("usage".into(), u.into());
@@ -519,16 +495,17 @@ mod tests {
         let bare = json!([{ "type": "text", "text": "a" }]);
         let read = items(bare.clone()).expect("items");
         assert_eq!(items_json(&read).expect("input"), bare);
-        let events = [
-            Output::InputTokens(Modality::Video, 1056),
-            Output::InputTokens(Modality::Text, 3),
-            Output::Usage(Usage::new(1059, 0)),
-        ];
+        let raw = json!({
+            "object": "list",
+            "data": [],
+            "usage": { "prompt_tokens": 1059, "total_tokens": 1059, "prompt_tokens_details":
+                { "video_tokens": 1056, "text_tokens": 3, "cached_tokens": 1 } },
+        });
+        let mut events = Vec::new();
+        decode_whole(Bytes::from(raw.to_string()), &mut events).expect("events");
+        assert!(events.contains(&Output::InputTokens(Modality::Video, 1056)));
         let written = encode_whole(&events, false).expect("a body");
         let written: Value = serde_json::from_slice(&written).unwrap_or_default();
-        assert_eq!(
-            written["usage"]["prompt_tokens_details"],
-            json!({ "video_tokens": 1056, "text_tokens": 3 })
-        );
+        assert_eq!(written, raw);
     }
 }

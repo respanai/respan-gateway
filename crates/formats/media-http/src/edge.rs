@@ -46,6 +46,17 @@ pub(crate) fn sends<I: 'static>(body: Bytes) -> Box<dyn Encoder<I>> {
     })
 }
 
+/// A vector as a list of numbers, each as its shortest `f32` text, not as
+/// the `f64` it widens to.
+pub(crate) fn floats(vector: &[f32]) -> serde_json::Value {
+    let number = |f: &f32| {
+        f.to_string()
+            .parse::<f64>()
+            .map_or(serde_json::Value::Null, serde_json::Value::from)
+    };
+    vector.iter().map(number).collect::<Vec<_>>().into()
+}
+
 /// The content of a video, chunk by chunk as it comes.
 pub(crate) fn content() -> Box<dyn Decoder<video::Output>> {
     Box::new(|bytes: Bytes, out: &mut Vec<video::Output>| {
