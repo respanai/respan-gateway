@@ -124,18 +124,13 @@ enum Family {
     Ultra,
     Sd35,
     Inpaint,
-    Outpaint,
     Erase,
-    SearchReplace,
-    SearchRecolor,
     RemoveBackground,
     StyleTransfer,
     StyleGuide,
-    ControlSketch,
-    ControlStructure,
     FastUpscale,
-    CreativeUpscale,
-    ConservativeUpscale,
+    /// Any other service: an image and a prompt.
+    Service,
 }
 
 impl Family {
@@ -146,18 +141,18 @@ impl Family {
             ("stability.stable-image-ultra", Ultra),
             ("stability.sd3-5-large", Sd35),
             ("stability.stable-image-inpaint", Inpaint),
-            ("stability.stable-outpaint", Outpaint),
+            ("stability.stable-outpaint", Service),
             ("stability.stable-image-erase-object", Erase),
-            ("stability.stable-image-search-replace", SearchReplace),
-            ("stability.stable-image-search-recolor", SearchRecolor),
+            ("stability.stable-image-search-replace", Service),
+            ("stability.stable-image-search-recolor", Service),
             ("stability.stable-image-remove-background", RemoveBackground),
             ("stability.stable-style-transfer", StyleTransfer),
             ("stability.stable-image-style-guide", StyleGuide),
-            ("stability.stable-image-control-sketch", ControlSketch),
-            ("stability.stable-image-control-structure", ControlStructure),
+            ("stability.stable-image-control-sketch", Service),
+            ("stability.stable-image-control-structure", Service),
             ("stability.stable-fast-upscale", FastUpscale),
-            ("stability.stable-creative-upscale", CreativeUpscale),
-            ("stability.stable-conservative-upscale", ConservativeUpscale),
+            ("stability.stable-creative-upscale", Service),
+            ("stability.stable-conservative-upscale", Service),
         ];
         IDS.iter()
             .find(|(id, _)| model.contains(id))
@@ -236,9 +231,9 @@ fn body(family: Family, input: &Input) -> Result<Map<String, Value>, Fault> {
     if family.takes_prompt() && !input.prompt.is_empty() {
         v.insert("prompt".into(), input.prompt.clone().into());
     }
-    let keys = match family {
-        Family::StyleTransfer => ["init_image", "style_image"],
-        _ => ["image", ""],
+    let keys: &[&str] = match family {
+        Family::StyleTransfer => &["init_image", "style_image"],
+        _ => &["image"],
     };
     for (key, image) in keys.iter().zip(&input.images) {
         v.insert((*key).into(), encoded(image)?.into());
@@ -310,7 +305,7 @@ fn aspect_ratio(size: &str) -> Result<Option<String>, Fault> {
 fn passed(native: &Map<String, Value>, v: &mut Map<String, Value>) -> Result<(), Fault> {
     for key in TEXTS {
         if let Some(text) = native.get(*key) {
-            v.entry(*key).or_insert(text.clone());
+            v.insert((*key).into(), text.clone());
         }
     }
     for (keys, whole) in [(INTEGERS, true), (NUMBERS, false)] {
@@ -323,7 +318,7 @@ fn passed(native: &Map<String, Value>, v: &mut Map<String, Value>) -> Result<(),
                 Some(_) => None,
             };
             let number = number.ok_or_else(|| invalid(key, "must be a number"))?;
-            v.entry(*key).or_insert(number.into());
+            v.insert((*key).into(), number.into());
         }
     }
     Ok(())
