@@ -3,9 +3,10 @@
 //!
 //! - [`openai`]: OpenAI's media endpoints, as OpenAI and compatible vendors
 //!   serve them, one format per kind.
-//! - [`gemini`]: Google's Veo and image models, as the Gemini API serves
-//!   them, of the video and image kinds.
-//! - [`bedrock`]: Amazon Bedrock's embedding models, on InvokeModel.
+//! - [`gemini`]: Google's Veo, image and embedding models, as the Gemini
+//!   API serves them, of the video, image and embedding kinds.
+//! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
+//!   on InvokeModel.
 //! - [`openrouter`]: OpenRouter's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over

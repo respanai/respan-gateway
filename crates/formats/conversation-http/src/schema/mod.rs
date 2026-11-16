@@ -32,13 +32,12 @@ pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
 pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
-pub(crate) use values::parts_within_totals;
 pub(crate) use values::{
     EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
 pub(crate) use values::{
-    FAILED_RESULT_PREFIX, Names, Totals, UsageFields, arguments_object, base64_field, check_usage,
-    count, data_media, decode_content, decode_message, decode_tools, each_tool, edit_native,
+    FAILED_RESULT_PREFIX, Names, UsageFields, arguments_object, base64_field, check_usage, count,
+    data_media, decode_content, decode_message, decode_tools, each_tool, edit_native,
     encode_content, encode_message, ended, fits, merge_fields, merge_into, merge_missing, only,
     own_fields, own_shapes, read_search, remainder, required_str, sealed, set, source_url,
     stop_json, take_strict, take_text, tidy, unless_file_id, unreadable_media, unsupported_fields,

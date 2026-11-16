@@ -1127,12 +1127,13 @@ fn a_chats_service_tier_is_said_in_responses_and_its_verbosity_is_its_own() {
 /// served, its counts within their totals, and the stream can still end.
 #[test]
 fn a_providers_parts_beyond_their_totals_stay_within_them() {
-    let usage = usage_of(&json!({
+    let read = usage_of(&json!({
         "input_tokens": 15, "output_tokens": 76,
         "input_tokens_details": { "cached_tokens": 20, "cache_write_tokens": 3 },
         "output_tokens_details": { "reasoning_tokens": 87 },
     }))
     .expect("read");
+    let usage = respan_gateway_conversation::Totals::default().increment(&read);
     assert_eq!(usage.reasoning_tokens, 76);
     assert_eq!(usage.cached_input_tokens, 15);
     assert_eq!(usage.cache_write_input_tokens, 0);

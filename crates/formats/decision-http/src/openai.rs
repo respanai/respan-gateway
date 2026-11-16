@@ -223,7 +223,7 @@ fn ids(questions: &[Value]) -> Vec<String> {
 
 /// Whether `v` is evidence: a text, or user messages of text and image
 /// parts, each image at a URL.
-fn is_evidence(v: &Value) -> bool {
+pub(crate) fn is_evidence(v: &Value) -> bool {
     let part = |p: &Value| match p["type"].as_str() {
         Some("input_text") => p["text"].is_string(),
         Some("input_image") => p["image_url"].is_string() && p.get("file_id").is_none(),
@@ -341,6 +341,7 @@ fn decode_question(id: String, v: Value) -> Result<Question, Fault> {
 /// The call of `input`: its state as the evidence, as JSON text if it is
 /// none, as of a client of another format; each question named for its id.
 fn encode_request(input: &Input) -> Result<Map<String, Value>, Fault> {
+    refuse_media(input, OPENAI)?;
     let mut questions = Vec::with_capacity(input.questions.len());
     for q in &input.questions {
         let mut v = Map::new();
@@ -566,6 +567,15 @@ mod tests {
     }
 
     #[test]
+    fn media_evidence_of_another_format_is_refused() {
+        let mut own = Map::new();
+        own.insert("input".into(), json!([{"type": "image", "data": "aGk="}]));
+        let mut input = Input::new(json!("s"), vec![Question::new("q", Ask::Noul)]);
+        input.native = Native::json::<crate::Own<crate::GeminiDecisions>>(own);
+        assert!(encode_request(&input).is_err_and(|f| f.is(FaultKind::Client)));
+    }
+
+    #[test]
     fn a_question_of_another_formats_own_type_is_dropped() {
         for own in [
             json!({"type": "date", "instructions": "When?"}),
@@ -660,7 +670,7 @@ mod tests {
         ]});
         let asked = call["questions"].as_array().cloned().unwrap_or_default();
         let events = events_of(&answers, &asked).expect("events");
-        let written = super::super::encode_response(&events).expect("body");
+        let written = super::super::encode_response(&events, &Asked::new(b"{}")).expect("body");
         let written: Value = serde_json::from_slice(&written).unwrap_or_default();
         assert_eq!(written["answers"]["tone"]["choice"], "calm");
         assert_eq!(

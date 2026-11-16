@@ -124,8 +124,7 @@ impl Format<ProviderIo, Output, Input> for MistralRealtime {
         })?;
         let query = Some(model_query(&model));
         let write = Box::new(input::Provider::new(model));
-        let mut provider = output::Provider;
-        let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
+        let read = output::Provider::default();
         Ok(SPEC.provider(io, query, write, Box::new(read), None))
     }
 }

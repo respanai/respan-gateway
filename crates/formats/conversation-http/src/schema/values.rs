@@ -189,16 +189,6 @@ pub(crate) fn check_usage(usage: &Usage, fields: UsageFields) -> Result<(), Faul
     Ok(())
 }
 
-/// A provider's counts with each part within its whole: some report more
-/// reasoning than output, and an answer already given is not failed for it.
-pub(crate) fn parts_within_totals(mut usage: Usage) -> Usage {
-    usage.reasoning_tokens = usage.reasoning_tokens.min(usage.output_tokens);
-    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
-    let uncached = usage.input_tokens - usage.cached_input_tokens;
-    usage.cache_write_input_tokens = usage.cache_write_input_tokens.min(uncached);
-    usage
-}
-
 /// A provider's usage count at `v`: `None` if it says none (absent or
 /// null); a whole number even when written as a float (`12.0`); else a
 /// failure, so a count that cannot be one is never metered as zero.
@@ -501,19 +491,6 @@ pub(crate) fn take_strict<C: Schema>(tool: &mut Tool) {
     }
 }
 
-/// Turns a provider's running usage totals into increments.
-#[derive(Debug, Default)]
-pub(crate) struct Totals(Usage);
-
-impl Totals {
-    /// What `total` adds to the totals seen so far; usage only grows.
-    pub fn increment(&mut self, total: &Usage) -> Usage {
-        let step = total.saturating_sub(&self.0);
-        self.0 += &step;
-        step
-    }
-}
-
 /// Stop sequences, or `None` for none.
 pub(crate) fn stop_json(stop: &[String]) -> Option<Value> {
     (!stop.is_empty()).then(|| stop.into())
@@ -712,19 +689,4 @@ pub(crate) fn edit_native<C: Schema, T>(
     let edited = edit(&mut fields);
     *native = C::native(fields);
     edited
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usage_totals_become_increments() {
-        let mut totals = Totals::default();
-        let total = |n| Usage::new(0, n);
-        assert_eq!(totals.increment(&total(1)).output_tokens, 1);
-        assert_eq!(totals.increment(&total(3)).output_tokens, 2);
-        assert!(totals.increment(&total(3)).is_empty());
-        assert!(totals.increment(&total(2)).is_empty(), "never negative");
-    }
 }

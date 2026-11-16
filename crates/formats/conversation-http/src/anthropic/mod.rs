@@ -153,9 +153,14 @@ const KNOWN: &[&str] = &[
     "metadata",
 ];
 
-/// Roles read from messages, including inline instructions from clients.
-/// When writing, `split_system` moves leading instructions to the system prompt.
+/// Roles written in messages; leading instructions have their own field.
 const ROLES: Names<Role> = Names(
+    &[("user", Role::User), ("assistant", Role::Assistant)],
+    PhantomData,
+);
+
+/// Clients can also send inline instructions in messages.
+const READ_ROLES: Names<Role> = Names(
     &[
         ("system", Role::System),
         ("user", Role::User),
@@ -315,7 +320,7 @@ impl Schema for AnthropicMessages {
             chat.messages.push(system);
         }
         for m in v["messages"].as_array().into_iter().flatten() {
-            let mut message = decode_message::<Self>(m, &ROLES)?;
+            let mut message = decode_message::<Self>(m, &READ_ROLES)?;
             signed(&mut message, &m["content"]);
             chat.messages.push(message);
         }

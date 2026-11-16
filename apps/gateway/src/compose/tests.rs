@@ -385,6 +385,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-veo",
             "decisions",
             "openai-decisions",
+            "gemini-decisions",
             "responses-ws"
         ]
     );
@@ -1069,6 +1070,79 @@ async fn azure_decisions_uses_the_reserved_path_and_api_key() {
             assert!(headers.get("authorization").is_none());
             assert_eq!(body["model"], "deployment");
         }
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn gemini_decisions_use_the_goog_key_and_answer_each_contract_in_its_own() {
+    use axum::{Json, Router, extract::State, routing::post as route_post};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    type Captured = Arc<Mutex<Vec<(http::HeaderMap, Value)>>>;
+    async fn fake(
+        State(seen): State<Captured>,
+        headers: http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        let answers: serde_json::Map<String, Value> = (body["questions"].as_object())
+            .into_iter()
+            .flatten()
+            .map(|(id, _)| {
+                (
+                    id.clone(),
+                    json!({"type": "noul", "noul": 0.7, "confidence": 0.7}),
+                )
+            })
+            .collect();
+        seen.lock().expect("capture").push((headers, body));
+        Json(
+            json!({"answers": answers, "usage": {"total_input_tokens": 4, "total_output_tokens": 0}}),
+        )
+    }
+    let seen: Captured = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let addr = listener.local_addr().expect("address");
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1beta/decisions", route_post(fake))
+                .with_state(seen.clone()),
+        )
+        .into_future(),
+    );
+    let text = format!(
+        "providers = {{ g = {{ vendor = \"gemini\", base_url = \"http://{addr}/v1beta\", key = \"provider-secret\", formats = [\"gemini-decisions\"] }} }}\nformats = [\"gemini-decisions\", \"decisions\", \"openai-decisions\"]\n"
+    );
+    let gateway = resolve(&text).expect("gateway");
+    let asked = json!({"model":"g/gemini-decision-1","input":"hello","questions":{"spam":{"type":"noul","instructions":"Is it spam?"}}});
+    let (resp, _) = serve(&gateway, post("/v1beta/decisions", asked.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let result: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(result["answers"]["spam"]["noul"], 0.7);
+    assert_eq!(result["usage"]["total_input_tokens"], 4);
+    // A client of `decisions` is asked of Google in its contract.
+    let legacy = json!({"model":"g/gemini-decision-1","state":"hello","questions":{"spam":{"type":"noul","instructions":"Is it spam?"}}});
+    let (resp, _) = serve(&gateway, post("/v1/decisions", legacy.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let result: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(result["answers"]["spam"]["noul"], 0.7);
+    gateway.idle().await;
+    {
+        let captured = seen.lock().expect("capture");
+        assert_eq!(captured.len(), 2);
+        for (headers, _) in captured.iter() {
+            let key = headers.get("x-goog-api-key").and_then(|v| v.to_str().ok());
+            assert_eq!(key, Some("provider-secret"));
+            assert!(headers.get("authorization").is_none());
+        }
+        assert_eq!(captured[1].1["input"], "hello");
+        assert_eq!(captured[0].1["model"], "gemini-decision-1");
     }
     server.abort();
 }

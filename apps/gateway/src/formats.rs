@@ -14,11 +14,11 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Format, Gateway};
 use respan_gateway_decision as decision;
-use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
+use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
-use respan_gateway_media_http::bedrock::BedrockEmbeddings;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
+use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
@@ -220,6 +220,7 @@ mod endpoints {
     /// OpenAI's decisions, beside the ones `/v1/decisions` has.
     pub const OPENAI_DECISIONS_PATH: &str = "/openai/v1/decisions";
     pub const OPENAI_DECISIONS: &[&str] = &["POST /openai/v1/decisions"];
+    pub const GEMINI_DECISIONS: &[&str] = &["POST /v1beta/decisions"];
     pub const DECISIONS: &[&str] = &["POST /v1/decisions", "POST /v1/systemone"];
     pub const VIDEOS: &[&str] = &[
         "POST /v1/videos",
@@ -271,6 +272,8 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
+        KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::EMBEDDING, &GeminiEmbeddings),
         KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
         KnownFormat::claiming(
             kind::IMAGE,
@@ -310,14 +313,19 @@ pub fn formats() -> Vec<KnownFormat> {
             decision::Input::model,
             decision::Input::set_model,
         )),
+        KnownFormat::of(kind::DECISION, endpoints::GEMINI_DECISIONS, GeminiDecisions).model(
+            Model::of(decision::Input::model, decision::Input::set_model),
+        ),
         KnownFormat::of(kind::PASSTHROUGH, endpoints::PASSTHROUGH, Passthrough),
     ]
 }
 
-/// Whether a request is for `decisions`, not OpenAI's at its own path.
+/// Whether a request is for `decisions`, not OpenAI's or Gemini's at their own paths.
 fn legacy_decisions(_: &Routes, io: &ClientIo) -> bool {
     let uri = io.request().uri();
-    !respan_gateway_http::path::path_ends_with(uri, endpoints::OPENAI_DECISIONS_PATH)
+    let own = [endpoints::OPENAI_DECISIONS_PATH, GeminiDecisions::PATH];
+    !own.iter()
+        .any(|p| respan_gateway_http::path::path_ends_with(uri, p))
 }
 
 /// Whether a `generateContent` call is for an image ([`drawn_elsewhere`]).

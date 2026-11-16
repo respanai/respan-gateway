@@ -79,8 +79,8 @@ sent if the request names none.
 
 An inline `system` message is read as instructions at that point in the
 conversation. Targets keep their placement rules: Anthropic takes leading
-instructions in its system prompt and refuses them after the conversation
-starts.
+instructions in its system prompt and writes later instructions in place
+as user messages.
 
 Thinking is the kind's reasoning; its signature, and what else the kind has
 no form for, stays native to this format. Reasoning without its signature,

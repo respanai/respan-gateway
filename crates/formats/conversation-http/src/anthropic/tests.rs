@@ -324,7 +324,9 @@ fn an_inline_system_message_keeps_its_place_in_openai_chat() {
             { "role": "assistant", "content": "hello" },
         ],
     });
-    let chat = AnthropicMessages.decode_json(&body);
+    let chat = AnthropicMessages
+        .decode_json(&body)
+        .expect("an inline system message can be read");
     let translated = crate::openai::OpenAiChat
         .encode_request(&chat)
         .expect("an inline system message can be written as OpenAI Chat");
@@ -363,7 +365,7 @@ fn a_leading_inline_system_message_joins_the_system_prompt() {
 }
 
 #[test]
-fn a_later_inline_system_message_is_refused_by_anthropic() {
+fn a_later_inline_system_message_keeps_its_place_as_a_user_message() {
     let body = json!({
         "model": "claude", "max_tokens": 10,
         "messages": [
@@ -371,7 +373,14 @@ fn a_later_inline_system_message_is_refused_by_anthropic() {
             { "role": "system", "content": "later" },
         ],
     });
-    assert!(written(body, |_| {}).is_err());
+    let translated = written(body, |_| {}).expect("later instructions become user messages");
+    assert_eq!(
+        translated["messages"],
+        json!([
+            { "role": "user", "content": "hi" },
+            { "role": "user", "content": "later" },
+        ])
+    );
 }
 
 #[test]
