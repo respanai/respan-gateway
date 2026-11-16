@@ -183,8 +183,9 @@ models on `POST /models/{model}:batchEmbedContents`, its key in
   each request's `outputDimensionality`.
 - An item of parts is one request of those parts, one joint vector. Media
   goes inline from its bytes (`inlineData`), or from its URL for Gemini to
-  fetch (`fileData`). An item's native fields, such as `taskType`, go in its
-  request.
+  fetch (`fileData`) with its type, which may be a family's wildcard such as
+  `image/*`; a URL of no type at all is refused, 400, before the call. An
+  item's native fields, such as `taskType`, go in its request.
 - Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
   some models only (not `gemini-embedding-001`); its OpenAI-compatible
   endpoint reports none. `promptTokenDetails` are the input tokens of each

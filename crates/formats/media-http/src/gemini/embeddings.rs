@@ -156,11 +156,20 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     Ok(sends(Bytes::from(body)))
 }
 
-/// A part as a Gemini part.
+/// A part as a Gemini part. A file at a URL is written with its type, a
+/// family's wildcard such as `image/*` too, as the embedding models need one.
 fn part_json(part: &Part) -> Result<Value, Fault> {
     match part {
         Part::Text(text) => Ok(json!({ "text": text })),
-        Part::Media(media) => Ok(media_part(media)),
+        Part::Media(media) => match &media.source {
+            MediaSource::Url(_) if media.mime_type == "*/*" => {
+                Err(invalid("input", "has a file at a URL that names no type"))
+            }
+            MediaSource::Url(uri) => Ok(json!({
+                "fileData": { "mimeType": media.mime_type, "fileUri": uri }
+            })),
+            _ => Ok(media_part(media)),
+        },
         _ => Err(invalid("input", "has a part Gemini cannot embed")),
     }
 }
@@ -457,7 +466,7 @@ mod tests {
         let sent = json!([
             { "text": "a" },
             { "inlineData": { "mimeType": "video/mp4", "data": "YWJj" } },
-            { "fileData": { "fileUri": "https://x.test/i" } },
+            { "fileData": { "mimeType": "image/*", "fileUri": "https://x.test/i" } },
         ]);
         assert_eq!(body["requests"][0]["content"]["parts"], sent);
     }
@@ -513,7 +522,7 @@ mod tests {
               "content": { "parts": [
                 { "text": "b" },
                 { "inline_data": { "mime_type": "image/png", "data": "YWJj" } },
-                { "fileData": { "fileUri": "https://x.test/v" } },
+                { "fileData": { "mimeType": "video/mp4", "fileUri": "https://x.test/v" } },
               ] } },
         ] });
         let input = request("/v1beta/models/m:batchEmbedContents", asked).expect("a request");
@@ -526,7 +535,7 @@ mod tests {
             "content": { "parts": [
                 { "text": "b" },
                 { "inlineData": { "mimeType": "image/png", "data": "YWJj" } },
-                { "fileData": { "fileUri": "https://x.test/v" } },
+                { "fileData": { "mimeType": "video/mp4", "fileUri": "https://x.test/v" } },
             ] } });
         assert_eq!(body["requests"][1], sent);
 
