@@ -153,9 +153,19 @@ const KNOWN: &[&str] = &[
     "metadata",
 ];
 
-/// Roles a message can have; system prompts have their own field.
+/// Roles written in messages; leading instructions have their own field.
 const ROLES: Names<Role> = Names(
     &[("user", Role::User), ("assistant", Role::Assistant)],
+    PhantomData,
+);
+
+/// Clients can also send inline instructions in messages.
+const READ_ROLES: Names<Role> = Names(
+    &[
+        ("system", Role::System),
+        ("user", Role::User),
+        ("assistant", Role::Assistant),
+    ],
     PhantomData,
 );
 
@@ -310,7 +320,7 @@ impl Schema for AnthropicMessages {
             chat.messages.push(system);
         }
         for m in v["messages"].as_array().into_iter().flatten() {
-            let mut message = decode_message::<Self>(m, &ROLES)?;
+            let mut message = decode_message::<Self>(m, &READ_ROLES)?;
             signed(&mut message, &m["content"]);
             chat.messages.push(message);
         }
