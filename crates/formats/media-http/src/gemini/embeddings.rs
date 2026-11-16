@@ -88,7 +88,7 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     for item in &input.items {
         let parts = match item {
             Item::Text(text) => vec![json!({ "text": text })],
-            Item::Parts(parts) => parts.iter().map(part).collect::<Result<Vec<_>, _>>()?,
+            Item::Parts(p) => p.parts.iter().map(part).collect::<Result<Vec<_>, _>>()?,
             _ => return Err(invalid("input", "must be texts or parts for Gemini")),
         };
         let mut request = json!({
@@ -186,6 +186,7 @@ mod tests {
     use respan_gateway_conversation::Media;
     use respan_gateway_core::Native;
     use respan_gateway_http::http;
+    use respan_gateway_media::embedding::Parts;
 
     fn call(items: &[&str], f: impl FnOnce(&mut Input)) -> Result<(String, Value), Fault> {
         let items = items.iter().map(|t| Item::Text((*t).into()));
@@ -227,7 +228,8 @@ mod tests {
             media("video/mp4", bytes),
             media("image/png", url("https://x.test/i.png")),
         ];
-        let (_, body) = call(&[], |i| i.items = vec![Item::Parts(parts)]).expect("a call");
+        let (_, body) =
+            call(&[], |i| i.items = vec![Item::Parts(Parts::new(parts))]).expect("a call");
         let sent = json!([
             { "text": "a" },
             { "inline_data": { "mime_type": "video/mp4", "data": "YWJj" } },
@@ -235,7 +237,7 @@ mod tests {
         ]);
         assert_eq!(body["requests"][0]["content"]["parts"], sent);
         let http = vec![media("image/png", url("http://x.test/i.png"))];
-        assert!(call(&[], |i| i.items = vec![Item::Parts(http)]).is_err());
+        assert!(call(&[], |i| i.items = vec![Item::Parts(Parts::new(http))]).is_err());
     }
 
     #[test]

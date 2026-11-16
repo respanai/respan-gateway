@@ -13,7 +13,9 @@ use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
 use respan_gateway_http::{All, ClientIo, Decoder, Encoder, ProviderIo, Whole, native::Json};
 use respan_gateway_http::{Connect, Upstream};
-use respan_gateway_media::embedding::{Embedding, Input, Item, Modality, Output, Part, Start};
+use respan_gateway_media::embedding::{
+    Embedding, Input, Item, Modality, Output, Part, Parts, Start,
+};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "openai-embeddings";
@@ -28,9 +30,8 @@ const EMBEDDINGS: &str = "/embeddings";
 /// those, or parts: a list of objects of `content`, each a list of parts, or
 /// one list of parts (`text`, `image_url`, `input_video`, `input_audio`,
 /// `input_file`), read as [`Item::Parts`] of texts and media, one vector
-/// each. A part is written back as it was read; any other list is relayed
-/// as written. Parts are written as `[{"content": [..]}]`. The input tokens
-/// of a modality, if the provider counts them, are written as
+/// each, written back as it was read (else as `{"content": [..]}`); any
+/// other list is relayed as written. The input tokens of a modality, if the provider counts them, are written as
 /// `usage.prompt_tokens_details.{modality}_tokens`. A vector
 /// is decoded from a list of numbers or from base64 (little-endian `f32`s),
 /// whichever the provider answers, and written as the client's
@@ -120,16 +121,22 @@ fn read_items(v: &Value) -> Result<Vec<Item>, Fault> {
 }
 
 /// The items of a list of parts: one of them if it is a list of parts, else
-/// one each for the texts and `content` lists in it. `None` if any is of a
+/// one each for the texts and `content` lists in it, each kept as written. `None` if any is of a
 /// form the kind has none for.
 fn parts_items(all: &[Value]) -> Option<Vec<Item>> {
     let parts = |list: &[Value]| list.iter().map(part).collect::<Option<Vec<_>>>();
+    let item_of = |list: &[Value], written: &Value| {
+        let mut item = Parts::new(parts(list)?);
+        item.native = Native::json::<Key>(written.clone());
+        Some(Item::Parts(item))
+    };
     if all.iter().all(|p| p.get("type").is_some()) {
-        return Some(vec![Item::Parts(parts(all)?)]);
+        let written = Value::Array(all.to_vec());
+        return Some(vec![item_of(all, &written)?]);
     }
     let item = |v: &Value| match (v, &v["content"]) {
         (Value::String(text), _) | (_, Value::String(text)) => Some(Item::Text(text.clone())),
-        (_, Value::Array(list)) if !list.is_empty() => Some(Item::Parts(parts(list)?)),
+        (_, Value::Array(list)) if !list.is_empty() => item_of(list, v),
         _ => None,
     };
     all.iter().map(item).collect()
@@ -232,15 +239,19 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
 /// The `input` of items: one as it is, several as a list of one kind.
 fn items_json(items: &[Item]) -> Result<Value, Fault> {
     if items.iter().any(|i| matches!(i, Item::Parts(_))) {
-        let content = |item: &Item| match item {
-            Item::Text(text) => Ok(vec![json!({ "type": "text", "text": text })]),
-            Item::Parts(parts) => Ok(parts.iter().map(part_json).collect()),
+        let written = |item: &Item| match item {
+            Item::Text(text) => Ok(Value::from(text.clone())),
+            Item::Parts(p) => Ok(match p.native.value::<Key>() {
+                Some(written) => written.clone(),
+                None => json!({ "content": p.parts.iter().map(part_json).collect::<Vec<_>>() }),
+            }),
             _ => Err(Fault::bad_request("an input cannot mix parts with tokens")),
         };
-        let all = items
-            .iter()
-            .map(|i| content(i).map(|c| json!({ "content": c })));
-        return all.collect::<Result<Vec<_>, _>>().map(Into::into);
+        let all = items.iter().map(written).collect::<Result<Vec<_>, _>>()?;
+        return Ok(match &all[..] {
+            [only @ Value::Array(_)] => only.clone(),
+            _ => all.into(),
+        });
     }
     let item = |item: &Item| match item {
         Item::Text(text) => Value::from(text.clone()),
@@ -500,11 +511,14 @@ mod tests {
               "input_video": { "data": "data:video/mp4;base64,AAAA", "format": "mp4" } },
         ] }]);
         let read = items(asked.clone()).expect("items");
-        let [Item::Parts(parts)] = &read[..] else {
+        let [Item::Parts(item)] = &read[..] else {
             panic!("not one item of parts: {read:?}");
         };
-        assert!(matches!(&parts[1], Part::Media(m) if m.mime_type == "video/mp4"));
+        assert!(matches!(&item.parts[1], Part::Media(m) if m.mime_type == "video/mp4"));
         assert_eq!(items_json(&read).expect("input"), asked);
+        let bare = json!([{ "type": "text", "text": "a" }]);
+        let read = items(bare.clone()).expect("items");
+        assert_eq!(items_json(&read).expect("input"), bare);
         let events = [
             Output::InputTokens(Modality::Video, 1056),
             Output::InputTokens(Modality::Text, 3),

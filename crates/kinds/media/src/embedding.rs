@@ -52,14 +52,34 @@ pub enum Item {
     Text(String),
     /// Parts (texts, images, audio, videos, files) embedded together as one
     /// vector.
-    Parts(Vec<Part>),
+    Parts(Parts),
     /// An item the kind has no form for, such as token ids; only a call in
     /// its format can send it.
     Native(Native),
 }
 
+/// The parts of an [`Item::Parts`].
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct Parts {
+    /// The parts, in order.
+    pub parts: Vec<Part>,
+    /// The item as its format wrote it, to write back as it was.
+    pub native: Native,
+}
+
+impl Parts {
+    /// Parts with no native form.
+    pub fn new(parts: impl Into<Vec<Part>>) -> Self {
+        Self {
+            parts: parts.into(),
+            native: Native::default(),
+        }
+    }
+}
+
 /// A part of an [`Item::Parts`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum Part {
     /// A text.
