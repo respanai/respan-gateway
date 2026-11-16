@@ -425,7 +425,7 @@ fn write_result(content: &[Content], is_error: bool, response: &mut Value) {
 /// type, and finds a URL's type itself.
 pub fn media_part(media: &Media) -> Value {
     match &media.source {
-        MediaSource::Url(uri) if media.mime_type == "image/*" => {
+        MediaSource::Url(uri) if media.mime_type.ends_with("/*") => {
             json!({ "fileData": { "fileUri": uri } })
         }
         MediaSource::Url(uri) => {

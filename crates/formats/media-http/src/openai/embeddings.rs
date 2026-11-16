@@ -175,7 +175,12 @@ fn part_json(part: &Part) -> Result<Value, Fault> {
         "video" => "input_video",
         _ => "input_file",
     };
-    Ok(json!({ "type": kind, kind: { "data": url, "format": format } }))
+    let mut data = json!({ "data": url });
+    // A type of any, as a file with none has, names no format.
+    if format != "*" {
+        data["format"] = format.into();
+    }
+    Ok(json!({ "type": kind, kind: data }))
 }
 
 /// The text of an item that is one: a text, or parts of another format that

@@ -6,7 +6,7 @@ use super::{is_segment, refusal};
 use crate::edge::{bind_provider, floats, sends};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{base64_bytes, invalid, merge_missing};
-use respan_gateway_conversation_http::gemini::media_part;
+use respan_gateway_conversation_http::gemini::{media_part, method_of};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
@@ -28,6 +28,9 @@ type Key = crate::Own<GeminiEmbeddings>;
 const ONE: &str = "embedContent";
 /// The method of several requests, answered a vector each.
 const BATCH: &str = "batchEmbedContents";
+
+/// A request's size of vector, by its name in JSON and in the API's own.
+const SIZE: [&str; 2] = ["outputDimensionality", "output_dimensionality"];
 
 /// The modalities a `promptTokenDetails` counts, by Gemini's names.
 const MODALITIES: [(&str, Modality); 5] = [
@@ -62,7 +65,8 @@ const MODALITIES: [(&str, Modality); 5] = [
 /// `text` part and says no more, else parts, of `text`, `inlineData` and
 /// `fileData`. An `outputDimensionality` every request says is the
 /// `dimensions`; a request's other fields, such as `taskType` and `title`,
-/// are its item's native fields. The answer is `embedding`, or
+/// and sizes that differ, are its item's native fields, which only a Gemini
+/// provider is sent. The answer is `embedding`, or
 /// `embeddings`, by index, and the usage as `usageMetadata`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiEmbeddings;
@@ -103,16 +107,12 @@ impl Format<ProviderIo, Output, Input> for GeminiEmbeddings {
 /// The model, unescaped, of a call at `uri`, and whether it is a batch:
 /// `.../models/{model}:embedContent` or `:batchEmbedContents`.
 fn call_of(uri: &Uri) -> Option<(String, bool)> {
-    let (rest, last) = uri.path().rsplit_once('/')?;
-    let (model, method) = last.rsplit_once(':')?;
-    let batch = match method {
-        ONE => false,
-        BATCH => true,
-        _ => return None,
-    };
-    let named = rest.rsplit('/').next() == Some("models") && !model.is_empty();
-    let unescaped = || percent_encoding::percent_decode_str(model).decode_utf8_lossy();
-    named.then(|| (unescaped().into_owned(), batch))
+    let (model, method) = method_of(uri)?;
+    match method {
+        ONE => Some((model, false)),
+        BATCH => Some((model, true)),
+        _ => None,
+    }
 }
 
 /// The call of `input`: its model's `batchEmbedContents`, a request an item.
@@ -156,17 +156,11 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     Ok(sends(Bytes::from(body)))
 }
 
-/// A part as a Gemini part. Gemini finds the type of a URL of any type
-/// itself.
+/// A part as a Gemini part.
 fn part_json(part: &Part) -> Result<Value, Fault> {
     match part {
         Part::Text(text) => Ok(json!({ "text": text })),
-        Part::Media(media) => Ok(match &media.source {
-            MediaSource::Url(uri) if media.mime_type.ends_with("/*") => {
-                json!({ "fileData": { "fileUri": uri } })
-            }
-            _ => media_part(media),
-        }),
+        Part::Media(media) => Ok(media_part(media)),
         _ => Err(invalid("input", "has a part Gemini cannot embed")),
     }
 }
@@ -250,19 +244,20 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
         .ok_or_else(|| Fault::bad_request("the request is to no embedContent endpoint"))?;
     let mut v: Map<String, Value> = serde_json::from_slice(raw)
         .map_err(|_| Fault::bad_request("the request body is not a JSON object"))?;
-    let mut requests = match (batch, v.remove("requests")) {
-        (false, _) => vec![v],
-        (true, Some(Value::Array(all))) if !all.is_empty() => {
-            let object = |(i, request)| match request {
-                Value::Object(request) => Ok(request),
-                _ => Err(invalid(&format!("requests[{i}]"), "must be an object")),
-            };
-            (all.into_iter().enumerate().map(object)).collect::<Result<Vec<_>, _>>()?
-        }
-        (true, _) => return Err(invalid("requests", "must be a list of requests")),
+    let mut requests = match batch {
+        false => vec![v],
+        true => match v.remove("requests") {
+            Some(Value::Array(all)) if !all.is_empty() => {
+                let object = |(i, request)| match request {
+                    Value::Object(request) => Ok(request),
+                    _ => Err(invalid(&format!("requests[{i}]"), "must be an object")),
+                };
+                (all.into_iter().enumerate().map(object)).collect::<Result<Vec<_>, _>>()?
+            }
+            _ => return Err(invalid("requests", "must be a list of requests")),
+        },
     };
     // A size the kind can say, as every request says it, goes as one.
-    const SIZE: [&str; 2] = ["outputDimensionality", "output_dimensionality"];
     let size = |request: &Map<String, Value>| {
         let said = SIZE.iter().find_map(|key| request.get(*key));
         said.and_then(Value::as_u64)
@@ -272,41 +267,15 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
     let dimensions = dimensions.filter(|n| requests.iter().all(|r| size(r) == Some(*n)));
     let mut items = Vec::with_capacity(requests.len());
     for (i, request) in requests.iter_mut().enumerate() {
-        let at = if batch {
-            format!("requests[{i}].")
-        } else {
-            String::new()
-        };
         request.remove("model");
         if dimensions.is_some() {
             SIZE.iter().for_each(|key| drop(request.remove(*key)));
         }
-        let content = request.remove("content").unwrap_or_default();
-        let mut parts = Vec::new();
-        for (j, part) in content["parts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .enumerate()
-        {
-            let read = read_part(part);
-            let unread = || {
-                invalid(
-                    &format!("{at}content.parts[{j}]"),
-                    "is neither text nor media",
-                )
-            };
-            parts.push(read.ok_or_else(unread)?);
-        }
-        items.push(match (&mut parts[..], request.is_empty()) {
-            ([], _) => return Err(invalid(&format!("{at}content"), "must have parts")),
-            ([Part::Text(text)], true) => Item::Text(std::mem::take(text)),
-            _ => {
-                let mut item = Parts::new(parts);
-                item.native = Native::json::<Key>(std::mem::take(request));
-                Item::Parts(item)
-            }
-        });
+        let at = match batch {
+            true => format!("requests[{i}]."),
+            false => String::new(),
+        };
+        items.push(read_item(request, &at)?);
     }
     let mut input = Input::new(items);
     input.model = Some(model);
@@ -314,11 +283,38 @@ fn read_request(head: &RequestHead, raw: &[u8]) -> Result<Input, Fault> {
     Ok(input)
 }
 
-/// A client's part, if it is one the kind has: a text, or media, its bytes
-/// inline or a file's URL. A file that names no type is of any.
-fn read_part(part: &Value) -> Option<Part> {
+/// The item of a client's `request`, named by `at` in a refusal: a text if
+/// its `content` is one `text` part and it says no more, else parts, the
+/// rest of it their native fields.
+fn read_item(request: &mut Map<String, Value>, at: &str) -> Result<Item, Fault> {
+    let content = request.remove("content").unwrap_or_default();
+    let mut parts = Vec::new();
+    for (j, part) in content["parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let unread = |why| invalid(&format!("{at}content.parts[{j}]"), why);
+        parts.push(read_part(part).map_err(unread)?);
+    }
+    Ok(match (&mut parts[..], request.is_empty()) {
+        ([], _) => return Err(invalid(&format!("{at}content"), "must have parts")),
+        ([Part::Text(text)], true) => Item::Text(std::mem::take(text)),
+        _ => {
+            let mut item = Parts::new(parts);
+            item.native = Native::json::<Key>(std::mem::take(request));
+            Item::Parts(item)
+        }
+    })
+}
+
+/// A client's part, if it is one the kind has, else why it is not: a text,
+/// or media, its bytes inline or a file's URL. A file that names no type is
+/// of any.
+fn read_part(part: &Value) -> Result<Part, &'static str> {
     if let Some(text) = part["text"].as_str() {
-        return Some(Part::Text(text.to_owned()));
+        return Ok(Part::Text(text.to_owned()));
     }
     let mime = |data: &Value| {
         field(data, "mimeType", "mime_type")
@@ -330,18 +326,22 @@ fn read_part(part: &Value) -> Option<Part> {
         field(part, "fileData", "file_data"),
     );
     let media = match (inline, file) {
-        (Value::Null, Value::Null) => return None,
+        (Value::Null, Value::Null) => return Err("is neither text nor media"),
         (Value::Null, file) => {
-            let url = field(file, "fileUri", "file_uri").as_str()?;
+            let url = field(file, "fileUri", "file_uri").as_str();
+            let url = url.ok_or("must have a `fileUri`")?;
             let mime = mime(file).unwrap_or_else(|| "*/*".to_owned());
             Media::new(mime, MediaSource::Url(url.to_owned()))
         }
         (inline, _) => {
-            let bytes = base64_bytes(inline["data"].as_str()?)?;
-            Media::new(mime(inline)?, MediaSource::Bytes(bytes.into()))
+            let bytes = inline["data"].as_str().and_then(base64_bytes);
+            let (Some(mime), Some(bytes)) = (mime(inline), bytes) else {
+                return Err("must have a `mimeType` and base64 `data`");
+            };
+            Media::new(mime, MediaSource::Bytes(bytes.into()))
         }
     };
-    Some(Part::Media(media))
+    Ok(Part::Media(media))
 }
 
 /// The encoder of an answer to `request`: its vector, or the vectors of a

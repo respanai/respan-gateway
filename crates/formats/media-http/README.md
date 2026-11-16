@@ -197,7 +197,8 @@ models on `POST /models/{model}:batchEmbedContents`, its key in
   a text if it is one `text` part and says no more, else parts (`text`,
   `inlineData`, `fileData`). An `outputDimensionality` every request says
   is the `dimensions`; a request's other fields, such as `taskType` and
-  `title`, stay its item's, for a Gemini provider. The answer is
+  `title`, and sizes that differ between requests, stay its item's, for a
+  Gemini provider only: another provider is not sent them. The answer is
   `embedding`, or `embeddings`, and the usage as `usageMetadata`.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
