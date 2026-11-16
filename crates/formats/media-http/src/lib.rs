@@ -41,6 +41,7 @@ impl Natives for openai::OpenAiEmbeddings {}
 impl Natives for openai::OpenAiSpeech {}
 impl Natives for openai::OpenAiTranscriptions {}
 impl Natives for openai::OpenAiVideos {}
+impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}
 impl Natives for openrouter::OpenRouterVideos {}

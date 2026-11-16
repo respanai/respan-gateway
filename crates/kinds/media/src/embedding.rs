@@ -3,9 +3,10 @@
 //! A response is a sequence of events: a [`Output::Start`], then an
 //! [`Output::Embedding`] for each item of the request, in order (as many as
 //! the model answers for an [`Item::Native`]), with
-//! [`Output::Usage`] and [`Output::Native`] among them.
+//! [`Output::Usage`], [`Output::InputTokens`] and [`Output::Native`] among
+//! them.
 
-use respan_gateway_conversation::Usage;
+use respan_gateway_conversation::{Media, Usage};
 use respan_gateway_core::Native;
 
 /// The kind's input: items to embed.
@@ -49,10 +50,59 @@ impl Input {
 pub enum Item {
     /// A text.
     Text(String),
-    /// An item the kind has no form for, such as token ids or parts (texts,
-    /// images, videos) the model answers one vector for, or one each; only a
-    /// call in its format can send it.
+    /// Parts (texts, images, audio, videos, files) embedded together as one
+    /// vector.
+    Parts(Parts),
+    /// An item the kind has no form for, such as token ids; only a call in
+    /// its format can send it.
     Native(Native),
+}
+
+/// The parts of an [`Item::Parts`].
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct Parts {
+    /// The parts, in order.
+    pub parts: Vec<Part>,
+    /// What its format says of the item that the kind has no place for, or
+    /// the item as it wrote it, to write back as it was.
+    pub native: Native,
+}
+
+impl Parts {
+    /// Parts with no native form.
+    pub fn new(parts: impl Into<Vec<Part>>) -> Self {
+        Self {
+            parts: parts.into(),
+            native: Native::default(),
+        }
+    }
+}
+
+/// A part of an [`Item::Parts`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Part {
+    /// A text.
+    Text(String),
+    /// Media: its type, and its bytes or its URL.
+    Media(Media),
+}
+
+/// What a count of input tokens is of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Modality {
+    /// Text.
+    Text,
+    /// Images.
+    Image,
+    /// Audio.
+    Audio,
+    /// Video.
+    Video,
+    /// Documents, such as PDFs.
+    Document,
 }
 
 /// The kind's output: one event of a response.
@@ -65,6 +115,8 @@ pub enum Output {
     Embedding(Embedding),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
+    /// Of the usage's input tokens, those of a modality, as an increment.
+    InputTokens(Modality, u64),
     /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
     Native(Native),

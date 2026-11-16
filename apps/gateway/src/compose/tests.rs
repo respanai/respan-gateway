@@ -378,6 +378,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "openai-videos",
             "openai-embeddings",
             "gemini-generate",
+            "gemini-embeddings",
             "gemini-images",
             "gemini-live",
             "mistral-realtime",

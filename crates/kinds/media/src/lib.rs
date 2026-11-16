@@ -2,7 +2,7 @@
 //! The media kinds: each operation is a kind of its own, an `Input` in and
 //! an `Output` out, in a module of its name.
 //!
-//! - [`embedding`]: vectors for texts.
+//! - [`embedding`]: vectors for texts and media.
 //! - [`image`]: images generated from a prompt, or edits of source images.
 //! - [`transcription`]: speech to text, or a translation of it to English.
 //! - [`speech`]: text to speech.

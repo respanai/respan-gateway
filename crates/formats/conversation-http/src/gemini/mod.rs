@@ -171,13 +171,20 @@ fn finish_of(reason: &str) -> Finish {
 /// `.../models/{model}:{method}`, `generateContent` or
 /// `streamGenerateContent`.
 pub fn call_of(uri: &http::Uri) -> Option<(String, &str)> {
-    let path = uri.path();
-    let (rest, last) = path.rsplit_once('/')?;
+    let known = |(_, method): &(String, &str)| {
+        matches!(*method, "generateContent" | "streamGenerateContent")
+    };
+    method_of(uri).filter(known)
+}
+
+/// The model, unescaped, and the method, whichever it is, a Gemini path
+/// names: `.../models/{model}:{method}`.
+pub fn method_of(uri: &http::Uri) -> Option<(String, &str)> {
+    let (rest, last) = uri.path().rsplit_once('/')?;
     let (model, method) = last.rsplit_once(':')?;
     let named = rest.rsplit('/').next() == Some("models") && !model.is_empty();
-    let known = matches!(method, "generateContent" | "streamGenerateContent");
     let unescaped = || percent_encoding::percent_decode_str(model).decode_utf8_lossy();
-    (named && known).then(|| (unescaped().into_owned(), method))
+    named.then(|| (unescaped().into_owned(), method))
 }
 
 /// Whether a streaming call at `uri` asks for server-sent events (`alt=sse`).
