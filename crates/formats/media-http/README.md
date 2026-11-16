@@ -202,3 +202,38 @@ only, its key a Bedrock API key as a bearer token.
 - Token ids, parts and a `dimensions` the model takes none of are refused,
   400, before the call; other fields of another format, such as an end
   user's id, are dropped.
+
+`bedrock::BedrockImages`, named `bedrock-images`: Amazon Bedrock's Stability AI
+models on InvokeModel, `POST /model/{model}/invoke`, as a provider only, its
+key a Bedrock API key as a bearer token.
+
+- Stable Image Core and Ultra and Stable Diffusion 3.5 Large
+  (`stability.*`) draw from a prompt, with the nearest `aspect_ratio` of the
+  request's `size` (within 5%, else 400; `auto` sends none). Stable
+  Diffusion 3.5 Large (with `mode`) and Ultra take an edit as an
+  image-to-image, Core takes none.
+- The Image Services (`stability.stable-*`: inpaint, outpaint, erase object,
+  search and replace, search and recolor, remove background, style transfer,
+  style guide, control sketch and structure, and the fast, creative and
+  conservative upscales) edit the first image, sent as `image` (style
+  transfer's `init_image`, with the second as `style_image`), and take no
+  generation. A mask, a `mask` native field as OpenAI's edits have it, goes as
+  `mask` to inpaint and erase, and is refused by the rest: it is Stability's,
+  white where it paints. An edit's `size` is dropped, but for style guide's
+  `aspect_ratio`; the prompt is dropped where a service takes none (erase,
+  remove background, fast upscale).
+- Stability's own fields are native fields of the request, sent as they are,
+  a form's numbers as numbers: `output_format`, `seed`, `negative_prompt`,
+  `style_preset`, `strength`, `search_prompt`, `select_prompt`, `grow_mask`,
+  `left`, `right`, `up`, `down`, `creativity`, `control_strength`,
+  `fidelity`, `composition_fidelity`, `style_strength` and `change_strength`.
+  Other fields of another format, such as a `quality` or `user`, are dropped.
+- An answer's `images` are the images, each of the type its bytes say; a
+  `finish_reasons` entry that is not null is a fault, not an image: a filter's
+  is a 400 coded `content_filter`, `Inference error` a provider fault.
+  Bedrock reports no tokens for these models, so there is no usage; a call
+  makes one image.
+- More than one image (`n`), images or a mask by URL, an image to a model
+  that takes none (or none to a service that edits), a `size` of no aspect
+  ratio Stability draws, and a `response_format` but `b64_json` are refused,
+  400, before the call.
