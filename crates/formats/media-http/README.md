@@ -181,11 +181,19 @@ key in `x-goog-api-key`.
 
 - Every text is one request of the batch, one part each; `dimensions` is
   each request's `outputDimensionality`.
+- An OpenAI-style client's parts (`text`, `image_url`, `input_video`,
+  `input_audio`, `input_file`; one item as `{"content": [..]}`, or a bare
+  list of parts) are one request of those parts, one joint vector. A
+  `data:` URL, or raw base64 with its `format` or `mime_type`, goes inline;
+  an `https` URL goes for Gemini to fetch, its type the part's `format`,
+  `mime_type` or the URL's extension. Any other source is refused, 400.
 - Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
   some models only (not `gemini-embedding-001`); its OpenAI-compatible
-  endpoint reports none.
-- Token ids and parts are refused, 400, before the call; other fields of
-  another format, such as an end user's id, are dropped.
+  endpoint reports none. `promptTokenDetails` become the usage's
+  `prompt_tokens_details` (`text_tokens`, `image_tokens`, `audio_tokens`,
+  `video_tokens`, `document_tokens`) in an OpenAI-style response.
+- Token ids are refused, 400, before the call; other fields of another
+  format, such as an end user's id, are dropped.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider

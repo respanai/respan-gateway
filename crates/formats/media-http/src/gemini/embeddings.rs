@@ -4,17 +4,25 @@
 
 use super::is_segment;
 use crate::edge::{bind_provider, sends};
+use crate::openai::{OpenAiEmbeddings, usage_extras};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::Usage;
-use respan_gateway_conversation_http::fields::invalid;
-use respan_gateway_core::{Connection, Fault, Format, Provider};
+use respan_gateway_conversation_http::fields::{base64_bytes, data_url, invalid};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::{Connect, Decoder, Encoder, KeyIn, ProviderIo, Upstream, Whole};
+use respan_gateway_http::{
+    Connect, Decoder, Encoder, KeyIn, ProviderIo, Upstream, Whole, native::Json,
+};
 use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 const NAME: &str = "gemini-embeddings";
+
+/// How an OpenAI-style client's parts arrive: as that format's natives.
+type Theirs = crate::Own<OpenAiEmbeddings>;
 /// The method a model's texts are embedded by, all in one call.
 const BATCH: &str = ":batchEmbedContents";
 
@@ -22,14 +30,24 @@ const BATCH: &str = ":batchEmbedContents";
 /// only: a `POST` to `.../models/{model}:batchEmbedContents`, one request
 /// per text, each text one part.
 ///
+/// An item given as parts (`{"type": "text" | "image_url" | "input_video" |
+/// "input_audio" | "input_file", ..}`, one item as `{"content": [..]}`, or
+/// a bare list of parts) is one request of those parts, one joint vector.
+/// A part's `data:` URL, or raw base64 with its `format` or `mime_type`, is
+/// sent inline; an `https` URL is sent for Gemini to fetch, its type the
+/// part's `format`, `mime_type` or the URL's extension. Any other source is
+/// refused, 400, before the call.
+///
 /// `dimensions` is each request's `outputDimensionality`. An answer's
 /// vectors are its `embeddings`' `values`, in order; its usage is
 /// `usageMetadata`'s `promptTokenCount`, which Gemini reports for some
 /// models only (not `gemini-embedding-001`), and which the OpenAI-compatible
-/// endpoint reports for none.
+/// endpoint reports for none. Its `promptTokenDetails` are the usage's
+/// `prompt_tokens_details`, a `{modality}_tokens` each, to a client that
+/// writes them.
 ///
-/// Token ids and parts are refused, 400, before the call; fields of another
-/// format, such as an end user's id, are dropped.
+/// Token ids are refused, 400, before the call; fields of another format,
+/// such as an end user's id, are dropped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiEmbeddings;
 
@@ -75,21 +93,26 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             "is needed by Gemini, such as gemini-embedding-001",
         ));
     }
-    let requests = (input.items.iter())
-        .map(|item| match item {
-            Item::Text(text) => {
-                let mut request = json!({
-                    "model": format!("models/{model}"),
-                    "content": { "parts": [{ "text": text }] },
-                });
-                if let Some(n) = input.dimensions {
-                    request["outputDimensionality"] = n.into();
-                }
-                Ok(request)
+    let mut requests = Vec::new();
+    for item in &input.items {
+        let contents = match item {
+            Item::Text(text) => vec![vec![json!({ "text": text })]],
+            Item::Native(n) => contents_of(n.value::<Theirs>().ok_or_else(|| {
+                invalid("input", "must be texts or parts of an OpenAI-style client")
+            })?)?,
+            _ => return Err(invalid("input", "must be texts or parts for Gemini")),
+        };
+        for parts in contents {
+            let mut request = json!({
+                "model": format!("models/{model}"),
+                "content": { "parts": parts },
+            });
+            if let Some(n) = input.dimensions {
+                request["outputDimensionality"] = n.into();
             }
-            _ => Err(invalid("input", "must be texts for Gemini")),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+            requests.push(request);
+        }
+    }
     head.uri = format!("/models/{model}{BATCH}")
         .parse()
         .map_err(|e| Fault::internal("a call's path is no path").with_source(e))?;
@@ -98,6 +121,110 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     let body = serde_json::to_vec(&json!({ "requests": requests }))
         .map_err(|e| Fault::internal("a body could not be written").with_source(e))?;
     Ok(sends(Bytes::from(body)))
+}
+
+/// The contents a client's parts item holds, each the parts of one request:
+/// a bare list of parts is one, else every element is one, a text or an
+/// object of `content`.
+fn contents_of(v: &Value) -> Result<Vec<Vec<Value>>, Fault> {
+    let bad = || invalid("input", "must be texts or lists of parts");
+    let items = v.as_array().filter(|a| !a.is_empty()).ok_or_else(bad)?;
+    let bare = |i: &Value| i.get("type").is_some() && i.get("content").is_none();
+    if items.iter().all(bare) {
+        return Ok(vec![items.iter().map(part).collect::<Result<_, _>>()?]);
+    }
+    let content = |item: &Value| match (item, &item["content"]) {
+        (Value::String(text), _) | (_, Value::String(text)) => Ok(vec![json!({ "text": text })]),
+        (_, Value::Array(parts)) if !parts.is_empty() => parts.iter().map(part).collect(),
+        _ => Err(bad()),
+    };
+    items.iter().map(content).collect()
+}
+
+/// A client's part as a Gemini part: a text, or media sent inline or by URL.
+fn part(p: &Value) -> Result<Value, Fault> {
+    let kind = p["type"].as_str().unwrap_or_default();
+    let (family, inner) = match kind {
+        "text" => {
+            let text = p["text"].as_str();
+            return text
+                .map(|text| json!({ "text": text }))
+                .ok_or_else(|| invalid("input", "has a text part with no text"));
+        }
+        "image_url" | "image" => ("image", &p[kind]),
+        "input_video" | "video_url" | "video" => ("video", &p[kind]),
+        "input_audio" | "audio" => ("audio", &p[kind]),
+        "input_file" | "file" => ("application", &p[kind]),
+        _ => return Err(invalid("input", "has a part of a type Gemini cannot embed")),
+    };
+    let fields = if inner.is_object() { inner } else { p };
+    let source = inner.as_str().or_else(|| {
+        let keys = ["url", "data", "file_data", "file_url"];
+        keys.iter().find_map(|k| fields[k].as_str())
+    });
+    let source = source.ok_or_else(|| invalid("input", "has a media part with no data"))?;
+    let named = ["mime_type", "format"]
+        .iter()
+        .find_map(|k| fields[k].as_str());
+    let named = named.map(|n| match n.contains('/') {
+        true => n.to_owned(),
+        false => format!("{family}/{n}"),
+    });
+    let inline =
+        |mime: String, data: String| json!({ "inline_data": { "mime_type": mime, "data": data } });
+    if let Some((mime, bytes)) = data_url(source).map_err(|e| invalid("input", e.reason()))? {
+        let mime = named.filter(|_| mime == "text/plain").unwrap_or(mime);
+        return Ok(inline(mime, STANDARD.encode(bytes)));
+    }
+    if source.starts_with("https://") {
+        let mime = named.or_else(|| mime_of_url(source));
+        let mime = mime.ok_or_else(|| invalid("input", "has a URL of no known media type"))?;
+        return Ok(json!({ "file_data": { "mime_type": mime, "file_uri": source } }));
+    }
+    match (named, base64_bytes(source)) {
+        (Some(mime), Some(_)) => Ok(inline(mime, source.to_owned())),
+        _ => Err(invalid(
+            "input",
+            "must be a `data:` URL, an https URL, or base64 with its format",
+        )),
+    }
+}
+
+/// The media type a URL's file extension names.
+fn mime_of_url(url: &str) -> Option<String> {
+    let path = url.split(['?', '#']).next()?;
+    let mime = match path.rsplit_once('.')?.1.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mp3" => "audio/mp3",
+        "wav" => "audio/wav",
+        "pdf" => "application/pdf",
+        _ => return None,
+    };
+    Some(mime.to_owned())
+}
+
+/// `usageMetadata`'s `promptTokenDetails` as `prompt_tokens_details`: the
+/// tokens of each modality, summed, as `{modality}_tokens`.
+fn modality_tokens(details: &Value) -> Option<Native> {
+    let mut by = Map::new();
+    for d in details.as_array().into_iter().flatten() {
+        let (Some(modality), Some(n)) = (d["modality"].as_str(), d["tokenCount"].as_u64()) else {
+            continue;
+        };
+        let key = format!("{}_tokens", modality.to_ascii_lowercase());
+        let total = by.get(&key).and_then(Value::as_u64).unwrap_or(0);
+        by.insert(key, total.saturating_add(n).into());
+    }
+    if by.is_empty() {
+        return None;
+    }
+    let extras = Map::from_iter([("prompt_tokens_details".to_owned(), Value::Object(by))]);
+    usage_extras::<Theirs>(extras)
 }
 
 /// The model a call at `path`, `.../models/{model}:batchEmbedContents`, is of.
@@ -127,6 +254,8 @@ fn read_response(model: Option<String>) -> Box<dyn Decoder<Output>> {
         }
         let counted = v["usageMetadata"]["promptTokenCount"].as_u64();
         out.extend(counted.map(|n| Output::Usage(Usage::new(n, 0))));
+        let details = &v["usageMetadata"]["promptTokenDetails"];
+        out.extend(modality_tokens(details).map(Output::Native));
         Ok(())
     }))
 }
@@ -134,7 +263,6 @@ fn read_response(model: Option<String>) -> Box<dyn Decoder<Output>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_core::Native;
     use respan_gateway_http::http;
 
     fn call(items: &[&str], f: impl FnOnce(&mut Input)) -> Result<(String, Value), Fault> {
@@ -168,6 +296,26 @@ mod tests {
     }
 
     #[test]
+    fn a_client_s_parts_are_one_request_of_parts() {
+        let asked = json!([{ "content": [
+            { "type": "text", "text": "a" },
+            { "type": "input_video", "input_video": { "data": "data:video/mp4;base64,AAAA", "format": "mp4" } },
+            { "type": "image_url", "image_url": { "url": "https://x.test/i.png" } },
+        ] }]);
+        let item = Item::Native(Native::json::<Theirs>(asked));
+        let (_, body) = call(&[], |i| i.items = vec![item]).expect("a call");
+        let parts = json!([
+            { "text": "a" },
+            { "inline_data": { "mime_type": "video/mp4", "data": "AAAA" } },
+            { "file_data": { "mime_type": "image/png", "file_uri": "https://x.test/i.png" } },
+        ]);
+        assert_eq!(body["requests"][0]["content"]["parts"], parts);
+        let url = json!([{ "type": "image_url", "image_url": { "url": "http://x.test/i.png" } }]);
+        let item = Item::Native(Native::json::<Theirs>(url));
+        assert!(call(&[], |i| i.items = vec![item]).is_err());
+    }
+
+    #[test]
     fn an_answer_is_its_vectors_and_the_tokens_gemini_counts() {
         let read = |answer: Value| {
             let mut decoder = read_response(model_of("/v1beta/models/m:batchEmbedContents"));
@@ -180,8 +328,7 @@ mod tests {
         };
         let counted = read(json!({
             "embeddings": [{ "values": [0.5, 1.0] }, { "values": [2.0] }],
-            "usageMetadata": { "promptTokenCount": 3,
-                "promptTokenDetails": [{ "modality": "TEXT", "tokenCount": 3 }] },
+            "usageMetadata": { "promptTokenCount": 3 },
         }));
         assert_eq!(
             counted,
@@ -191,6 +338,20 @@ mod tests {
                 Output::Embedding(Embedding::new(1, vec![2.0])),
                 Output::Usage(Usage::new(3, 0)),
             ]
+        );
+        let video = read(json!({
+            "embeddings": [{ "values": [0.5] }],
+            "usageMetadata": { "promptTokenCount": 1059, "promptTokenDetails": [
+                { "modality": "VIDEO", "tokenCount": 1056 },
+                { "modality": "TEXT", "tokenCount": 3 }] },
+        }));
+        let Some(Output::Native(n)) = video.last() else {
+            panic!("no details: {video:?}");
+        };
+        assert_eq!(
+            n.value::<Theirs>(),
+            Some(&json!({ "usage": { "prompt_tokens_details":
+                { "video_tokens": 1056, "text_tokens": 3 } } }))
         );
         let uncounted = read(json!({ "embeddings": [{ "values": [0.5] }] }));
         assert_eq!(uncounted.len(), 2);
