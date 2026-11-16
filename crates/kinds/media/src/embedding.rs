@@ -64,7 +64,8 @@ pub enum Item {
 pub struct Parts {
     /// The parts, in order.
     pub parts: Vec<Part>,
-    /// The item as its format wrote it, to write back as it was.
+    /// What its format says of the item that the kind has no place for, or
+    /// the item as it wrote it, to write back as it was.
     pub native: Native,
 }
 

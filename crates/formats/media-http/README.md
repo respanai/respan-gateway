@@ -18,7 +18,7 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 | `openai-images` | `/images/generations`, `/images/edits` | JSON; an edit a form (`image` or `image[]`, `mask`), or JSON naming its images by `image_url` | JSON; with `stream`, `image_generation.*` or `image_edit.*` events |
 | `openai-transcriptions` | `/audio/transcriptions`, `/audio/translations` | A form (`file`) | JSON (`json`, `verbose_json`, `diarized_json`) or text (`text`, `srt`, `vtt`); with `stream`, `transcript.text.*` events |
 | `openai-speech` | `/audio/speech` | JSON | The audio's bytes; with `stream_format: "sse"`, `speech.audio.*` events |
-| `openai-embeddings` | `/embeddings` | JSON; `input` a text, texts, token ids or lists of them, or parts (`text`, `image_url`, `input_video`, `input_audio`, `input_file`), a list of `{"content": [..]}` or one list of parts, read as typed parts and written back as they were read; any other list of objects is relayed as written | JSON; vectors as `encoding_format` asks, `float` or `base64`, whatever the provider answers; input tokens by modality as `usage.prompt_tokens_details.{text,image,audio,video,document}_tokens` |
+| `openai-embeddings` | `/embeddings` | JSON; `input` a text, texts, token ids or lists of them, or a list of `{"content": [..]}`, each a list of parts (`text`, `image_url`, `input_audio`, `input_video`, `input_file`), read as typed parts and written back as they were read; any other list of objects is relayed as written | JSON; vectors as `encoding_format` asks, `float` or `base64`, whatever the provider answers; input tokens by modality as `usage.prompt_tokens_details.{text,image,audio,video,file}_tokens` |
 | `openai-videos` | `POST /videos`, `GET /videos`, `GET` or `DELETE /videos/{id}`, `GET /videos/{id}/content`, `POST /videos/{id}/remix` | JSON, or a form with an `input_reference` file | A job, a list or a deletion in JSON; content as its bytes |
 
 - A provider is asked to stream as the call's `StreamResponse` says, else
@@ -176,20 +176,29 @@ generation, as a provider only, its key a bearer token. Its job ids start
   thumbnail, is refused, 400 `unsupported`, before any call.
 
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
-models on `POST /models/{model}:batchEmbedContents`, as a provider only, its
-key in `x-goog-api-key`.
+models on `POST /models/{model}:batchEmbedContents`, its key in
+`x-goog-api-key`.
 
 - Every text is one request of the batch, one part each; `dimensions` is
   each request's `outputDimensionality`.
 - An item of parts is one request of those parts, one joint vector. Media
-  goes inline from its bytes (`inline_data`), or from an `https` URL for
-  Gemini to fetch (`file_data`); any other URL is refused, 400.
+  goes inline from its bytes (`inlineData`), or from its URL for Gemini to
+  fetch (`fileData`). An item's native fields, such as `taskType`, go in its
+  request.
 - Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
   some models only (not `gemini-embedding-001`); its OpenAI-compatible
   endpoint reports none. `promptTokenDetails` are the input tokens of each
   modality (text, image, audio, video, document).
 - Token ids are refused, 400, before the call; other fields of another
   format, such as an end user's id, are dropped.
+- A client speaks it too, of any provider of the kind: a `POST` to
+  `.../models/{model}:embedContent`, one request, or
+  `:batchEmbedContents`, its `requests`. A request's `content` is an item:
+  a text if it is one `text` part and says no more, else parts (`text`,
+  `inlineData`, `fileData`). An `outputDimensionality` every request says
+  is the `dimensions`; a request's other fields, such as `taskType` and
+  `title`, stay its item's, for a Gemini provider. The answer is
+  `embedding`, or `embeddings`, and the usage as `usageMetadata`.
 
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider

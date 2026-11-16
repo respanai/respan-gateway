@@ -217,6 +217,10 @@ mod endpoints {
     ];
     pub const SPEECH: &[&str] = &["POST /v1/audio/speech"];
     pub const EMBEDDINGS: &[&str] = &["POST /v1/embeddings"];
+    pub const EMBED_CONTENT: &[&str] = &[
+        "POST /v1beta/models/{model}:embedContent",
+        "POST /v1beta/models/{model}:batchEmbedContents",
+    ];
     /// OpenAI's decisions, beside the ones `/v1/decisions` has.
     pub const OPENAI_DECISIONS_PATH: &str = "/openai/v1/decisions";
     pub const OPENAI_DECISIONS: &[&str] = &["POST /openai/v1/decisions"];
@@ -273,7 +277,9 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
-        KnownFormat::provider_only(kind::EMBEDDING, &GeminiEmbeddings),
+        KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
+            Model::of(embedding::Input::model, embedding::Input::set_model),
+        ),
         KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
         KnownFormat::claiming(
             kind::IMAGE,
