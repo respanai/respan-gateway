@@ -18,7 +18,7 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 | `openai-images` | `/images/generations`, `/images/edits` | JSON; an edit a form (`image` or `image[]`, `mask`), or JSON naming its images by `image_url` | JSON; with `stream`, `image_generation.*` or `image_edit.*` events |
 | `openai-transcriptions` | `/audio/transcriptions`, `/audio/translations` | A form (`file`) | JSON (`json`, `verbose_json`, `diarized_json`) or text (`text`, `srt`, `vtt`); with `stream`, `transcript.text.*` events |
 | `openai-speech` | `/audio/speech` | JSON | The audio's bytes; with `stream_format: "sse"`, `speech.audio.*` events |
-| `openai-embeddings` | `/embeddings` | JSON; `input` a text, texts, token ids or lists of them, or a list of parts (`{"type": ..}` objects), relayed as written | JSON; vectors as `encoding_format` asks, `float` or `base64`, whatever the provider answers |
+| `openai-embeddings` | `/embeddings` | JSON; `input` a text, texts, token ids or lists of them, or parts (`text`, `image_url`, `input_video`, `input_audio`, `input_file`), a list of `{"content": [..]}` or one list of parts, read as typed parts and written back as `[{"content": [..]}]`; any other list of objects is relayed as written | JSON; vectors as `encoding_format` asks, `float` or `base64`, whatever the provider answers; input tokens by modality as `usage.prompt_tokens_details.{text,image,audio,video,document}_tokens` |
 | `openai-videos` | `POST /videos`, `GET /videos`, `GET` or `DELETE /videos/{id}`, `GET /videos/{id}/content`, `POST /videos/{id}/remix` | JSON, or a form with an `input_reference` file | A job, a list or a deletion in JSON; content as its bytes |
 
 - A provider is asked to stream as the call's `StreamResponse` says, else
@@ -181,17 +181,13 @@ key in `x-goog-api-key`.
 
 - Every text is one request of the batch, one part each; `dimensions` is
   each request's `outputDimensionality`.
-- An OpenAI-style client's parts (`text`, `image_url`, `input_video`,
-  `input_audio`, `input_file`; one item as `{"content": [..]}`, or a bare
-  list of parts) are one request of those parts, one joint vector. A
-  `data:` URL, or raw base64 with its `format` or `mime_type`, goes inline;
-  an `https` URL goes for Gemini to fetch, its type the part's `format`,
-  `mime_type` or the URL's extension. Any other source is refused, 400.
+- An item of parts is one request of those parts, one joint vector. Media
+  goes inline from its bytes (`inline_data`), or from an `https` URL for
+  Gemini to fetch (`file_data`); any other URL is refused, 400.
 - Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
   some models only (not `gemini-embedding-001`); its OpenAI-compatible
-  endpoint reports none. `promptTokenDetails` become the usage's
-  `prompt_tokens_details` (`text_tokens`, `image_tokens`, `audio_tokens`,
-  `video_tokens`, `document_tokens`) in an OpenAI-style response.
+  endpoint reports none. `promptTokenDetails` are the input tokens of each
+  modality (text, image, audio, video, document).
 - Token ids are refused, 400, before the call; other fields of another
   format, such as an end user's id, are dropped.
 
