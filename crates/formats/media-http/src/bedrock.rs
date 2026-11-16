@@ -1,8 +1,13 @@
-//! Amazon Bedrock's InvokeModel for embeddings, over HTTP: a provider format
-//! of the [`embedding`](respan_gateway_media::embedding) kind,
-//! [`BedrockEmbeddings`]. A provider's base URL is its region's runtime,
+//! Amazon Bedrock's InvokeModel, over HTTP: provider formats of the
+//! [`embedding`](respan_gateway_media::embedding) kind,
+//! [`BedrockEmbeddings`], and the [`image`](respan_gateway_media::image)
+//! kind, [`BedrockImages`]. A provider's base URL is its region's runtime,
 //! `https://bedrock-runtime.{region}.amazonaws.com`, its key a Bedrock API key
 //! as a bearer token.
+
+mod images;
+
+pub use images::BedrockImages;
 
 use percent_encoding::percent_decode_str;
 use respan_gateway_conversation::Usage;

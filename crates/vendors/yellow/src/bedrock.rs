@@ -1,7 +1,8 @@
 //! Amazon Bedrock, at a region's `bedrock-runtime`, with a Bedrock API key:
 //! Claude on Bedrock's Anthropic Messages (`/anthropic/v1/messages`), every
 //! other model on Converse ([`BedrockConverse`]), which serves Claude too,
-//! and Cohere and Titan embeddings on InvokeModel ([`BedrockEmbeddings`]).
+//! Cohere and Titan embeddings and Stability AI images on InvokeModel
+//! ([`BedrockEmbeddings`], [`BedrockImages`]).
 //! An AWS key pair signs calls outside the gateway, by a SigV4 proxy at the
 //! base URL, as an HTTP proxy is. Its models are its account's: none are
 //! listed.
@@ -13,7 +14,7 @@ use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_core::Fault;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media_http::bedrock::BedrockEmbeddings;
+use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
 
 use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, KeyIn, Model, Rewrite, Vendor};
 
@@ -33,6 +34,7 @@ pub const VENDOR: Vendor = Vendor {
         (&BedrockConverse, Some(BASE_URL)),
         (&Dialected::new(AnthropicMessages, Messages), Some(BASE_URL)),
         (&BedrockEmbeddings, Some(BASE_URL)),
+        (&BedrockImages, Some(BASE_URL)),
     ],
     models: no_models,
     format_for: Some(format_for),
