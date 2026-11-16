@@ -203,7 +203,7 @@ fn timed(raw: Bytes) -> Result<Bytes, Fault> {
 /// OpenRouter's speech, as it departs from OpenAI's: asked for no
 /// `response_format` it answers `pcm`, so it is asked for `mp3`, which
 /// OpenAI answers then. A model that speaks `pcm` alone, as Gemini's and
-/// HeyGen's do, refuses that itself, and is to be asked for `pcm`. Its
+/// HeyGen's do, asked for another fails `bad_request` before sending. Its
 /// `pcm` is 16-bit as OpenAI's, at 24 kHz or, from some models, such as
 /// Fish Audio's and HeyGen's, 44.1 kHz.
 #[derive(Debug, Clone, Copy)]
@@ -218,10 +218,22 @@ impl Dialect for OpenRouterSpeech {
     }
 }
 
-/// `input` asking for `mp3`, unless it asks for a format.
+/// `input` asking for `mp3`, unless it asks for a format; refused if its
+/// model speaks `pcm` alone and it asks for another.
 fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
-    input.audio_format.get_or_insert_with(|| "mp3".into());
-    Ok(())
+    let format = input.audio_format.get_or_insert_with(|| "mp3".into());
+    match input.model.as_deref() {
+        Some(model) if speaks_pcm_alone(model) && format != "pcm" => Err(Fault::bad_request(
+            format!("{model} speaks pcm alone; ask for response_format \"pcm\""),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Whether `model` is one of its speech models that speak `pcm` alone:
+/// Gemini's and HeyGen's.
+fn speaks_pcm_alone(model: &str) -> bool {
+    model.starts_with("heygen/") || (model.starts_with("google/gemini-") && model.contains("-tts"))
 }
 
 #[cfg(test)]
@@ -372,5 +384,13 @@ mod tests {
         input.audio_format = Some("pcm".into());
         in_mp3(&mut input).expect("taken");
         assert_eq!(input.audio_format.as_deref(), Some("pcm"));
+        input.model = Some("google/gemini-3.8-flash-tts".into());
+        in_mp3(&mut input).expect("pcm is taken");
+        input.audio_format = None;
+        let refused = in_mp3(&mut input).expect_err("mp3 is refused");
+        assert_eq!(
+            refused.message(),
+            "google/gemini-3.8-flash-tts speaks pcm alone; ask for response_format \"pcm\""
+        );
     }
 }
