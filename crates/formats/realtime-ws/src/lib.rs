@@ -41,7 +41,7 @@ pub use calls::Calls;
 pub use gemini::GeminiLive;
 pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;
-pub use openai::OpenAiRealtime;
+pub use openai::{OpenAiRealtime, OpenAiRealtimeBeta};
 pub use phonic::PhonicSts;
 pub use responses::ResponsesWs;
 

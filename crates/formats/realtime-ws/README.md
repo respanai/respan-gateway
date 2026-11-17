@@ -11,6 +11,14 @@ a format per spec:
   `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
   after `wss://generativelanguage.googleapis.com`. Its server sends JSON in
   binary frames, which its transport takes as text.
+- `OpenAiRealtimeBeta`, `openai-realtime-beta`: OpenAI Realtime's beta
+  protocol, which providers that adopted it before GA still speak, sent to
+  `/realtime` after the provider's base URL. It is no client's format: GA
+  serves `/realtime`. Each frame is respelled at the wire (some server
+  events' names, a session's fields at its top, its formats' names such as
+  `pcm16`, a model's message parts' types), so it reads and writes as
+  `OpenAiRealtime` does, and its natives are OpenAI Realtime's. A
+  transcription session is refused.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
 - `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
