@@ -13,6 +13,7 @@ pub mod fireworks;
 pub mod groq;
 pub mod minimax;
 pub mod mistral;
+pub mod morph;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
@@ -46,6 +47,7 @@ pub const ALL: &[&Vendor] = &[
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
     &phonic::VENDOR,
+    &morph::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,
