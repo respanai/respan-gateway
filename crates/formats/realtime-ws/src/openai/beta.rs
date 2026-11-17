@@ -37,8 +37,8 @@ const RENAMED: &[(&str, &str)] = &[
     ("conversation.item.created", "conversation.item.added"),
 ];
 
-/// A session's fields the beta kept at its top, by their beta name and
-/// their GA path in it.
+/// A session's or response's fields the beta kept at its top, by their
+/// beta name and their GA path in it.
 const MOVED: &[(&str, &[&str])] = &[
     ("voice", &["audio", "output", "voice"]),
     ("speed", &["audio", "output", "speed"]),
@@ -154,30 +154,10 @@ fn respelled(frame: &Bytes, respell: fn(&mut Map<String, Value>)) -> Result<Byte
 fn to_beta(event: &mut Map<String, Value>) {
     if let Some(Value::Object(session)) = event.get_mut("session") {
         session.remove("type");
-        if let Some(modalities) = session.remove("output_modalities") {
-            session.insert("modalities".into(), modalities_to_beta(modalities));
-        }
-        for (name, path) in MOVED {
-            if let Some(value) = take_at(session, path) {
-                session.insert((*name).into(), format_to_beta(value));
-            }
-        }
-        drop_empty_audio(session);
+        fields_to_beta(session);
     }
     if let Some(Value::Object(response)) = event.get_mut("response") {
-        if let Some(modalities) = response.remove("output_modalities") {
-            response.insert("modalities".into(), modalities_to_beta(modalities));
-        }
-        if let Some(voice) = take_at(response, &["audio", "output", "voice"]) {
-            response.insert("voice".into(), voice);
-        }
-        if let Some(format) = take_at(response, &["audio", "output", "format"]) {
-            response.insert("output_audio_format".into(), format_to_beta(format));
-        }
-        if let Some(limit) = response.remove("max_output_tokens") {
-            response.insert("max_response_output_tokens".into(), limit);
-        }
-        drop_empty_audio(response);
+        fields_to_beta(response);
     }
     respell_parts(event, |t| {
         PARTS.iter().find(|(_, ga)| *ga == t).map(|(b, _)| *b)
@@ -197,36 +177,41 @@ fn to_ga(event: &mut Map<String, Value>) {
     }
     if let Some(Value::Object(session)) = event.get_mut("session") {
         session.insert("type".into(), "realtime".into());
-        if let Some(modalities) = session.remove("modalities") {
-            session.insert("output_modalities".into(), modalities_to_ga(modalities));
-        }
-        for (name, path) in MOVED {
-            if let Some(value) = session.remove(*name) {
-                put_at(session, path, format_to_ga(value));
-            }
-        }
+        fields_to_ga(session);
     }
     if let Some(Value::Object(response)) = event.get_mut("response") {
-        if let Some(modalities) = response.remove("modalities") {
-            response.insert("output_modalities".into(), modalities_to_ga(modalities));
-        }
-        if let Some(voice) = response.remove("voice") {
-            put_at(response, &["audio", "output", "voice"], voice);
-        }
-        if let Some(format) = response.remove("output_audio_format") {
-            put_at(
-                response,
-                &["audio", "output", "format"],
-                format_to_ga(format),
-            );
-        }
-        if let Some(limit) = response.remove("max_response_output_tokens") {
-            response.insert("max_output_tokens".into(), limit);
-        }
+        fields_to_ga(response);
     }
     respell_parts(event, |t| {
         PARTS.iter().find(|(beta, _)| *beta == t).map(|(_, ga)| *ga)
     });
+}
+
+/// A session's or response's fields, as GA's writer wrote them, spelled as
+/// the beta did.
+fn fields_to_beta(object: &mut Map<String, Value>) {
+    if let Some(modalities) = object.remove("output_modalities") {
+        object.insert("modalities".into(), modalities_to_beta(modalities));
+    }
+    for (name, path) in MOVED {
+        if let Some(value) = take_at(object, path) {
+            object.insert((*name).into(), format_to_beta(value));
+        }
+    }
+    drop_empty_audio(object);
+}
+
+/// A session's or response's fields, spelled as the beta did, as GA's
+/// reader reads them.
+fn fields_to_ga(object: &mut Map<String, Value>) {
+    if let Some(modalities) = object.remove("modalities") {
+        object.insert("output_modalities".into(), modalities_to_ga(modalities));
+    }
+    for (name, path) in MOVED {
+        if let Some(value) = object.remove(*name) {
+            put_at(object, path, format_to_ga(value));
+        }
+    }
 }
 
 /// GA's output modalities as the beta's: audio comes with its transcript.
@@ -288,6 +273,7 @@ fn respell_item(item: &mut Value, respell: &impl Fn(&str) -> Option<&'static str
     }
 }
 
+/// The type of `part` respelled by `respell`.
 fn respell_part(part: &mut Value, respell: &impl Fn(&str) -> Option<&'static str>) {
     let respelled = part["type"].as_str().and_then(respell);
     if let (Some(t), Some(part)) = (respelled, part.as_object_mut()) {
