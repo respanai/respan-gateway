@@ -207,12 +207,18 @@ const CHAT: &str = "POST /v1/chat/completions";
 /// Where it serves Realtime, which a model of any category may be.
 const REALTIME: &str = "WEBSOCKET /v1/realtime";
 
+/// The category of its transcription models, whose Realtime sessions it
+/// opens only with the model at `?model=`, which an OpenAI transcription
+/// session does not send.
+const TRANSCRIPTION: &str = "transcription";
+
 /// The models of its list, each of the kind its category's endpoint is,
 /// else a chat if it is served at Chat Completions, else a realtime one if
-/// it is served at Realtime; one served at none, such as a video or
-/// transcription model, which it answers as jobs, a reranker, a music model
-/// or a speech model that does not stream, is none the gateway serves, and
-/// is left out.
+/// it is served at Realtime and does not transcribe; one served at none,
+/// such as a video or transcription model, which it answers as jobs or in
+/// a Realtime session opened otherwise, a reranker, a music model or a
+/// speech model that does not stream, is none the gateway serves, and is
+/// left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -228,7 +234,7 @@ fn described(m: &Value) -> Option<Model> {
     let kind = match own {
         Some((_, endpoint, kind)) if serves(endpoint) => *kind,
         _ if serves(CHAT) => "chat",
-        _ if serves(REALTIME) => "realtime",
+        _ if serves(REALTIME) && category != Some(TRANSCRIPTION) => "realtime",
         _ => return None,
     };
     let mut model = models::listed(&Value::Array(vec![without_price(m)])).pop()?;
