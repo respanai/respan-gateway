@@ -441,6 +441,26 @@ fn text_parts_alone_or_none_are_read_as_text() {
 }
 
 #[test]
+fn content_with_a_parts_own_field_stays_as_it_came() {
+    // A signature, or any field the kind has no place for, is not dropped.
+    for parts in [
+        json!([{ "type": "thinking", "thinking": "hm", "signature": "sig" }]),
+        json!([{ "type": "text", "text": "ok", "annotations": [] }]),
+        json!([{ "type": "thinking", "thinking": [{ "type": "text", "text": "hm", "x": 1 }] }]),
+    ] {
+        let body = json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
+            "message": { "role": "assistant", "content": parts.clone() } }] });
+        let out = decode_body(&body);
+        assert!(
+            !out.iter().any(|r| matches!(r, Output::Delta { .. })),
+            "{out:?}"
+        );
+        let written = body_of(&out).expect("a body");
+        assert_eq!(written["choices"][0]["message"]["content"], parts);
+    }
+}
+
+#[test]
 fn content_with_a_part_the_kind_cannot_read_stays_as_it_came() {
     let parts = json!([
         { "type": "text", "text": "see" },

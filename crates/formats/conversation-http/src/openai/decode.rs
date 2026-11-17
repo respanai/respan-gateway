@@ -408,25 +408,39 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
 /// A `content` that is an array of parts, as some servers answer a model
 /// that reasons, read in order: a `text` part's text as text, and a
 /// `thinking` part's (a string, or `text` parts) as reasoning. `None` unless
-/// every part is one of those, so content with any other part, an image,
-/// stays as it came.
+/// every part is one of those and says nothing else (`closed` only marks a
+/// streamed thinking part's end), so content with any other part, an image,
+/// or a part's own field, a signature, stays as it came.
 fn content_parts(content: &Value) -> Option<Vec<(Key, String)>> {
+    let only = |part: &Value, keys: &[&str]| {
+        let fields = part.as_object()?;
+        fields
+            .keys()
+            .all(|k| keys.contains(&k.as_str()))
+            .then_some(())
+    };
     let text_of = |part: &Value| match part["type"].as_str()? {
-        "text" => part["text"].as_str().map(str::to_owned),
+        "text" => {
+            only(part, &["type", "text"])?;
+            part["text"].as_str().map(str::to_owned)
+        }
         _ => None,
     };
     let mut said = Vec::new();
     for part in content.as_array()? {
         let read = match part["type"].as_str()? {
             "text" => (Key::Text, text_of(part)?),
-            "thinking" => match &part["thinking"] {
-                Value::String(text) => (Key::Reasoning, text.clone()),
-                Value::Array(texts) => (
-                    Key::Reasoning,
-                    texts.iter().map(text_of).collect::<Option<_>>()?,
-                ),
-                _ => return None,
-            },
+            "thinking" => {
+                only(part, &["type", "thinking", "closed"])?;
+                match &part["thinking"] {
+                    Value::String(text) => (Key::Reasoning, text.clone()),
+                    Value::Array(texts) => (
+                        Key::Reasoning,
+                        texts.iter().map(text_of).collect::<Option<_>>()?,
+                    ),
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         said.push(read);
