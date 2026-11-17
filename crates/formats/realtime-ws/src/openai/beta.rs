@@ -159,7 +159,7 @@ fn to_beta(event: &mut Map<String, Value>) {
         }
         for (name, path) in MOVED {
             if let Some(value) = take_at(session, path) {
-                session.insert((*name).into(), format_to_beta(name, value));
+                session.insert((*name).into(), format_to_beta(value));
             }
         }
         drop_empty_audio(session);
@@ -198,7 +198,7 @@ fn to_ga(event: &mut Map<String, Value>) {
         }
         for (name, path) in MOVED {
             if let Some(value) = session.remove(*name) {
-                put_at(session, path, format_to_ga(name, value));
+                put_at(session, path, format_to_ga(value));
             }
         }
     }
@@ -218,27 +218,23 @@ fn modalities_to_beta(modalities: Value) -> Value {
 /// The beta's modalities as GA's output modalities: audio with its
 /// transcript is audio.
 fn modalities_to_ga(modalities: Value) -> Value {
-    let said = modalities.as_array().into_iter().flatten();
-    match said.clone().any(|m| m == "audio") {
+    match modalities
+        .as_array()
+        .is_some_and(|m| m.iter().any(|m| m == "audio"))
+    {
         true => json!(["audio"]),
         false => modalities,
     }
 }
 
 /// A moved field's value as the beta says it: an audio format by its name.
-fn format_to_beta(name: &str, value: Value) -> Value {
-    if !name.ends_with("_audio_format") {
-        return value;
-    }
+fn format_to_beta(value: Value) -> Value {
     let named = formats().into_iter().find(|(_, ga)| *ga == value);
     named.map_or(value, |(beta, _)| beta.into())
 }
 
 /// A moved field's value as GA says it: an audio format as its object.
-fn format_to_ga(name: &str, value: Value) -> Value {
-    if !name.ends_with("_audio_format") {
-        return value;
-    }
+fn format_to_ga(value: Value) -> Value {
     let named = formats().into_iter().find(|(beta, _)| value == *beta);
     named.map_or(value, |(_, ga)| ga)
 }
@@ -246,17 +242,12 @@ fn format_to_ga(name: &str, value: Value) -> Value {
 /// The types of the model's message parts in `event`'s item, or its
 /// response's output, respelled by `respell`.
 fn respell_parts(event: &mut Map<String, Value>, respell: impl Fn(&str) -> Option<&'static str>) {
-    for (name, value) in event.iter_mut() {
-        match (name.as_str(), value) {
-            ("item", item) => respell_item(item, &respell),
-            ("response", response) => {
-                let output = response.get_mut("output").and_then(Value::as_array_mut);
-                for item in output.into_iter().flatten() {
-                    respell_item(item, &respell);
-                }
-            }
-            _ => {}
-        }
+    if let Some(item) = event.get_mut("item") {
+        respell_item(item, &respell);
+    }
+    let output = event.get_mut("response").and_then(|r| r.get_mut("output"));
+    for item in output.and_then(Value::as_array_mut).into_iter().flatten() {
+        respell_item(item, &respell);
     }
 }
 
