@@ -1,6 +1,6 @@
 //! EmpirioLabs AI: Chat Completions, Responses, Messages, the Gemini API,
-//! images, embeddings, speech and decisions, as OpenAI, Anthropic, Google
-//! and Respan serve them, images and speech in its dialect.
+//! images, embeddings, speech, Realtime and decisions, as OpenAI, Anthropic,
+//! Google and Respan serve them, images and speech in its dialect.
 
 use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
@@ -21,6 +21,7 @@ use respan_gateway_media_http::{
     Natives,
     openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
 };
+use respan_gateway_realtime_ws::OpenAiRealtime;
 use respan_gateway_sse as sse;
 use serde_json::Value;
 
@@ -34,6 +35,9 @@ const BASE_URL: &str = "https://api.empiriolabs.ai/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its Realtime is.
+const REALTIME_URL: &str = "wss://api.empiriolabs.ai/v1";
 
 /// Where its Gemini API is.
 const GEMINI_URL: &str = "https://api.empiriolabs.ai/v1beta";
@@ -56,6 +60,7 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(OpenAiSpeech, EmpirioLabsSpeech),
             Some(BASE_URL),
         ),
+        (&OpenAiRealtime, Some(REALTIME_URL)),
         (&Decisions, Some(BASE_URL)),
     ],
     models: list_models,
@@ -199,11 +204,15 @@ const KINDS: &[(&str, &str, &str)] = &[
 /// Where it serves chat, which a model of another category may be too.
 const CHAT: &str = "POST /v1/chat/completions";
 
+/// Where it serves Realtime, which a model of any category may be.
+const REALTIME: &str = "WEBSOCKET /v1/realtime";
+
 /// The models of its list, each of the kind its category's endpoint is,
-/// else a chat if it is served at Chat Completions; one served at neither,
-/// such as a video or transcription model, which it answers as jobs, a
-/// reranker, a music model, a realtime one or a speech model that does not
-/// stream, is none the gateway serves, and is left out.
+/// else a chat if it is served at Chat Completions, else a realtime one if
+/// it is served at Realtime; one served at none, such as a video or
+/// transcription model, which it answers as jobs, a reranker, a music model
+/// or a speech model that does not stream, is none the gateway serves, and
+/// is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -219,6 +228,7 @@ fn described(m: &Value) -> Option<Model> {
     let kind = match own {
         Some((_, endpoint, kind)) if serves(endpoint) => *kind,
         _ if serves(CHAT) => "chat",
+        _ if serves(REALTIME) => "realtime",
         _ => return None,
     };
     let mut model = models::listed(&Value::Array(vec![without_price(m)])).pop()?;

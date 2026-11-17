@@ -769,6 +769,7 @@ fn empiriolabs_is_called_at_each_of_its_apis() {
             ("openai-images", api),
             ("openai-embeddings", api),
             ("openai-speech", api),
+            ("openai-realtime", "wss://api.empiriolabs.ai/v1"),
             ("decisions", api),
         ]
     );
