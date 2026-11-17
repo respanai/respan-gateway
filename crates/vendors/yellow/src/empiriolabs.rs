@@ -1,6 +1,6 @@
 //! EmpirioLabs AI: Chat Completions, Responses, Messages, the Gemini API,
-//! images, embeddings, speech and decisions, as OpenAI, Anthropic, Google
-//! and Respan serve them, images and speech in its dialect.
+//! images, embeddings, speech, Realtime and decisions, as OpenAI, Anthropic,
+//! Google and Respan serve them, images and speech in its dialect.
 
 use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
@@ -8,7 +8,7 @@ use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter};
+use respan_gateway_core::{Extensions, Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::content;
@@ -16,11 +16,14 @@ use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
+use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
 use respan_gateway_media_http::{
     Natives,
     openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
 };
+use respan_gateway_realtime as realtime;
+use respan_gateway_realtime_ws::{OpenAiRealtime, SessionModel, requested_model};
 use respan_gateway_sse as sse;
 use serde_json::Value;
 
@@ -34,6 +37,9 @@ const BASE_URL: &str = "https://api.empiriolabs.ai/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its Realtime is.
+const REALTIME_URL: &str = "wss://api.empiriolabs.ai/v1";
 
 /// Where its Gemini API is.
 const GEMINI_URL: &str = "https://api.empiriolabs.ai/v1beta";
@@ -55,6 +61,10 @@ pub const VENDOR: Vendor = Vendor {
         (
             &Dialected::new(OpenAiSpeech, EmpirioLabsSpeech),
             Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiRealtime, EmpirioLabsRealtime),
+            Some(REALTIME_URL),
         ),
         (&Decisions, Some(BASE_URL)),
     ],
@@ -176,6 +186,42 @@ fn streamed_audio(raw: Bytes) -> Result<Bytes, Fault> {
     Err(Fault::truncated())
 }
 
+/// Its Realtime: a transcription session names its model at `?model=`
+/// too, which an OpenAI one, opened at its intent, does not, and it
+/// refuses one that does not (`400 missing_required_parameter`).
+#[derive(Debug, Clone, Copy)]
+struct EmpirioLabsRealtime;
+
+impl Dialect for EmpirioLabsRealtime {
+    type Input = realtime::Input;
+    type Output = realtime::Output;
+
+    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        let query = head.uri.query().unwrap_or_default();
+        if form_urlencoded::parse(query.as_bytes()).any(|(name, _)| name == "model") {
+            return Ok(None);
+        }
+        // The model routing chose, else the one the client's handshake asks for.
+        let extensions = head.extensions.get::<Extensions>();
+        let chosen = extensions.and_then(|e| e.get::<SessionModel>().map(|m| m.0.clone()));
+        let asked = || requested_model(extensions?.get::<Original>()?);
+        let Some(model) = chosen.or_else(asked) else {
+            return Ok(None);
+        };
+        let named = form_urlencoded::Serializer::new(String::new())
+            .append_pair("model", &model)
+            .finish();
+        let query = match query {
+            "" => named,
+            query => format!("{query}&{named}"),
+        };
+        head.uri = format!("{}?{query}", head.uri.path())
+            .parse()
+            .map_err(|e| Fault::internal("its Realtime URL could not be written").with_source(e))?;
+        Ok(None)
+    }
+}
+
 /// Its models: `GET /models` as OpenAI lists them, each with its category,
 /// the endpoints it is served at, its limits, features and price.
 fn list_models(p: &VendorProvider) -> BoxFuture<'_, Models> {
@@ -199,11 +245,15 @@ const KINDS: &[(&str, &str, &str)] = &[
 /// Where it serves chat, which a model of another category may be too.
 const CHAT: &str = "POST /v1/chat/completions";
 
+/// Where it serves Realtime, which a model of any category may be.
+const REALTIME: &str = "WEBSOCKET /v1/realtime";
+
 /// The models of its list, each of the kind its category's endpoint is,
-/// else a chat if it is served at Chat Completions; one served at neither,
-/// such as a video or transcription model, which it answers as jobs, a
-/// reranker, a music model, a realtime one or a speech model that does not
-/// stream, is none the gateway serves, and is left out.
+/// else a chat if it is served at Chat Completions, else a realtime one if
+/// it is served at Realtime; one served at none, such as a video or
+/// transcription model, which it answers as jobs, a reranker, a music model
+/// or a speech model that does not stream, is none the gateway serves, and
+/// is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -219,6 +269,7 @@ fn described(m: &Value) -> Option<Model> {
     let kind = match own {
         Some((_, endpoint, kind)) if serves(endpoint) => *kind,
         _ if serves(CHAT) => "chat",
+        _ if serves(REALTIME) => "realtime",
         _ => return None,
     };
     let mut model = models::listed(&Value::Array(vec![without_price(m)])).pop()?;

@@ -49,10 +49,11 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
-| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `decisions` |
+| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
+| | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -85,7 +86,9 @@ formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. Session formats take a `wss://` URL as their
-SDK does: `wss://api.openai.com/v1` for `openai-realtime`,
+SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
+at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
+at `?model=` too),
 `responses-ws` and `openai-live` (OpenAI's Live API, which its Live models
 such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://generativelanguage.googleapis.com` for `gemini-live`,
