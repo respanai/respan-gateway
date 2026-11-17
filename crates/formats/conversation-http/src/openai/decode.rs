@@ -234,8 +234,21 @@ impl OpenAiDecoder {
             let delta = Delta::Reasoning(text.into());
             self.say(Key::Reasoning, Block::Reasoning, delta, out);
         }
-        if let Some(text) = body["content"].as_str().filter(|t| !t.is_empty()) {
-            self.say(Key::Text, Block::Text, Delta::Text(text.into()), out);
+        match content_parts(&body["content"]) {
+            Some(parts) => {
+                for (key, text) in parts.into_iter().filter(|(_, t)| !t.is_empty()) {
+                    let (kind, delta) = match key {
+                        Key::Reasoning => (Block::Reasoning, Delta::Reasoning(text)),
+                        _ => (Block::Text, Delta::Text(text)),
+                    };
+                    self.say(key, kind, delta, out);
+                }
+            }
+            None => {
+                if let Some(text) = body["content"].as_str().filter(|t| !t.is_empty()) {
+                    self.say(Key::Text, Block::Text, Delta::Text(text.into()), out);
+                }
+            }
         }
         // A text's signature is the message's, even on a last empty text.
         if let Some(s) = body[SIGNED]["google"]["thought_signature"].as_str() {
@@ -374,7 +387,8 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
             let text = y.is_string() || y.is_null();
             let ours = match field.as_str() {
                 "role" => true,
-                "content" | "reasoning_content" => text,
+                "content" => text || content_parts(y).is_some(),
+                "reasoning_content" => text,
                 "reasoning" => text && alias,
                 "tool_calls" => typed,
                 _ => false,
@@ -389,6 +403,49 @@ fn choice_leftovers(choice: &Value, key: &str, typed: bool) -> Option<Value> {
         }
     }
     (rest.len() > 1).then(|| rest.into())
+}
+
+/// A `content` that is an array of parts, as some servers answer a model
+/// that reasons, read in order: a `text` part's text as text, and a
+/// `thinking` part's (a string, or `text` parts) as reasoning. `None` unless
+/// every part is one of those and says nothing else (`closed` only marks a
+/// streamed thinking part's end), so content with any other part, an image,
+/// or a part's own field, a signature, stays as it came.
+fn content_parts(content: &Value) -> Option<Vec<(Key, String)>> {
+    let only = |part: &Value, keys: &[&str]| {
+        let fields = part.as_object()?;
+        fields
+            .keys()
+            .all(|k| keys.contains(&k.as_str()))
+            .then_some(())
+    };
+    let text_of = |part: &Value| match part["type"].as_str()? {
+        "text" => {
+            only(part, &["type", "text"])?;
+            part["text"].as_str().map(str::to_owned)
+        }
+        _ => None,
+    };
+    let mut said = Vec::new();
+    for part in content.as_array()? {
+        let read = match part["type"].as_str()? {
+            "text" => (Key::Text, text_of(part)?),
+            "thinking" => {
+                only(part, &["type", "thinking", "closed"])?;
+                match &part["thinking"] {
+                    Value::String(text) => (Key::Reasoning, text.clone()),
+                    Value::Array(texts) => (
+                        Key::Reasoning,
+                        texts.iter().map(text_of).collect::<Option<_>>()?,
+                    ),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        said.push(read);
+    }
+    Some(said)
 }
 
 /// The tool calls of a choice's `body`, if each is a function call the
