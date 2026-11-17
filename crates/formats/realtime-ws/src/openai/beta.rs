@@ -171,6 +171,9 @@ fn to_beta(event: &mut Map<String, Value>) {
         if let Some(voice) = take_at(response, &["audio", "output", "voice"]) {
             response.insert("voice".into(), voice);
         }
+        if let Some(format) = take_at(response, &["audio", "output", "format"]) {
+            response.insert("output_audio_format".into(), format_to_beta(format));
+        }
         if let Some(limit) = response.remove("max_output_tokens") {
             response.insert("max_response_output_tokens".into(), limit);
         }
@@ -193,6 +196,7 @@ fn to_ga(event: &mut Map<String, Value>) {
         event.insert("type".into(), ga.into());
     }
     if let Some(Value::Object(session)) = event.get_mut("session") {
+        session.insert("type".into(), "realtime".into());
         if let Some(modalities) = session.remove("modalities") {
             session.insert("output_modalities".into(), modalities_to_ga(modalities));
         }
@@ -200,6 +204,24 @@ fn to_ga(event: &mut Map<String, Value>) {
             if let Some(value) = session.remove(*name) {
                 put_at(session, path, format_to_ga(value));
             }
+        }
+    }
+    if let Some(Value::Object(response)) = event.get_mut("response") {
+        if let Some(modalities) = response.remove("modalities") {
+            response.insert("output_modalities".into(), modalities_to_ga(modalities));
+        }
+        if let Some(voice) = response.remove("voice") {
+            put_at(response, &["audio", "output", "voice"], voice);
+        }
+        if let Some(format) = response.remove("output_audio_format") {
+            put_at(
+                response,
+                &["audio", "output", "format"],
+                format_to_ga(format),
+            );
+        }
+        if let Some(limit) = response.remove("max_response_output_tokens") {
+            response.insert("max_output_tokens".into(), limit);
         }
     }
     respell_parts(event, |t| {
@@ -242,6 +264,9 @@ fn format_to_ga(value: Value) -> Value {
 /// The types of the model's message parts in `event`'s item, or its
 /// response's output, respelled by `respell`.
 fn respell_parts(event: &mut Map<String, Value>, respell: impl Fn(&str) -> Option<&'static str>) {
+    if let Some(part) = event.get_mut("part") {
+        respell_part(part, &respell);
+    }
     if let Some(item) = event.get_mut("item") {
         respell_item(item, &respell);
     }
@@ -259,10 +284,14 @@ fn respell_item(item: &mut Value, respell: &impl Fn(&str) -> Option<&'static str
     }
     let parts = item.get_mut("content").and_then(Value::as_array_mut);
     for part in parts.into_iter().flatten() {
-        let respelled = part["type"].as_str().and_then(respell);
-        if let (Some(t), Some(part)) = (respelled, part.as_object_mut()) {
-            part.insert("type".into(), t.into());
-        }
+        respell_part(part, respell);
+    }
+}
+
+fn respell_part(part: &mut Value, respell: &impl Fn(&str) -> Option<&'static str>) {
+    let respelled = part["type"].as_str().and_then(respell);
+    if let (Some(t), Some(part)) = (respelled, part.as_object_mut()) {
+        part.insert("type".into(), t.into());
     }
 }
 
@@ -310,5 +339,83 @@ fn drop_if_empty(object: &mut Map<String, Value>, name: &str) {
         .is_some_and(Map::is_empty)
     {
         object.remove(name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{input, output};
+    use super::*;
+
+    fn heard(frame: Value) -> Value {
+        let raw = respelled(&Bytes::from(frame.to_string()), to_ga).expect("translate");
+        let mut events = Vec::new();
+        output::Provider::default()
+            .read(raw, &mut events)
+            .expect("read");
+        let mut client = output::Client::default();
+        let mut frames = Vec::new();
+        for event in events {
+            client.write(&event, &mut frames).expect("write");
+        }
+        serde_json::from_slice(frames.last().expect("a frame")).expect("JSON")
+    }
+
+    #[test]
+    fn a_beta_session_is_a_ga_realtime_session() {
+        let frame = heard(json!({"type": "session.created", "session": {
+            "id": "s1", "modalities": ["text", "audio"], "voice": "alloy",
+            "input_audio_format": "pcm16", "output_audio_format": "g711_ulaw"
+        }}));
+        assert_eq!(frame["session"]["type"], "realtime");
+        assert_eq!(frame["session"]["output_modalities"], json!(["audio"]));
+        assert_eq!(frame["session"]["audio"]["output"]["voice"], "alloy");
+        assert_eq!(
+            frame["session"]["audio"]["output"]["format"]["type"],
+            "audio/pcmu"
+        );
+    }
+
+    #[test]
+    fn beta_content_parts_and_response_metadata_reach_ga_clients() {
+        for kind in ["response.content_part.added", "response.content_part.done"] {
+            let frame = heard(json!({"type": kind, "part": {"type": "audio", "transcript": "hi"}}));
+            assert_eq!(frame["part"]["type"], "output_audio");
+        }
+        let frame = heard(json!({"type": "response.done", "response": {
+            "status": "completed", "modalities": ["text", "audio"],
+            "voice": "alloy", "output_audio_format": "pcm16",
+            "output": [{"role": "assistant", "content": [{"type": "text", "text": "hi"}]}]
+        }}));
+        assert_eq!(frame["response"]["output_modalities"], json!(["audio"]));
+        assert_eq!(frame["response"]["audio"]["output"]["voice"], "alloy");
+        assert_eq!(
+            frame["response"]["output"][0]["content"][0]["type"],
+            "output_text"
+        );
+    }
+
+    #[test]
+    fn a_response_audio_override_is_sent_in_beta_shape() {
+        let mut client = input::Client::new(Some("model".into()), None);
+        let mut events = Vec::new();
+        let frame = json!({"type": "response.create", "response": {
+            "output_modalities": ["audio"], "audio": {"output": {
+                "voice": "alloy", "format": {"type": "audio/pcmu"}
+            }}
+        }});
+        client
+            .read(Bytes::from(frame.to_string()), &mut events)
+            .expect("read");
+        let mut provider = input::Provider::new("model".into(), false);
+        let mut frames = Vec::new();
+        for event in events {
+            provider.write(&event, &mut frames).expect("write");
+        }
+        let frame = respelled(frames.last().expect("response"), to_beta).expect("translate");
+        let frame: Value = serde_json::from_slice(&frame).expect("JSON");
+        assert_eq!(frame["response"]["modalities"], json!(["text", "audio"]));
+        assert_eq!(frame["response"]["output_audio_format"], "g711_ulaw");
+        assert!(frame["response"].get("audio").is_none());
     }
 }
