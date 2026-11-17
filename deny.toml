@@ -1,5 +1,9 @@
 [advisories]
 version = 2
+ignore = [
+    { id = "RUSTSEC-2026-0542", reason = "humantime unmaintained, no vulnerability" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no vulnerability" },
+]
 
 [licenses]
 version = 2
