@@ -95,6 +95,10 @@ transcribes for an OpenAI Realtime or Gemini Live transcription as its own
 clients transcribe with theirs; `wss://api.phonic.ai/v1` for `phonic-sts`:
 Phonic's speech-to-speech, which its models such as `phonic-1` speak, the
 key a bearer token and the model in its `config`.
+A provider that still speaks OpenAI Realtime's beta protocol takes
+`openai-realtime-beta` and its own `wss://` base URL, such as
+`wss://api.stepfun.ai/v1`: the key a bearer token and the model at
+`?model=`, its clients speaking `openai-realtime`.
 Perplexity's Agent API speaks `openai-responses` alone, at
 `https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
 such as `openai/gpt-5.6-sol`.

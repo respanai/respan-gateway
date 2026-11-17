@@ -53,6 +53,7 @@ const MOVED: &[(&str, &[&str])] = &[
         "input_audio_noise_reduction",
         &["audio", "input", "noise_reduction"],
     ),
+    ("max_response_output_tokens", &["max_output_tokens"]),
 ];
 
 /// The audio formats the beta named, by their beta name and GA object: its
@@ -169,6 +170,9 @@ fn to_beta(event: &mut Map<String, Value>) {
         }
         if let Some(voice) = take_at(response, &["audio", "output", "voice"]) {
             response.insert("voice".into(), voice);
+        }
+        if let Some(limit) = response.remove("max_output_tokens") {
+            response.insert("max_response_output_tokens".into(), limit);
         }
         drop_empty_audio(response);
     }
