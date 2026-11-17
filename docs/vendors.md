@@ -87,7 +87,8 @@ formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
-at `wss://api.empiriolabs.ai/v1`),
+at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
+at `?model=` too),
 `responses-ws` and `openai-live` (OpenAI's Live API, which its Live models
 such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://generativelanguage.googleapis.com` for `gemini-live`,
