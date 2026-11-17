@@ -53,6 +53,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
+| | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
