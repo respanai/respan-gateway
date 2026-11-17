@@ -58,7 +58,10 @@ can read it (the module docs give each shape): the response's own fields in the 
 departures from the spec, such as reasoning in `reasoning_content`, are its
 plugins' in the [vendors crate](../../vendors/README.md), which read
 these. Reasoning has no field in this format, and is dropped; media in a tool
-result leads the message after the results. A part Chat has no form for
+result leads the message after the results. An answer's `content` that is
+an array of `text` and `thinking` parts, as some servers send for a model
+that reasons, is read as its text and reasoning, so a client gets strings;
+content with any other part stays native. A part Chat has no form for
 (audio but WAV or MP3, a document by URL) is dropped.
 
 A block is any number unique in a response, such as a plugin's own: both

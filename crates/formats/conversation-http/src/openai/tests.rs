@@ -368,6 +368,96 @@ fn reasoning_content_opens_a_reasoning_block_before_the_text() {
 }
 
 #[test]
+fn content_parts_are_read_as_reasoning_then_text() {
+    // As Mistral's reasoning models answer: `content` an array of parts.
+    let chunks = [
+        "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+        "data: {\"id\":\"x\",\"p\":\"ab\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"hm\"}],\"closed\":true}]}}]}\n\n",
+        "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[]},{\"type\":\"text\",\"text\":\"READY\"}]}}]}\n\n",
+        "data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n",
+    ];
+    let (out, end) = decode_all(&chunks);
+    assert!(end.is_ok());
+    let events: Vec<_> = out
+        .iter()
+        .filter(|r| !matches!(r, Output::Start(_) | Output::Native(_)))
+        .cloned()
+        .collect();
+    assert_eq!(
+        events,
+        [
+            Output::block_start(0, Block::Reasoning),
+            Output::reasoning(0, "hm"),
+            Output::block_end(0),
+            Output::block_start(1, Block::Text),
+            Output::text(1, "READY"),
+            Output::block_end(1),
+            Output::finished(Finish::Stop),
+        ]
+    );
+    // A client of the format gets strings, never the parts.
+    let stream = stream_of(&out, false).expect("a stream");
+    assert!(!stream.contains("\"thinking\""), "{stream}");
+    let deltas: Vec<_> = chunks_of(&stream)
+        .iter()
+        .map(|c| c["choices"][0]["delta"].clone())
+        .collect();
+    assert!(
+        deltas.iter().any(|d| d["reasoning_content"] == "hm"),
+        "{stream}"
+    );
+    assert!(deltas.iter().any(|d| d["content"] == "READY"), "{stream}");
+    // A whole body's message is read the same way, and written as strings.
+    let body = json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
+        "message": { "role": "assistant", "content": [
+            { "type": "thinking", "thinking": "hm" },
+            { "type": "text", "text": "READY" },
+        ] } }] });
+    let whole = decode_body(&body);
+    assert_eq!(whole[1..], events);
+    let written = body_of(&whole).expect("a body");
+    assert_eq!(written["choices"][0]["message"]["content"], "READY");
+    assert_eq!(written["choices"][0]["message"]["reasoning_content"], "hm");
+}
+
+#[test]
+fn text_parts_alone_or_none_are_read_as_text() {
+    let body = |content: Value| {
+        json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
+            "message": { "role": "assistant", "content": content } }] })
+    };
+    let text = decode_body(&body(json!([
+        { "type": "text", "text": "RE" },
+        { "type": "text", "text": "ADY" },
+    ])));
+    let mut expected = vec![Output::block_start(0, Block::Text)];
+    expected.extend([Output::text(0, "RE"), Output::text(0, "ADY")]);
+    expected.extend([Output::block_end(0), Output::finished(Finish::Stop)]);
+    assert_eq!(text[1..], expected);
+    // No parts say nothing, and are not relayed as the vendor's own.
+    let empty = decode_body(&body(json!([])));
+    assert_eq!(empty[1..], [Output::finished(Finish::Stop)]);
+}
+
+#[test]
+fn content_with_a_part_the_kind_cannot_read_stays_as_it_came() {
+    let parts = json!([
+        { "type": "text", "text": "see" },
+        { "type": "image_url", "image_url": { "url": "https://x/y.png" } },
+    ]);
+    let body = json!({ "id": "x", "choices": [{ "index": 0, "finish_reason": "stop",
+        "message": { "role": "assistant", "content": parts.clone() } }] });
+    let out = decode_body(&body);
+    assert!(
+        !out.iter().any(|r| matches!(r, Output::Delta { .. })),
+        "{out:?}"
+    );
+    let written = body_of(&out).expect("a body");
+    assert_eq!(written["choices"][0]["message"]["content"], parts);
+}
+
+#[test]
 fn only_the_first_choice_finishes_the_response() {
     let (out, _) = decode_all(&[
         "data: {\"id\":\"x\",\"choices\":[{\"index\":1,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
@@ -578,7 +668,7 @@ fn a_whole_response_decodes_into_events() {
         Some(Output::Native(_))
     ));
     let parts = json!({ "choices": [{ "index": 0,
-        "message": { "role": "assistant", "content": [{ "type": "text", "text": "ok" }] } }] });
+        "message": { "role": "assistant", "content": [{ "type": "image_url", "image_url": { "url": "u" } }] } }] });
     assert!(matches!(
         decode_body(&parts).first(),
         Some(Output::Native(_))
