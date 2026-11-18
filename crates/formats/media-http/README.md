@@ -188,13 +188,10 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
 - `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
   are the kind's, its error `{code, message}`; its model, size and length
   are the job's; the `video_url` of its `outputs` is its video, and their
-  `cost`, what it charged, the job's native `cost`. It serves the video only
-  there, so `video::LocateContent` retrieves the job first and refuses one
-  not finished, 400 `video_not_ready`; the content is a `GET` of that URL's
-  path at the provider's host, relayed as it comes, so the key never goes
-  to another host.
-- Another format's operation, such as OpenAI's remix, delete, list or
-  thumbnail, is refused, 400 `unsupported`, before any call.
+  `cost`, what it charged, the job's native `cost`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in

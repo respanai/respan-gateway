@@ -1,13 +1,13 @@
 //! Together's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`TogetherVideos`].
 
-use crate::edge::{bind_provider, content, sends};
+use crate::edge::{bind_provider, sends};
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing};
 use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, Uri, request::Parts as RequestHead};
+use respan_gateway_http::http::{Method, request::Parts as RequestHead};
 use respan_gateway_http::path::{escape, set_path};
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
@@ -38,12 +38,9 @@ const VIDEOS: &str = "/v2/videos";
 /// `completed` once its video is made, or `failed` with the error Together
 /// gives; a state it adds is the format's own. Its video is the `video_url`
 /// of its `outputs` ([`Job::videos`]), and the `cost` there, what it
-/// charged, the job's native `cost`. Content is a `GET` of that URL's path
-/// at the provider's host, so the key never goes to another host;
-/// [`LocateContent`](respan_gateway_media::video::LocateContent) finds it.
-///
-/// Another format's operation, such as OpenAI's remix, delete, list or
-/// thumbnail, is refused, 400, before any call.
+/// charged, the job's native `cost`. It serves the video only there, so
+/// content, like another format's operation, such as OpenAI's remix,
+/// delete, list or thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TogetherVideos;
 
@@ -69,11 +66,8 @@ impl Format<ProviderIo, Output, Input> for TogetherVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, sent| {
-            Some(match sent.uri().path().starts_with(VIDEOS) {
-                true => Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>,
-                false => content(),
-            })
+        Ok(bind_provider(io, NAME, call, |_, _| {
+            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
         }))
     }
 }
@@ -81,11 +75,13 @@ impl Format<ProviderIo, Output, Input> for TogetherVideos {
 /// An operation Together has no form for, refused.
 fn unsupported(input: &Input) -> Fault {
     let what = match input {
-        Input::Native { .. } => "operation of another format",
-        _ => "operation of this kind",
+        Input::Native { .. } => "no video operation of another format",
+        Input::Content { .. } => {
+            "no video content: it serves a video at the `video_url` of its job's `outputs`"
+        }
+        _ => "no video operation of this kind",
     };
-    Fault::bad_request(format!("Together has no video {what}"))
-        .with(ErrorCode("unsupported".into()))
+    Fault::bad_request(format!("Together has {what}")).with(ErrorCode("unsupported".into()))
 }
 
 /// Together's id of a job `id`, if it is one of this format's.
@@ -102,15 +98,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let path = format!("{VIDEOS}/{}", escape(job_of(id)?));
             (Method::GET, path, None)
         }
-        Input::Content { id, url } => {
-            job_of(id)?;
-            let url = url.as_deref().ok_or_else(|| {
-                Fault::config(
-                    "Together's content is at the URL its job names, which the request needs",
-                )
-            })?;
-            (Method::GET, content_path(url)?, None)
-        }
         _ => return Err(unsupported(input)),
     };
     head.method = method;
@@ -121,22 +108,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     head.headers
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     Ok(sends(body))
-}
-
-/// The path and query of the URL `url` of a job's video, at the provider's
-/// host; one under its jobs' is not a video's.
-fn content_path(url: &str) -> Result<String, Fault> {
-    let unusable =
-        || Fault::upstream("the URL of Together's video is not one it can be fetched at");
-    let uri = url.parse::<Uri>().map_err(|_| unusable())?;
-    let path = uri.path();
-    if path.trim_start_matches('/').is_empty() || path.starts_with(VIDEOS) {
-        return Err(unusable());
-    }
-    Ok(match uri.query() {
-        Some(query) => format!("{path}?{query}"),
-        None => path.to_owned(),
-    })
 }
 
 /// A creation's JSON body.
@@ -245,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_downloaded_where_it_says() {
+    fn a_job_is_polled_by_its_id_and_its_content_refused() {
         let mut head = head();
         let retrieve = Input::Retrieve {
             id: "together_01a1-ecb7".into(),
@@ -255,10 +226,10 @@ mod tests {
         assert_eq!(head.uri.path(), "/v2/videos/01a1-ecb7");
         let content = Input::Content {
             id: "together_01a1-ecb7".into(),
-            url: Some("https://api.together.ai/shrt/5juV?x=1".into()),
+            url: None,
         };
-        call(&mut head, &content).expect("a call");
-        assert_eq!(head.uri.to_string(), "/shrt/5juV?x=1");
+        let refused = call(&mut head, &content).err().expect("refused");
+        assert_eq!(refused.code(), "unsupported");
         // An id not of this format's is no job of Together's.
         let foreign = Input::Retrieve {
             id: "video_1".into(),

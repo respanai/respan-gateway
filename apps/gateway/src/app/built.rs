@@ -14,7 +14,6 @@ use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_media::video::{LocateContent, VideoJobs};
 use respan_gateway_media_http::gemini::GeminiVeo;
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
-use respan_gateway_media_http::together::TogetherVideos;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
 use respan_gateway_plugin_relay::Relay;
@@ -228,13 +227,9 @@ fn with_plugins(
         })
         .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
         .collect();
-    // Veo and Together serve a job's content only where the job says, and
-    // OpenRouter answers for one not finished as for one it never made.
-    let located = [
-        GeminiVeo::NAME,
-        OpenRouterVideos::NAME,
-        TogetherVideos::NAME,
-    ];
+    // Veo serves a job's content only where the job says, and OpenRouter
+    // answers for one not finished as for one it never made.
+    let located = [GeminiVeo::NAME, OpenRouterVideos::NAME];
     let located = (plan.upstreams.iter().flat_map(|u| &u.entries))
         .filter(|e| located.contains(&e.format.as_str()));
     let locate = located.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
