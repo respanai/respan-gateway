@@ -21,6 +21,7 @@ respan-gateway-core.workspace = true
 respan-gateway-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 respan-gateway-http.workspace = true
