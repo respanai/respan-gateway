@@ -403,6 +403,8 @@ fn routes(
         Some(local) => router.layer(from_fn_with_state(local, auth::local_only)),
         None => router,
     };
+    // Each turn of a Responses socket is a request through all of the above.
+    let router = router.layer(respan_gateway_serve::ResponsesWebSocket);
     // Outermost: a preflight carries no key, and no host check applies.
     let router = match cors {
         Some(cors) => router.layer(from_fn_with_state(cors, auth::cors)),

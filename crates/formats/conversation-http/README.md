@@ -92,7 +92,8 @@ token limit.
 ending in `/responses`; its provider base URL includes the version, as
 `openai-chat`'s does. It is plain HTTP, a `POST /v1/responses` answered whole
 or, with `stream: true`, as named SSE events; Responses over WebSocket is
-`responses-ws`, a format of its own kind.
+its turns, each such a `POST`, by `respan-gateway-serve`'s
+`ResponsesWebSocket`.
 
 `instructions` is a leading system message and `input` the messages after it;
 an assistant's consecutive messages, function calls and reasoning items are one

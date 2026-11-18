@@ -5,8 +5,7 @@ an HTTP Upgrade exchange on the HTTP wire: the call's head is the upgrade
 request, the answer's head is the `101`, and the two bodies are streams of
 frames, **one body item per text frame**. This crate is a wire: it knows
 no kind and reads no provider's events. The realtime kind's formats over
-it, one per spec (OpenAI Realtime, Gemini Live, and Responses over
-WebSocket), are
+it, one per spec (OpenAI Realtime, Gemini Live, ...), are
 [`respan-gateway-realtime-ws`](../../formats/realtime-ws/README.md)'s, and
 the vendors that speak them
 [`respan-gateway-vendors`](../../vendors/README.md)'s.

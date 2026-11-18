@@ -191,6 +191,10 @@ from conversations it keeps in memory for `keep` after each was last read,
 and a Responses request naming a `conversation` is sent its items with
 every provider. `[plugins.responses] enabled = false` turns this off.
 
+A Responses client may also connect over WebSocket (OpenAI's WebSocket
+mode, at `/v1/responses`): each `response.create` it sends is a streamed
+`POST /v1/responses` of its own, to any provider, as above.
+
 ## Tools
 
 Tool servers (`[tools.<name>]`: MCP servers and tool vendors such as
