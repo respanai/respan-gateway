@@ -1,6 +1,6 @@
 //! OpenAI's Responses WebSocket mode, as a layer over any HTTP service.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::future::{poll_fn, ready};
 use std::pin::pin;
 use std::task::{Context, Poll};
@@ -49,8 +49,10 @@ const SESSION_MAX: Duration = Duration::from_secs(60 * 60);
 /// OpenAI's `error` event. Turns of a lane run in order, lanes side by side,
 /// up to 16 at once, 32 named lanes, for at most 60 minutes. A
 /// `previous_response_id` is the wrapped service's to resolve, as over HTTP,
-/// so the socket keeps no responses of its own. Any other request passes
-/// through.
+/// but for a `store: false` response, which OpenAI keeps for its socket
+/// alone: so does this, the latest of each lane, as the items sent and
+/// answered, and a turn continuing one is sent them as its `input`'s start.
+/// Any other request passes through.
 ///
 /// Install it outermost: `router.layer(ResponsesWebSocket)`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -149,6 +151,7 @@ where
     let (tx, mut rx) = mpsc::channel::<String>(IN_FLIGHT);
     let mut waiting: VecDeque<(Lane, Map<String, Value>)> = VecDeque::new();
     let (mut busy, mut named) = (HashSet::new(), HashSet::new());
+    let mut kept: HashMap<Lane, Kept> = HashMap::new();
     let mut turns = FuturesUnordered::new();
     let mut deadline = pin!(tokio::time::sleep(SESSION_MAX));
     let mut quiet = Box::pin(tokio::time::sleep(limits.ping_after));
@@ -158,21 +161,28 @@ where
             let Some(at) = waiting.iter().position(|(lane, _)| !busy.contains(lane)) else {
                 break;
             };
-            let (lane, body) = waiting.remove(at).expect("a waiting turn");
+            let (lane, mut body) = waiting.remove(at).expect("a waiting turn");
+            let replay = replay(&mut body, &lane, &kept);
             busy.insert(lane.clone());
-            turns.push(turn(inner.clone(), &head, lane, body, tx.clone()));
+            turns.push(turn(inner.clone(), &head, lane, body, replay, tx.clone()));
         }
         let message = tokio::select! {
             biased;
             () = &mut deadline => {
                 let message = "the connection reached its 60-minute limit";
-                let event = error(400, "websocket_connection_limit_reached", message, None, &None);
+                let code = Some("websocket_connection_limit_reached");
+                let event = error(400, code, message, None, &None);
                 let _ = sink.send(Message::text(event)).await;
                 break CloseCode::Normal;
             }
             Some(frame) = rx.recv() => Message::text(frame),
-            Some(lane) = turns.next() => {
-                busy.remove(&lane);
+            Some(done) = turns.next() => {
+                busy.remove(&done.lane);
+                match done.kept {
+                    Some(new) => _ = kept.insert(done.lane, new),
+                    None if done.evicts => _ = kept.remove(&done.lane),
+                    None => {}
+                }
                 continue;
             }
             () = &mut quiet => {
@@ -212,25 +222,35 @@ where
 /// A `response.create` as its lane and the body of its request, or the
 /// `error` event refusing it.
 fn create(text: &str, named: &mut HashSet<String>) -> Result<(Lane, Map<String, Value>), String> {
-    let invalid = |message| error(400, "invalid_request_error", message, None, &None);
+    let invalid = |message| error(400, None, message, None, &None);
     let Ok(Value::Object(mut body)) = serde_json::from_str(text) else {
-        return Err(invalid("an event is a JSON object"));
+        return Err(invalid(
+            "Expected a 'response.create' message as the first websocket event.",
+        ));
     };
     if body.remove("type").is_none_or(|t| t != "response.create") {
-        return Err(invalid("the only event a client sends is response.create"));
+        return Err(invalid(
+            "Expected a 'response.create' message as the first websocket event.",
+        ));
+    }
+    if body.get("stream").is_some_and(|s| s != true) {
+        return Err(invalid(
+            "The 'stream' parameter is not supported on /v1/responses.",
+        ));
+    }
+    if body.get("background").is_some_and(|b| b == true) {
+        return Err(invalid(
+            "The 'background' parameter is not supported on /v1/responses over websockets.",
+        ));
     }
     let lane = match body.remove("stream_id") {
-        None | Some(Value::Null) => None,
+        None => None,
         Some(Value::String(id)) if valid_lane(&id) => Some(id),
         Some(_) => {
-            let message = "stream_id is 1 to 256 letters, digits, '_', '-' or '.'";
-            return Err(error(
-                400,
-                "invalid_stream_id",
-                message,
-                Some("stream_id"),
-                &None,
-            ));
+            let message = "The 'stream_id' field must be a non-empty string with at most 256 \
+                characters and may only contain letters, numbers, underscores, hyphens, and periods.";
+            let code = Some("invalid_stream_id");
+            return Err(error(400, code, message, Some("stream_id"), &None));
         }
     };
     if let Some(id) = &lane
@@ -238,7 +258,7 @@ fn create(text: &str, named: &mut HashSet<String>) -> Result<(Lane, Map<String, 
     {
         if named.len() >= LANES {
             let message = "a connection has at most 32 stream_id values";
-            let code = "websocket_stream_limit_reached";
+            let code = Some("websocket_stream_limit_reached");
             return Err(error(400, code, message, Some("stream_id"), &lane));
         }
         named.insert(id.clone());
@@ -252,14 +272,103 @@ fn valid_lane(id: &str) -> bool {
     (1..=256).contains(&id.len()) && id.chars().all(allowed)
 }
 
-/// One turn through `inner`, its events sent to `tx`; its lane once done.
+/// A lane's latest `store: false` response: its id and every item of it,
+/// sent and answered.
+#[derive(Clone, Debug)]
+struct Kept {
+    id: String,
+    items: Vec<Value>,
+}
+
+/// What a turn keeps of itself: for `store: false`, the items it sends; and
+/// whether it continues its own lane's kept response.
+#[derive(Default)]
+struct Replay {
+    sent: Option<Vec<Value>>,
+    continues_own: bool,
+}
+
+/// How a turn ended, for its lane's kept response.
+struct Done {
+    lane: Lane,
+    /// Its own response, to keep in place of the lane's.
+    kept: Option<Kept>,
+    /// Whether the lane's kept response goes: a stored response is its
+    /// latest, or a continuation of it failed.
+    evicts: bool,
+}
+
+/// Start `body` from the items of the kept response its
+/// `previous_response_id` names, if one is kept, and ask a `store: false`
+/// one for its reasoning's `encrypted_content`, without which it cannot be
+/// sent again.
+fn replay(body: &mut Map<String, Value>, lane: &Lane, kept: &HashMap<Lane, Kept>) -> Replay {
+    let named = body.get("previous_response_id").and_then(Value::as_str);
+    let parent = named.and_then(|id| kept.iter().find(|(_, k)| k.id == id));
+    let continues_own = parent.is_some_and(|(owner, _)| owner == lane);
+    if let Some((_, parent)) = parent {
+        body.remove("previous_response_id");
+        let mut items = parent.items.clone();
+        items.extend(input_items(body.get("input")));
+        body.insert("input".into(), items.into());
+    }
+    if body.get("store") != Some(&Value::Bool(false)) {
+        return Replay {
+            sent: None,
+            continues_own,
+        };
+    }
+    let include = body.entry("include").or_insert_with(|| json!([]));
+    if let Some(include) = include.as_array_mut()
+        && !include.iter().any(|i| i == "reasoning.encrypted_content")
+    {
+        include.push("reasoning.encrypted_content".into());
+    }
+    Replay {
+        sent: Some(input_items(body.get("input"))),
+        continues_own,
+    }
+}
+
+/// `input` as items: a string is one user message.
+fn input_items(input: Option<&Value>) -> Vec<Value> {
+    match input {
+        Some(Value::String(text)) => vec![json!({"role": "user", "content": text})],
+        Some(Value::Array(items)) => items.clone(),
+        _ => Vec::new(),
+    }
+}
+
+/// The kept response of a `response.completed` event of a turn that sent
+/// `sent`, unless it would be over `limit` bytes: its reasoning without
+/// `encrypted_content` left out, as it cannot be sent again.
+fn completed(data: &str, sent: &[Value], limit: usize) -> Option<Kept> {
+    let event: Value = serde_json::from_str(data).ok()?;
+    if event["type"] != "response.completed" {
+        return None;
+    }
+    let response = &event["response"];
+    let output = response["output"].as_array()?;
+    let replayable = |item: &&Value| {
+        item["type"] != "reasoning" || item.get("encrypted_content").is_some_and(Value::is_string)
+    };
+    let mut items = sent.to_vec();
+    items.extend(output.iter().filter(replayable).cloned());
+    let size: usize = items.iter().map(|i| i.to_string().len()).sum();
+    let id = response["id"].as_str()?.to_owned();
+    (size <= limit).then_some(Kept { id, items })
+}
+
+/// One turn through `inner`, its events sent to `tx`; how it ended once
+/// done.
 fn turn<S, B>(
     mut inner: S,
     head: &Parts,
     lane: Lane,
     body: Map<String, Value>,
+    replay: Replay,
     tx: mpsc::Sender<String>,
-) -> BoxFuture<'static, Lane>
+) -> BoxFuture<'static, Done>
 where
     S: Service<Request, Response = http::Response<B>> + Send + 'static,
     S::Future: Send,
@@ -288,44 +397,53 @@ where
         HeaderValue::from_static("application/json"),
     );
     async move {
+        let mut done = Done {
+            lane,
+            kept: None,
+            evicts: replay.continues_own,
+        };
+        let lane = &done.lane.clone();
+        let limit = respan_gateway_ws::Limits::default().max_message;
         let ready = poll_fn(|cx| inner.poll_ready(cx)).await.is_ok();
         let answer = match ready {
             true => inner.call(req).await.ok(),
             false => None,
         };
-        let event = |status, code, message| error(status, code, message, None, &lane);
+        let event = |status, message| error(status, None, message, None, lane);
         let Some(answer) = answer else {
-            let _ = tx
-                .send(event(500, "server_error", "the gateway failed"))
-                .await;
-            return lane;
+            let _ = tx.send(event(500, "the gateway failed")).await;
+            return done;
         };
         let status = answer.status();
         let mut body = pin!(answer.into_body());
         if !status.is_success() {
-            let limit = respan_gateway_ws::Limits::default().max_message;
             let read = Limited::new(body, limit).collect().await;
             let read = read.map(|b| b.to_bytes()).unwrap_or_default();
-            let _ = tx.send(refusal(status, &read, &lane)).await;
-            return lane;
+            let _ = tx.send(refusal(status, &read, lane)).await;
+            return done;
         }
+        // The stored response is the lane's latest now.
+        done.evicts = replay.sent.is_none();
         let mut sse = Sse::default();
         loop {
             let next = body.frame().await.map(Result::ok);
             let Some(frame) = next else { break };
             let Some(frame) = frame else {
-                let _ = tx
-                    .send(event(502, "server_error", "the response broke off"))
-                    .await;
-                return lane;
+                let _ = tx.send(event(502, "the response broke off")).await;
+                return done;
             };
             for data in frame.into_data().map(|d| sse.feed(&d)).unwrap_or_default() {
-                if data != "[DONE]" && tx.send(tagged(data, &lane)).await.is_err() {
-                    return lane;
+                if let Some(sent) = &replay.sent
+                    && let Some(kept) = completed(&data, sent, limit)
+                {
+                    done.kept = Some(kept);
+                }
+                if data != "[DONE]" && tx.send(tagged(data, lane)).await.is_err() {
+                    return done;
                 }
             }
         }
-        lane
+        done
     }
     .boxed()
 }
@@ -393,9 +511,15 @@ fn refusal(status: StatusCode, body: &[u8], lane: &Lane) -> String {
 }
 
 /// OpenAI's `error` event.
-fn error(status: u16, code: &str, message: &str, param: Option<&str>, lane: &Lane) -> String {
-    let kind = match code {
-        "server_error" => "server_error",
+fn error(
+    status: u16,
+    code: Option<&str>,
+    message: &str,
+    param: Option<&str>,
+    lane: &Lane,
+) -> String {
+    let kind = match status {
+        500.. => "server_error",
         _ => "invalid_request_error",
     };
     let error = json!({"type": kind, "code": code, "message": message, "param": param});

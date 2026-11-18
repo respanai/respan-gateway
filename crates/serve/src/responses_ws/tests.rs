@@ -13,14 +13,19 @@ use super::*;
 #[derive(Default)]
 struct Running(AtomicUsize, AtomicUsize);
 
+/// Ids of the stub's responses.
+static IDS: AtomicUsize = AtomicUsize::new(0);
+
 /// A Responses service: `response.created` echoing what it was sent, then
-/// after `delay` ms `response.completed`; `input: "fail"` is refused 400.
+/// after `delay` ms `response.completed`, with an answer and two reasoning
+/// items, one of them encrypted; an input ending `"fail"` is refused 400.
 async fn stub(State(running): State<Arc<Running>>, req: Request) -> Response {
     let auth = req.headers().get("authorization").cloned();
     let upgrade = req.headers().contains_key("upgrade");
     let bytes = req.into_body().collect().await.expect("a body").to_bytes();
     let sent: Value = serde_json::from_slice(&bytes).expect("JSON");
-    if sent["input"] == "fail" {
+    let last = sent["input"].as_array().and_then(|i| i.last());
+    if sent["input"] == "fail" || last.is_some_and(|i| i["content"] == "fail") {
         let refused =
             json!({"error": {"type": "invalid_request_error", "code": "bad", "message": "no"}});
         return http::Response::builder()
@@ -41,7 +46,13 @@ async fn stub(State(running): State<Arc<Running>>, req: Request) -> Response {
                 _ => {
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                     running.0.fetch_sub(1, Ordering::SeqCst);
-                    json!({"type": "response.completed", "input": input})
+                    let id = format!("resp_{}", IDS.fetch_add(1, Ordering::SeqCst));
+                    let output = json!([
+                        {"type": "reasoning", "summary": []},
+                        {"type": "reasoning", "summary": [], "encrypted_content": "e"},
+                        {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]},
+                    ]);
+                    json!({"type": "response.completed", "input": input, "response": {"id": id, "output": output}})
                 }
             };
             Ok::<_, std::io::Error>(format!("event: x\ndata: {event}\n\n"))
@@ -219,4 +230,112 @@ async fn any_other_request_passes_through() {
         .expect("ready");
     let resp = app.call(req).await.expect("an answer");
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+/// The `sent` of the next `response.created`, and the id of the response
+/// that completes it.
+async fn turn(ws: &mut Client, event: Value) -> (Value, String) {
+    send(ws, event).await;
+    let created = next(ws).await;
+    assert_eq!(created["type"], "response.created", "{created}");
+    let completed = next(ws).await;
+    let id = completed["response"]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    (created["sent"].clone(), id)
+}
+
+fn unstored(input: &str, previous: Option<&str>) -> Value {
+    let mut event =
+        json!({"type": "response.create", "model": "m", "input": input, "store": false});
+    if let Some(previous) = previous {
+        event["previous_response_id"] = previous.into();
+    }
+    event
+}
+
+#[tokio::test]
+async fn an_unstored_response_is_kept_for_the_socket_and_continued_from() {
+    let (url, _) = serve().await;
+    let mut ws = connect(&url).await;
+    let (sent, first) = turn(&mut ws, unstored("My name is Harvey", None)).await;
+    assert_eq!(sent["include"], json!(["reasoning.encrypted_content"]));
+    let (sent, _) = turn(&mut ws, unstored("What is my name?", Some(&first))).await;
+    assert!(sent.get("previous_response_id").is_none(), "{sent}");
+    let items = sent["input"].as_array().expect("items");
+    let kinds: Vec<_> = items.iter().map(|i| i["type"].clone()).collect();
+    assert_eq!(
+        kinds,
+        [
+            Value::Null,
+            "reasoning".into(),
+            "message".into(),
+            Value::Null
+        ]
+    );
+    assert_eq!(items[0]["content"], "My name is Harvey");
+    assert_eq!(items[1]["encrypted_content"], "e");
+    assert_eq!(items[3]["content"], "What is my name?");
+}
+
+#[tokio::test]
+async fn an_id_not_kept_and_a_stored_turn_pass_through() {
+    let (url, _) = serve().await;
+    let mut ws = connect(&url).await;
+    let (sent, _) = turn(&mut ws, unstored("hi", Some("resp_elsewhere"))).await;
+    assert_eq!(sent["previous_response_id"], "resp_elsewhere");
+    assert_eq!(sent["input"], "hi");
+    let stored = json!({"type": "response.create", "model": "m", "input": "hi"});
+    let (sent, id) = turn(&mut ws, stored.clone()).await;
+    assert!(sent.get("include").is_none(), "{sent}");
+    let mut after = stored;
+    after["previous_response_id"] = id.clone().into();
+    let (sent, _) = turn(&mut ws, after).await;
+    assert_eq!(sent["previous_response_id"], id.as_str());
+    assert_eq!(sent["input"], "hi");
+}
+
+#[tokio::test]
+async fn a_lane_keeps_its_latest_and_a_failed_continuation_evicts_it() {
+    let (url, _) = serve().await;
+    let mut ws = connect(&url).await;
+    let (_, older) = turn(&mut ws, unstored("one", None)).await;
+    turn(&mut ws, unstored("two", None)).await;
+    // Only the latest is kept, and this one, sent as it is, is it now.
+    let (sent, latest) = turn(&mut ws, unstored("x", Some(&older))).await;
+    assert_eq!(sent["previous_response_id"], older.as_str());
+    let (sent, _) = turn(&mut ws, unstored("y", Some(&latest))).await;
+    assert!(sent.get("previous_response_id").is_none(), "kept");
+    let (_, latest) = turn(&mut ws, unstored("z", None)).await;
+    send(&mut ws, unstored("fail", Some(&latest))).await;
+    assert_eq!(next(&mut ws).await["type"], "error");
+    let (sent, _) = turn(&mut ws, unstored("x", Some(&latest))).await;
+    assert_eq!(sent["previous_response_id"], latest.as_str(), "evicted");
+}
+
+#[tokio::test]
+async fn what_the_socket_does_not_take_is_refused_as_openai_does() {
+    let (url, _) = serve().await;
+    let mut ws = connect(&url).await;
+    for (extra, code) in [
+        (json!({"stream": false}), Value::Null),
+        (json!({"background": true}), Value::Null),
+        (json!({"stream_id": null}), "invalid_stream_id".into()),
+    ] {
+        let mut event = create("x", None, 0);
+        event
+            .as_object_mut()
+            .expect("an object")
+            .extend(extra.as_object().expect("an object").clone());
+        send(&mut ws, event).await;
+        let refused = next(&mut ws).await;
+        assert_eq!(refused["type"], "error");
+        assert_eq!(refused["status"], 400);
+        assert_eq!(refused["error"]["code"], code, "{refused}");
+    }
+    let mut event = create("x", None, 0);
+    event["stream"] = true.into();
+    send(&mut ws, event).await;
+    assert_eq!(next(&mut ws).await["type"], "response.created");
 }
