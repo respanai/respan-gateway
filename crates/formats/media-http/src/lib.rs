@@ -7,6 +7,8 @@
 //!   API serves them, of the video, image and embedding kinds.
 //! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
 //!   on InvokeModel.
+//! - [`minimax`]: MiniMax's video generation and speech synthesis, on its
+//!   own API.
 //! - [`openrouter`]: OpenRouter's video generation.
 //! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis and
 //!   recognition, on DashScope's own API.
@@ -23,6 +25,7 @@ pub mod bedrock;
 pub mod dashscope;
 mod edge;
 pub mod gemini;
+pub mod minimax;
 pub mod openai;
 pub mod openrouter;
 pub mod together;
@@ -49,7 +52,9 @@ impl Natives for openai::OpenAiVideos {}
 impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}
+impl Natives for minimax::MiniMaxVideos {}
 impl Natives for openrouter::OpenRouterVideos {}
 impl Natives for dashscope::DashScopeSpeech {}
 impl Natives for dashscope::DashScopeTranscriptions {}
+impl Natives for minimax::MiniMaxSpeech {}
 impl Natives for together::TogetherVideos {}

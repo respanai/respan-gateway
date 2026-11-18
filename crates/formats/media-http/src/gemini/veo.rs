@@ -602,12 +602,12 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
 }
 
 /// Whether `id` is spelled as a job id the gateway gives out, Veo's,
-/// OpenAI's, OpenRouter's or Together's, perhaps wrapped in its provider's name
-/// (`<provider>~<id>`): none of Google's own files or operations is, so
+/// OpenAI's, OpenRouter's, Together's or MiniMax's, perhaps wrapped in its
+/// provider's name (`<provider>~<id>`): none of Google's own files or operations is, so
 /// those pass through.
 fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [PREFIX, "video_", "gen-vid-", "together_"]
+    [PREFIX, "video_", "gen-vid-", "together_", "minimax_"]
         .iter()
         .any(|s| inner.starts_with(s))
 }

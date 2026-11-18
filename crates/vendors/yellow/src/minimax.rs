@@ -1,4 +1,5 @@
-//! MiniMax's OpenAI-compatible chat and H3 image API.
+//! MiniMax's OpenAI-compatible chat and H3 image API, and its own videos and
+//! speech.
 
 use respan_gateway_conversation::MediaSource;
 use respan_gateway_conversation_http::fields::media_url;
@@ -7,19 +8,27 @@ use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_media::image;
+use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::{Natives, openai::OpenAiImages};
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 use serde_json::{Value, json};
 
 const BASE_URL: &str = "https://api.minimax.io/v1";
 
-/// MiniMax's OpenAI-compatible chat and image endpoints.
+/// Where its videos are: the format adds the `/v2`.
+const VIDEOS_URL: &str = "https://api.minimax.io";
+
+/// MiniMax's OpenAI-compatible chat and image endpoints, and its videos
+/// (`minimax-videos`, at the host alone) and speech (`minimax-speech`, at the
+/// chat base URL).
 pub const VENDOR: Vendor = Vendor {
     id: "minimax",
     key_env: &["MINIMAX_API_KEY"],
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
         (&Dialected::new(OpenAiImages, MiniMaxImages), Some(BASE_URL)),
+        (&MiniMaxVideos, Some(VIDEOS_URL)),
+        (&MiniMaxSpeech, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
