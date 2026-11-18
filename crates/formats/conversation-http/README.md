@@ -106,6 +106,15 @@ response whole), one item at a time, with the ids, `output_index`,
 `content_index` and `sequence_number` the kind has no place for made when
 another provider answered.
 
+Its Conversations API (`responses::conversations`) is the format's too: its
+routes (`/conversations`, a conversation, its items and an item, under any
+prefix) are read as `Operation`s, and what they answer, which calls no model,
+is written whole from the one output its keeper answers with (`answer`), such
+as the responses plugin's; with none, the request is refused `not_found`. The
+module writes a conversation's items as the API lists them, from what a client
+adds, a request's messages or a response's output, and reads them back as
+messages.
+
 What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
 them), `store: false`, `include`, `truncation`, the rest of `reasoning`

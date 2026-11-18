@@ -1648,6 +1648,7 @@ dependencies = [
  "respan-gateway-sse",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
