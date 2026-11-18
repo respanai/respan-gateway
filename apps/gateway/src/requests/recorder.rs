@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 
 use respan_gateway_conversation as conversation;
 use respan_gateway_core::{ClientContext, Fault, Plugin, ProviderContext, async_trait};
+use respan_gateway_plugin_fallback::Attempt;
 use respan_gateway_plugin_routing::Model;
 use respan_gateway_plugin_tool_loop::{Sink, StepReport, ToolHop};
 
@@ -100,7 +101,12 @@ impl Plugin for Recorder {
         }
         if let Some(Tracked(entry)) = px.extensions().get::<Tracked>() {
             let provider = self.providers.get(px.provider()).cloned();
-            entry.record().provider = provider.or_else(|| Some(px.provider().to_owned()));
+            let provider = provider.unwrap_or_else(|| px.provider().to_owned());
+            // Named as sent; once a fallback or race returns, its winner.
+            if let Some(attempt) = px.extensions().get::<Attempt>() {
+                entry.attempt(attempt.clone(), provider.clone());
+            }
+            entry.record().provider = Some(provider);
         }
         Ok(())
     }
