@@ -1,11 +1,13 @@
-//! Where the plugin keeps what it keeps ([`Store`]): in this gateway's
-//! memory ([`Memory`]), or wherever a deployment of several gateways shares
-//! it.
+//! Where the plugin keeps what it keeps ([`Store`], [`Conversations`]): in
+//! this gateway's memory ([`Memory`]), or wherever a deployment of several
+//! gateways shares it.
 
 use std::time::Duration;
 
+use moka::ops::compute::Op;
 use respan_gateway_conversation::{Content, MediaSource, Message, Role};
-use respan_gateway_core::{Native, async_trait};
+use respan_gateway_core::{Native, Result, async_trait};
+use serde_json::{Map, Value};
 
 /// What is kept under a key: a response's turn of a conversation (the
 /// messages its request added, and the reply) under its id, beside the
@@ -31,17 +33,54 @@ pub trait Store: Send + Sync + 'static {
     async fn get(&self, key: &str) -> Option<Turn>;
 }
 
-/// Turns kept in this gateway's memory, each for `keep` after it was last
-/// written or read, up to [`Memory::BUDGET`] bytes of them, roughly, the
-/// least recently used dropped first: not across a restart, nor shared
-/// between gateways.
+/// A conversation of the Conversations API, as kept under its id.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Conversation {
+    /// When it was made, in seconds since the Unix epoch.
+    pub created_at: u64,
+    /// Its metadata.
+    pub metadata: Map<String, Value>,
+    /// The [`Scope`](crate::Scope) it was made in, if any: none other
+    /// reaches it.
+    pub scope: Option<String>,
+    /// Its items, Responses items each with an `id`, oldest first.
+    pub items: Vec<Value>,
+}
+
+/// Where conversations are kept: long-lived, so a deployment of several
+/// gateways shares them, as each may be asked of any. A change is a call of
+/// its own, which a shared store makes atomic, as two responses of one
+/// conversation may end at once. `Err` fails the request it is made for.
+#[async_trait]
+pub trait Conversations: Send + Sync + 'static {
+    /// Keep `conversation` under `id`, a new one.
+    async fn create(&self, id: String, conversation: Conversation) -> Result<()>;
+    /// The conversation under `id`, if it is kept; kept afresh, as it was read.
+    async fn get(&self, id: &str) -> Result<Option<Conversation>>;
+    /// Set conversation `id`'s metadata; `false` if it is not kept.
+    async fn update(&self, id: &str, metadata: Map<String, Value>) -> Result<bool>;
+    /// Add `items` to conversation `id`'s end; `false` if it is not kept.
+    async fn append(&self, id: &str, items: Vec<Value>) -> Result<bool>;
+    /// Remove item `item` of conversation `id`; `false` if neither is kept.
+    async fn remove(&self, id: &str, item: &str) -> Result<bool>;
+    /// Delete conversation `id`; `false` if it is not kept.
+    async fn delete(&self, id: &str) -> Result<bool>;
+}
+
+/// Turns and conversations kept in this gateway's memory, each for `keep`
+/// after it was last written or read, up to [`Memory::BUDGET`] bytes of
+/// each, roughly, the least recently used dropped first: not across a
+/// restart, nor shared between gateways.
 #[derive(Debug)]
 pub struct Memory {
     turns: moka::sync::Cache<String, Turn>,
+    conversations: moka::sync::Cache<String, Conversation>,
 }
 
 impl Memory {
-    /// The bytes of messages kept at most, roughly.
+    /// The bytes of turns' messages, and of conversations' items, kept at
+    /// most, roughly.
     pub const BUDGET: u64 = 256 << 20;
 
     /// Turns kept for `keep`.
@@ -60,7 +99,37 @@ impl Memory {
             .max_capacity(budget)
             .eviction_policy(moka::policy::EvictionPolicy::lru())
             .build();
-        Self { turns }
+        let bytes = |_: &String, c: &Conversation| {
+            let items = c.items.iter().map(|i| i.to_string().len());
+            u32::try_from(256 + items.sum::<usize>()).unwrap_or(u32::MAX)
+        };
+        let conversations = moka::sync::Cache::builder()
+            .time_to_idle(keep)
+            .weigher(bytes)
+            .max_capacity(budget)
+            .eviction_policy(moka::policy::EvictionPolicy::lru())
+            .build();
+        Self {
+            turns,
+            conversations,
+        }
+    }
+
+    /// Change conversation `id` by `change`, if it is kept and `change`
+    /// says it changed; whether it did.
+    fn change(&self, id: &str, change: impl FnOnce(&mut Conversation) -> bool) -> bool {
+        let entry = self.conversations.entry_by_ref(id);
+        let done = entry.and_compute_with(|kept| match kept {
+            Some(kept) => {
+                let mut conversation = kept.into_value();
+                match change(&mut conversation) {
+                    true => Op::Put(conversation),
+                    false => Op::Nop,
+                }
+            }
+            None => Op::Nop,
+        });
+        matches!(done, moka::ops::compute::CompResult::ReplacedWith(_))
     }
 }
 
@@ -74,6 +143,44 @@ impl Store for Memory {
 
     async fn get(&self, key: &str) -> Option<Turn> {
         self.turns.get(key)
+    }
+}
+
+#[async_trait]
+impl Conversations for Memory {
+    async fn create(&self, id: String, conversation: Conversation) -> Result<()> {
+        self.conversations.insert(id, conversation);
+        Ok(())
+    }
+
+    async fn get(&self, id: &str) -> Result<Option<Conversation>> {
+        Ok(self.conversations.get(id))
+    }
+
+    async fn update(&self, id: &str, metadata: Map<String, Value>) -> Result<bool> {
+        Ok(self.change(id, |c| {
+            c.metadata = metadata;
+            true
+        }))
+    }
+
+    async fn append(&self, id: &str, items: Vec<Value>) -> Result<bool> {
+        Ok(self.change(id, |c| {
+            c.items.extend(items);
+            true
+        }))
+    }
+
+    async fn remove(&self, id: &str, item: &str) -> Result<bool> {
+        Ok(self.change(id, |c| {
+            let before = c.items.len();
+            c.items.retain(|i| i["id"] != item);
+            c.items.len() != before
+        }))
+    }
+
+    async fn delete(&self, id: &str) -> Result<bool> {
+        Ok(self.conversations.remove(id).is_some())
     }
 }
 
