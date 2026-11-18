@@ -41,14 +41,14 @@ use respan_gateway_conversation_http::fields::{
 };
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Native};
+use respan_gateway_core::{Connection, ErrorCode, EventSink, Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderMap, HeaderValue, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{ClientIo, Encoder, ProviderIo, native::Json, raw::Original};
+use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, raw::Original};
 use serde_json::{Map, Value, json};
 use std::sync::LazyLock;
 
@@ -413,6 +413,25 @@ where
     I: Clone + Send + Sync + 'static,
     O: Clone + Send + Sync + 'static,
 {
+    respond_client(io, decode, move |reply, fields| {
+        let mut head = reply.head();
+        let encoder = encoder(reply.request(), fields, &mut head);
+        reply.write(head, encoder)
+    })
+}
+
+/// The client edge of a format: a request decoded by `decode`, and its
+/// response the sink `respond` makes of its [`Reply`] and the fields of the
+/// client's request.
+fn respond_client<I, O>(
+    io: ClientIo,
+    decode: fn(&RequestHead, &Form) -> Result<I, Fault>,
+    respond: impl FnOnce(Reply, &Map<String, Value>) -> EventSink<O> + Send + 'static,
+) -> Connection<I, O>
+where
+    I: Clone + Send + Sync + 'static,
+    O: Clone + Send + Sync + 'static,
+{
     let original = io.extensions().get::<Original>().cloned();
     let read = original.clone();
     io.with_error(refusal).bind(
@@ -428,12 +447,7 @@ where
                 Ok(())
             })
         },
-        move |reply| {
-            let mut head = reply.head();
-            let fields = asked(original.as_ref());
-            let encoder = encoder(reply.request(), fields, &mut head);
-            Ok(reply.write(head, encoder))
-        },
+        move |reply| Ok(respond(reply, asked(original.as_ref()))),
     )
 }
 
