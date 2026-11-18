@@ -188,6 +188,10 @@ it in memory for `keep` (default 1 hour). A Chat client's reasoning between
 tool calls is kept the same way when OpenAI's Responses API serves it.
 `[plugins.responses] enabled = false` turns this off.
 
+A Responses client may also connect over WebSocket (OpenAI's WebSocket
+mode, at `/v1/responses`): each `response.create` it sends is a streamed
+`POST /v1/responses` of its own, to any provider, as above.
+
 ## Tools
 
 Tool servers (`[tools.<name>]`: MCP servers and tool vendors such as

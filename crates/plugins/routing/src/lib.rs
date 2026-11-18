@@ -950,10 +950,10 @@ mod tests {
     #[test]
     fn a_session_crosses_formats_within_its_kind() {
         const LIVE: &str = "realtime";
-        const RESPONSES: &str = "responses";
+        const STS: &str = "speech-to-speech";
         let openai = vec![
             speaks("openai-realtime", LIVE, "openai:openai-realtime"),
-            speaks("responses-ws", RESPONSES, "openai:responses-ws"),
+            speaks("x-sts", STS, "openai:x-sts"),
         ];
         let routes = Routes::new()
             .provider("openai", openai)
@@ -968,10 +968,10 @@ mod tests {
             internal(LIVE, "gemini-live", None).as_deref(),
             Some("gemini")
         );
-        // Gemini speaks no Responses, so even a model it is named for stays
+        // Gemini speaks no such kind, so even a model it is named for stays
         // with the provider that does.
-        let responses = internal(RESPONSES, "responses-ws", Some("gemini/gemini-live"));
-        assert_eq!(responses.as_deref(), Some("openai:responses-ws"));
+        let sts = internal(STS, "x-sts", Some("gemini/gemini-live"));
+        assert_eq!(sts.as_deref(), Some("openai:x-sts"));
     }
 
     #[test]

@@ -32,7 +32,6 @@ const kindOf = {
   "openai-realtime": "realtime",
   "openai-live": "realtime",
   "gemini-live": "realtime",
-  "responses-ws": "responses",
   "openai-images": "image",
   "openai-transcriptions": "transcription",
   "openai-speech": "speech",
@@ -57,7 +56,6 @@ const providers = [
       "openai-chat",
       "openai-responses",
       "openai-realtime",
-      "responses-ws",
       "openai-live",
       "openai-images",
       "openai-transcriptions",
@@ -177,7 +175,6 @@ const routes = {
       ],
     },
     { format: "openai-realtime", kind: "realtime", endpoints: ["GET /v1/realtime"] },
-    { format: "responses-ws", kind: "responses", endpoints: ["GET /v1/responses"] },
     { format: "openai-live", kind: "realtime", endpoints: ["GET /v1/live/sessions (WebSocket)"] },
     {
       format: "openai-images",
@@ -242,7 +239,6 @@ const routes = {
   defaults: [
     { kind: "chat", provider: "openai" },
     ...(NO_REALTIME ? [] : [{ kind: "realtime", provider: "openai" }]),
-    { kind: "responses", provider: "openai" },
     { kind: "image", provider: "openai" },
     { kind: "transcription", provider: "openai" },
     { kind: "speech", provider: "openai" },

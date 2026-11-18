@@ -35,7 +35,6 @@ provider usage.
 | | [background_jobs](background_jobs.rs) | Durable background Responses jobs: submit, poll, cancel, and recovery after a crash. |
 | Realtime | [realtime](realtime.rs) | An OpenAI Realtime session, metered and capped, text and audio. |
 | | [gemini_live](gemini_live.rs) | Gemini Live with each turn paid for up front, tools and shutdown. **Live.** |
-| | [responses_ws](responses_ws.rs) | Responses over WebSocket: named lanes, continuation and per-turn billing. **Live.** |
 | | [tool_guard](tool_guard.rs) | A tool allow-list for any realtime session: OpenAI Realtime clients on Gemini Live. **Live.** |
 
 ## Live and real-world runs
@@ -43,8 +42,6 @@ provider usage.
 ```bash
 GEMINI_API_KEY=... MODEL=gemini-live-2.5-flash MODEL_INPUT_LIMIT=1048576 \
   cargo run -p respan-gateway-examples --example gemini_live      # :8082
-OPENAI_API_KEY=... MODEL=gpt-4.1-mini MODEL_INPUT_LIMIT=1047576 \
-  cargo run -p respan-gateway-examples --example responses_ws     # :8081
 GEMINI_API_KEY=... ALLOWED_TOOLS=get_weather,get_time \
   cargo run -p respan-gateway-examples --example tool_guard       # :8083
 ```
