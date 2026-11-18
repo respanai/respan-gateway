@@ -18,6 +18,7 @@ pub mod nace;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
+pub mod stepfun;
 pub mod together;
 pub mod vllm;
 pub mod xai;
@@ -50,6 +51,7 @@ pub const ALL: &[&Vendor] = &[
     &deepinfra::VENDOR,
     &phonic::VENDOR,
     &morph::VENDOR,
+    &stepfun::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,

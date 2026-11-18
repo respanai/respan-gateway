@@ -175,6 +175,24 @@ generation, as a provider only, its key a bearer token. Its job ids start
 - Another format's operation, such as OpenAI's remix, delete, list or
   thumbnail, is refused, 400 `unsupported`, before any call.
 
+`together::TogetherVideos`, named `together-videos`: Together's video
+generation, as a provider only, its key a bearer token, its base URL the
+API's host with no version (`https://api.together.xyz`). Its job ids are
+Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /v2/videos` makes a job: the kind's `seconds` go as they are, as
+  text, its `size` as `width` and `height`, its reference image, a URL or a
+  data URL of its bytes, as the first of the media's `frame_images`, and its
+  `together-videos` native fields (`resolution`, `ratio`, `generate_audio`,
+  `negative_prompt`, `seed`) as they are.
+- `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
+  are the kind's, its error `{code, message}`; its model, size and length
+  are the job's; the `video_url` of its `outputs` is its video, and their
+  `cost`, what it charged, the job's native `cost`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
 `x-goog-api-key`.
@@ -252,3 +270,31 @@ key a Bedrock API key as a bearer token.
   that takes none (or none to a service that edits), a `size` of no aspect
   ratio Stability draws, and a `response_format` but `b64_json` are refused,
   400, before the call.
+
+`dashscope::{DashScopeSpeech, DashScopeTranscriptions}`, named
+`dashscope-speech` and `dashscope-transcriptions`: Alibaba Cloud Model
+Studio's audio models on DashScope's own API, as a provider only. Its
+OpenAI-compatible endpoint serves chat alone. A provider's base URL is its
+region's API, with the version, `https://dashscope-intl.aliyuncs.com/api/v1`,
+its key a bearer token.
+
+- Speech (`qwen-audio-3.*-tts-*`) is a `POST` to
+  `/services/audio/tts/SpeechSynthesizer`, asked to stream
+  (`X-DashScope-SSE: enable`), as its whole answer names the audio at a URL.
+  The text, voice, `instructions` (as `instruction`), speed (as `rate`) and
+  audio format, `mp3` unless asked, are its `input`. Each event's base64
+  `output.audio.data` is the next chunk of audio; the last event's
+  (`finish_reason: "stop"`) usage is its tokens, the rest of it, such as
+  the `characters` some models bill, a native `{"usage": {..}}`. A request
+  without a voice, or of a format but `mp3`, `wav`, `pcm` and `opus`, is
+  refused, 400, before the call; a parameter DashScope refuses, in the
+  stream or as a refusal written as an event, is a 400.
+- Recognition of a whole file (`qwen-audio-3.*-asr-flash`, `qwen3-asr-flash`,
+  `fun-asr-flash-*`) is a `POST` to
+  `/services/aigc/multimodal-generation/generation`, a user message of the
+  audio as a data URI of its bytes, or its URL, with its `format` (from its
+  type) and the language as both `language_hints` and `asr_options.language`
+  in `parameters`, as Qwen3-ASR and the other models each read one. The answer's
+  `output.text`, or its first choice's text, is the transcript; its usage is
+  the seconds billed and its tokens, if any. A translation, a prompt and a
+  temperature are refused, 400, before the call.

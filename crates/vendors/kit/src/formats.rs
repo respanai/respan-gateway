@@ -9,14 +9,16 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, PhonicSts, ResponsesWs,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
 };
 
 use crate::{Upstream, Vendor};
@@ -30,7 +32,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &GeminiGenerate,
     &BedrockConverse,
     &OpenAiRealtime,
-    &ResponsesWs,
+    &OpenAiRealtimeBeta,
     &OpenAiLive,
     &GeminiLive,
     &MistralRealtime,
@@ -42,10 +44,13 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiVideos,
     &GeminiVeo,
     &OpenRouterVideos,
+    &TogetherVideos,
     &GeminiImages,
     &BedrockEmbeddings,
     &BedrockImages,
     &GeminiEmbeddings,
+    &DashScopeSpeech,
+    &DashScopeTranscriptions,
     &Decisions,
     &OpenAiDecisions::DEFAULT,
     &GeminiDecisions,

@@ -289,11 +289,6 @@ fn a_vendor_is_every_format_it_speaks() {
                 "wss://api.openai.com/v1"
             ),
             entry(
-                "responses-ws",
-                "openai:responses-ws",
-                "wss://api.openai.com/v1"
-            ),
-            entry(
                 "openai-live",
                 "openai:openai-live",
                 "wss://api.openai.com/v1"
@@ -363,7 +358,7 @@ fn a_vendor_is_every_format_it_speaks() {
     assert_eq!(header(1, 4, "x-goog-api-key").as_deref(), Some("AIza"));
     assert!(plan.upstreams.iter().all(|u| u.own_key));
     // Served by default: the chat formats, each chat, media, realtime and
-    // decision client format, and Responses over WebSocket.
+    // decision client format.
     assert_eq!(
         plan.serve,
         [
@@ -386,8 +381,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-veo",
             "decisions",
             "openai-decisions",
-            "gemini-decisions",
-            "responses-ws"
+            "gemini-decisions"
         ]
     );
 }
@@ -517,13 +511,11 @@ fn client_keys_are_literal_or_from_the_environment_and_named() {
 }
 
 #[test]
-fn two_providers_of_a_session_format_no_other_translates_are_an_error() {
-    let text = "providers = { openai = { vendor = \"openai\", key = \"k\" }, responses = { formats = \"responses-ws\", base_url = \"wss://x.test/v1\" } }\n";
+fn two_providers_of_passthrough_are_an_error() {
+    let text = "providers = { a = { formats = \"passthrough\", base_url = \"https://a.test\" }, b = { formats = \"passthrough\", base_url = \"https://b.test\" } }\nformats = [\"passthrough\"]\n";
     assert_eq!(
         plan(text).err().as_deref(),
-        Some(
-            "formats: responses-ws needs exactly one provider of that format; openai, responses all speak it"
-        )
+        Some("formats: passthrough needs exactly one provider of that format; a, b all speak it")
     );
     // A realtime session goes to any provider of the kind.
     let text = "providers = { openai = { vendor = \"openai\", key = \"k\" }, realtime = { formats = \"openai-realtime\", base_url = \"wss://x.test/v1\" } }\nformats = [\"openai-realtime\", \"gemini-live\"]\n";
@@ -597,9 +589,9 @@ fn a_session_provider_is_websocket_and_its_clients_go_to_it_alone() {
     assert!(resolve(lone).is_ok(), "{:?}", resolve(lone).err());
     let cases = [
         (
-            "providers = { p = { formats = \"openai-chat\", base_url = \"http://x.test\" } }\nformats = [\"responses-ws\"]\n"
+            "providers = { p = { formats = \"openai-chat\", base_url = \"http://x.test\" } }\nformats = [\"passthrough\"]\n"
                 .to_owned(),
-            "formats: responses-ws needs exactly one provider of that format",
+            "formats: passthrough needs exactly one provider of that format",
         ),
     ];
     for (text, expected) in cases {
@@ -769,6 +761,7 @@ fn empiriolabs_is_called_at_each_of_its_apis() {
             ("openai-images", api),
             ("openai-embeddings", api),
             ("openai-speech", api),
+            ("openai-realtime", "wss://api.empiriolabs.ai/v1"),
             ("decisions", api),
         ]
     );

@@ -7,9 +7,6 @@
 //! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
 //! - [`OpenAiLive`]: OpenAI's Live API, `openai-live`, full duplex.
 //! - [`PhonicSts`]: Phonic's speech-to-speech, `phonic-sts`, full duplex.
-//! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
-//!   which is not realtime: it streams Responses over a socket, and uses the
-//!   kind's types only as native events.
 //!
 //! [`OpenAiRealtime`], [`GeminiLive`], [`OpenAiLive`] and [`PhonicSts`]
 //! decode each frame into the kind's events, keeping what the kind has no
@@ -19,9 +16,7 @@
 //! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
 //! cannot change the answer, or refused: an input `bad_request`, closing
-//! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
-//! frame to the kind's native event of its name, and writes no other
-//! format's. A frame that is not JSON fails: the client's, `bad_request`;
+//! the client 1008; an output `upstream`. A frame that is not JSON fails: the client's, `bad_request`;
 //! the provider's, `upstream`. A handshake one refuses is answered
 //! text/plain with the fault's error code, never its message.
 
@@ -34,16 +29,14 @@ mod live;
 mod mistral;
 mod openai;
 mod phonic;
-mod responses;
 mod session;
 
 pub use calls::Calls;
 pub use gemini::GeminiLive;
 pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;
-pub use openai::OpenAiRealtime;
+pub use openai::{OpenAiRealtime, OpenAiRealtimeBeta};
 pub use phonic::PhonicSts;
-pub use responses::ResponsesWs;
 
 /// What only format `F` of this crate reads of a value: no other crate can name it.
 struct Own<F>(std::marker::PhantomData<fn() -> F>);
@@ -68,7 +61,6 @@ pub trait Natives: Sized + 'static {
 impl Natives for OpenAiRealtime {}
 impl Natives for GeminiLive {}
 impl Natives for OpenAiLive {}
-impl Natives for ResponsesWs {}
 
 use respan_gateway_core::Native;
 use respan_gateway_http::{native::Json, raw::Original};

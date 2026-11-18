@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+form_urlencoded.workspace = true
 respan-gateway-conversation.workspace = true
 respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true
@@ -20,8 +21,8 @@ respan-gateway-decision.workspace = true
 respan-gateway-http.workspace = true
 respan-gateway-media.workspace = true
 respan-gateway-media-http.workspace = true
+respan-gateway-realtime.workspace = true
 respan-gateway-realtime-ws.workspace = true
-respan-gateway-sse.workspace = true
 respan-gateway-vendor-kit.workspace = true
 serde_json.workspace = true
 

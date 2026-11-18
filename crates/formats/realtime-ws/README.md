@@ -11,6 +11,14 @@ a format per spec:
   `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
   after `wss://generativelanguage.googleapis.com`. Its server sends JSON in
   binary frames, which its transport takes as text.
+- `OpenAiRealtimeBeta`, `openai-realtime-beta`: OpenAI Realtime's beta
+  protocol, which providers that adopted it before GA still speak, sent to
+  `/realtime` after the provider's base URL. It is no client's format: GA
+  serves `/realtime`. Each frame is respelled at the wire (some server
+  events' names, a session's fields at its top, its formats' names such as
+  `pcm16`, a model's message parts' types), so it reads and writes as
+  `OpenAiRealtime` does, and its natives are OpenAI Realtime's. A
+  transcription session is refused.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
 - `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
@@ -19,10 +27,6 @@ a format per spec:
 - `PhonicSts`, `phonic-sts`: Phonic's speech-to-speech, which its models
   (`phonic-1`) speak, at `/sts/ws` after `wss://api.phonic.ai/v1`, with no
   query.
-- `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
-  `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
-  streams Responses over a socket, and uses the kind's types only as native
-  events.
 
 Each is served at a path ending in its own, but not in another's that ends
 in it (Mistral's in OpenAI's `/realtime`), and sends to it;
@@ -77,9 +81,7 @@ seconds since its `conversation_created` are `Seconds` at each frame but
 its audio, and at its end. Tools, `say`, `generate_reply` and the rest stay native.
 
 `OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
-too: see [Translation](#translation). `ResponsesWs` decodes every frame to the
-kind's `Input::Native` or `Output::Native`, its own, and writes no other
-format's.
+too: see [Translation](#translation).
 
 Plugins filter events with `cx.filter(|e: &mut Output| ..)` (client edge)
 or `px.filter(..)` (provider edge), and drop one with a `Filter` that does
@@ -190,7 +192,7 @@ with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 A refused input is `bad_request`, closing the client 1008; a refused
 output `upstream`. Another format's natives, fields and events alike, are
 dropped by a writer, with a warning at the provider's: what has meaning
-beyond its format belongs in the kind. OpenAI's, Gemini's and Responses'
+beyond its format belongs in the kind. OpenAI's and Gemini's
 open their own to code that names them (`fields`, `with_fields`), OpenAI
 Live's for reading (`fields`), Mistral's to say what its transcript heard
 (`heard_seconds`), and `Calls` leaves some tools' calls out of OpenAI's and

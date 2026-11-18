@@ -1648,6 +1648,7 @@ dependencies = [
  "respan-gateway-sse",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -2016,13 +2017,18 @@ dependencies = [
  "axum",
  "bytes",
  "futures",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "respan-gateway-core",
  "respan-gateway-http",
  "respan-gateway-ws",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]
@@ -2133,6 +2139,7 @@ name = "respan-gateway-vendors-yellow"
 version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
+ "form_urlencoded",
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
  "respan-gateway-core",
@@ -2141,8 +2148,8 @@ dependencies = [
  "respan-gateway-http",
  "respan-gateway-media",
  "respan-gateway-media-http",
+ "respan-gateway-realtime",
  "respan-gateway-realtime-ws",
- "respan-gateway-sse",
  "respan-gateway-vendor-kit",
  "serde_json",
  "tokio",

@@ -24,7 +24,7 @@
 //! What the kind has no form for stays native to this format and is dropped
 //! in translation: `previous_response_id` and `conversation` (another
 //! provider cannot resolve them; the gateway's `plugins.responses` resolves
-//! the first itself), `include`, `truncation`,
+//! both itself), `include`, `truncation`,
 //! the rest of `reasoning` (`generate_summary`, a summary but `auto`), `metadata`, built-in tools (web search,
 //! file search, computer use, code interpreter, MCP) and the items they
 //! make, and the rest of what the request says beyond the spec's defaults.
@@ -67,7 +67,13 @@
 //! order they opened.
 //!
 //! Not carried: log probabilities, which are written empty.
+//!
+//! # Conversations
+//!
+//! OpenAI's Conversations API is this format's too ([`conversations`]): its
+//! requests are clients of it, answered by whoever keeps conversations.
 
+pub mod conversations;
 mod decode;
 mod encode;
 mod request;
@@ -98,7 +104,7 @@ const USAGE_FIELDS: &str = "usage_fields";
 const RESPONSE_FIELDS: &str = "response_fields";
 
 /// OpenAI Responses, `openai-responses`: a `POST` to any path ending in
-/// `/responses`. The provider's base URL includes the version, such as
+/// `/responses`, and a client of the Conversations API ([`conversations`]). The provider's base URL includes the version, such as
 /// `https://api.openai.com/v1`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiResponses;
@@ -123,10 +129,13 @@ impl Format<ClientIo, Input, Output> for OpenAiResponses {
         RESPONSES
     }
     fn matches(&self, io: &ClientIo) -> bool {
-        self.accepts(io.request())
+        self.accepts(io.request()) || conversations::is_route(io.request())
     }
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        self.bind_client(io)
+        match conversations::is_route(io.request()) {
+            true => conversations::bind(io),
+            false => self.bind_client(io),
+        }
     }
 }
 

@@ -396,7 +396,8 @@ impl std::fmt::Debug for RespanConfig {
 }
 
 /// The conversation state the gateway keeps
-/// (`respan_gateway_plugin_responses`), in its memory: not across a
+/// (`respan_gateway_plugin_responses`): responses' turns and the
+/// Conversations API's conversations, in its memory: not across a
 /// restart, nor shared between gateways, so a client whose requests reach
 /// several gateways needs them to reach the one that kept its conversation.
 #[derive(Debug, Clone, Deserialize)]

@@ -26,7 +26,24 @@ where
     I: Clone + Send + Sync + 'static,
     O: Clone + Send + Sync + 'static,
 {
-    io.with_refusal(read_provider_error).bind(
+    bind_provider_with(io, format, read_provider_error, encode, decode)
+}
+
+/// [`bind_provider`], its failure read by `refusal`.
+pub(crate) fn bind_provider_with<I, O>(
+    io: ProviderIo,
+    format: &'static str,
+    refusal: impl FnOnce(http::Response<Bytes>) -> Fault + Send + 'static,
+    encode: impl FnOnce(&mut RequestHead, &I) -> Result<Box<dyn Encoder<I>>, Fault> + Send + 'static,
+    decode: impl FnOnce(&ResponseHead, &http::Request<Bytes>) -> Option<Box<dyn Decoder<O>>>
+    + Send
+    + 'static,
+) -> Connection<O, I>
+where
+    I: Clone + Send + Sync + 'static,
+    O: Clone + Send + Sync + 'static,
+{
+    io.with_refusal(refusal).bind(
         move |head, input: Option<&I>| {
             let input = input.ok_or_else(|| {
                 Fault::config(format!("{format} does not accept streaming inputs"))

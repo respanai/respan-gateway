@@ -18,4 +18,10 @@ through the HTTP wire's `handle`, its body read whole up to 32 MiB (413
   server's graceful shutdown (`axum::serve(..).with_graceful_shutdown`) drains
   them too.
 
+`ResponsesWebSocket` is a layer for any HTTP service, such as this router
+with a host's own layers: OpenAI's Responses WebSocket mode, the socket
+accepted at a path ending in `/responses` and each `response.create` sent
+within as an ordinary streamed `POST` to it, its SSE events written back as
+frames. Install it outermost, so every layer runs per turn.
+
 Await `gateway.idle()` after the server returns to let in-flight requests end.

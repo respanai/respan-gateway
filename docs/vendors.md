@@ -24,7 +24,7 @@ Each vendor is in one of two tiers:
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `responses-ws`, `openai-live`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `openai-live`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/anthropic-dark.svg"><img src="assets/vendors/anthropic.svg" width="20" height="20" alt=""></picture> | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `anthropic-messages` |
 | <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-generate`, `openai-chat`, `gemini-live`, `gemini-images`, `gemini-veo`, `gemini-decisions`, `gemini-embeddings` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |
@@ -41,7 +41,7 @@ Each vendor is in one of two tiers:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images` |
 | | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
-| <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings` |
+| <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
 | | Nace (Drex) | `nace` | `NACE_API_KEY` | `decisions` (at `/systemone`), `openai-decisions` |
 | <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions` |
@@ -50,10 +50,11 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses` |
-| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `decisions` |
+| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos` |
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
+| | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -80,14 +81,17 @@ Gemini's OpenAI-compatible endpoint
 EmpirioLabs AI's and OpenRouter's for `anthropic-messages`: `https://api.empiriolabs.ai`, `https://openrouter.ai/api`. The media
 formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `openai-videos`, `openai-embeddings`), `openrouter-videos` and
-`openai-responses` take the same base URL as `openai-chat`. Gemini's own formats, `gemini-generate`
+`openai-responses` take the same base URL as `openai-chat`; Together's
+`together-videos` takes its host alone, `https://api.together.xyz`. Gemini's own formats, `gemini-generate`
 (`generateContent` and `streamGenerateContent`, the model in the path),
 `gemini-images` (its image models' `generateContent`), `gemini-veo` and
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. Session formats take a `wss://` URL as their
-SDK does: `wss://api.openai.com/v1` for `openai-realtime`,
-`responses-ws` and `openai-live` (OpenAI's Live API, which its Live models
+SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
+at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
+at `?model=` too) and
+`openai-live` (OpenAI's Live API, which its Live models
 such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://generativelanguage.googleapis.com` for `gemini-live`,
 `wss://api.mistral.ai/v1` for `mistral-realtime`: Mistral's realtime
@@ -96,6 +100,10 @@ transcribes for an OpenAI Realtime or Gemini Live transcription as its own
 clients transcribe with theirs; `wss://api.phonic.ai/v1` for `phonic-sts`:
 Phonic's speech-to-speech, which its models such as `phonic-1` speak, the
 key a bearer token and the model in its `config`.
+A provider that still speaks OpenAI Realtime's beta protocol takes
+`openai-realtime-beta` and its own `wss://` base URL, such as
+`wss://api.stepfun.ai/v1`: the key a bearer token and the model at
+`?model=`, its clients speaking `openai-realtime`.
 Perplexity's Agent API speaks `openai-responses` alone, at
 `https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
 such as `openai/gpt-5.6-sol`.
@@ -109,6 +117,11 @@ runtime.
 Its InvokeModel formats, `bedrock-embeddings` (Cohere Embed and Titan) and
 `bedrock-images` (Stability AI's models and services), are called at the same
 base URL, `https://bedrock-runtime.<region>.amazonaws.com`.
+
+DashScope's own formats, `dashscope-speech` and `dashscope-transcriptions`
+(Alibaba Cloud Model Studio's speech synthesis and recognition, which its
+OpenAI-compatible endpoint does not serve), take its region's API with the
+version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 
 Respan's formats sit under one API, `https://api.respan.ai/api`:
 `openai-chat` and `openai-responses` at it, `anthropic-messages` at

@@ -18,17 +18,19 @@ use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, PhonicSts, ResponsesWs, SessionModel,
-    requested_model,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
+    SessionModel, requested_model,
 };
 
 /// The kinds of traffic this binary carries, as the admin API and routing
@@ -36,9 +38,6 @@ use respan_gateway_realtime_ws::{
 pub mod kind {
     pub const CHAT: &str = "chat";
     pub const REALTIME: &str = "realtime";
-    /// Responses over WebSocket: a session of many requests and replies,
-    /// which no other format speaks.
-    pub const RESPONSES: &str = "responses";
     pub const PASSTHROUGH: &str = "passthrough";
     pub const IMAGE: &str = "image";
     pub const TRANSCRIPTION: &str = "transcription";
@@ -248,7 +247,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::CHAT_COMPLETIONS, OpenAiChat).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
-        session(kind::RESPONSES, ResponsesWs, ResponsesWs::PATH, false),
+        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta).websocket(),
         session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),
@@ -277,10 +276,13 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
             Model::of(embedding::Input::model, embedding::Input::set_model),
         ),
         KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
+        KnownFormat::provider_only(kind::VIDEO, &TogetherVideos).job_ids("together_"),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,

@@ -116,7 +116,8 @@ impl ProviderIo {
     }
 
     /// Change the call after its format wrote it, before it is sent:
-    /// `request` edits its head, and may rewrite its whole body, which a
+    /// `request` edits its head, which carries the call's [`Extensions`]
+    /// while it does, and may rewrite its whole body, which a
     /// call of live input, whose body streams, cannot have. `Err` fails the
     /// call unsent. The format still reads its answer against the call as
     /// it wrote it.
@@ -212,7 +213,7 @@ impl ProviderIo {
                 body.full_bytes().cloned().unwrap_or_default(),
             );
             let (head, body) = match self.request {
-                Some(request) => changed(head, body, request)?,
+                Some(request) => changed(head, body, request, &self.extensions)?,
                 None => (head, body),
             };
             let response_hook = self.response;
@@ -330,8 +331,12 @@ fn changed(
     mut head: RequestHead,
     body: Body,
     request: RequestHook,
+    extensions: &Extensions,
 ) -> Result<(RequestHead, Body), Fault> {
-    let Some(rewrite) = request(&mut head)? else {
+    head.extensions.insert(extensions.clone());
+    let rewrite = request(&mut head);
+    head.extensions.remove::<Extensions>();
+    let Some(rewrite) = rewrite? else {
         return Ok((head, body));
     };
     let whole = body

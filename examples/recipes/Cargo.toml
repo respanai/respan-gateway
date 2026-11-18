@@ -135,9 +135,5 @@ name = "gemini_live"
 path = "gemini_live.rs"
 
 [[example]]
-name = "responses_ws"
-path = "responses_ws.rs"
-
-[[example]]
 name = "tool_guard"
 path = "tool_guard.rs"

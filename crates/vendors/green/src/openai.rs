@@ -15,7 +15,7 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
-use respan_gateway_realtime_ws::{OpenAiLive, OpenAiRealtime, ResponsesWs};
+use respan_gateway_realtime_ws::{OpenAiLive, OpenAiRealtime};
 use serde_json::{Map, Value};
 
 use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, Model, Rewrite, Vendor};
@@ -33,7 +33,6 @@ pub const VENDOR: Vendor = Vendor {
         (&Dialected::new(OpenAiChat, OpenAi), Some(BASE_URL)),
         (&OpenAiResponses, Some(BASE_URL)),
         (&OpenAiRealtime, Some(BASE_URL)),
-        (&ResponsesWs, Some(BASE_URL)),
         (&OpenAiLive, Some(BASE_URL)),
         (&OpenAiImages, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
