@@ -1,6 +1,6 @@
 //! EmpirioLabs AI: Chat Completions, Responses, Messages, the Gemini API,
-//! images, embeddings, speech, Realtime and decisions, as OpenAI, Anthropic,
-//! Google and Respan serve them, images and speech in its dialect.
+//! images, embeddings, speech, Realtime, decisions and videos, as OpenAI,
+//! Anthropic, Google and Respan serve them, images and speech in its dialect.
 
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::media_url;
@@ -15,6 +15,7 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
 use respan_gateway_media_http::{
     Natives,
     openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
@@ -33,6 +34,9 @@ const BASE_URL: &str = "https://api.empiriolabs.ai/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its videos are: the format adds the `/v1`.
+const VIDEOS_URL: &str = "https://api.empiriolabs.ai";
 
 /// Where its Realtime is.
 const REALTIME_URL: &str = "wss://api.empiriolabs.ai/v1";
@@ -63,6 +67,7 @@ pub const VENDOR: Vendor = Vendor {
             Some(REALTIME_URL),
         ),
         (&Decisions, Some(BASE_URL)),
+        (&EmpirioLabsVideos, Some(VIDEOS_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
