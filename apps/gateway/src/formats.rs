@@ -23,6 +23,7 @@ use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
@@ -278,6 +279,7 @@ pub fn formats() -> Vec<KnownFormat> {
             Model::of(embedding::Input::model, embedding::Input::set_model),
         ),
         KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
+        KnownFormat::provider_only(kind::VIDEO, &TogetherVideos).job_ids("together_"),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
