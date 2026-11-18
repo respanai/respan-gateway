@@ -128,6 +128,16 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
         native.with_fields::<Key<Self>>(edit)
     }
+    /// This format's native JSON, including opaque stream event strings.
+    fn native_value(native: &Native) -> Option<&Value> {
+        native.value::<Key<Self>>()
+    }
+
+    /// Wrap JSON as this format's native value.
+    fn with_native_value(value: Value) -> Native {
+        Native::json::<Key<Self>>(value)
+    }
+
     /// The keys of a conversation's `native` this format writes itself, from
     /// the conversation and the native together.
     const OWN: &'static [&'static str] = &[];
