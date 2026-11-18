@@ -5,6 +5,7 @@
       <img src="docs/assets/wordmark.png" alt="Respan Gateway" width="420">
     </picture>
   </a>
+  <h1>Respan Gateway: open-source LLM gateway</h1>
   <p><b>The universal adapter for AI.</b></p>
   <div>
     <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-brightgreen.svg?style=flat" alt="License: MIT OR Apache-2.0"></a>
@@ -17,7 +18,7 @@
 </div>
 <br>
 
-**Respan Gateway** is a single Rust binary that sits between your code and
+**Respan Gateway** is an open-source LLM gateway: a single Rust binary that sits between your code and
 every AI API. Point the SDK you already use at it, and it connects you to
 everything: chat models, images, video and voice from every major provider;
 tools for any model, from web search and memory to code sandboxes and any MCP
@@ -30,7 +31,10 @@ requests), with a live log of every call. **[▶ Watch the demo](https://www.you
 </div>
 <br>
 
-## Key features
+> [!TIP]
+> Starring the repo helps more developers find Respan Gateway.
+
+## LLM gateway features
 
 - **Any client, any model**<br>
   OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini API
@@ -42,7 +46,7 @@ requests), with a live log of every call. **[▶ Watch the demo](https://www.you
   Live, and back), plus images, speech, transcription, embeddings and video
   through OpenAI's or Gemini's APIs, to any vendor that has them.
 
-- **MCP tools for every model**<br>
+- **MCP gateway and tools for every model**<br>
   Put MCP servers or built-in tool vendors behind the gateway, from web search
   to code sandboxes. It runs their tools inside chat requests, so a plain chat
   call can use them, whatever the client or model.
@@ -109,7 +113,7 @@ The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
 - [Embed in Rust](docs/plugins.md#in-a-gateway-of-your-own) — Mount the gateway in your own Rust service.
 - [Docker](Dockerfile) — `docker run -p 8080:8080 -e OPENAI_API_KEY -e RESPAN_CLIENT_KEYS=<a key of yours> ghcr.io/respanai/respan-gateway` on any container host; listening beyond localhost, it needs a client key.
 
-## Performance
+## AI gateway performance vs LiteLLM, Bifrost and Portkey
 
 | | Respan Gateway | Bifrost | Portkey | LiteLLM (1 worker) |
 |---|---:|---:|---:|---:|
@@ -229,7 +233,7 @@ issues as [SECURITY.md](SECURITY.md) describes.
 [issues](https://github.com/respanai/respan-gateway/issues). Missing a vendor,
 format or feature? [Ask for it](https://github.com/respanai/respan-gateway/issues/new/choose).
 
-**Want it managed?** [Respan](https://respan.ai) runs the gateway for you, with
+**Want it managed?** [Respan](https://respan.ai/ai-gateway) runs the gateway for you, with
 dashboards, evals and span-02.
 
 <a href="https://github.com/respanai/respan-gateway/graphs/contributors">
