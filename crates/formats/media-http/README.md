@@ -175,6 +175,27 @@ generation, as a provider only, its key a bearer token. Its job ids start
 - Another format's operation, such as OpenAI's remix, delete, list or
   thumbnail, is refused, 400 `unsupported`, before any call.
 
+`together::TogetherVideos`, named `together-videos`: Together's video
+generation, as a provider only, its key a bearer token, its base URL the
+API's host with no version (`https://api.together.xyz`). Its job ids are
+Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /v2/videos` makes a job: the kind's `seconds` go as they are, as
+  text, its `size` as `width` and `height`, its reference image, a URL or a
+  data URL of its bytes, as the first of the media's `frame_images`, and its
+  `together-videos` native fields (`resolution`, `ratio`, `generate_audio`,
+  `negative_prompt`, `seed`) as they are.
+- `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
+  are the kind's, its error `{code, message}`; its model, size and length
+  are the job's; the `video_url` of its `outputs` is its video, and their
+  `cost`, what it charged, the job's native `cost`. It serves the video only
+  there, so `video::LocateContent` retrieves the job first and refuses one
+  not finished, 400 `video_not_ready`; the content is a `GET` of that URL's
+  path at the provider's host, relayed as it comes, so the key never goes
+  to another host.
+- Another format's operation, such as OpenAI's remix, delete, list or
+  thumbnail, is refused, 400 `unsupported`, before any call.
+
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
 `x-goog-api-key`.

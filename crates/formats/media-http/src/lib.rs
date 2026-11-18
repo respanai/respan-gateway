@@ -8,6 +8,7 @@
 //! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
 //!   on InvokeModel.
 //! - [`openrouter`]: OpenRouter's video generation.
+//! - [`together`]: Together's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -21,6 +22,7 @@ mod edge;
 pub mod gemini;
 pub mod openai;
 pub mod openrouter;
+pub mod together;
 
 /// What only format `F` of this crate reads of a value: no other crate can name it.
 struct Own<F>(std::marker::PhantomData<fn() -> F>);
@@ -45,3 +47,4 @@ impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}
 impl Natives for openrouter::OpenRouterVideos {}
+impl Natives for together::TogetherVideos {}
