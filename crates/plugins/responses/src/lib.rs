@@ -248,7 +248,8 @@ impl Plugin for Responses {
         let pending = Pending::default();
         pending.lock().instructed = original.is_some_and(|r| OpenAiResponses::instructed(r.body()));
         if let Ok(input) = cx.input::<Input>() {
-            let named = conversations::conversation_of(input)?;
+            let body = original.map(|r| r.body().as_ref()).unwrap_or_default();
+            let named = conversations::conversation_of(body)?;
             if let Some(id) = named {
                 if previous_response_id(input).is_some() {
                     return Err(conversations::both_named());
@@ -770,9 +771,16 @@ mod tests {
         let both = serde_json::json!({"model": "m", "input": "hi", "conversation": made["id"], "previous_response_id": "resp_1"});
         let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(both)).await;
         assert_eq!(status, http::StatusCode::BAD_REQUEST);
-        let unnamed = serde_json::json!({"model": "m", "input": "hi", "conversation": {"foo": 1}});
-        let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(unnamed)).await;
-        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        for unnamed in [
+            serde_json::json!({"foo": 1}),
+            serde_json::json!({}),
+            serde_json::json!([]),
+        ] {
+            let unnamed = serde_json::json!({"model": "m", "input": "hi", "conversation": unnamed});
+            let (status, _) =
+                send(&gateway, http::Method::POST, "/v1/responses", Some(unnamed)).await;
+            assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        }
         let unknown = serde_json::json!({"model": "m", "input": "hi", "conversation": "conv_none"});
         let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(unknown)).await;
         assert_eq!(status, http::StatusCode::NOT_FOUND);
