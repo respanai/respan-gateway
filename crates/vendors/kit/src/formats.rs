@@ -9,6 +9,7 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -48,6 +49,8 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &BedrockEmbeddings,
     &BedrockImages,
     &GeminiEmbeddings,
+    &DashScopeSpeech,
+    &DashScopeTranscriptions,
     &Decisions,
     &OpenAiDecisions::DEFAULT,
     &GeminiDecisions,

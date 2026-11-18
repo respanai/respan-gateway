@@ -18,6 +18,7 @@ use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -278,6 +279,8 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
             Model::of(embedding::Input::model, embedding::Input::set_model),
         ),
