@@ -126,6 +126,10 @@ DashScope's own formats, `dashscope-speech` and `dashscope-transcriptions`
 OpenAI-compatible endpoint does not serve), take its region's API with the
 version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 
+Z.ai's `zai-videos` (CogVideoX video generation on its international site)
+takes its API with the version, `https://api.z.ai/api/paas/v4`, the key a
+bearer token.
+
 Respan's formats sit under one API, `https://api.respan.ai/api`:
 `openai-chat` and `openai-responses` at it, `anthropic-messages` at
 `/anthropic`, `gemini-generate` at `/google/gemini/v1beta` (its key in

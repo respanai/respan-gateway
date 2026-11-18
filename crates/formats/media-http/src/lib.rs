@@ -11,6 +11,7 @@
 //! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis and
 //!   recognition, on DashScope's own API.
 //! - [`together`]: Together's video generation.
+//! - [`zai`]: Z.ai's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -26,6 +27,7 @@ pub mod gemini;
 pub mod openai;
 pub mod openrouter;
 pub mod together;
+pub mod zai;
 
 /// What only format `F` of this crate reads of a value: no other crate can name it.
 struct Own<F>(std::marker::PhantomData<fn() -> F>);
@@ -53,3 +55,4 @@ impl Natives for openrouter::OpenRouterVideos {}
 impl Natives for dashscope::DashScopeSpeech {}
 impl Natives for dashscope::DashScopeTranscriptions {}
 impl Natives for together::TogetherVideos {}
+impl Natives for zai::ZaiVideos {}

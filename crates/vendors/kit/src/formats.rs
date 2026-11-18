@@ -16,6 +16,7 @@ use respan_gateway_media_http::openai::{
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_media_http::together::TogetherVideos;
+use respan_gateway_media_http::zai::ZaiVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_realtime_ws::{
     GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
@@ -45,6 +46,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &GeminiVeo,
     &OpenRouterVideos,
     &TogetherVideos,
+    &ZaiVideos,
     &GeminiImages,
     &BedrockEmbeddings,
     &BedrockImages,
