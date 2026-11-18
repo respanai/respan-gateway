@@ -2016,13 +2016,18 @@ dependencies = [
  "axum",
  "bytes",
  "futures",
+ "http",
  "http-body-util",
  "hyper",
  "hyper-util",
  "respan-gateway-core",
  "respan-gateway-http",
  "respan-gateway-ws",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]
