@@ -117,6 +117,11 @@ Its InvokeModel formats, `bedrock-embeddings` (Cohere Embed and Titan) and
 `bedrock-images` (Stability AI's models and services), are called at the same
 base URL, `https://bedrock-runtime.<region>.amazonaws.com`.
 
+DashScope's own formats, `dashscope-speech` and `dashscope-transcriptions`
+(Alibaba Cloud Model Studio's speech synthesis and recognition, which its
+OpenAI-compatible endpoint does not serve), take its region's API with the
+version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
+
 Respan's formats sit under one API, `https://api.respan.ai/api`:
 `openai-chat` and `openai-responses` at it, `anthropic-messages` at
 `/anthropic`, `gemini-generate` at `/google/gemini/v1beta` (its key in

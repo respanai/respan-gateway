@@ -8,6 +8,8 @@
 //! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
 //!   on InvokeModel.
 //! - [`openrouter`]: OpenRouter's video generation.
+//! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis and
+//!   recognition, on DashScope's own API.
 //! - [`together`]: Together's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
@@ -18,6 +20,7 @@ use respan_gateway_http::native::Json;
 use serde_json::{Map, Value};
 
 pub mod bedrock;
+pub mod dashscope;
 mod edge;
 pub mod gemini;
 pub mod openai;
@@ -47,4 +50,6 @@ impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}
 impl Natives for openrouter::OpenRouterVideos {}
+impl Natives for dashscope::DashScopeSpeech {}
+impl Natives for dashscope::DashScopeTranscriptions {}
 impl Natives for together::TogetherVideos {}
