@@ -782,10 +782,18 @@ pub fn messages(items: &[Value]) -> Result<Vec<Message>, Fault> {
     Ok(read.messages)
 }
 
-/// The `conversation` a Responses request names, by its id or as
-/// `{"id": ..}`; `Err` as OpenAI refuses one named wrong.
-pub fn conversation_of(input: &Input) -> Result<Option<String>, Fault> {
-    let id = match OpenAiResponses::fields(&input.native).get("conversation") {
+/// The `conversation` a Responses request's `body` names, by its id or as
+/// `{"id": ..}`, reading no more of it than that field; `Err` as OpenAI
+/// refuses one named wrong. The body, as a request's `native` keeps no field
+/// that says nothing, such as `{}`.
+pub fn conversation_of(body: &[u8]) -> Result<Option<String>, Fault> {
+    #[derive(serde::Deserialize)]
+    struct Named {
+        #[serde(default)]
+        conversation: Value,
+    }
+    let named = serde_json::from_slice::<Named>(body).ok();
+    let id = match named.as_ref().map(|n| &n.conversation) {
         None | Some(Value::Null) => return Ok(None),
         Some(Value::String(id)) => (id, "conversation"),
         Some(Value::Object(c)) => match c.get("id") {
@@ -1215,9 +1223,8 @@ mod tests {
     #[test]
     fn a_conversation_named_wrong_is_refused() {
         let named = |conversation: Value| {
-            let mut input = Input::default();
-            input.native = OpenAiResponses::native(json!({ "conversation": conversation }));
-            match conversation_of(&input) {
+            let body = json!({ "model": "m", "conversation": conversation }).to_string();
+            match conversation_of(body.as_bytes()) {
                 Ok(id) => id.unwrap_or_default(),
                 Err(f) => {
                     let error = &OpenAiResponses::error_body(&f)["error"];
