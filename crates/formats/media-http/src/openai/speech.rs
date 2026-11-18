@@ -109,7 +109,9 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     Ok(input)
 }
 
-/// The call of `input`, in JSON.
+/// The call of `input`, in JSON. Audio of no format named is asked for as
+/// `mp3`, the spec's default and the type a client is answered with, as a
+/// compatible vendor may default to another.
 fn post(
     head: &mut RequestHead,
     input: &Input,
@@ -121,7 +123,8 @@ fn post(
     v.insert("input".into(), input.text.clone().into());
     set(&mut v, "voice", input.voice.clone());
     set(&mut v, "instructions", input.instructions.clone());
-    set(&mut v, "response_format", input.audio_format.clone());
+    let format = input.audio_format.as_deref().unwrap_or("mp3");
+    v.insert("response_format".into(), format.into());
     set(&mut v, "speed", input.speed);
     merge_missing(&mut v, input.native.fields::<Key>());
     if stream {
