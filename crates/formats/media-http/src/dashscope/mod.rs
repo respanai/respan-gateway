@@ -30,6 +30,14 @@ fn says_error(v: &Value) -> bool {
     v["code"].as_str().is_some_and(|c| !c.is_empty()) && v["output"].is_null()
 }
 
+/// The fault of a refused answer whose body may be an event stream, read
+/// from its event's data.
+fn refusal(answer: http::Response<Bytes>) -> Fault {
+    let (head, body) = answer.into_parts();
+    let body = respan_gateway_sse::event_data(&body).map_or(body, Bytes::from);
+    read_provider_error(http::Response::from_parts(head, body))
+}
+
 /// The fault of an error DashScope said in a success, `raw`: a 400 for a
 /// parameter it refused, else a 502.
 fn said_error(raw: Bytes, v: &Value) -> Fault {

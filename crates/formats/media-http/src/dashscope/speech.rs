@@ -2,11 +2,11 @@
 //! asked to stream: a format of the [`speech`](respan_gateway_media::speech)
 //! kind, [`DashScopeSpeech`].
 
-use super::{post_json, said_error, says_error};
-use crate::edge::{bind_provider, ended_events, sends};
+use super::{post_json, refusal, said_error, says_error};
+use crate::edge::{bind_provider_with, ended_events, sends};
 use respan_gateway_conversation::Usage;
 use respan_gateway_conversation_http::fields::{base64_bytes, invalid, merge_missing, set};
-use respan_gateway_core::{Connection, Fault, Format, Provider};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::HeaderValue;
 use respan_gateway_http::http::request::Parts as RequestHead;
@@ -34,9 +34,11 @@ const FORMATS: [&str; 4] = ["mp3", "wav", "pcm", "opus"];
 ///
 /// Each event's base64 `output.audio.data` decodes into an
 /// [`Output::Audio`] chunk, in order; the event that ends it
-/// (`finish_reason: "stop"`) holds the usage, its tokens as [`Output::Usage`],
-/// and a stream cut before it fails `truncated`. An error event is the
-/// fault it says, a 400 for a parameter refused.
+/// (`finish_reason: "stop"`) holds the usage, its tokens as [`Output::Usage`]
+/// and the rest, such as the `characters` some models bill, as an
+/// [`Output::Native`] `{"usage": {..}}`, and a stream cut before it fails
+/// `truncated`. An error event, or a refusal written as one, is the fault
+/// it says, a 400 for a parameter refused.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DashScopeSpeech;
 
@@ -62,7 +64,7 @@ impl Format<ProviderIo, Output, Input> for DashScopeSpeech {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, post, |_, _| {
+        Ok(bind_provider_with(io, NAME, refusal, post, |_, _| {
             Some(ended_events(stream_event))
         }))
     }
@@ -120,6 +122,14 @@ fn stream_event(done: &mut bool, raw: &[u8], out: &mut Vec<Output>) -> Result<()
         let usage = Usage::new(count("input_tokens"), count("output_tokens"));
         if !usage.is_empty() {
             out.push(Output::Usage(usage));
+        }
+        let mut extras = v["usage"].as_object().cloned().unwrap_or_default();
+        for key in ["input_tokens", "output_tokens", "total_tokens"] {
+            extras.remove(key);
+        }
+        if !extras.is_empty() {
+            let extras = serde_json::json!({ "usage": extras });
+            out.push(Output::Native(Native::json::<Key>(extras)));
         }
     }
     Ok(())

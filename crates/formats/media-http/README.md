@@ -266,9 +266,11 @@ its key a bearer token.
   The text, voice, `instructions` (as `instruction`), speed (as `rate`) and
   audio format, `mp3` unless asked, are its `input`. Each event's base64
   `output.audio.data` is the next chunk of audio; the last event's
-  (`finish_reason: "stop"`) usage is its tokens. A request without a voice,
-  or of a format but `mp3`, `wav`, `pcm` and `opus`, is refused, 400, before
-  the call; a parameter DashScope refuses in the stream is a 400.
+  (`finish_reason: "stop"`) usage is its tokens, the rest of it, such as
+  the `characters` some models bill, a native `{"usage": {..}}`. A request
+  without a voice, or of a format but `mp3`, `wav`, `pcm` and `opus`, is
+  refused, 400, before the call; a parameter DashScope refuses, in the
+  stream or as a refusal written as an event, is a 400.
 - Recognition of a whole file (`qwen-audio-3.*-asr-flash`, `qwen3-asr-flash`,
   `fun-asr-flash-*`) is a `POST` to
   `/services/aigc/multimodal-generation/generation`, a user message of the
