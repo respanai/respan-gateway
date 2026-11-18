@@ -23,7 +23,6 @@ respan-gateway-media.workspace = true
 respan-gateway-media-http.workspace = true
 respan-gateway-realtime.workspace = true
 respan-gateway-realtime-ws.workspace = true
-respan-gateway-sse.workspace = true
 respan-gateway-vendor-kit.workspace = true
 serde_json.workspace = true
 

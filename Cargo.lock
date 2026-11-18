@@ -2150,7 +2150,6 @@ dependencies = [
  "respan-gateway-media-http",
  "respan-gateway-realtime",
  "respan-gateway-realtime-ws",
- "respan-gateway-sse",
  "respan-gateway-vendor-kit",
  "serde_json",
  "tokio",
