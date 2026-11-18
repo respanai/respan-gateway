@@ -41,7 +41,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   `text/plain`; a client that asked for text a provider gave as JSON gets
   the transcript's text, or SubRip or WebVTT of its segments.
 - Audio is relayed chunk by chunk as it comes, the provider read no faster
-  than the client takes it, as the content type its `response_format` names;
+  than the client takes it. Speech asked with no `response_format` is asked
+  for as `mp3`; its raw audio is labelled as its first bytes show (WAV, MP3,
+  FLAC, AAC), else as its `response_format` names, and PCM always as asked;
   a video's content likewise, as its variant's: `video/mp4`, `image/webp` for
   a thumbnail, `image/jpeg` for a spritesheet.
 - A video's `seconds` is a string in OpenAI's API, as it is written; a

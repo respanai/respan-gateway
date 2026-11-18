@@ -199,22 +199,13 @@ fn raw_audio(event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
     Ok(())
 }
 
-/// The type of audio whose first bytes are `bytes`, where they say it
-/// surely: a compatible vendor may answer another format than asked.
-fn heard_type(bytes: &[u8]) -> Option<&'static str> {
-    let at = |from: usize, magic: &[u8]| bytes.get(from..from + magic.len()) == Some(magic);
-    let sync = |mask: u8, value: u8| {
-        bytes.first() == Some(&0xFF) && bytes.get(1).is_some_and(|b| b & mask == value)
-    };
-    Some(match () {
-        _ if at(0, b"RIFF") && at(8, b"WAVE") => "audio/wav",
-        _ if at(0, b"ID3") => "audio/mpeg",
-        _ if at(0, b"fLaC") => "audio/flac",
-        // ADTS: its frame sync, then layer 0.
-        _ if sync(0xF6, 0xF0) => "audio/aac",
-        _ if sync(0xE0, 0xE0) => "audio/mpeg",
-        _ => return None,
-    })
+/// The type of audio whose first bytes are `bytes`, of those a speech
+/// endpoint answers, as a compatible vendor may answer another format than
+/// asked. Raw PCM has no header, so audio asked as PCM is not read.
+fn heard_type(named: &str, bytes: &[u8]) -> Option<&'static str> {
+    let heard = super::sniff(bytes);
+    let speech = |t: &&str| matches!(*t, "audio/wav" | "audio/mpeg" | "audio/flac" | "audio/aac");
+    heard.filter(speech).filter(|_| named != "audio/pcm")
 }
 
 /// A response of raw audio whose head waits for its first audio, to be
@@ -230,7 +221,7 @@ impl Labelled {
     /// Writes the head, labelled by `audio`, the first audio if any.
     fn open(&mut self, audio: Option<&[u8]>) {
         if let Some((reply, mut head, named)) = self.unopened.take() {
-            let label = audio.and_then(heard_type).unwrap_or(named);
+            let label = audio.and_then(|a| heard_type(named, a)).unwrap_or(named);
             super::content_type(&mut head, label);
             self.sink = Some(reply.write(head, Box::new(raw_audio)));
         }
