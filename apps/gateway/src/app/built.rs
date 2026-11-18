@@ -259,18 +259,8 @@ fn with_plugins(
         Some(closer) => gateway.plugin(closer.plugin()),
         None => gateway,
     };
-    let gateway = gateway
-        .plugin(Recorder::new(log.clone(), formats, names.clone()))
-        .plugin(routing(plan, formats, tool_loop.is_some()))
-        .plugin(mcp_router);
-    let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
-    // A provider without a key of its own gets the client's.
-    let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
-    let keyless = keyless.flat_map(|u| u.entries.iter().map(|e| e.internal.clone()));
-    // An MCP server gets a client's credentials only if it says so.
-    let forwarded = plan.mcp.iter().filter(|s| s.forward_auth);
-    let forwarded = forwarded.map(|s| s.name.clone());
-    let gateway = gateway.plugin(ClientCredentials::new(keyless.chain(forwarded)));
+    let gateway = gateway.plugin(Recorder::new(log.clone(), formats, names.clone()));
+    // It answers the Conversations API itself, which names no model to route.
     let responses = &config.plugins.responses;
     let gateway = match responses.enabled {
         true => {
@@ -281,6 +271,17 @@ fn with_plugins(
         }
         false => gateway,
     };
+    let gateway = gateway
+        .plugin(routing(plan, formats, tool_loop.is_some()))
+        .plugin(mcp_router);
+    let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
+    // A provider without a key of its own gets the client's.
+    let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
+    let keyless = keyless.flat_map(|u| u.entries.iter().map(|e| e.internal.clone()));
+    // An MCP server gets a client's credentials only if it says so.
+    let forwarded = plan.mcp.iter().filter(|s| s.forward_auth);
+    let forwarded = forwarded.map(|s| s.name.clone());
+    let gateway = gateway.plugin(ClientCredentials::new(keyless.chain(forwarded)));
     // A relay gives its vendor's response heads and error bodies back.
     let mut gateway = match config.relay {
         true => gateway.plugin(Relay),
@@ -402,6 +403,8 @@ fn routes(
         Some(local) => router.layer(from_fn_with_state(local, auth::local_only)),
         None => router,
     };
+    // Each turn of a Responses socket is a request through all of the above.
+    let router = router.layer(respan_gateway_serve::ResponsesWebSocket);
     // Outermost: a preflight carries no key, and no host check applies.
     let router = match cors {
         Some(cors) => router.layer(from_fn_with_state(cors, auth::cors)),

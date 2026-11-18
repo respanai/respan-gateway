@@ -2,7 +2,6 @@
 //! images, embeddings, speech, Realtime and decisions, as OpenAI, Anthropic,
 //! Google and Respan serve them, images and speech in its dialect.
 
-use base64::Engine as _;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
@@ -10,12 +9,8 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Extensions, Fault, Filter};
 use respan_gateway_decision_http::Decisions;
-use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
+use respan_gateway_http::http::header::{ACCEPT, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::http::response::Parts as ResponseHead;
-use respan_gateway_http::path::set_path;
 use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
 use respan_gateway_media_http::{
@@ -24,7 +19,6 @@ use respan_gateway_media_http::{
 };
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{OpenAiRealtime, SessionModel, requested_model};
-use respan_gateway_sse as sse;
 use serde_json::Value;
 
 use respan_gateway_vendor_kit::{
@@ -115,13 +109,11 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
 }
 
 /// EmpirioLabs AI's speech, as it departs from OpenAI's: its
-/// `/audio/speech` answers the audio at a URL of its storage, so it is
-/// called at `/audio/speech:stream`, which answers events of the audio.
-/// Their `audio.chunk`s are read, whole, as the audio, an `audio.error` as
-/// a fault, and a stream without its `audio.done` fails `truncated`. It is
-/// not asked for OpenAI's events (`stream_format`); a client that asked
-/// still gets a stream, framed at the client edge. It streams at no
-/// `speed`, which fails `bad_request` before sending.
+/// `/audio/speech` answers the audio at a URL of its storage unless the
+/// call accepts audio, so it is asked for the audio's bytes
+/// (`Accept: application/octet-stream`). It is not asked for OpenAI's
+/// events (`stream_format`); a client that asked still gets a stream,
+/// framed at the client edge.
 #[derive(Debug, Clone, Copy)]
 pub struct EmpirioLabsSpeech;
 
@@ -129,61 +121,11 @@ impl Dialect for EmpirioLabsSpeech {
     type Input = speech::Input;
     type Output = speech::Output;
 
-    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
-        Some(Box::new(taken_speech))
-    }
-
     fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        set_path(head, "/audio/speech:stream")?;
+        let audio = HeaderValue::from_static("application/octet-stream");
+        head.headers.insert(ACCEPT, audio);
         Ok(Some(Box::new(|body| crate::without(body, "stream_format"))))
     }
-
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        if !head.status.is_success() || !content::is_stream(head) {
-            return None;
-        }
-        let audio = HeaderValue::from_static("application/octet-stream");
-        head.headers.insert(CONTENT_TYPE, audio);
-        Some(Box::new(streamed_audio))
-    }
-}
-
-/// `input` as it streams speech: at no `speed`.
-fn taken_speech(input: &mut speech::Input) -> Result<(), Fault> {
-    if input.speed.is_some() {
-        return Err(Fault::bad_request(
-            "EmpirioLabs AI streams no speech at a 'speed'",
-        ));
-    }
-    Ok(())
-}
-
-/// The audio of a whole stream of its speech's events.
-fn streamed_audio(raw: Bytes) -> Result<Bytes, Fault> {
-    let unreadable = |what| Fault::upstream(format!("EmpirioLabs AI's speech {what}"));
-    let mut parser = sse::Parser::new(None);
-    let mut events = parser.push(raw)?;
-    events.extend(parser.finish());
-    let mut audio = Vec::new();
-    for v in events.iter().filter_map(|e| sse::event_json(e)) {
-        match v["type"].as_str() {
-            Some("audio.chunk") => {
-                let chunk = v["audio_b64"]
-                    .as_str()
-                    .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok());
-                audio.extend(chunk.ok_or_else(|| unreadable("sent audio not in base64"))?);
-            }
-            Some("audio.done") => return Ok(Bytes::from(audio)),
-            Some("audio.error") => {
-                let error = &v["error"];
-                let message = error["message"].as_str().or_else(|| error.as_str());
-                let message = message.or_else(|| v["message"].as_str());
-                return Err(unreadable(message.unwrap_or("failed")));
-            }
-            _ => {}
-        }
-    }
-    Err(Fault::truncated())
 }
 
 /// Its Realtime: a transcription session names its model at `?model=`
@@ -238,7 +180,7 @@ const KINDS: &[(&str, &str, &str)] = &[
     ("text", "POST /v1/chat/completions", "chat"),
     ("embedding", "POST /v1/embeddings", "embedding"),
     ("image", "POST /v1/images/generations", "image"),
-    ("audio", "POST /v1/audio/speech:stream", "speech"),
+    ("audio", "POST /v1/audio/speech", "speech"),
     ("decision", "POST /v1/decisions", "decision"),
 ];
 
@@ -251,9 +193,8 @@ const REALTIME: &str = "WEBSOCKET /v1/realtime";
 /// The models of its list, each of the kind its category's endpoint is,
 /// else a chat if it is served at Chat Completions, else a realtime one if
 /// it is served at Realtime; one served at none, such as a video or
-/// transcription model, which it answers as jobs, a reranker, a music model
-/// or a speech model that does not stream, is none the gateway serves, and
-/// is left out.
+/// transcription model, which it answers as jobs, a reranker or a music
+/// model, is none the gateway serves, and is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -323,6 +264,7 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::bytes::Bytes;
     use serde_json::json;
 
     fn entry(id: &str, category: &str, endpoints: &[&str]) -> Value {
@@ -359,8 +301,9 @@ mod tests {
                 said("qwen-audio-3-0-tts", "speech"),
                 said("aplomb-1", "decision"),
                 said("perplexity-sonar", "chat"),
+                said("glm-tts", "speech"),
             ],
-            "video, transcription jobs, speech that does not stream and a reranker are none it serves"
+            "video, transcription jobs and a reranker are none it serves"
         );
     }
 
@@ -448,46 +391,15 @@ mod tests {
         assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 
-    fn answer(status: u16, content_type: &str) -> ResponseHead {
-        let answer = http::Response::builder()
-            .status(status)
-            .header("content-type", content_type);
-        answer.body(()).expect("head").into_parts().0
-    }
-
     #[test]
-    fn speech_is_asked_for_as_a_stream_and_read_whole() {
+    fn speech_is_asked_for_as_audio_at_its_endpoint() {
         let mut head = http::Request::new(()).into_parts().0;
         head.uri = http::Uri::from_static("/audio/speech");
         let rewrite = EmpirioLabsSpeech.request(&mut head).expect("a call");
-        assert_eq!(head.uri.path(), "/audio/speech:stream");
-        let call = Bytes::from_static(br#"{"input":"Hi.","stream_format":"sse"}"#);
+        assert_eq!(head.uri.path(), "/audio/speech");
+        assert_eq!(head.headers[ACCEPT], "application/octet-stream");
+        let call = Bytes::from_static(br#"{"input":"Hi.","speed":1.5,"stream_format":"sse"}"#);
         let call = rewrite.expect("a rewrite")(call).expect("a call");
-        assert_eq!(call, &br#"{"input":"Hi."}"#[..]);
-
-        let mut events = answer(200, "text/event-stream");
-        let read = EmpirioLabsSpeech.response(&head, &mut events);
-        assert_eq!(events.headers[CONTENT_TYPE], "application/octet-stream");
-        let stream = "data: {\"type\": \"audio.chunk\", \"seq\": 0, \"audio_b64\": \"SUQz\"}\n\n\
-                      data: {\"type\": \"audio.chunk\", \"seq\": 1, \"audio_b64\": \"AAE=\"}\n\n\
-                      data: {\"type\":\"audio.done\",\"audio_url\":\"https://media.test/a.mp3\"}\n\n\
-                      data: [DONE]\n\n";
-        let audio = read.expect("a rewrite")(Bytes::from_static(stream.as_bytes()));
-        assert_eq!(audio.expect("audio"), Bytes::from_static(b"ID3\0\x01"));
-        let refused = EmpirioLabsSpeech.response(&head, &mut answer(400, "text/event-stream"));
-        assert!(refused.is_none(), "a refusal is read as it is");
-    }
-
-    #[test]
-    fn speech_cut_or_failed_fails() {
-        let cut = "data: {\"type\": \"audio.chunk\", \"audio_b64\": \"SUQz\"}\n\n";
-        assert!(streamed_audio(Bytes::from_static(cut.as_bytes())).is_err());
-        let failed =
-            "data: {\"type\": \"audio.error\", \"error\": {\"message\": \"overloaded\"}}\n\n";
-        let fault = streamed_audio(Bytes::from_static(failed.as_bytes())).err();
-        assert!(fault.is_some_and(|f| f.message().contains("overloaded")));
-        let mut fast = speech::Input::new("Hi.");
-        fast.speed = Some(1.5);
-        assert!(taken_speech(&mut fast).is_err());
+        assert_eq!(call, &br#"{"input":"Hi.","speed":1.5}"#[..]);
     }
 }

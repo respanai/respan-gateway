@@ -15,10 +15,10 @@ use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_realtime_ws::{
     GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
-    ResponsesWs,
 };
 
 use crate::{Upstream, Vendor};
@@ -33,7 +33,6 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &BedrockConverse,
     &OpenAiRealtime,
     &OpenAiRealtimeBeta,
-    &ResponsesWs,
     &OpenAiLive,
     &GeminiLive,
     &MistralRealtime,
@@ -45,6 +44,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiVideos,
     &GeminiVeo,
     &OpenRouterVideos,
+    &TogetherVideos,
     &GeminiImages,
     &BedrockEmbeddings,
     &BedrockImages,

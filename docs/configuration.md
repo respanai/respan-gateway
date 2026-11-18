@@ -186,7 +186,14 @@ A Responses client's `previous_response_id` works with every provider, not
 only OpenAI. When a translated provider keeps no state, the gateway keeps
 it in memory for `keep` (default 1 hour). A Chat client's reasoning between
 tool calls is kept the same way when OpenAI's Responses API serves it.
-`[plugins.responses] enabled = false` turns this off.
+The gateway also serves OpenAI's Conversations API (`/v1/conversations`),
+from conversations it keeps in memory for `keep` after each was last read,
+and a Responses request naming a `conversation` is sent its items with
+every provider. `[plugins.responses] enabled = false` turns this off.
+
+A Responses client may also connect over WebSocket (OpenAI's WebSocket
+mode, at `/v1/responses`): each `response.create` it sends is a streamed
+`POST /v1/responses` of its own, to any provider, as above.
 
 ## Tools
 

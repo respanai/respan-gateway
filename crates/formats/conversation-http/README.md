@@ -92,7 +92,8 @@ token limit.
 ending in `/responses`; its provider base URL includes the version, as
 `openai-chat`'s does. It is plain HTTP, a `POST /v1/responses` answered whole
 or, with `stream: true`, as named SSE events; Responses over WebSocket is
-`responses-ws`, a format of its own kind.
+its turns, each such a `POST`, by `respan-gateway-serve`'s
+`ResponsesWebSocket`.
 
 `instructions` is a leading system message and `input` the messages after it;
 an assistant's consecutive messages, function calls and reasoning items are one
@@ -105,6 +106,15 @@ finish. A stream is written as the documented sequence (`response.created`,
 response whole), one item at a time, with the ids, `output_index`,
 `content_index` and `sequence_number` the kind has no place for made when
 another provider answered.
+
+Its Conversations API (`responses::conversations`) is the format's too: its
+routes (`/conversations`, a conversation, its items and an item, under any
+prefix) are read as `Operation`s, and what they answer, which calls no model,
+is written whole from the one output its keeper answers with (`answer`), such
+as the responses plugin's; with none, the request is refused `not_found`. The
+module writes a conversation's items as the API lists them, from what a client
+adds, a request's messages or a response's output, and reads them back as
+messages.
 
 What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
