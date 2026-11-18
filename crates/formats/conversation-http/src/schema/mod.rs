@@ -60,11 +60,11 @@ struct Key<F>(std::marker::PhantomData<fn() -> F>);
 pub(crate) trait Own: Schema {
     /// `value` as this format's own: none if it says nothing.
     fn native(value: impl Into<Value>) -> Native {
-        Native::json::<Key<Self>>(value)
+        Self::with_native_value(value.into())
     }
     /// The value of this format's own in `native`, if it holds one.
     fn value(native: &Native) -> Option<&Value> {
-        native.value::<Key<Self>>()
+        Self::native_value(native)
     }
 }
 impl<F: Schema> Own for F {}
