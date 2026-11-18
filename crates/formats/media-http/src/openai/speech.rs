@@ -2,22 +2,26 @@
 //! audio's bytes or, if asked (`stream_format: "sse"`), a stream of events.
 
 use super::{
-    Fields, Form, as_usage_extras, b64, bind_client, event_json, invalid, json_bytes,
-    merge_missing, missing, post_to, read_usage, sends, set, sse_event, streams, take_number,
-    take_string, unb64, unreadable, usage_extras, write_usage,
+    Fields, Form, as_usage_extras, b64, event_json, invalid, json_bytes, merge_missing, missing,
+    post_to, read_usage, respond_client, sends, set, sse_event, streams, take_number, take_string,
+    unb64, unreadable, usage_extras, write_usage,
 };
 use crate::edge::{bind_provider, ended_events};
+use futures::{Sink, ready};
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format, Native};
+use respan_gateway_core::{Connection, EventSink, Fault, Format, Native};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::content;
 use respan_gateway_http::http::{self, Method, request::Parts as RequestHead};
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{ClientIo, Decoder, Encoder, ProviderIo, native::Json};
+use respan_gateway_http::{ClientIo, Decoder, Encoder, ProviderIo, Reply, native::Json};
 use respan_gateway_http::{Connect, Upstream};
 use respan_gateway_media::speech::{Input, Output};
 use serde_json::{Map, Value};
+use std::collections::VecDeque;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
 const NAME: &str = "openai-speech";
 
@@ -32,8 +36,8 @@ const SPEECH: &str = "/audio/speech";
 /// A stream of events decodes into the same chunks, from each
 /// `speech.audio.delta`, and the usage of its `speech.audio.done`, failing
 /// `truncated` without one. A client is answered in the framing it asked
-/// for: the audio's bytes, of the type its `response_format` names, or a
-/// stream of events.
+/// for: the audio's bytes, labelled as their first bytes say, else as its
+/// `response_format` names, or a stream of events.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiSpeech;
 
@@ -53,7 +57,7 @@ impl Format<ClientIo, Input, Output> for OpenAiSpeech {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        Ok(bind_client(io, decode_request, response_encoder))
+        Ok(respond_client(io, decode_request, respond))
     }
 }
 
@@ -109,7 +113,9 @@ fn decode_request(_: &RequestHead, form: &Form) -> Result<Input, Fault> {
     Ok(input)
 }
 
-/// The call of `input`, in JSON.
+/// The call of `input`, in JSON. Audio of no format named is asked for as
+/// `mp3`, the spec's default and the type a client is answered with, as a
+/// compatible vendor may default to another.
 fn post(
     head: &mut RequestHead,
     input: &Input,
@@ -121,7 +127,8 @@ fn post(
     v.insert("input".into(), input.text.clone().into());
     set(&mut v, "voice", input.voice.clone());
     set(&mut v, "instructions", input.instructions.clone());
-    set(&mut v, "response_format", input.audio_format.clone());
+    let format = input.audio_format.as_deref().unwrap_or("mp3");
+    v.insert("response_format".into(), format.into());
     set(&mut v, "speed", input.speed);
     merge_missing(&mut v, input.native.fields::<Key>());
     if stream {
@@ -166,26 +173,125 @@ fn stream_event(done: &mut bool, raw: &[u8], out: &mut Vec<Output>) -> Result<()
     Ok(())
 }
 
-/// The encoder of a response to a client's `request`, in the framing it
-/// asked for.
-fn response_encoder(
-    _request: &http::Request<Bytes>,
-    asked: &Map<String, Value>,
-    head: &mut http::response::Parts,
-) -> Box<dyn Encoder<Output>> {
+/// The sink of a response to a client that `asked` so, in the framing it
+/// asked for: a stream of events, or the audio's bytes, labelled as its
+/// first bytes say ([`Labelled`]).
+fn respond(reply: Reply, asked: &Map<String, Value>) -> EventSink<Output> {
+    let mut head = reply.head();
     if asks_events(asked) {
-        super::content_type(head, "text/event-stream");
-        return Box::new(StreamEncoder::default());
+        super::content_type(&mut head, "text/event-stream");
+        return reply.write(head, Box::new(StreamEncoder::default()));
     }
     let format = asked.get("response_format").and_then(Value::as_str);
-    super::content_type(head, audio_type(format.unwrap_or("mp3")));
-    Box::new(|event: &Output, out: &mut Vec<Bytes>| {
-        // Raw audio has no place for anything else.
-        if let Output::Audio(bytes) = event {
-            out.push(bytes.clone());
-        }
-        Ok(())
+    let named = audio_type(format.unwrap_or("mp3"));
+    EventSink::new(Labelled {
+        unopened: Some((reply, head, named)),
+        queued: VecDeque::new(),
+        sink: None,
     })
+}
+
+/// The audio's bytes, and nothing else, which raw audio has no place for.
+fn raw_audio(event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+    if let Output::Audio(bytes) = event {
+        out.push(bytes.clone());
+    }
+    Ok(())
+}
+
+/// The type of audio whose first bytes are `bytes`, where they say it
+/// surely: a compatible vendor may answer another format than asked.
+fn heard_type(bytes: &[u8]) -> Option<&'static str> {
+    let at = |from: usize, magic: &[u8]| bytes.get(from..from + magic.len()) == Some(magic);
+    let sync = |mask: u8, value: u8| {
+        bytes.first() == Some(&0xFF) && bytes.get(1).is_some_and(|b| b & mask == value)
+    };
+    Some(match () {
+        _ if at(0, b"RIFF") && at(8, b"WAVE") => "audio/wav",
+        _ if at(0, b"ID3") => "audio/mpeg",
+        _ if at(0, b"fLaC") => "audio/flac",
+        // ADTS: its frame sync, then layer 0.
+        _ if sync(0xF6, 0xF0) => "audio/aac",
+        _ if sync(0xE0, 0xE0) => "audio/mpeg",
+        _ => return None,
+    })
+}
+
+/// A response of raw audio whose head waits for its first audio, to be
+/// labelled as [`heard_type`] says, else as the client `named` it. What
+/// comes before is queued; a response with none is labelled as named.
+struct Labelled {
+    unopened: Option<(Reply, http::response::Parts, &'static str)>,
+    queued: VecDeque<Result<Output, Fault>>,
+    sink: Option<EventSink<Output>>,
+}
+
+impl Labelled {
+    /// Writes the head, labelled by `audio`, the first audio if any.
+    fn open(&mut self, audio: Option<&[u8]>) {
+        if let Some((reply, mut head, named)) = self.unopened.take() {
+            let label = audio.and_then(heard_type).unwrap_or(named);
+            super::content_type(&mut head, label);
+            self.sink = Some(reply.write(head, Box::new(raw_audio)));
+        }
+    }
+
+    /// Sends what is queued, once the response is open.
+    fn poll_send(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Fault>> {
+        let Some(sink) = &mut self.sink else {
+            return Poll::Ready(Ok(()));
+        };
+        while !self.queued.is_empty() {
+            ready!(Pin::new(&mut *sink).poll_ready(cx))?;
+            if let Some(item) = self.queued.pop_front() {
+                Pin::new(&mut *sink).start_send(item)?;
+            }
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl Sink<Result<Output, Fault>> for Labelled {
+    type Error = Fault;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Fault>> {
+        let this = self.get_mut();
+        ready!(this.poll_send(cx))?;
+        match &mut this.sink {
+            Some(sink) => Pin::new(sink).poll_ready(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Result<Output, Fault>) -> Result<(), Fault> {
+        let this = self.get_mut();
+        match &item {
+            Ok(Output::Audio(bytes)) if !bytes.is_empty() => this.open(Some(bytes)),
+            Ok(_) => {}
+            Err(_) => this.open(None),
+        }
+        this.queued.push_back(item);
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Fault>> {
+        let this = self.get_mut();
+        ready!(this.poll_send(cx))?;
+        match &mut this.sink {
+            Some(sink) => Pin::new(sink).poll_flush(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Fault>> {
+        let this = self.get_mut();
+        this.open(None);
+        ready!(this.poll_send(cx))?;
+        match &mut this.sink {
+            Some(sink) => Pin::new(sink).poll_close(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
 }
 
 /// The content type of audio of file format `format`.
