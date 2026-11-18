@@ -26,8 +26,19 @@ A Responses request naming a `conversation` (its id, or `{"id": ..}`) is
 sent its items before its input, whatever the provider, OpenAI's own
 included, which is sent the items rather than the id and asked for its
 reasoning encrypted; once its response ended well, its input and output
-items are added to the conversation, whatever its `store`. A request
-naming a `previous_response_id` too is refused, as OpenAI refuses it.
+items are added to the conversation, unless it says `store: false`, which
+reads the conversation and adds nothing, as OpenAI's does. A request naming
+a `previous_response_id` too is refused, as OpenAI refuses it. What it is
+told is read, and refused, as OpenAI reads it: each item's id is the
+gateway's, metadata is merged, and reasoning's encrypted content is listed
+only when included.
+
+Where it is not OpenAI's: responses of one conversation that run at once all
+succeed, each adding its items as it ends (OpenAI refuses the later with
+`conversation_locked`); a route asked with another method is a 404, not a
+405; and `Memory`, made with the gateway it serves, is not kept across a
+reload of the binary's config (SIGHUP), which builds anew, its turns as its
+conversations.
 Conversations are kept in `Conversations`, `Memory` by default, for `keep`
 after each was last read; a deployment of several gateways gives them one
 they share (`Responses::with_conversations`), each change a call of its own

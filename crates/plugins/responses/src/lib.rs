@@ -114,18 +114,23 @@ impl Responses {
         }
         let id = operation.conversation().unwrap_or_default().to_owned();
         let kept = joined(store, &id, scope.as_deref()).await?;
-        let gone = || Fault::not_found(format!("no conversation '{id}'"));
-        let no_item =
-            |item: &str| Fault::not_found(format!("no item '{item}' in conversation '{id}'"));
+        let gone = || conversations::no_conversation(&id);
         Ok(match operation {
             Operation::Retrieve { .. } => {
                 conversations::conversation(&id, kept.created_at, &kept.metadata)
             }
             Operation::Update { metadata, .. } => {
-                if !store.update(&id, metadata.clone()).await? {
+                let mut merged = kept.metadata.clone();
+                merged.extend(metadata.clone());
+                let (most, _, _) = conversations::METADATA;
+                if merged.len() > most {
+                    let had = kept.metadata.len();
+                    return Err(conversations::too_much_metadata(merged.len(), had));
+                }
+                if !store.update(&id, metadata).await? {
                     return Err(gone());
                 }
-                conversations::conversation(&id, kept.created_at, &metadata)
+                conversations::conversation(&id, kept.created_at, &merged)
             }
             Operation::Delete { .. } => {
                 if !store.delete(&id).await? {
@@ -133,20 +138,25 @@ impl Responses {
                 }
                 conversations::deleted(&id)
             }
-            Operation::List { page, .. } => conversations::page_of(&kept.items, &page)
-                .ok_or_else(|| no_item(page.after.as_deref().unwrap_or_default()))?,
-            Operation::Add { items, .. } => {
+            Operation::List { page, .. } => conversations::page_of(&kept.items, &page)?,
+            Operation::Add {
+                items, encrypted, ..
+            } => {
                 if !store.append(&id, items.clone()).await? {
                     return Err(gone());
                 }
-                conversations::item_list(items, false)
+                conversations::item_list(conversations::shown(items, encrypted), false)
             }
-            Operation::Item { item, .. } => (kept.items.into_iter())
-                .find(|i| i["id"] == item.as_str())
-                .ok_or_else(|| no_item(&item))?,
+            Operation::Item {
+                item, encrypted, ..
+            } => {
+                let found = kept.items.into_iter().find(|i| i["id"] == item.as_str());
+                let found = found.ok_or_else(|| conversations::no_item(&item, true))?;
+                conversations::shown(vec![found], encrypted).remove(0)
+            }
             Operation::DeleteItem { item, .. } => {
                 if !store.remove(&id, &item).await? {
-                    return Err(no_item(&item));
+                    return Err(conversations::no_item(&item, false));
                 }
                 conversations::conversation(&id, kept.created_at, &kept.metadata)
             }
@@ -159,7 +169,7 @@ impl Responses {
 async fn joined(store: &dyn Conversations, id: &str, scope: Option<&str>) -> Result<Conversation> {
     let kept = store.get(id).await?;
     let kept = kept.filter(|c| c.scope.as_deref() == scope);
-    kept.ok_or_else(|| Fault::not_found(format!("no conversation '{id}'")))
+    kept.ok_or_else(|| conversations::no_conversation(id))
 }
 
 /// Now, in seconds since the Unix epoch.
@@ -241,9 +251,7 @@ impl Plugin for Responses {
             let named = conversations::conversation_of(input)?;
             if let Some(id) = named {
                 if previous_response_id(input).is_some() {
-                    return Err(Fault::bad_request(
-                        "`previous_response_id` and `conversation` cannot be used together",
-                    ));
+                    return Err(conversations::both_named());
                 }
                 let kept = joined(&*self.conversations, &id, scope.as_deref()).await?;
                 let before = conversations::messages(&kept.items)?;
@@ -460,8 +468,11 @@ impl Filter<Output> for Keep {
 
     fn end(&mut self, end: &Result<()>, _out: &mut Vec<Output>) -> Result<()> {
         let shared = std::mem::take(&mut *self.pending.lock());
+        // As OpenAI's: a request that says `store: false` reads its
+        // conversation, and adds nothing to it.
         if let (Ok(()), Some(id), Some(request)) =
             (end, self.conversation.take(), shared.request.as_ref())
+            && request.store
         {
             // What cannot be written as items is only not kept.
             let input = conversations::input_items(&request.added).unwrap_or_default();
@@ -759,9 +770,122 @@ mod tests {
         let both = serde_json::json!({"model": "m", "input": "hi", "conversation": made["id"], "previous_response_id": "resp_1"});
         let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(both)).await;
         assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        let unnamed = serde_json::json!({"model": "m", "input": "hi", "conversation": {"foo": 1}});
+        let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(unnamed)).await;
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
         let unknown = serde_json::json!({"model": "m", "input": "hi", "conversation": "conv_none"});
         let (status, _) = send(&gateway, http::Method::POST, "/v1/responses", Some(unknown)).await;
         assert_eq!(status, http::StatusCode::NOT_FOUND);
+    }
+
+    /// A request that says `store: false` reads its conversation, as OpenAI's
+    /// does, and adds nothing to it.
+    #[tokio::test]
+    async fn a_request_that_says_store_false_adds_nothing() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let gateway = translating(Shared::default(), "Paris", Arc::clone(&sent));
+        let made = serde_json::json!({"items": [{"role": "user", "content": "I am in Europe."}]});
+        let (_, made) = send(
+            &gateway,
+            http::Method::POST,
+            "/v1/conversations",
+            Some(made),
+        )
+        .await;
+        let id = made["id"].as_str().expect("an id");
+        let asked = serde_json::json!({"model": "m", "input": "capital?", "conversation": id, "store": false});
+        let answer = respond(&gateway, asked).await;
+        assert_eq!(answer["conversation"]["id"], id, "{answer}");
+        assert_eq!(said(&sent, 0), ["I am in Europe.", "capital?"]);
+        assert_eq!(listed(&gateway, id).await.len(), 1);
+    }
+
+    /// Metadata is merged, as OpenAI merges it, up to its most pairs.
+    #[tokio::test]
+    async fn metadata_is_merged() {
+        let gateway = translating(Shared::default(), "", Arc::default());
+        let made = serde_json::json!({"metadata": {"topic": "a", "n": "1"}});
+        let (_, made) = send(
+            &gateway,
+            http::Method::POST,
+            "/v1/conversations",
+            Some(made),
+        )
+        .await;
+        let path = format!("/v1/conversations/{}", made["id"].as_str().expect("an id"));
+        let update = serde_json::json!({"metadata": {"topic": "b"}});
+        let (_, updated) = send(&gateway, http::Method::POST, &path, Some(update)).await;
+        assert_eq!(
+            updated["metadata"],
+            serde_json::json!({"topic": "b", "n": "1"})
+        );
+        let (_, got) = send(&gateway, http::Method::GET, &path, None).await;
+        assert_eq!(got["metadata"], updated["metadata"]);
+        let many: serde_json::Map<String, Value> =
+            (0..15).map(|i| (format!("k{i}"), "v".into())).collect();
+        let (status, refused) = send(
+            &gateway,
+            http::Method::POST,
+            &path,
+            Some(serde_json::json!({"metadata": many})),
+        )
+        .await;
+        assert_eq!(status, http::StatusCode::BAD_REQUEST);
+        assert_eq!(refused["error"]["code"], "metadata_max_properties_exceeded");
+    }
+
+    /// An item's id is the gateway's, whatever the client said, so deleting
+    /// one deletes it alone.
+    #[tokio::test]
+    async fn an_item_is_given_its_own_id() {
+        let gateway = translating(Shared::default(), "", Arc::default());
+        let (_, made) = send(&gateway, http::Method::POST, "/v1/conversations", None).await;
+        let items = format!(
+            "/v1/conversations/{}/items",
+            made["id"].as_str().expect("an id")
+        );
+        let same = serde_json::json!({"role": "user", "content": "x", "id": "msg_mine"});
+        let added = serde_json::json!({"items": [same.clone(), same]});
+        let (_, added) = send(&gateway, http::Method::POST, &items, Some(added)).await;
+        let (first, last) = (
+            added["first_id"].as_str().unwrap_or_default(),
+            added["last_id"].as_str().unwrap_or_default(),
+        );
+        assert!(first != "msg_mine" && first != last, "{added}");
+        send(
+            &gateway,
+            http::Method::DELETE,
+            &format!("{items}/{first}"),
+            None,
+        )
+        .await;
+        let (_, list) = send(&gateway, http::Method::GET, &items, None).await;
+        assert_eq!(list["data"].as_array().map(Vec::len), Some(1), "{list}");
+    }
+
+    /// Reasoning's encrypted content is kept, and shown only when included.
+    #[tokio::test]
+    async fn encrypted_reasoning_is_listed_only_when_included() {
+        let gateway = translating(Shared::default(), "", Arc::default());
+        let reasoning =
+            serde_json::json!({"type": "reasoning", "summary": [], "encrypted_content": "sealed"});
+        let made = serde_json::json!({"items": [reasoning]});
+        let (_, made) = send(
+            &gateway,
+            http::Method::POST,
+            "/v1/conversations",
+            Some(made),
+        )
+        .await;
+        let items = format!(
+            "/v1/conversations/{}/items",
+            made["id"].as_str().expect("an id")
+        );
+        let (_, plain) = send(&gateway, http::Method::GET, &items, None).await;
+        assert_eq!(plain["data"][0].get("encrypted_content"), None, "{plain}");
+        let included = format!("{items}?include[]=reasoning.encrypted_content");
+        let (_, included) = send(&gateway, http::Method::GET, &included, None).await;
+        assert_eq!(included["data"][0]["encrypted_content"], "sealed");
     }
 
     /// Gives each request the scope its `x-scope` header names.

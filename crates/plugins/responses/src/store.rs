@@ -58,7 +58,8 @@ pub trait Conversations: Send + Sync + 'static {
     async fn create(&self, id: String, conversation: Conversation) -> Result<()>;
     /// The conversation under `id`, if it is kept; kept afresh, as it was read.
     async fn get(&self, id: &str) -> Result<Option<Conversation>>;
-    /// Set conversation `id`'s metadata; `false` if it is not kept.
+    /// Merge `metadata` into conversation `id`'s, each key in place of the
+    /// one it had; `false` if it is not kept.
     async fn update(&self, id: &str, metadata: Map<String, Value>) -> Result<bool>;
     /// Add `items` to conversation `id`'s end; `false` if it is not kept.
     async fn append(&self, id: &str, items: Vec<Value>) -> Result<bool>;
@@ -159,7 +160,7 @@ impl Conversations for Memory {
 
     async fn update(&self, id: &str, metadata: Map<String, Value>) -> Result<bool> {
         Ok(self.change(id, |c| {
-            c.metadata = metadata;
+            c.metadata.extend(metadata);
             true
         }))
     }
