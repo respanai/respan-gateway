@@ -42,9 +42,9 @@ const FORMATS: &[(&str, &str)] = &[
 /// `/services/aigc/multimodal-generation/generation`, a user message of the
 /// audio, as a data URI of its bytes or its URL, for DashScope to fetch.
 ///
-/// The audio's `format`, from its type, the language (as `language_hints`)
-/// and the input's native fields, such as `enable_itn`, are its
-/// `parameters`. A translation, a prompt and a temperature are refused, 400,
+/// The audio's `format`, from its type, the language (as both
+/// `language_hints` and `asr_options.language`) and the input's native
+/// fields, such as `asr_options.enable_itn`, are its `parameters`. A translation, a prompt and a temperature are refused, 400,
 /// before the call.
 ///
 /// An answer's text is its `output.text`, or its first choice's text, a
@@ -107,8 +107,12 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     post_json(head, GENERATION)?;
     let mut parameters = Map::new();
     parameters.insert("format".into(), format.into());
-    let hints = input.language.clone().map(|l| vec![Value::from(l)]);
-    set(&mut parameters, "language_hints", hints);
+    // Qwen3-ASR reads `asr_options.language`, the others `language_hints`;
+    // each model ignores the other's field.
+    if let Some(language) = &input.language {
+        parameters.insert("language_hints".into(), json!([language]));
+        parameters.insert("asr_options".into(), json!({ "language": language }));
+    }
     merge_missing(&mut parameters, input.native.fields::<Key>());
     let mut body = Map::new();
     set(&mut body, "model", input.model.clone());
@@ -149,6 +153,8 @@ fn read_response() -> Box<dyn Decoder<Output>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_conversation::Media;
+    use respan_gateway_http::http;
 
     fn read(v: Value) -> Vec<Output> {
         let mut out = Vec::new();
@@ -158,6 +164,23 @@ mod tests {
             .expect("a body");
         decoder.end(Ok(()), &mut out).expect("an answer");
         out
+    }
+
+    #[test]
+    fn a_language_is_sent_as_every_recognizer_reads_it() {
+        let audio = Media::new("audio/wav", MediaSource::Bytes(Bytes::from_static(b"RIFF")));
+        for model in ["qwen3-asr-flash", "qwen-audio-3.1-asr-flash"] {
+            let mut input = Input::new(audio.clone());
+            input.model = Some(model.into());
+            input.language = Some("fr".into());
+            let mut head = http::Request::new(()).into_parts().0;
+            let mut body = Vec::new();
+            let mut encoder = post(&mut head, &input).expect("a call");
+            encoder.encode(&input, &mut body).expect("a body");
+            let body: Value = serde_json::from_slice(&body[0]).expect("JSON");
+            assert_eq!(body["parameters"]["asr_options"]["language"], "fr");
+            assert_eq!(body["parameters"]["language_hints"], json!(["fr"]));
+        }
     }
 
     #[test]

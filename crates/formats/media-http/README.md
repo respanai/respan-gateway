@@ -275,7 +275,8 @@ its key a bearer token.
   `fun-asr-flash-*`) is a `POST` to
   `/services/aigc/multimodal-generation/generation`, a user message of the
   audio as a data URI of its bytes, or its URL, with its `format` (from its
-  type) and the language as `language_hints` in `parameters`. The answer's
+  type) and the language as both `language_hints` and `asr_options.language`
+  in `parameters`, as Qwen3-ASR and the other models each read one. The answer's
   `output.text`, or its first choice's text, is the transcript; its usage is
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
