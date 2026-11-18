@@ -112,8 +112,9 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
 
 /// EmpirioLabs AI's speech, as it departs from OpenAI's: asked for its
 /// audio's bytes, it counts no usage, so it is asked for JSON, the audio
-/// inline (`response_format: "b64_json"`), the format asked for as its
-/// `output_format`, which Gemini's models honor and Qwen's do not. Its
+/// inline (`b64_json: true`), in the format asked for, named both as its
+/// `response_format`, which Qwen's and StepFun's models honor, and its
+/// `output_format`, which Gemini's do. Its
 /// answer is read as OpenAI's events: the audio, then its usage, as
 /// `input_tokens` and `output_tokens`. It is not asked for OpenAI's events
 /// (`stream_format`); a client that asked still gets a stream, framed at
@@ -146,9 +147,10 @@ fn inline_audio(body: Bytes) -> Result<Bytes, Fault> {
     let unwritten = |e| Fault::internal("a call is no JSON object").with_source(e);
     let mut call: Map<String, Value> = serde_json::from_slice(&body).map_err(unwritten)?;
     call.shift_remove("stream_format");
-    if let Some(format) = call.insert("response_format".into(), "b64_json".into()) {
+    if let Some(format) = call.get("response_format").cloned() {
         call.entry("output_format").or_insert(format);
     }
+    call.insert("b64_json".into(), true.into());
     serde_json::to_vec(&call)
         .map(Bytes::from)
         .map_err(unwritten)
