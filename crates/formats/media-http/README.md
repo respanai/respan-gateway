@@ -233,6 +233,21 @@ a follow-up by.
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
 
+`zai::ZaiVideos`, named `zai-videos`: Z.ai's CogVideoX video generation on
+its international site, as a provider only, its key a bearer token, its base
+URL the API with its version (`https://api.z.ai/api/paas/v4`). Its job ids
+are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /videos/generations` makes a job: the kind's `seconds` go as
+  `duration` and its `size` as `size`, as they are, its reference image, a
+  URL or a data URL of its bytes, as `image_url`, and its `zai-videos`
+  native fields (`quality`, `with_audio`, `fps`) as they are.
+- `GET /async-result/{id}` polls it: `PROCESSING`, `SUCCESS` and `FAIL` are
+  the kind's; the `url` of its `video_result` is its video.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
 `x-goog-api-key`.
