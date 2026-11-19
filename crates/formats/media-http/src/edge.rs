@@ -132,6 +132,12 @@ pub(crate) fn job_error(error: &Value) -> Option<video::JobError> {
     Some(video::JobError::new(code, message))
 }
 
+/// The error of a job that ended as `state` with no video, such as
+/// `cancelled`: it failed, as that, unless its provider said why.
+pub(crate) fn ended_as(error: Option<video::JobError>, state: &str) -> Option<video::JobError> {
+    error.or_else(|| Some(video::JobError::new(None, state)))
+}
+
 /// A video a job names, at `url`.
 pub(crate) fn video_at(url: &str) -> Media {
     Media::new("video/mp4", MediaSource::Url(url.to_owned()))

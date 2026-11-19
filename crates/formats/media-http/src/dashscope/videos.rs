@@ -2,7 +2,7 @@
 //! of the [`video`](respan_gateway_media::video) kind, [`DashScopeVideos`].
 
 use super::says_error;
-use crate::edge::{bind_jobs, gets, job_error, job_of, posts, unsupported, video_at};
+use crate::edge::{bind_jobs, ended_as, gets, job_error, job_of, posts, unsupported, video_at};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
@@ -38,8 +38,8 @@ const SYNTHESIS: &str = "/services/aigc/video-generation/video-synthesis";
 ///
 /// A job's id is DashScope's task after `dashscope_`. `PENDING` is queued,
 /// `RUNNING` in progress, `SUCCEEDED` completed and `FAILED` failed with
-/// the `code` and `message` it gives; `CANCELED` and `UNKNOWN` are the
-/// format's own. Its video is the `video_url` of its output, valid for 24
+/// the `code` and `message` it gives; `CANCELED` and `UNKNOWN`, a task
+/// gone, are failed, as that. Its video is the `video_url` of its output, valid for 24
 /// hours, and the `usage` it reports the job's native `usage`. It serves
 /// the video only there, so content, like another format's operation, such
 /// as OpenAI's remix, delete, list or thumbnail, is refused, 400, before
@@ -127,11 +127,12 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let id = task["task_id"]
         .as_str()
         .ok_or_else(|| unreadable("has no id"))?;
-    let status = match task["task_status"].as_str() {
+    let state = task["task_status"].as_str();
+    let status = match state {
         Some("PENDING") => Status::Queued,
         Some("RUNNING") => Status::InProgress,
         Some("SUCCEEDED") => Status::Completed,
-        Some("FAILED") => Status::Failed,
+        Some("FAILED" | "CANCELED" | "UNKNOWN") => Status::Failed,
         Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable("has no status")),
     };
@@ -144,7 +145,10 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.size = usage["video_ratio"]
         .as_str()
         .map(|size| size.replace('*', "x"));
-    job.error = job_error(task);
+    job.error = match state {
+        Some(ended @ ("CANCELED" | "UNKNOWN")) => ended_as(job_error(task), ended),
+        _ => job_error(task),
+    };
     job.videos = (task["video_url"].as_str().map(video_at).into_iter()).collect();
     if usage.is_object() {
         job.native = Native::json::<Key>(json!({ "usage": usage }));

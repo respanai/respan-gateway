@@ -2,7 +2,8 @@
 //! of the [`video`](respan_gateway_media::video) kind, [`MiniMaxVideos`].
 
 use crate::edge::{
-    bind_jobs, dimensions, gets, job_error, job_of, nearest_ratio, posts, unsupported, video_at,
+    bind_jobs, dimensions, ended_as, gets, job_error, job_of, nearest_ratio, posts, unsupported,
+    video_at,
 };
 use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
@@ -38,7 +39,7 @@ const RATIOS: [(u32, u32); 6] = [(21, 9), (16, 9), (4, 3), (1, 1), (3, 4), (9, 1
 ///
 /// A job's id is MiniMax's after `minimax_`. It is `queued`, `running`,
 /// `succeeded` once its video is made, or `failed` with the error MiniMax
-/// gives; `cancelled` is the format's own. Its video is the `content.url` of
+/// gives, or `cancelled`, which is failed, as that. Its video is the `content.url` of
 /// its task ([`Job::videos`]), a time-limited URL, and its `usage`, what it
 /// bills, the job's native `usage`. It serves the video only there, so
 /// content, like another format's operation, such as OpenAI's remix, delete,
@@ -142,11 +143,12 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     }
     let task = v.get("task").unwrap_or(&v);
     let id = task["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
-    let status = match task["status"].as_str() {
+    let state = task["status"].as_str();
+    let status = match state {
         Some("queued") => Status::Queued,
         Some("running") => Status::InProgress,
         Some("succeeded") => Status::Completed,
-        Some("failed") => Status::Failed,
+        Some("failed" | "cancelled") => Status::Failed,
         Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable("has no status")),
     };
@@ -155,7 +157,10 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.seconds = task["duration"]
         .as_u64()
         .and_then(|s| u32::try_from(s).ok());
-    job.error = job_error(&task["error"]);
+    job.error = match state {
+        Some(ended @ "cancelled") => ended_as(job_error(&task["error"]), ended),
+        _ => job_error(&task["error"]),
+    };
     job.videos = (task["content"]["url"].as_str().map(video_at).into_iter()).collect();
     if let Some(usage) = task.get("usage").filter(|usage| usage.is_object()) {
         job.native = Native::json::<Key>(json!({ "usage": usage }));
