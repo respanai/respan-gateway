@@ -4,7 +4,7 @@
 use respan_gateway_core::{Connection, Fault, Format, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::{Connect, ProviderIo, Reach, Upstream};
-use respan_gateway_realtime::{Input, Output};
+use respan_gateway_realtime::{AudioFormat, Input, Output};
 use respan_gateway_ws::WsTransport;
 use serde_json::{Map, Value, json};
 
@@ -81,10 +81,32 @@ const PARTS: &[(&str, &str)] = &[("text", "output_text"), ("audio", "output_audi
 /// OpenAI Realtime's. It is no client's format: GA serves `/realtime`. A
 /// transcription session, which the beta opened otherwise, is refused,
 /// `bad_request`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct OpenAiRealtimeBeta;
+///
+/// The beta's PCM names no rate: OpenAI heard it at 24 kHz
+/// ([`OpenAiRealtimeBeta::DEFAULT`]), and a provider that hears it at
+/// another says so ([`OpenAiRealtimeBeta::hearing`]). The user's audio is
+/// converted to that rate until a session names a format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenAiRealtimeBeta {
+    /// The rate its provider hears PCM at, in Hz.
+    heard: u32,
+}
+
+impl Default for OpenAiRealtimeBeta {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 impl OpenAiRealtimeBeta {
+    /// As OpenAI spoke it: its PCM heard at 24 kHz.
+    pub const DEFAULT: Self = Self::hearing(24_000);
+
+    /// As a provider that hears PCM at `rate` Hz speaks it.
+    pub const fn hearing(rate: u32) -> Self {
+        Self { heard: rate }
+    }
+
     /// The format's name, `openai-realtime-beta`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is sent to.
@@ -119,12 +141,13 @@ impl Format<ProviderIo, Output, Input> for OpenAiRealtimeBeta {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let (query, mut provider, mut reader) = call(&io)?;
+        let (query, provider, mut reader) = call(&io)?;
         if query == TRANSCRIPTION_QUERY {
             return Err(Fault::bad_request(
                 "OpenAI Realtime's beta protocol takes no transcription session",
             ));
         }
+        let mut provider = provider.hearing(AudioFormat::pcm16(self.heard));
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| {
             let start = out.len();
             provider.write(event, out)?;
@@ -403,5 +426,31 @@ mod tests {
         assert_eq!(frame["response"]["modalities"], json!(["text", "audio"]));
         assert_eq!(frame["response"]["output_audio_format"], "g711_ulaw");
         assert!(frame["response"].get("audio").is_none());
+    }
+
+    #[test]
+    fn a_providers_own_rate_is_what_the_users_audio_is_converted_to() {
+        use respan_gateway_realtime::{Audio, Session};
+        let audio = Input::Audio {
+            audio: Audio {
+                data: Bytes::from(vec![0; 4_800]),
+                format: AudioFormat::pcm16(24_000),
+            },
+            native: Default::default(),
+        };
+        let heard = AudioFormat::pcm16(16_000);
+        let mut provider = input::Provider::new("model".into(), false).hearing(heard);
+        let mut frames = Vec::new();
+        for event in [Input::Session(Session::default()), audio] {
+            provider.write(&event, &mut frames).expect("write");
+        }
+        // A session that says nothing is no frame; 100 ms at 24 kHz is
+        // 3,200 bytes at 16 kHz, less what the conversion holds back.
+        let [frame] = &frames[..] else {
+            panic!("one frame: {frames:?}");
+        };
+        let frame: Value = serde_json::from_slice(frame).expect("JSON");
+        let sent = crate::json::unbase64(&frame["audio"]).expect("base64");
+        assert!((3_000..=3_200).contains(&sent.len()), "{}", sent.len());
     }
 }

@@ -21,7 +21,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiChat, Some(BASE_URL)),
         (&OpenAiSpeech, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
-        (&OpenAiRealtimeBeta, Some(REALTIME_URL)),
+        (&OpenAiRealtimeBeta::DEFAULT, Some(REALTIME_URL)),
     ],
     ..Vendor::DEFAULT
 };

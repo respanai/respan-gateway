@@ -6,7 +6,7 @@ use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Decoder;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status,
+    Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status, Tool, ToolResult, Turns,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
@@ -263,4 +263,105 @@ fn another_formats_session_is_told_as_phonic_tells_it() {
         }])
         .is_err()
     );
+}
+
+fn commit() -> Input {
+    Input::Commit {
+        native: Native::default(),
+    }
+}
+
+fn respond() -> Input {
+    Input::Respond {
+        native: Native::default(),
+    }
+}
+
+#[test]
+fn tools_are_its_websocket_tools_and_their_answers_make_it_answer() {
+    let parameters = json!({"type": "object", "properties": {"city": {"type": "string"}}});
+    let mut tool = Tool::new("weather", parameters);
+    tool.description = Some("The weather.".into());
+    let start = session(|s| s.tools = Some(vec![tool]));
+    let answer = Input::ToolResult(ToolResult::new("c1", r#"{"temp": 20}"#));
+    // The response asked for after the answer is Phonic's own to make;
+    // one asked for after nothing it answers is refused.
+    let written = sent(None, &[start.clone(), answer, respond()]).expect("written");
+    assert_eq!(
+        written[0]["tools"],
+        json!([{"type": "custom_websocket", "tool_schema": {"type": "function", "function": {
+            "name": "weather", "description": "The weather.", "strict": true,
+            "parameters": {"type": "object", "properties": {"city": {"type": "string"}}}}}}])
+    );
+    let output = json!({"type": "tool_call_output", "tool_call_id": "c1", "output": {"temp": 20}});
+    assert_eq!(written[1..], [output]);
+    assert!(sent(None, &[start, respond()]).is_err());
+}
+
+#[test]
+fn turns_the_client_ends_are_push_to_talk() {
+    let start = session(|s| {
+        s.turns = Some(Turns::Manual);
+        s.input_audio = Some(AudioFormat::pcm16(8_000));
+    });
+    let chunk = || Input::Audio {
+        audio: audio(AudioFormat::pcm16(8_000), 640),
+        native: Native::default(),
+    };
+    let events = [start, chunk(), chunk(), commit(), respond(), chunk()];
+    let written = sent(None, &events).expect("written");
+    assert_eq!(written[0]["push_to_talk"], true);
+    let types: Vec<&str> = written[1..]
+        .iter()
+        .filter_map(|f| f["type"].as_str())
+        .collect();
+    // The first audio of a turn unmutes it; its commit mutes it, with a
+    // second of silence, 25 chunks of 40 ms; the response is not asked for.
+    let mut expected = vec!["unmute", "audio_chunk", "audio_chunk", "mute"];
+    expected.extend(["audio_chunk"; 25]);
+    expected.extend(["unmute", "audio_chunk"]);
+    assert_eq!(types, expected);
+}
+
+#[test]
+fn a_tools_call_ends_the_response_it_is_made_in() {
+    let server = [
+        json!({"type": "assistant_started_speaking"}),
+        json!({"type": "audio_chunk", "audio": "AAEC", "text": ""}),
+        json!({"type": "tool_call", "tool_call_id": "c1", "tool_name": "weather",
+            "parameters": {"city": "Tokyo"}}),
+        // The audio after it begins another response, which its end ends.
+        json!({"type": "audio_chunk", "audio": "AAEC", "text": ""}),
+        json!({"type": "assistant_finished_speaking"}),
+        // A call no response was open for is one of its own.
+        json!({"type": "tool_call", "tool_call_id": "c2", "tool_name": "weather",
+            "parameters": {}}),
+        json!({"type": "assistant_finished_speaking"}),
+    ];
+    let mut provider = output::Provider::new(Applied::default(), Box::new(Instant::now));
+    let events = read(&server, |raw, out| provider.decode(raw, out));
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|e| match e {
+            Output::ResponseStart { .. } => "start",
+            Output::ResponseDone { .. } => "done",
+            Output::ToolCall { .. } => "call",
+            Output::Audio { .. } => "audio",
+            Output::Native(_) => "native",
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "start", "audio", "call", "done", "start", "audio", "done", "start", "call", "done",
+            "native"
+        ]
+    );
+    assert!(
+        matches!(&events[2], Output::ToolCall { id, name, arguments, .. }
+        if id == "c1" && name == "weather" && arguments == r#"{"city":"Tokyo"}"#)
+    );
+    // Its own client is told what Phonic said, and nothing made up.
+    assert_eq!(heard(&events).expect("written"), server);
 }

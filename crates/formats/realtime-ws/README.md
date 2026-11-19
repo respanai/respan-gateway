@@ -18,7 +18,10 @@ a format per spec:
   events' names, a session's fields at its top, its formats' names such as
   `pcm16`, a model's message parts' types), so it reads and writes as
   `OpenAiRealtime` does, and its natives are OpenAI Realtime's. A
-  transcription session is refused.
+  transcription session is refused. Its PCM names no rate: OpenAI heard it
+  at 24 kHz (`OpenAiRealtimeBeta::DEFAULT`), and a provider that hears it at
+  another says so (`OpenAiRealtimeBeta::hearing`), which the user's audio is
+  converted to until a session names a format.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
 - `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
@@ -70,7 +73,8 @@ is `Seconds` beyond the last, beside the event, which stays native, as
 delegation and the rest do. It is full duplex: no turns or responses.
 
 `PhonicSts` does the same for Phonic's speech-to-speech: its `config` (its
-model, system prompt, voice and both audio formats), audio both ways, the
+model, system prompt, voice and both audio formats), audio both ways, its
+tools' calls (`tool_call`) and answers (`tool_call_output`), the
 user's turns (`user_started_speaking`, `user_finished_speaking`) and
 transcript (`input_text`, a word at a time, spaced as it is told), the
 model's turns
@@ -78,7 +82,11 @@ model's turns
 `interrupted_response`) and the transcript each audio chunk carries, and
 errors. It bills a conversation by its minutes and says no usage, so the
 seconds since its `conversation_created` are `Seconds` at each frame but
-its audio, and at its end. Tools, `say`, `generate_reply` and the rest stay native.
+its audio, and at its end. A tool's call ends the response it is made in,
+and the audio after it begins another, so a response's start or end that
+Phonic did not say is made up, and not written to its own client. A
+`config`'s own tools and push to talk, `say`, `generate_reply` and the rest
+stay native.
 
 `OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
 too: see [Translation](#translation).
@@ -147,14 +155,22 @@ What one spec has and the other has not is emulated, dropped or refused:
   client's if it takes it, else 44.1 kHz PCM; a later session is
   acknowledged, what it changes dropped. Audio is sent in chunks of at most 40 ms, the
   longest it takes. A voice is kept only from a Phonic client, as another
-  format's names another vendor's. Voice detection and transcription
-  settings are dropped; anything else it has none of, such as tools, text
-  output, commits, messages and responses, is refused.
+  format's names another vendor's. Each tool is one its client runs,
+  defined for the conversation, its arguments always matching its schema;
+  a tool's answer is written as it comes, and the response asked for after
+  it dropped, as Phonic answers it itself. Turns the client ends are its
+  push to talk: the user's first audio of a turn unmutes it, and its commit
+  mutes it, with a second of silence, which Phonic waits for before it
+  answers. It hears audio only as fast as it plays, so audio sent faster is
+  cut at its commit. Voice detection and transcription settings and
+  another format's tool choice are dropped; anything else it has none of,
+  such as text output, a commit under its voice detection, messages,
+  cancels and a response to nothing it answers, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
   audio chunk, or with an empty one at its turn's end, the user's a word at a time, another format's parts of a
   word joined, not whole, and usage is not written;
-  text and tools' calls are refused.
+  text, and a tool's call whose arguments are not JSON, are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a

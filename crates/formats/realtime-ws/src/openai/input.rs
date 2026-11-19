@@ -210,6 +210,13 @@ impl Provider {
         }
     }
 
+    /// A writer to a provider that hears audio in `format` until a session
+    /// names another.
+    pub(super) fn hearing(mut self, format: AudioFormat) -> Self {
+        self.input = format;
+        self
+    }
+
     pub(super) fn write(&mut self, event: &Input, out: &mut Vec<Bytes>) -> Result<(), Fault> {
         let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
