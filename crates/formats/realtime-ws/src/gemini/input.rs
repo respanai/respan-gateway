@@ -321,10 +321,7 @@ impl Provider {
         };
         let mut messages = Vec::new();
         self.encode(&event, &mut messages)?;
-        for message in &messages {
-            out.push(json::frame(message)?);
-        }
-        Ok(())
+        json::frames(messages, out)
     }
 
     fn encode(&mut self, event: &Input, out: &mut Vec<Value>) -> Result<(), Fault> {

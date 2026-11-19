@@ -9,13 +9,12 @@ mod tests;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
+use respan_gateway_http::{ClientIo, ProviderIo};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
 use crate::session::{self as spec, Spec};
-use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
 type Key = crate::Own<OpenAiLive>;
@@ -77,9 +76,7 @@ impl Upstream for OpenAiLive {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -93,9 +90,7 @@ impl Format<ProviderIo, Output, Input> for OpenAiLive {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let wire = io.extensions().get::<Original>();
-        let model = chosen.or_else(|| requested_model(wire?));
+        let model = spec::dialled_model(&io);
         let (say, said) = spec::say();
         let mut provider = input::Provider::new(model, say);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
