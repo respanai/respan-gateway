@@ -205,10 +205,10 @@ which `video::VideoJobs` routes a follow-up by.
   `duration`, its prompt as the `text` of its `content`, its reference image
   as the `first_frame` image there, its `size` as a `ratio` and a
   `resolution` (`480P` or `768P` by its short side, the ratio the one of
-  MiniMax's it is, to a pixel's rounding: 864x480 is 16:9, 480P), and its
+  MiniMax's nearest, within 5%: 864x480 is 16:9, 480P), and its
   `minimax-videos` native fields (`resolution`, `ratio`, `generate_audio`,
   `extra`) as they are, where the `size` has not said them. Any other
-  `size` is refused, 400 `unsupported`, before any call.
+  `size` is refused, 400, before any call.
 - `GET /v2/query/video_generation/{id}` polls it: `queued`, `running`,
   `succeeded` and `failed` are the kind's, its error `{code, message}`;
   any other state, such as `cancelled`, is the format's own. The

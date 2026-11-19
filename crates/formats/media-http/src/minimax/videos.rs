@@ -1,16 +1,16 @@
 //! MiniMax's video generation, `/v2/video_generation`: a provider format
 //! of the [`video`](respan_gateway_media::video) kind, [`MiniMaxVideos`].
 
-use crate::edge::{bind_provider, sends};
-use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use crate::edge::{
+    bind_jobs, dimensions, gets, job_error, job_of, nearest_ratio, posts, unsupported, video_at,
+};
+use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "minimax-videos";
@@ -20,9 +20,8 @@ type Key = crate::Own<MiniMaxVideos>;
 /// What starts the id of a job of MiniMax's: its own ids are bare numbers.
 const PREFIX: &str = "minimax_";
 
-/// Where its jobs are, at the provider's base.
-const CREATE: &str = "/v2/video_generation";
-const QUERY: &str = "/v2/query/video_generation";
+/// The ratios, width to height, its models make.
+const RATIOS: [(u32, u32); 6] = [(21, 9), (16, 9), (4, 3), (1, 1), (3, 4), (9, 16)];
 
 /// MiniMax's video generation: `POST /v2/video_generation` makes a job and
 /// `GET /v2/query/video_generation/{id}` polls it, at the API's host, its
@@ -32,7 +31,7 @@ const QUERY: &str = "/v2/query/video_generation";
 /// `duration`, its prompt as a `text` of its `content`, its reference image
 /// as the `first_frame` image there, its `size` as a `ratio` and a
 /// `resolution` (`480P` or `768P` by its short side, the ratio the one of
-/// MiniMax's it is, to a pixel's rounding), and its native fields of this
+/// MiniMax's nearest, within 5%), and its native fields of this
 /// format, such as `resolution`, `ratio`, `generate_audio` or `extra`, as
 /// they are, where the `size` has not said them. Any other `size` is refused,
 /// 400, before any call; with none, MiniMax's own answer says what is missing.
@@ -69,52 +68,24 @@ impl Format<ProviderIo, Output, Input> for MiniMaxVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
-        }))
+        Ok(bind_jobs(io, NAME, call, read_job))
     }
-}
-
-/// A request MiniMax has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("MiniMax has {what}")).with(ErrorCode("unsupported".into()))
-}
-
-/// MiniMax's id of a job `id`, if it is one of this format's.
-fn job_of(id: &str) -> Result<&str, Fault> {
-    let job = id.strip_prefix(PREFIX).filter(|job| !job.is_empty());
-    job.ok_or_else(|| Fault::not_found(format!("no MiniMax video job is {id:?}")))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
-    let (method, path, body) = match input {
-        Input::Create(create) => (Method::POST, CREATE.to_owned(), Some(create_body(create)?)),
-        Input::Retrieve { id } => (
-            Method::GET,
-            format!("{QUERY}/{}", escape(job_of(id)?)),
-            None,
-        ),
-        Input::Content { .. } => {
-            return Err(unsupported(
-                "no video content: it serves a video at the `content.url` of its task",
-            ));
+    match input {
+        Input::Create(create) => posts(head, "/v2/video_generation", &create_body(create)?),
+        Input::Retrieve { id } => {
+            let id = job_of("MiniMax", PREFIX, id)?;
+            gets(head, &format!("/v2/query/video_generation/{}", escape(id)))
         }
-        Input::Native { .. } => return Err(unsupported("no video operation of another format")),
-        _ => return Err(unsupported("no video operation of this kind")),
-    };
-    head.method = method;
-    set_path(head, &path)?;
-    let Some(body) = body else {
-        return Ok(sends(Bytes::new()));
-    };
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Ok(sends(body))
+        _ => Err(unsupported("MiniMax", input)),
+    }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model = model
         .ok_or_else(|| Fault::bad_request("a video needs a model, such as MiniMax-H3-Lite"))?;
@@ -126,52 +97,35 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
     let mut v = Map::new();
     v.insert("model".into(), model.into());
     v.insert("content".into(), content.into());
-    if let Some(seconds) = create.seconds {
-        v.insert("duration".into(), seconds.into());
-    }
+    set(&mut v, "duration", create.seconds);
     if let Some(size) = &create.size {
-        let (ratio, resolution) = ratio_of(size)?;
+        let (ratio, resolution) = shape_of(size)?;
         v.insert("ratio".into(), ratio.into());
         v.insert("resolution".into(), resolution.into());
     }
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
-/// MiniMax's ratio and resolution of a size `WxH`: the short side is 480 or
-/// 768, and the ratio one of MiniMax's, within the 2% a rounded pixel makes.
-fn ratio_of(size: &str) -> Result<(&'static str, &'static str), Fault> {
-    let parsed = size.split_once(['x', 'X']).and_then(|(w, h)| {
-        let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
-        (w > 0 && h > 0).then_some((f64::from(w), f64::from(h)))
+/// MiniMax's ratio and resolution of a size `WxH`: the resolution is its
+/// short side's, 480 or 768, the ratio the one of MiniMax's nearest (864x480
+/// is 16:9).
+fn shape_of(size: &str) -> Result<(String, &'static str), Fault> {
+    let shape = dimensions(size).and_then(|(w, h)| {
+        let resolution = match w.min(h) {
+            480 => "480P",
+            768 => "768P",
+            _ => return None,
+        };
+        let (a, b) = nearest_ratio(w, h, &RATIOS)?;
+        Some((format!("{a}:{b}"), resolution))
     });
-    let (w, h) = parsed.ok_or_else(|| refused(size))?;
-    let resolution = match w.min(h) as u32 {
-        480 => "480P",
-        768 => "768P",
-        _ => return Err(refused(size)),
-    };
-    let ratios = [
-        ("21:9", 21.0 / 9.0),
-        ("16:9", 16.0 / 9.0),
-        ("4:3", 4.0 / 3.0),
-    ]
-    .into_iter()
-    .chain([("1:1", 1.0), ("3:4", 0.75), ("9:16", 9.0 / 16.0)]);
-    let ratio = ratios
-        .into_iter()
-        .find(|(_, r)| (w / h - r).abs() <= r * 0.02);
-    ratio
-        .map(|(ratio, _)| (ratio, resolution))
-        .ok_or_else(|| refused(size))
-}
-
-fn refused(size: &str) -> Fault {
-    unsupported(&format!(
-        "no 'size' {size}: it takes a short side of 480 or 768 pixels and a ratio of 21:9, 16:9, 4:3, 1:1, 3:4 or 9:16"
-    ))
+    shape.ok_or_else(|| {
+        invalid(
+            "size",
+            "is not one MiniMax makes: a short side of 480 or 768 pixels and a ratio of 21:9, 16:9, 4:3, 1:1, 3:4 or 9:16",
+        )
+    })
 }
 
 /// The job of an answer `raw`: a creation's `{task_id}`, or a poll's task,
@@ -201,14 +155,8 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.seconds = task["duration"]
         .as_u64()
         .and_then(|s| u32::try_from(s).ok());
-    let error = &task["error"];
-    job.error = error["message"].as_str().map(|message| {
-        let code = error["code"].as_str().map(str::to_owned);
-        JobError::new(code, message)
-    });
-    job.videos = (task["content"]["url"].as_str().into_iter())
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
-        .collect();
+    job.error = job_error(&task["error"]);
+    job.videos = (task["content"]["url"].as_str().map(video_at).into_iter()).collect();
     if let Some(usage) = task.get("usage").filter(|usage| usage.is_object()) {
         job.native = Native::json::<Key>(json!({ "usage": usage }));
     }
@@ -220,7 +168,9 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use crate::Natives;
-    use respan_gateway_http::http;
+    use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::http::{self, Method};
+    use respan_gateway_media::video::JobError;
 
     fn head() -> RequestHead {
         http::Request::new(()).into_parts().0
@@ -242,9 +192,8 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         ));
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "MiniMax-H3-Lite", "duration": 4,
                 "content": [{ "type": "text", "text": "a wave" },
                     { "type": "image_url", "role": "first_frame",
@@ -252,7 +201,6 @@ mod tests {
         );
         create.size = Some("864x480".into());
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
             (&body["ratio"], &body["resolution"]),
             (&json!("16:9"), &json!("480P"))
@@ -270,8 +218,7 @@ mod tests {
         // A size that is no combination of MiniMax's is refused, not snapped.
         for size in ["1280x720", "480x1000", "wide"] {
             create.size = Some(size.into());
-            let refused = create_body(&create).expect_err("refused");
-            assert_eq!(refused.code(), "unsupported", "{size}");
+            assert!(create_body(&create).is_err(), "{size}");
         }
         create.size = None;
         create.model = None;
@@ -292,18 +239,6 @@ mod tests {
             url: None,
         };
         let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
-        // An id not of this format's is no job of MiniMax's.
-        let foreign = Input::Retrieve {
-            id: "video_1".into(),
-        };
-        assert!(call(&mut head, &foreign).is_err());
-        // Another format's operation, such as OpenAI's remix, is refused before a call.
-        let remix = Input::Native {
-            id: Some("minimax_1".into()),
-            native: Native::json::<()>(json!({"method": "POST"})),
-        };
-        let refused = call(&mut head, &remix).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
     }
 

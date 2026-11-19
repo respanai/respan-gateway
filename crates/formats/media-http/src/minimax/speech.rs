@@ -1,12 +1,12 @@
 //! MiniMax's speech synthesis, `POST /t2a_v2`: a format of the
 //! [`speech`](respan_gateway_media::speech) kind, [`MiniMaxSpeech`].
 
-use crate::edge::{bind_provider, ended_events, sends};
+use crate::edge::{bind_provider, ended_events, posts};
 use respan_gateway_conversation_http::fields::{invalid, merge_missing, set};
 use respan_gateway_conversation_http::read_provider_error;
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
+use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{self, StatusCode, request::Parts as RequestHead};
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::speech::{Input, Output};
@@ -15,7 +15,6 @@ use serde_json::{Map, Value, json};
 const NAME: &str = "minimax-speech";
 
 type Key = crate::Own<MiniMaxSpeech>;
-const SPEECH: &str = "/t2a_v2";
 /// The audio formats MiniMax writes, of those a client names.
 const FORMATS: [&str; 5] = ["mp3", "pcm", "flac", "wav", "opus"];
 
@@ -97,9 +96,6 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             &format!("{format} is not written by MiniMax: mp3, pcm, flac, wav or opus"),
         ));
     }
-    respan_gateway_http::path::set_path(head, SPEECH)?;
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     let mut native = input.native.fields::<Key>().clone();
     let mut section = |name: &str| match native.remove(name) {
         Some(Value::Object(fields)) => fields,
@@ -129,9 +125,7 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
         );
     }
     merge_missing(&mut v, &native);
-    let body = serde_json::to_vec(&v)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))?;
-    Ok(sends(Bytes::from(body)))
+    posts(head, "/t2a_v2", &v)
 }
 
 /// The decoder of MiniMax's whole answer.
