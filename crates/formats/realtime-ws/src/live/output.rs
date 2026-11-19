@@ -30,8 +30,7 @@ impl Provider {
     }
 
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
+        let v = json::provider_event(&raw)?;
         let mut rest = v.clone();
         let kind = take(&mut rest, &["type"], string, text).unwrap_or_default();
         if let Some(event) = self.decode(&kind, rest) {
@@ -115,10 +114,7 @@ impl Client {
         let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
-        if let Some(v) = self.encode(&event)? {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.encode(&event)?, out)
     }
 
     fn encode(&mut self, event: &Output) -> Result<Option<Value>, Fault> {

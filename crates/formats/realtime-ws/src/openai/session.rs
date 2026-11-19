@@ -8,7 +8,7 @@ use respan_gateway_realtime::{
 use serde_json::{Map, Value, json};
 
 use super::Key;
-use crate::json::{at, merge, number, set, string, take, text};
+use crate::json::{at, merge, number, string, take, text};
 
 const TYPE: &[&str] = &["session", "type"];
 const MODEL: &[&str] = &["session", "model"];
@@ -53,11 +53,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// refused by `refuse` where it holds another format's fields.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, &path[1..], value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, &path[1..], value);
     put(TYPE, s.purpose.and_then(purpose_json));
     put(MODEL, s.model.as_ref().and_then(text));
     put(INSTRUCTIONS, s.instructions.as_ref().and_then(text));

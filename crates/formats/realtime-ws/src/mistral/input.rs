@@ -41,8 +41,7 @@ impl Client {
     }
 
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Input>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
+        let v = json::client_event(&raw)?;
         let event = self.decode(v)?;
         if std::mem::replace(&mut self.opened, true) {
             out.push(event);
@@ -132,10 +131,7 @@ impl Provider {
         let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
-        for v in self.frames(&event)? {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.frames(&event)?, out)
     }
 
     fn frames(&mut self, event: &Input) -> Result<Vec<Value>, Fault> {

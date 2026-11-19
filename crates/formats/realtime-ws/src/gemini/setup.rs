@@ -6,7 +6,7 @@ use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, Turns, Vad};
 use serde_json::{Map, Value, json};
 
 use super::Key;
-use crate::json::{at, merge, set, string, take, text};
+use crate::json::{at, merge, string, take, text};
 
 const MODEL: &[&str] = &["setup", "model"];
 const MODALITIES: &[&str] = &["setup", "generationConfig", "responseModalities"];
@@ -49,11 +49,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// Live API cannot. Its audio formats are each chunk's own.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, path, value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, path, value);
     put(
         MODEL,
         s.model.as_ref().map(|m| format!("models/{m}").into()),

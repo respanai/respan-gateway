@@ -60,8 +60,7 @@ impl Default for Provider {
 
 impl Provider {
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
+        let v = json::provider_event(&raw)?;
         let mut rest = v.clone();
         match take(&mut rest, &["type"], string, text) {
             Some(kind) if self.decode(&kind, rest, out).is_some() => {}
@@ -283,13 +282,12 @@ impl Client {
         let mut events = Vec::new();
         self.encode(&event, &mut events)?;
         let made_up = !owned(&event);
-        for mut v in events {
+        for v in &mut events {
             if made_up && v.get("event_id").is_none() {
                 v["event_id"] = self.ids.next("event").into();
             }
-            out.push(json::frame(&v)?);
         }
-        Ok(())
+        json::frames(events, out)
     }
 
     fn encode(&mut self, event: &Output, out: &mut Vec<Value>) -> Result<(), Fault> {

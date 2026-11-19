@@ -6,7 +6,7 @@ use respan_gateway_realtime::{AudioFormat, Encoding, Session};
 use serde_json::{Value, json};
 
 use super::Key;
-use crate::json::{set, string, take, text};
+use crate::json::{string, take, text};
 
 const MODEL: &[&str] = &["session", "model"];
 const INSTRUCTIONS: &[&str] = &["session", "instructions"];
@@ -34,11 +34,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// takes it, but its native, which is its event's.
 pub(super) fn encode(s: &Session, format: Option<AudioFormat>) -> Value {
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, &path[1..], value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, &path[1..], value);
     put(MODEL, s.model.as_ref().and_then(text));
     put(INSTRUCTIONS, s.instructions.as_ref().and_then(text));
     put(VOICE, s.voice.as_ref().and_then(text));

@@ -20,7 +20,6 @@ use respan_gateway_realtime::{AudioFormat, Input, Output, Session};
 use respan_gateway_ws::WsTransport;
 
 use crate::session::{self as spec, Spec};
-use crate::{SessionModel, requested_model};
 
 const NAME: &str = SPEC.name;
 enum Key {}
@@ -101,9 +100,7 @@ impl Upstream for PhonicSts {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -117,10 +114,8 @@ impl Format<ProviderIo, Output, Input> for PhonicSts {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let wire = io.extensions().get::<Original>();
-        let model = chosen.or_else(|| requested_model(wire?));
-        let voiced = wire
+        let model = spec::dialled_model(&io);
+        let voiced = (io.extensions().get::<Original>())
             .and_then(Original::get)
             .is_some_and(|head| path_ends_with(head.uri(), SPEC.path));
         let applied = Applied::default();

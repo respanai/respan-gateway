@@ -6,7 +6,7 @@ use respan_gateway_realtime::{AudioFormat, Encoding, Session, Tool, Turns};
 use serde_json::{Value, json};
 
 use super::Key;
-use crate::json::{set, string, take, text};
+use crate::json::{string, take, text};
 
 const MODEL: &[&str] = &["model"];
 const INSTRUCTIONS: &[&str] = &["system_prompt"];
@@ -37,11 +37,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// talk, and each tool one its client runs, defined for the conversation.
 pub(super) fn encode(s: &Session) -> Value {
     let mut v = json!({"type": "config"});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, path, value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, path, value);
     put(MODEL, s.model.as_ref().and_then(text));
     put(INSTRUCTIONS, s.instructions.as_ref().and_then(text));
     put(VOICE, s.voice.as_ref().and_then(text));

@@ -116,9 +116,7 @@ impl Upstream for GeminiLive {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn at_origin(&self) -> bool {
