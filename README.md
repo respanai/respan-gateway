@@ -211,7 +211,8 @@ Everything the gateway does is a plugin on one public Rust API.
 
 **Traffic control** · named routes, fallback, retries, hedged requests, and the cheapest or fastest provider.
 
-**Observability** · a live request log, the cost of every call, and traces in [Respan](https://respan.ai).
+**Observability** · a live request log, the cost of every call, Prometheus
+metrics at `/metrics`, and traces in [Respan](https://respan.ai).
 
 **Your framework** · anything with a base URL. Guides for the [OpenAI SDK](https://www.respan.ai/docs/integrations/gateway/open-ai-sdk), [Anthropic SDK](https://www.respan.ai/docs/integrations/gateway/anthropic-sdk), [Google GenAI](https://www.respan.ai/docs/integrations/gateway/google-gen-ai), [Vercel AI SDK](https://www.respan.ai/docs/integrations/gateway/vercel-ai-sdk), [LangChain](https://www.respan.ai/docs/integrations/gateway/lang-chain), [Pydantic AI](https://www.respan.ai/docs/integrations/gateway/pydantic-ai), [Pi](https://www.respan.ai/docs/integrations/gateway/pi), [OpenCode](https://www.respan.ai/docs/integrations/gateway/open-code) and [more](https://www.respan.ai/docs/integrations/gateway/overview).
 

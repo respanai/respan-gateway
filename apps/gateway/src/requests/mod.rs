@@ -10,7 +10,7 @@ mod record;
 mod recorder;
 
 pub use edge::track;
-pub use log::{RequestLog, attribute, charge};
+pub use log::{ProviderStats, RequestLog, attribute, charge};
 pub use record::{RequestRecord, rfc3339};
 pub use recorder::{Recorder, steps};
 

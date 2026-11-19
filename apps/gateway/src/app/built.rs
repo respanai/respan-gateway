@@ -363,6 +363,10 @@ fn routes(
     cors: Option<Arc<Cors>>,
 ) -> (Router, Option<tokio::sync::watch::Receiver<bool>>) {
     let mut router = Router::new().route("/healthz", get(|| async { "ok" }));
+    // Metrics, behind the client keys as the admin API is.
+    let metrics = get(crate::admin::metrics).with_state(admin.clone());
+    let metrics = metrics.layer(from_fn_with_state(keys.clone(), auth::require_admin));
+    router = router.route("/metrics", metrics);
     let mut listed = None;
     // A relay lets its vendor answer, with the client's credentials.
     if !config.relay {

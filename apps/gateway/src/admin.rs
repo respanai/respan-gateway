@@ -736,6 +736,34 @@ async fn export(State(admin): State<Arc<Admin>>, Query(q): Query<ExportQuery>) -
     (headers, body).into_response()
 }
 
+/// `GET /metrics`: what the request log has counted since the process
+/// started, as Prometheus reads it (`text/plain; version=0.0.4`): requests
+/// and errors, tokens, cost, and each provider's and tool server's calls
+/// with the time they took. Behind the client keys as the admin API is, so
+/// a scraper sends an admin client's key as `Authorization: Bearer`; with
+/// none configured, it answers to anyone who reaches the gateway.
+pub(crate) async fn metrics(State(admin): State<Arc<Admin>>) -> Response {
+    let providers: Vec<&str> = admin
+        .providers
+        .iter()
+        .filter_map(|p| p["name"].as_str())
+        .collect();
+    let servers: Vec<&str> = admin
+        .mcp
+        .iter()
+        .filter_map(|s| s["name"].as_str())
+        .collect();
+    let body = crate::metrics::exposition(&admin.process, &providers, &servers);
+    (
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+        )],
+        body,
+    )
+        .into_response()
+}
+
 async fn request(State(admin): State<Arc<Admin>>, Path(id): Path<String>) -> Response {
     match admin.process.log.get(&id) {
         Some(record) => Json(record).into_response(),
@@ -851,6 +879,60 @@ mod tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    /// `GET path`, with an optional client key, answered as text.
+    async fn send_text(app: &App, path: &str, key: Option<&str>) -> (StatusCode, String) {
+        let mut request = Request::builder().method(Method::GET).uri(path);
+        if let Some(key) = key {
+            request = request.header("authorization", format!("Bearer {key}"));
+        }
+        let request = request
+            .body(Body::empty())
+            .unwrap_or_else(|e| panic!("{e}"));
+        let response = app.router().oneshot(request).await;
+        let response = response.unwrap_or_else(|never| match never {});
+        let status = response.status();
+        let bytes = response.into_body().collect().await;
+        let bytes = bytes.map(|b| b.to_bytes()).unwrap_or_default();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn metrics_say_what_the_log_counted() {
+        let config = || Config::parse(TOOLS).unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config()).unwrap_or_else(|e| panic!("{e}"));
+        let (status, body) = send_text(&app, "/metrics", None).await;
+        assert_eq!(status, StatusCode::OK);
+        for line in [
+            "# TYPE respan_gateway_requests_total counter",
+            "respan_gateway_requests_total 0",
+            "# TYPE respan_gateway_requests_in_flight gauge",
+            "# TYPE respan_gateway_tokens_total counter",
+            "respan_gateway_tokens_total{direction=\"input\"} 0",
+            "respan_gateway_tokens_total{direction=\"output\"} 0",
+            "# TYPE respan_gateway_mcp_requests_total counter",
+            "respan_gateway_mcp_requests_total{server=\"a\"} 0",
+            "respan_gateway_mcp_latency_seconds_count{server=\"a\"} 0",
+        ] {
+            assert!(body.contains(line), "{line} missing:\n{body}");
+        }
+    }
+
+    #[tokio::test]
+    async fn metrics_need_an_admin_key_when_there_are_ones() {
+        let text = "client_keys = [{ name = \"ops\", key = \"k-ops\", admin = true }, \
+                    { name = \"app\", key = \"k-app\" }]\n\
+                    [tools]\na = { url = \"http://a.test/mcp\" }\n";
+        let config = || Config::parse(text).unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config()).unwrap_or_else(|e| panic!("{e}"));
+        let (status, _) = send_text(&app, "/metrics", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = send_text(&app, "/metrics", Some("k-app")).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, body) = send_text(&app, "/metrics", Some("k-ops")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("respan_gateway_requests_total 0"), "{body}");
     }
 
     #[tokio::test]
