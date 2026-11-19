@@ -18,7 +18,7 @@ const NAME: &str = "minimax-videos";
 type Key = crate::Own<MiniMaxVideos>;
 
 /// What starts the id of a job of MiniMax's: its own ids are bare numbers.
-const PREFIX: &str = "minimax_";
+pub(crate) const PREFIX: &str = "minimax_";
 
 /// The ratios, width to height, its models make.
 const RATIOS: [(u32, u32); 6] = [(21, 9), (16, 9), (4, 3), (1, 1), (3, 4), (9, 16)];

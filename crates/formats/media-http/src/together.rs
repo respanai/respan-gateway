@@ -16,7 +16,7 @@ const NAME: &str = "together-videos";
 type Key = crate::Own<TogetherVideos>;
 
 /// What starts the id of a job of Together's: its own ids are bare UUIDs.
-const PREFIX: &str = "together_";
+pub(crate) const PREFIX: &str = "together_";
 
 /// Where its jobs are, at the provider's base.
 const VIDEOS: &str = "/v2/videos";

@@ -8,7 +8,7 @@
 mod embeddings;
 mod images;
 mod speech;
-mod veo;
+pub(crate) mod veo;
 
 pub use embeddings::GeminiEmbeddings;
 pub use images::GeminiImages;

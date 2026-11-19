@@ -3,6 +3,12 @@
 `respan-gateway-media-http` is the [media kinds](../../kinds/media/README.md)
 over HTTP.
 
+`JOB_IDS` is what each video format starts its jobs' ids with, by the
+format's name, and `job_ids(format)` one format's: a host routes a job's
+follow-up by it (`video::VideoJobs`), and a Veo client's poll or download
+is the gateway's only for an id spelled so. A new video format is a row
+there.
+
 `openai::{OpenAiImages, OpenAiTranscriptions, OpenAiSpeech, OpenAiVideos,
 OpenAiEmbeddings}`, named `openai-images`, `openai-transcriptions`,
 `openai-speech`, `openai-videos` and `openai-embeddings`: OpenAI's endpoints, as OpenAI and compatible vendors serve

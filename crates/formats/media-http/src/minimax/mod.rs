@@ -5,7 +5,7 @@
 //! for speech, `https://api.minimax.io/v1`.
 
 mod speech;
-mod videos;
+pub(crate) mod videos;
 
 pub use speech::MiniMaxSpeech;
 pub use videos::MiniMaxVideos;

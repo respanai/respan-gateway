@@ -18,7 +18,7 @@ const NAME: &str = "dashscope-videos";
 type Key = crate::Own<DashScopeVideos>;
 
 /// What starts the id of a job of DashScope's: its own ids are bare UUIDs.
-const PREFIX: &str = "dashscope_";
+pub(crate) const PREFIX: &str = "dashscope_";
 
 /// Where a job is made, below the base URL.
 const SYNTHESIS: &str = "/services/aigc/video-generation/video-synthesis";

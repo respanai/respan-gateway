@@ -18,7 +18,7 @@ const NAME: &str = "empiriolabs-videos";
 type Key = crate::Own<EmpirioLabsVideos>;
 
 /// What starts the id of a job of EmpirioLabs AI's: its own ids are bare UUIDs.
-const PREFIX: &str = "empiriolabs_";
+pub(crate) const PREFIX: &str = "empiriolabs_";
 
 /// The short sides, in pixels, of the resolutions its models document
 /// (`480p`, `720p`, ...).

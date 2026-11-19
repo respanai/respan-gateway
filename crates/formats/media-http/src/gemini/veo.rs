@@ -26,7 +26,7 @@ const NAME: &str = "gemini-veo";
 
 type Key = crate::Own<GeminiVeo>;
 /// What starts the id of a job of Veo's.
-const PREFIX: &str = "veo_";
+pub(crate) const PREFIX: &str = "veo_";
 
 /// Google's Veo, as the Gemini API serves it: a provider of the video kind.
 ///
@@ -568,7 +568,7 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
             let model = last.strip_suffix(":predictLongRunning")?;
             is_segment(model).then(|| Route::Create(model.to_owned()))
         }
-        Method::GET if parent == "operations" && issued(last) => {
+        Method::GET if parent == "operations" && crate::issued(last) => {
             let model = match segments.as_slice() {
                 [.., models, model, _, _] if models == "models" && is_segment(model) => {
                     Some(model.clone())
@@ -581,31 +581,13 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
             })
         }
         Method::GET if parent == "files" => {
-            let id = last.strip_suffix(":download").filter(|id| issued(id))?;
+            let id = last
+                .strip_suffix(":download")
+                .filter(|id| crate::issued(id))?;
             Some(Route::Download(id.to_owned()))
         }
         _ => None,
     }
-}
-
-/// Whether `id` is spelled as a job id the gateway gives out, Veo's,
-/// OpenAI's, OpenRouter's, Together's, EmpirioLabs AI's, DashScope's, Z.ai's or MiniMax's, perhaps wrapped in its
-/// provider's name (`<provider>~<id>`): none of Google's own files or operations is, so
-/// those pass through.
-fn issued(id: &str) -> bool {
-    let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    [
-        PREFIX,
-        "video_",
-        "gen-vid-",
-        "together_",
-        "empiriolabs_",
-        "dashscope_",
-        "zai_",
-        "minimax_",
-    ]
-    .iter()
-    .any(|s| inner.starts_with(s))
 }
 
 /// What a client asks: a creation's body read into the kind's, the rest by
