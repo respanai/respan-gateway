@@ -194,8 +194,9 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   data URL of its bytes, as the first of the media's `frame_images`, and its
   `together-videos` native fields (`resolution`, `ratio`, `generate_audio`,
   `negative_prompt`, `seed`) as they are.
-- `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
-  are the kind's, its error `{code, message}`; its model, size and length
+- `GET /v2/videos/{id}` polls it: `queued`, `in_progress`, `completed` and
+  `failed` are the kind's, its error `{code, message}`; `cancelled` is
+  `failed`, with that as the error unless one is said; its model, size and length
   are the job's; the `video_url` of its `outputs` is its video, and their
   `cost`, what it charged, the job's native `cost`.
 - Content is a `GET` of the URL its job names, with no key, which

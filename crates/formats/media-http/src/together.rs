@@ -2,7 +2,8 @@
 //! [`video`](respan_gateway_media::video) kind, [`TogetherVideos`].
 
 use crate::edge::{
-    bind_jobs, dimensions, fetches, gets, job_error, job_of, on_hosts, posts, unsupported, video_at,
+    bind_jobs, dimensions, ended_as, fetches, gets, job_error, job_of, on_hosts, posts,
+    unsupported, video_at,
 };
 use respan_gateway_conversation_http::fields::{media_url, merge_missing};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
@@ -35,9 +36,10 @@ const VIDEOS: &str = "/v2/videos";
 /// `resolution`, `ratio`, `generate_audio` or `negative_prompt`, as they
 /// are.
 ///
-/// A job's id is Together's after `together_`. It is `in_progress`,
+/// A job's id is Together's after `together_`. It is `queued`, `in_progress`,
 /// `completed` once its video is made, or `failed` with the error Together
-/// gives; a state it adds is the format's own. Its video is the `video_url`
+/// gives; `cancelled` is failed, as that, and a state it adds the format's
+/// own. Its video is the `video_url`
 /// of its `outputs` ([`Job::videos`]), and the `cost` there, what it
 /// charged, the job's native `cost`. Content is a `GET` of that URL, needed in
 /// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
@@ -131,10 +133,12 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     let id = v["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
-    let status = match v["status"].as_str() {
+    let state = v["status"].as_str();
+    let status = match state {
+        Some("queued") => Status::Queued,
         Some("in_progress") => Status::InProgress,
         Some("completed") => Status::Completed,
-        Some("failed") => Status::Failed,
+        Some("failed" | "cancelled") => Status::Failed,
         Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable("has no status")),
     };
@@ -142,7 +146,10 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.model = v["model"].as_str().map(str::to_owned);
     job.seconds = v["seconds"].as_str().and_then(|s| s.parse().ok());
     job.size = v["size"].as_str().map(str::to_owned);
-    job.error = job_error(&v["error"]);
+    job.error = match state {
+        Some(ended @ "cancelled") => ended_as(job_error(&v["error"]), ended),
+        _ => job_error(&v["error"]),
+    };
     let outputs = &v["outputs"];
     job.videos = (outputs["video_url"].as_str().map(video_at).into_iter()).collect();
     if let Some(cost) = outputs.get("cost").filter(|cost| cost.is_number()) {
