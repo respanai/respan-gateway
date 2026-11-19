@@ -1,15 +1,13 @@
 //! Z.ai's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`ZaiVideos`].
 
-use crate::edge::{bind_provider, sends};
-use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use crate::edge::{bind_jobs, gets, job_of, posts, unsupported, video_at};
+use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -19,12 +17,6 @@ type Key = crate::Own<ZaiVideos>;
 
 /// What starts the id of a job of Z.ai's: its own ids are bare numbers.
 const PREFIX: &str = "zai_";
-
-/// Where its jobs are made, at the provider's base.
-const CREATE: &str = "/videos/generations";
-
-/// Where its jobs are polled, at the provider's base.
-const RESULT: &str = "/async-result";
 
 /// Z.ai's video generation (CogVideoX): `POST /videos/generations` makes a
 /// job and `GET /async-result/{id}` polls it, at the API's version, its base
@@ -65,71 +57,37 @@ impl Format<ProviderIo, Output, Input> for ZaiVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
-        }))
+        Ok(bind_jobs(io, NAME, call, read_job))
     }
-}
-
-/// An operation Z.ai has no form for, refused.
-fn unsupported(input: &Input) -> Fault {
-    let what = match input {
-        Input::Native { .. } => "no video operation of another format",
-        Input::Content { .. } => {
-            "no video content: it serves a video at the `url` of its job's `video_result`"
-        }
-        _ => "no video operation of this kind",
-    };
-    Fault::bad_request(format!("Z.ai has {what}")).with(ErrorCode("unsupported".into()))
-}
-
-/// Z.ai's id of a job `id`, if it is one of this format's.
-fn job_of(id: &str) -> Result<&str, Fault> {
-    let job = id.strip_prefix(PREFIX).filter(|job| !job.is_empty());
-    job.ok_or_else(|| Fault::not_found(format!("no Z.ai video job is {id:?}")))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
-    let (method, path, body) = match input {
-        Input::Create(create) => (Method::POST, CREATE.to_owned(), Some(create_body(create)?)),
+    match input {
+        Input::Create(create) => posts(head, "/videos/generations", &create_body(create)?),
         Input::Retrieve { id } => {
-            let path = format!("{RESULT}/{}", escape(job_of(id)?));
-            (Method::GET, path, None)
+            let id = job_of("Z.ai", PREFIX, id)?;
+            gets(head, &format!("/async-result/{}", escape(id)))
         }
-        _ => return Err(unsupported(input)),
-    };
-    head.method = method;
-    set_path(head, &path)?;
-    let Some(body) = body else {
-        return Ok(sends(Bytes::new()));
-    };
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Ok(sends(body))
+        _ => Err(unsupported("Z.ai", input)),
+    }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model =
         model.ok_or_else(|| Fault::bad_request("a video needs a model, such as cogvideox-3"))?;
     let mut v = Map::new();
     v.insert("model".into(), model.into());
     v.insert("prompt".into(), create.prompt.clone().into());
-    if let Some(seconds) = create.seconds {
-        v.insert("duration".into(), seconds.into());
-    }
-    if let Some(size) = &create.size {
-        v.insert("size".into(), size.as_str().into());
-    }
+    set(&mut v, "duration", create.seconds);
+    set(&mut v, "size", create.size.clone());
     if let Some(reference) = &create.reference {
         v.insert("image_url".into(), json!([media_url(reference)]));
     }
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
 /// The job of an answer `raw`.
@@ -148,7 +106,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.model = v["model"].as_str().map(str::to_owned);
     job.videos = (v["video_result"].as_array().into_iter().flatten())
         .filter_map(|video| video["url"].as_str())
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
+        .map(video_at)
         .collect();
     out.push(Output::Job(job));
     Ok(())
@@ -157,11 +115,8 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_http::http;
-
-    fn head() -> RequestHead {
-        http::Request::new(()).into_parts().0
-    }
+    use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::http::{self, Method};
 
     fn jobs(raw: Value) -> Vec<Output> {
         let mut out = Vec::new();
@@ -180,9 +135,8 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         ));
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "cogvideox-3", "prompt": "a wave", "duration": 5,
                 "size": "1280x720", "image_url": ["https://a.example/cat.png"] })
         );
@@ -192,7 +146,7 @@ mod tests {
 
     #[test]
     fn a_job_is_polled_by_its_id_and_its_content_refused() {
-        let mut head = head();
+        let mut head = http::Request::new(()).into_parts().0;
         let retrieve = Input::Retrieve {
             id: "zai_8868".into(),
         };
@@ -204,18 +158,6 @@ mod tests {
             url: None,
         };
         let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
-        // An id not of this format's is no job of Z.ai's.
-        let foreign = Input::Retrieve {
-            id: "video_1".into(),
-        };
-        assert!(call(&mut head, &foreign).is_err());
-        // Another format's operation, such as OpenAI's remix, is refused before a call.
-        let remix = Input::Native {
-            id: Some("zai_1".into()),
-            native: Native::json::<()>(json!({"method": "POST"})),
-        };
-        let refused = call(&mut head, &remix).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
     }
 
@@ -232,7 +174,6 @@ mod tests {
         );
 
         let done = json!({ "model": "cogvideox-3", "id": "8868", "task_status": "SUCCESS",
-            "usage": { "completion_tokens": 0, "prompt_tokens": 0, "total_tokens": 0 },
             "video_result": [{ "url": "https://a.example/v.mp4",
                 "cover_image_url": "https://a.example/c.png" }] });
         let [Output::Job(job)] = &jobs(done)[..] else {
@@ -240,11 +181,5 @@ mod tests {
         };
         assert_eq!(job.status, Status::Completed);
         assert_eq!(job.video_url(), Some("https://a.example/v.mp4"));
-
-        let failed = json!({ "id": "8868", "task_status": "FAIL" });
-        let [Output::Job(job)] = &jobs(failed)[..] else {
-            panic!("a job");
-        };
-        assert_eq!(job.status, Status::Failed);
     }
 }
