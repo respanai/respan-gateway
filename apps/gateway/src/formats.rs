@@ -22,7 +22,7 @@ use respan_gateway_media_http::dashscope::{
     DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
@@ -280,6 +280,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
         KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
+        KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
         KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
         KnownFormat::provider_only(kind::VIDEO, &DashScopeVideos).job_ids("dashscope_"),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
