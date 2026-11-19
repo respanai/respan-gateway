@@ -26,6 +26,8 @@ pub mod together;
 pub mod vllm;
 pub mod xai;
 
+use respan_gateway_conversation::{Media, MediaSource};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::content::content_type;
@@ -76,6 +78,16 @@ fn without(body: Bytes, key: &str) -> Result<Bytes, Fault> {
     serde_json::to_vec(&call)
         .map(Bytes::from)
         .map_err(unwritten)
+}
+
+/// `images` as URLs, each of bytes a data URL of them, so that an edit is
+/// sent as JSON rather than as a form.
+fn as_urls(images: &mut [Media]) {
+    for media in images {
+        if matches!(media.source, MediaSource::Bytes(_)) {
+            media.source = MediaSource::Url(media_url(media));
+        }
+    }
 }
 
 /// Whether an answer is a success in JSON, which a dialect may read whole.

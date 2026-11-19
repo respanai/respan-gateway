@@ -35,6 +35,8 @@ pub mod openrouter;
 pub mod together;
 pub mod zai;
 
+pub use edge::{dimensions, nearest_aspect};
+
 /// What each video format of this crate starts its jobs' ids with, by the
 /// format's name: its provider's own spelling, or, where its provider's ids
 /// are bare, the format's.

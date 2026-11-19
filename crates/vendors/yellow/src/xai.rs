@@ -2,13 +2,12 @@
 //! images in its dialect; its Grok Voice models speak OpenAI Realtime at
 //! `wss://api.x.ai/v1/realtime`.
 
-use respan_gateway_conversation::MediaSource;
-use respan_gateway_conversation_http::fields::{invalid, media_url};
+use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_media::image;
-use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_media_http::{Natives, dimensions, nearest_aspect};
 use respan_gateway_realtime_ws::OpenAiRealtime;
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor};
@@ -29,22 +28,22 @@ pub const VENDOR: Vendor = Vendor {
 };
 
 /// The aspect ratios xAI draws, as it names them, each a width to a height.
-const ASPECT_RATIOS: [(&str, f64, f64); 15] = [
-    ("1:1", 1.0, 1.0),
-    ("3:4", 3.0, 4.0),
-    ("4:3", 4.0, 3.0),
-    ("9:16", 9.0, 16.0),
-    ("16:9", 16.0, 9.0),
-    ("2:3", 2.0, 3.0),
-    ("3:2", 3.0, 2.0),
-    ("9:19.5", 9.0, 19.5),
-    ("19.5:9", 19.5, 9.0),
-    ("9:20", 9.0, 20.0),
-    ("20:9", 20.0, 9.0),
-    ("1:2", 1.0, 2.0),
-    ("2:1", 2.0, 1.0),
-    ("21:9", 21.0, 9.0),
-    ("5:2", 5.0, 2.0),
+const ASPECT_RATIOS: [(&str, u32, u32); 15] = [
+    ("1:1", 1, 1),
+    ("3:4", 3, 4),
+    ("4:3", 4, 3),
+    ("9:16", 9, 16),
+    ("16:9", 16, 9),
+    ("2:3", 2, 3),
+    ("3:2", 3, 2),
+    ("9:19.5", 18, 39),
+    ("19.5:9", 39, 18),
+    ("9:20", 9, 20),
+    ("20:9", 20, 9),
+    ("1:2", 1, 2),
+    ("2:1", 2, 1),
+    ("21:9", 21, 9),
+    ("5:2", 5, 2),
 ];
 
 /// xAI's images, as they depart from OpenAI's: it takes no `size`, but an
@@ -67,11 +66,7 @@ impl Dialect for XaiImages {
 /// `input` as xAI takes it: its size as a ratio and a resolution, its
 /// images as URLs.
 fn drawn(input: &mut image::Input) -> Result<(), Fault> {
-    for image in &mut input.images {
-        if matches!(image.source, MediaSource::Bytes(_)) {
-            image.source = MediaSource::Url(media_url(image));
-        }
-    }
+    crate::as_urls(&mut input.images);
     let Some(size) = input.size.take().filter(|s| s != "auto") else {
         return Ok(());
     };
@@ -91,17 +86,8 @@ fn drawn(input: &mut image::Input) -> Result<(), Fault> {
 
 /// The aspect ratio and resolution of a size `WxH`.
 fn sized(size: &str) -> Option<(&'static str, &'static str)> {
-    let (w, h) = size.split_once(['x', 'X'])?;
-    let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
-    if w == 0 || h == 0 {
-        return None;
-    }
-    let ratio = f64::from(w) / f64::from(h);
-    let off = |&&(_, a, b): &&(&str, f64, f64)| (ratio / (a / b) - 1.0).abs();
-    let (name, ..) = ASPECT_RATIOS
-        .iter()
-        .min_by(|x, y| off(x).total_cmp(&off(y)))
-        .filter(|best| off(best) <= 0.05)?;
+    let (w, h) = dimensions(size)?;
+    let (name, ..) = nearest_aspect(w, h, &ASPECT_RATIOS)?;
     let resolution = if w.max(h) > 1024 { "2k" } else { "1k" };
     Some((name, resolution))
 }
@@ -109,7 +95,7 @@ fn sized(size: &str) -> Option<(&'static str, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::Media;
+    use respan_gateway_conversation::{Media, MediaSource};
     use respan_gateway_http::bytes::Bytes;
     use serde_json::{Value, json};
 

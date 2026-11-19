@@ -4,7 +4,7 @@
 
 use super::{post_json, said_error, says_error};
 use crate::Natives;
-use crate::edge::{bind_provider, dimensions, sends};
+use crate::edge::{bind_provider, boolean, dimensions, sends, whole_number};
 use crate::openai::OpenAiImages;
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::{invalid, media_url};
@@ -120,22 +120,13 @@ fn passed(native: &Map<String, Value>, parameters: &mut Map<String, Value>) -> R
         parameters.insert("negative_prompt".into(), text.clone());
     }
     for key in ["prompt_extend", "watermark"] {
-        let flag = match native.get(key) {
-            None => continue,
-            Some(Value::Bool(b)) => Some(*b),
-            Some(Value::String(t)) => t.trim().parse().ok(),
-            Some(_) => None,
-        };
-        let flag = flag.ok_or_else(|| invalid(key, "must be true or false"))?;
-        parameters.insert(key.into(), flag.into());
+        if let Some(flag) = native.get(key) {
+            let flag = boolean(flag).ok_or_else(|| invalid(key, "must be true or false"))?;
+            parameters.insert(key.into(), flag.into());
+        }
     }
     if let Some(seed) = native.get("seed") {
-        let seed = match seed {
-            Value::Number(n) => n.as_u64(),
-            Value::String(t) => t.trim().parse().ok(),
-            _ => None,
-        };
-        let seed = seed.ok_or_else(|| invalid("seed", "must be a whole number"))?;
+        let seed = whole_number(seed).ok_or_else(|| invalid("seed", "must be a whole number"))?;
         parameters.insert("seed".into(), seed.into());
     }
     Ok(())

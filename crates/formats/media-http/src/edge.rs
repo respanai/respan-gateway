@@ -144,7 +144,7 @@ pub(crate) fn video_at(url: &str) -> Media {
 }
 
 /// The width and height of a size `WxH`, neither of them zero.
-pub(crate) fn dimensions(size: &str) -> Option<(u32, u32)> {
+pub fn dimensions(size: &str) -> Option<(u32, u32)> {
     let (w, h) = size.split_once(['x', 'X'])?;
     let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
     (w > 0 && h > 0).then_some((w, h))
@@ -153,10 +153,48 @@ pub(crate) fn dimensions(size: &str) -> Option<(u32, u32)> {
 /// The aspect ratio of `ratios`, each a width to a height, nearest to a
 /// `width` by `height`, within 5%.
 pub(crate) fn nearest_ratio(width: u32, height: u32, ratios: &[(u32, u32)]) -> Option<(u32, u32)> {
+    nearest(width, height, ratios, |&(a, b)| (a, b)).copied()
+}
+
+/// The named aspect ratio of `ratios`, each a name, a width and a height,
+/// nearest to a `width` by `height`, within 5%.
+pub fn nearest_aspect(
+    width: u32,
+    height: u32,
+    ratios: &[(&'static str, u32, u32)],
+) -> Option<(&'static str, u32, u32)> {
+    nearest(width, height, ratios, |&(_, a, b)| (a, b)).copied()
+}
+
+/// The entry of `ratios` whose width to height, by `of`, is nearest to a
+/// `width` by `height`, within 5%.
+fn nearest<T>(width: u32, height: u32, ratios: &[T], of: impl Fn(&T) -> (u32, u32)) -> Option<&T> {
     let ratio = |w: u32, h: u32| f64::from(w) / f64::from(h);
-    let off = |&&(a, b): &&(u32, u32)| (ratio(width, height) / ratio(a, b) - 1.0).abs();
+    let off = |entry: &T| {
+        let (a, b) = of(entry);
+        (ratio(width, height) / ratio(a, b) - 1.0).abs()
+    };
     let best = ratios.iter().min_by(|x, y| off(x).total_cmp(&off(y)))?;
-    (off(&best) <= 0.05).then_some(*best)
+    (off(best) <= 0.05).then_some(best)
+}
+
+/// A field's whole number: a JSON one, or a form's text of one.
+pub(crate) fn whole_number(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// A field's boolean: JSON's, or a form's `true` or `false`, in any case.
+pub(crate) fn boolean(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) if s.trim().eq_ignore_ascii_case("true") => Some(true),
+        Value::String(s) if s.trim().eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
 }
 
 /// A vector as a list of numbers, each as its shortest `f32` text, not as
