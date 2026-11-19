@@ -385,6 +385,26 @@ its key a bearer token.
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
 
+`dashscope::DashScopeImages`, named `dashscope-images`: Alibaba Cloud Model
+Studio's image models that answer at once, Qwen-Image (`qwen-image-2.0`) and
+Wan from 2.6 (`wan2.6-t2i`), as a provider only, at the same base URL. Older
+Wan models and Qwen-MT-Image draw only as a task, which DashScope refuses
+there.
+
+- A `POST` to `/services/aigc/multimodal-generation/generation` of one user
+  message: the images to edit, each a URL or a data URL of its bytes, then
+  the prompt as text. Its `parameters` are the count as `n`, one unless
+  asked (Wan makes four otherwise), the `size` as `1024*768` (`auto` sends
+  none), and a request's `negative_prompt`, `prompt_extend`, `watermark`
+  and `seed`, as OpenAI's clients send them, a form's text read as a number
+  or a boolean. Other fields of another format, such as a `quality`, are
+  dropped.
+- An answer's images are those of its choices' content, at URLs DashScope
+  keeps for 24 hours; its `usage`, the images it made and their size, is a
+  native `{"usage": {..}}`, as it reports no tokens.
+- A mask and a `response_format` but `url` are refused, 400, before the
+  call; a `size` DashScope does not draw is its own 400.
+
 `dashscope::DashScopeVideos`, named `dashscope-videos`: Alibaba Cloud Model
 Studio's Wan video generation, as a provider only, at the same base URL. Its
 job ids are DashScope's task ids after `dashscope_`, which `video::VideoJobs`

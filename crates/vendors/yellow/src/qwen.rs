@@ -1,12 +1,12 @@
 //! Qwen, on Alibaba Cloud Model Studio's international site: Chat
-//! Completions as OpenAI serves them, speech, transcriptions and videos on
-//! DashScope's own API, and Realtime in OpenAI's beta protocol, which its
+//! Completions as OpenAI serves them, speech, transcriptions, images and
+//! videos on DashScope's own API, and Realtime in OpenAI's beta protocol, which its
 //! Omni Realtime models speak.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::Filter;
 use respan_gateway_media_http::dashscope::{
-    DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+    DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::OpenAiRealtimeBeta;
@@ -33,6 +33,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiChat, Some(BASE_URL)),
         (&DashScopeSpeech, Some(DASHSCOPE_URL)),
         (&DashScopeTranscriptions, Some(DASHSCOPE_URL)),
+        (&DashScopeImages, Some(DASHSCOPE_URL)),
         (&DashScopeVideos, Some(DASHSCOPE_URL)),
         (
             &Dialected::new(OpenAiRealtimeBeta::hearing(HEARD), QwenRealtime),

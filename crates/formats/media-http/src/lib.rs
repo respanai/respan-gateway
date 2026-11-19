@@ -11,7 +11,8 @@
 //!   own API.
 //! - [`openrouter`]: OpenRouter's video generation.
 //! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis,
-//!   recognition and video generation, on DashScope's own API.
+//!   recognition, image generation and video generation, on DashScope's own
+//!   API.
 //! - [`together`]: Together's video generation.
 //! - [`empiriolabs`]: EmpirioLabs AI's video generation.
 //! - [`zai`]: Z.ai's video generation.
@@ -33,6 +34,8 @@ pub mod openai;
 pub mod openrouter;
 pub mod together;
 pub mod zai;
+
+pub use edge::named_aspect;
 
 /// What each video format of this crate starts its jobs' ids with, by the
 /// format's name: its provider's own spelling, or, where its provider's ids
@@ -88,6 +91,7 @@ impl Natives for gemini::GeminiSpeech {}
 impl Natives for gemini::GeminiVeo {}
 impl Natives for minimax::MiniMaxVideos {}
 impl Natives for openrouter::OpenRouterVideos {}
+impl Natives for dashscope::DashScopeImages {}
 impl Natives for dashscope::DashScopeSpeech {}
 impl Natives for dashscope::DashScopeTranscriptions {}
 impl Natives for dashscope::DashScopeVideos {}

@@ -19,7 +19,7 @@ use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
 use respan_gateway_media_http::dashscope::{
-    DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+    DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
@@ -272,6 +272,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::IMAGE, &DashScopeImages),
         KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
         KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
         KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),

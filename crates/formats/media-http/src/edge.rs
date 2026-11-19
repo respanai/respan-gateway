@@ -1,6 +1,7 @@
 //! What the HTTP formats of this crate share.
 
 use respan_gateway_conversation::{Media, MediaSource};
+use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::read_provider_error;
 use respan_gateway_core::{Connection, ErrorCode, Fault};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -153,10 +154,66 @@ pub(crate) fn dimensions(size: &str) -> Option<(u32, u32)> {
 /// The aspect ratio of `ratios`, each a width to a height, nearest to a
 /// `width` by `height`, within 5%.
 pub(crate) fn nearest_ratio(width: u32, height: u32, ratios: &[(u32, u32)]) -> Option<(u32, u32)> {
+    nearest(width, height, ratios, |&(a, b)| (a, b)).copied()
+}
+
+/// An aspect ratio: its name, a width and a height.
+pub(crate) type Aspect = (&'static str, u32, u32);
+
+/// The aspect ratio of `ratios` nearest to a size `WxH`, within 5%, and the
+/// size's long side; none for `auto`. A size of no such ratio is refused,
+/// 400, naming the ratios `who` draws.
+pub fn named_aspect(
+    size: &str,
+    ratios: &[Aspect],
+    who: &str,
+) -> Result<Option<(Aspect, u32)>, Fault> {
+    if size == "auto" {
+        return Ok(None);
+    }
+    let found = dimensions(size).and_then(|(w, h)| {
+        let best = nearest(w, h, ratios, |&(_, a, b)| (a, b))?;
+        Some((*best, w.max(h)))
+    });
+    found.map(Some).ok_or_else(|| {
+        let names: Vec<&str> = ratios.iter().map(|(name, ..)| *name).collect();
+        let names = names.join(", ");
+        invalid(
+            "size",
+            &format!("is not of an aspect ratio {who} draws: {names}"),
+        )
+    })
+}
+
+/// The entry of `ratios` whose width to height, by `of`, is nearest to a
+/// `width` by `height`, within 5%.
+fn nearest<T>(width: u32, height: u32, ratios: &[T], of: impl Fn(&T) -> (u32, u32)) -> Option<&T> {
     let ratio = |w: u32, h: u32| f64::from(w) / f64::from(h);
-    let off = |&&(a, b): &&(u32, u32)| (ratio(width, height) / ratio(a, b) - 1.0).abs();
+    let off = |entry: &T| {
+        let (a, b) = of(entry);
+        (ratio(width, height) / ratio(a, b) - 1.0).abs()
+    };
     let best = ratios.iter().min_by(|x, y| off(x).total_cmp(&off(y)))?;
-    (off(&best) <= 0.05).then_some(*best)
+    (off(best) <= 0.05).then_some(best)
+}
+
+/// A field's whole number: a JSON one, or a form's text of one.
+pub(crate) fn whole_number(v: &Value) -> Option<u64> {
+    match v {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+/// A field's boolean: JSON's, or a form's `true` or `false`, in any case.
+pub(crate) fn boolean(v: &Value) -> Option<bool> {
+    match v {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) if s.trim().eq_ignore_ascii_case("true") => Some(true),
+        Value::String(s) if s.trim().eq_ignore_ascii_case("false") => Some(false),
+        _ => None,
+    }
 }
 
 /// A vector as a list of numbers, each as its shortest `f32` text, not as
