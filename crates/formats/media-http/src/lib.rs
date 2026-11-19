@@ -11,6 +11,7 @@
 //! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis,
 //!   recognition and video generation, on DashScope's own API.
 //! - [`together`]: Together's video generation.
+//! - [`empiriolabs`]: EmpirioLabs AI's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -22,6 +23,7 @@ use serde_json::{Map, Value};
 pub mod bedrock;
 pub mod dashscope;
 mod edge;
+pub mod empiriolabs;
 pub mod gemini;
 pub mod openai;
 pub mod openrouter;
@@ -46,6 +48,7 @@ impl Natives for openai::OpenAiEmbeddings {}
 impl Natives for openai::OpenAiSpeech {}
 impl Natives for openai::OpenAiTranscriptions {}
 impl Natives for openai::OpenAiVideos {}
+impl Natives for empiriolabs::EmpirioLabsVideos {}
 impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiVeo {}

@@ -21,6 +21,7 @@ use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
 use respan_gateway_media_http::dashscope::{
     DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -286,6 +287,7 @@ pub fn formats() -> Vec<KnownFormat> {
         ),
         KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
         KnownFormat::provider_only(kind::VIDEO, &TogetherVideos).job_ids("together_"),
+        KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos).job_ids("empiriolabs_"),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
