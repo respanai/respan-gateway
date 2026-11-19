@@ -209,6 +209,30 @@ in `x-goog-api-key`.
   usage is its input and output tokens, the rest, such as the tokens of each
   modality, a native `{"usage": {..}}`.
 
+`empiriolabs::EmpirioLabsVideos`, named `empiriolabs-videos`: EmpirioLabs
+AI's video generation, as a provider only, its key a bearer token, its base
+URL the API's host with no version (`https://api.empiriolabs.ai`). Its job
+ids are the provider's after `empiriolabs_`, which `video::VideoJobs` routes
+a follow-up by.
+
+- `POST /v1/videos/generations` makes a job: the kind's `seconds` go as its
+  `duration`, its reference image, a URL or a data URL of its bytes, as its
+  `image`, its `size` as a `resolution` (`<short side>p`, for 360, 480,
+  540, 720, 768 or 1080) and an `aspect_ratio` (16:9, 9:16, 1:1, 4:3, 3:4,
+  3:2, 2:3 or 21:9, the nearest within 5%), and its `empiriolabs-videos`
+  native fields (`generate_audio`, `mode`, and a `resolution` or
+  `aspect_ratio` the `size` does not say) as they are. Any other `size` is
+  refused, 400, before any call; a model that lacks the
+  resolution answers with its own error.
+- `GET /v1/jobs/{id}` polls it: `processing`, `completed` and `failed` are
+  the kind's, `cancelled` its own, its error `{code, message}`; its model is
+  the job's; the `url`s of its `result`'s `data` are its videos, their
+  `duration_seconds` its length, and the `usage`'s `cost_usd`, what it
+  charged, the job's native `cost_usd`.
+- It serves a video only at those URLs, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
 `x-goog-api-key`.
@@ -314,3 +338,24 @@ its key a bearer token.
   `output.text`, or its first choice's text, is the transcript; its usage is
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
+
+`dashscope::DashScopeVideos`, named `dashscope-videos`: Alibaba Cloud Model
+Studio's Wan video generation, as a provider only, at the same base URL. Its
+job ids are DashScope's task ids after `dashscope_`, which `video::VideoJobs`
+routes a follow-up by.
+
+- A `POST` to `/services/aigc/video-generation/video-synthesis`, asked to run
+  as a task (`X-DashScope-Async: enable`), makes a job: the kind's prompt and
+  reference image are the `input`'s `prompt` and `img_url`, its `seconds` and
+  `size` (as `832*480`) the `parameters`' `duration` and `size`, and its
+  `dashscope-videos` native fields the body's, an `input` or `parameters`
+  object laid into those field by field (`negative_prompt`, `resolution`,
+  `seed`, `prompt_extend`).
+- `GET /tasks/{id}` polls it: `PENDING`, `RUNNING`, `SUCCEEDED` and `FAILED`
+  are the kind's, its error the output's `code` and `message`; `CANCELED` and
+  `UNKNOWN` are the format's own. Its model, length and size are the job's,
+  the `output.video_url` (valid for 24 hours) its video, and the `usage` its
+  native `usage`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.

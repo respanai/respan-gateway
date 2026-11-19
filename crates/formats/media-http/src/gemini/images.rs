@@ -3,7 +3,7 @@
 //! [`GeminiImages`].
 
 use super::{is_segment, refusal};
-use crate::edge::{bind_provider, sends};
+use crate::edge::{bind_provider, dimensions, sends};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{base64_bytes, invalid};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
@@ -164,12 +164,8 @@ fn aspect_of(size: &str) -> Result<Option<(&'static str, Option<&'static str>)>,
     if size == "auto" {
         return Ok(None);
     }
-    let parsed = size.split_once(['x', 'X']).and_then(|(w, h)| {
-        let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
-        (w > 0 && h > 0).then_some((w, h))
-    });
     let ratio = |w: u32, h: u32| f64::from(w) / f64::from(h);
-    let nearest = parsed.and_then(|(w, h)| {
+    let nearest = dimensions(size).and_then(|(w, h)| {
         let off = |&&(_, aw, ah): &&(&str, u32, u32)| (ratio(w, h) / ratio(aw, ah) - 1.0).abs();
         let best = ASPECTS.iter().min_by(|a, b| off(a).total_cmp(&off(b)))?;
         (off(&best) <= 0.05).then_some((best, w.max(h)))
