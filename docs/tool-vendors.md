@@ -48,6 +48,7 @@ are:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tool-vendors/elevenlabs-dark.svg"><img src="assets/tool-vendors/elevenlabs.svg" width="20" height="20" alt=""></picture> | [ElevenLabs](https://elevenlabs.io) | Voice | `elevenlabs` | `ELEVENLABS_API_KEY` | `text_to_speech`, `search_voices`, `speech_to_text`, `sound_effect` |
 | | [Exa](https://exa.ai) | Search | `exa` | `EXA_API_KEY` | `search`, `get_contents` |
 | | [Firecrawl](https://firecrawl.dev) | Web scraping and search | `firecrawl` | `FIRECRAWL_API_KEY` | `scrape`, `crawl`, `get_crawl`, `map_site`, `search` |
+| | [SpecStream](https://specstream.ai) | Search | `specstream` | `SPECSTREAM_API_KEY` | `search`, `extract` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/tool-vendors`](../crates/tool-vendors/README.md), or a tool added
@@ -64,6 +65,7 @@ the arguments; a free call carries none.
 |---|---|---|
 | Linkup | `usd` | Its price list, by depth and fetch mode |
 | Exa | `usd` | The answer's `costDollars.total` |
+| SpecStream | `usd` | The answer's `data.price_usd` |
 | Firecrawl | `credits` | Scrape's `data.metadata.creditsUsed`, search's `creditsUsed`; crawl status shows the job's total without charging it again |
 | Tavily | `credits` | The answer's `usage.credits` |
 | Context7 | `requests` | One a call |
@@ -191,6 +193,16 @@ tool takes a document URL, or the `jobid://` of an earlier parse:
 - `split_document` is `POST /split`: the pages of each named section.
 
 Each is billed per page.
+
+**SpecStream**, at `https://api.specstream.ai/v1`, its key a bearer token:
+
+- `search` is `POST /web-search`: ranked sources with snippets and a
+  published date where the page states one, and an answer when one is
+  found. `speed: "fast"` costs less.
+- `extract` is `POST /extract`: up to 20 pages or documents as their main
+  text, with a status per URL.
+
+Each search is billed, and each page read; a page with no text is not.
 
 **Tavily**, at `https://api.tavily.com`, its key a bearer token:
 
