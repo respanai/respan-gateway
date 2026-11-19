@@ -187,6 +187,7 @@ pub fn router(admin: Arc<Admin>, keys: Arc<ClientKeys>) -> Router {
         .route("/ui/api/requests", get(requests))
         .route("/ui/api/requests/export", get(export))
         .route("/ui/api/requests/{id}", get(request))
+        .route("/ui/api/clients", get(clients))
         .route("/ui/api/events", get(events))
         .route("/ui/api/reload", post(reload))
         .route("/ui/api/config", get(config::show))
@@ -743,6 +744,38 @@ async fn request(State(admin): State<Arc<Admin>>, Path(id): Path<String>) -> Res
     }
 }
 
+/// `GET /ui/api/clients`: each client key's finished requests, by name
+/// (`name`, `requests`, `errors`, `avg_latency_ms`, `input_tokens`,
+/// `output_tokens`), with `cost_usd` once one of its requests had a cost:
+///
+/// ```json
+/// { "clients": [{ "name": "app", "requests": 40, "errors": 1,
+///     "avg_latency_ms": 812, "input_tokens": 12000, "output_tokens": 3000,
+///     "cost_usd": 0.42 }] }
+/// ```
+///
+/// Empty without client keys, and before their first request finishes; what
+/// `request_log.history` no longer keeps is not counted.
+async fn clients(State(admin): State<Arc<Admin>>) -> Json<Value> {
+    let clients: Vec<Value> = (admin.process.log.clients().iter())
+        .map(|(name, s)| {
+            let mut row = json!({
+                "name": name,
+                "requests": s.requests,
+                "errors": s.errors,
+                "avg_latency_ms": s.avg_latency_ms(),
+                "input_tokens": s.input_tokens,
+                "output_tokens": s.output_tokens,
+            });
+            if let Some(cost) = s.cost_usd {
+                row["cost_usd"] = cost.into();
+            }
+            row
+        })
+        .collect();
+    Json(json!({ "clients": clients }))
+}
+
 async fn not_found() -> Response {
     not_found_response()
 }
@@ -851,6 +884,15 @@ mod tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    #[tokio::test]
+    async fn clients_list_their_keys_stats() {
+        let config = || Config::parse(TOOLS).unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config()).unwrap_or_else(|e| panic!("{e}"));
+        let (status, listed) = send(&app, Method::GET, "/ui/api/clients", "").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(listed, json!({ "clients": [] }));
     }
 
     #[tokio::test]

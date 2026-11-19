@@ -8,6 +8,7 @@ import {
   Route,
   Server,
   Settings,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 
@@ -20,6 +21,7 @@ export interface NavItem {
 export const monitor: NavItem[] = [
   { to: "/", label: "Overview", icon: LayoutDashboard },
   { to: "/requests", label: "Requests", icon: Activity },
+  { to: "/clients", label: "Clients", icon: Users },
 ];
 
 export const build: NavItem[] = [
