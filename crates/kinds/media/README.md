@@ -41,7 +41,7 @@ the gateway: a client gives it back as a path segment, and a follow-up
 reach the provider that made the job. Nothing in the request says which but
 the id's spelling: OpenAI Videos' ids start `video_` (OpenAI's own API was
 removed on 2026-09-24; a compatible provider's), Veo's `veo_`, OpenRouter's
-`gen-vid-`, Together's `together_`, EmpirioLabs AI's `empiriolabs_`.
+`gen-vid-`, Together's `together_`, EmpirioLabs AI's `empiriolabs_`, DashScope's `dashscope_`.
 `video::VideoJobs`, registered after the router, sends each follow-up (and
 a page after one) to its job's provider by that spelling. Providers that
 spell ids alike, such as two deployments of one vendor, have their ids
