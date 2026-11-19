@@ -73,6 +73,11 @@ This integration has not been verified against the live API.
 MiniMax speech, `minimax-speech`, is called at the same base URL, `/t2a_v2`; the
 key is a bearer token.
 
+xAI's images take no `size`: it is sent as the nearest `aspect_ratio` xAI
+draws (within 5%, else 400) and a `resolution`, `2k` above 1024 pixels on the
+long side, else `1k`. xAI takes no form, so an edit's images are sent in JSON
+as data URLs of their bytes.
+
 ## Base URLs
 
 A provider's `base_url` is the one its own SDK takes. OpenAI-compatible ones
