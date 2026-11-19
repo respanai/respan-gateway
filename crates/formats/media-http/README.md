@@ -195,6 +195,20 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
 
+`gemini::GeminiSpeech`, named `gemini-speech`: Gemini's speech models
+(`gemini-3.8-flash-tts`) on `POST /interactions`, as a provider only, its key
+in `x-goog-api-key`.
+
+- The text is one user turn, `instructions` its `speech_metadata` `style`, a
+  voice a prebuilt voice of the `speech_config`, and the audio format the
+  `response_format`'s `mime_type`: `mp3` (unless asked), `wav` or `pcm`
+  (`audio/l16`, 16-bit at 24 kHz). Another format, a `speed` and
+  `instructions` with no voice (Gemini refuses a style without one) are
+  refused, 400, before the call.
+- The audio is the answer's base64 `audio` content, the whole of it at once;
+  usage is its input and output tokens, the rest, such as the tokens of each
+  modality, a native `{"usage": {..}}`.
+
 `empiriolabs::EmpirioLabsVideos`, named `empiriolabs-videos`: EmpirioLabs
 AI's video generation, as a provider only, its key a bearer token, its base
 URL the API's host with no version (`https://api.empiriolabs.ai`). Its job
