@@ -3,9 +3,11 @@
 //! to end against their live APIs. A vendor moves to green once it is.
 
 pub mod azure;
+pub mod baseten;
 pub mod bedrock;
 pub mod cerebras;
 pub mod cloudflare;
+pub mod concentrate;
 pub mod deepinfra;
 pub mod deepseek;
 pub mod empiriolabs;
@@ -17,6 +19,7 @@ pub mod morph;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
+pub mod primeintellect;
 pub mod stepfun;
 pub mod together;
 pub mod vllm;
@@ -50,6 +53,9 @@ pub const ALL: &[&Vendor] = &[
     &phonic::VENDOR,
     &morph::VENDOR,
     &stepfun::VENDOR,
+    &baseten::VENDOR,
+    &concentrate::VENDOR,
+    &primeintellect::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,
