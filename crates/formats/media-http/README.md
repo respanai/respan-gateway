@@ -348,6 +348,27 @@ its key a bearer token.
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
 
+`dashscope::DashScopeVideos`, named `dashscope-videos`: Alibaba Cloud Model
+Studio's Wan video generation, as a provider only, at the same base URL. Its
+job ids are DashScope's task ids after `dashscope_`, which `video::VideoJobs`
+routes a follow-up by.
+
+- A `POST` to `/services/aigc/video-generation/video-synthesis`, asked to run
+  as a task (`X-DashScope-Async: enable`), makes a job: the kind's prompt and
+  reference image are the `input`'s `prompt` and `img_url`, its `seconds` and
+  `size` (as `832*480`) the `parameters`' `duration` and `size`, and its
+  `dashscope-videos` native fields the body's, an `input` or `parameters`
+  object laid into those field by field (`negative_prompt`, `resolution`,
+  `seed`, `prompt_extend`).
+- `GET /tasks/{id}` polls it: `PENDING`, `RUNNING`, `SUCCEEDED` and `FAILED`
+  are the kind's, its error the output's `code` and `message`; `CANCELED` and
+  `UNKNOWN` are the format's own. Its model, length and size are the job's,
+  the `output.video_url` (valid for 24 hours) its video, and the `usage` its
+  native `usage`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `minimax::MiniMaxSpeech`, named `minimax-speech`: MiniMax's speech synthesis
 on its international API, as a provider only. A provider's base URL is
 `https://api.minimax.io/v1`, its key a bearer token.

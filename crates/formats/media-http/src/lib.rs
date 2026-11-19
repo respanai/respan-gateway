@@ -10,8 +10,8 @@
 //! - [`minimax`]: MiniMax's video generation and speech synthesis, on its
 //!   own API.
 //! - [`openrouter`]: OpenRouter's video generation.
-//! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis and
-//!   recognition, on DashScope's own API.
+//! - [`dashscope`]: Alibaba Cloud Model Studio's speech synthesis,
+//!   recognition and video generation, on DashScope's own API.
 //! - [`together`]: Together's video generation.
 //! - [`empiriolabs`]: EmpirioLabs AI's video generation.
 //!
@@ -59,5 +59,6 @@ impl Natives for minimax::MiniMaxVideos {}
 impl Natives for openrouter::OpenRouterVideos {}
 impl Natives for dashscope::DashScopeSpeech {}
 impl Natives for dashscope::DashScopeTranscriptions {}
+impl Natives for dashscope::DashScopeVideos {}
 impl Natives for minimax::MiniMaxSpeech {}
 impl Natives for together::TogetherVideos {}
