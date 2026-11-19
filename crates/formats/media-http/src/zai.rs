@@ -1,13 +1,14 @@
 //! Z.ai's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`ZaiVideos`].
 
-use crate::edge::{bind_jobs, gets, job_of, posts, unsupported, video_at};
+use crate::edge::{bind_provider, gets, job_of, posts, unsupported, video_at};
+use percent_encoding::percent_decode_str;
 use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -57,7 +58,13 @@ impl Format<ProviderIo, Output, Input> for ZaiVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_jobs(io, NAME, call, read_job))
+        Ok(bind_provider(io, NAME, call, |_, sent| {
+            // A poll's answer need not repeat its id: it is the one asked for.
+            let asked = (sent.uri().path().rsplit_once("/async-result/"))
+                .map(|(_, id)| percent_decode_str(id).decode_utf8_lossy().into_owned());
+            let read = move |raw, out: &mut Vec<Output>| read_job(raw, asked.as_deref(), out);
+            Some(Box::new(Whole::new(read)) as Box<dyn Decoder<Output>>)
+        }))
     }
 }
 
@@ -90,11 +97,12 @@ fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     Ok(v)
 }
 
-/// The job of an answer `raw`.
-fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+/// The job of an answer `raw`, its id the one `asked` for if it says none.
+fn read_job(raw: Bytes, asked: Option<&str>, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
-    let id = v["id"].as_str().ok_or_else(|| unreadable("has no id"))?;
+    let id = v["id"].as_str().or(asked);
+    let id = id.ok_or_else(|| unreadable("has no id"))?;
     let status = match v["task_status"].as_str() {
         Some("PROCESSING") => Status::InProgress,
         Some("SUCCESS") => Status::Completed,
@@ -120,7 +128,7 @@ mod tests {
 
     fn jobs(raw: Value) -> Vec<Output> {
         let mut out = Vec::new();
-        read_job(Bytes::from(raw.to_string()), &mut out).expect("read");
+        read_job(Bytes::from(raw.to_string()), Some("8868"), &mut out).expect("read");
         out
     }
 
@@ -173,13 +181,17 @@ mod tests {
             ("zai_8868", Status::InProgress, Some("cogvideox-3"))
         );
 
-        let done = json!({ "model": "cogvideox-3", "id": "8868", "task_status": "SUCCESS",
+        // A poll's answer is documented with no id: the job keeps the one asked for.
+        let done = json!({ "model": "cogvideox-3", "request_id": "r1", "task_status": "SUCCESS",
             "video_result": [{ "url": "https://a.example/v.mp4",
                 "cover_image_url": "https://a.example/c.png" }] });
         let [Output::Job(job)] = &jobs(done)[..] else {
             panic!("a job");
         };
-        assert_eq!(job.status, Status::Completed);
+        assert_eq!(
+            (job.id.as_str(), &job.status),
+            ("zai_8868", &Status::Completed)
+        );
         assert_eq!(job.video_url(), Some("https://a.example/v.mp4"));
     }
 }
