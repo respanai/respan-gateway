@@ -15,7 +15,7 @@ use respan_gateway_media::image::{Image, Input, Output, Start};
 use serde_json::{Map, Number, Value};
 
 use crate::Natives;
-use crate::edge::{bind_provider, sends};
+use crate::edge::{bind_provider, dimensions, nearest_ratio, sends};
 use crate::openai::{OpenAiImages, sniff};
 
 const NAME: &str = "bedrock-images";
@@ -281,17 +281,7 @@ fn aspect_ratio(size: &str) -> Result<Option<String>, Fault> {
     if size == "auto" {
         return Ok(None);
     }
-    let ratio = size.split_once(['x', 'X']).and_then(|(w, h)| {
-        let (w, h) = (w.trim().parse::<f64>().ok()?, h.trim().parse::<f64>().ok()?);
-        (w > 0.0 && h > 0.0).then_some(w / h)
-    });
-    let nearest = ratio.and_then(|ratio| {
-        let off = |&&(a, b): &&(u32, u32)| (ratio / (f64::from(a) / f64::from(b)) - 1.0).abs();
-        let best = ASPECT_RATIOS
-            .iter()
-            .min_by(|x, y| off(x).total_cmp(&off(y)))?;
-        (off(&best) <= 0.05).then_some(*best)
-    });
+    let nearest = dimensions(size).and_then(|(w, h)| nearest_ratio(w, h, &ASPECT_RATIOS));
     match nearest {
         Some((a, b)) => Ok(Some(format!("{a}:{b}"))),
         None => Err(invalid(
