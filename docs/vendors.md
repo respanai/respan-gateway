@@ -49,7 +49,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
 | <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
 | <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses`, `decisions` |
-| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions` |
+| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions`, `empiriolabs-videos` |
 | <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos`, `decisions` |
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
@@ -84,8 +84,9 @@ EmpirioLabs AI's and OpenRouter's for `anthropic-messages`: `https://api.empirio
 formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `openai-videos`, `openai-embeddings`), `openrouter-videos` and
 `openai-responses` take the same base URL as `openai-chat`; Together's
-`together-videos` and MiniMax's `minimax-videos` take their host alone,
-`https://api.together.xyz` and `https://api.minimax.io`. Gemini's own formats, `gemini-generate`
+`together-videos`, EmpirioLabs AI's `empiriolabs-videos` and MiniMax's
+`minimax-videos` take their host alone, `https://api.together.xyz`,
+`https://api.empiriolabs.ai` and `https://api.minimax.io`. Gemini's own formats, `gemini-generate`
 (`generateContent` and `streamGenerateContent`, the model in the path),
 `gemini-images` (its image models' `generateContent`), `gemini-veo` and
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with

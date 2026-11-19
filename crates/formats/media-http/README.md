@@ -195,6 +195,30 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
 
+`empiriolabs::EmpirioLabsVideos`, named `empiriolabs-videos`: EmpirioLabs
+AI's video generation, as a provider only, its key a bearer token, its base
+URL the API's host with no version (`https://api.empiriolabs.ai`). Its job
+ids are the provider's after `empiriolabs_`, which `video::VideoJobs` routes
+a follow-up by.
+
+- `POST /v1/videos/generations` makes a job: the kind's `seconds` go as its
+  `duration`, its reference image, a URL or a data URL of its bytes, as its
+  `image`, its `size` as a `resolution` (`<short side>p`, for 360, 480,
+  540, 720, 768 or 1080) and an `aspect_ratio` (16:9, 9:16, 1:1, 4:3, 3:4,
+  3:2, 2:3 or 21:9, the nearest within 5%), and its `empiriolabs-videos`
+  native fields (`generate_audio`, `mode`, and a `resolution` or
+  `aspect_ratio` the `size` does not say) as they are. Any other `size` is
+  refused, 400, before any call; a model that lacks the
+  resolution answers with its own error.
+- `GET /v1/jobs/{id}` polls it: `processing`, `completed` and `failed` are
+  the kind's, `cancelled` its own, its error `{code, message}`; its model is
+  the job's; the `url`s of its `result`'s `data` are its videos, their
+  `duration_seconds` its length, and the `usage`'s `cost_usd`, what it
+  charged, the job's native `cost_usd`.
+- It serves a video only at those URLs, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
 generation (its `/v2` API, the H3 models), as a provider only, its key a
 bearer token, its base URL the API's host with no version
