@@ -3,14 +3,11 @@
 //! `/decisions`.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_core::Fault;
-use respan_gateway_decision::{Input, Output};
 use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
-use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::path::set_path;
 use respan_gateway_media_http::openai::OpenAiEmbeddings;
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
+use respan_gateway_vendor_kit::decisions::SystemOne;
+use respan_gateway_vendor_kit::{Dialected, Vendor};
 
 /// Where its API is.
 const BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
@@ -22,23 +19,8 @@ pub const VENDOR: Vendor = Vendor {
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
         (&OpenAiEmbeddings, Some(BASE_URL)),
-        (&Dialected::new(Decisions, Fireworks), Some(BASE_URL)),
+        (&Dialected::new(Decisions, SystemOne), Some(BASE_URL)),
         (&OpenAiDecisions::DEFAULT, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
-
-/// Fireworks' decisions in System One's contract, which it serves at
-/// `/systemone`.
-#[derive(Debug, Clone, Copy)]
-pub struct Fireworks;
-
-impl Dialect for Fireworks {
-    type Input = Input;
-    type Output = Output;
-
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        set_path(head, "/systemone")?;
-        Ok(None)
-    }
-}

@@ -18,13 +18,18 @@ use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
-use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
+use respan_gateway_media_http::dashscope::{
+    DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
+use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_media_http::together::TogetherVideos;
+use respan_gateway_media_http::zai::ZaiVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
@@ -79,8 +84,6 @@ pub struct KnownFormat {
     /// What its clients send, as `METHOD /path`.
     pub endpoints: Vec<String>,
     pub websocket: bool,
-    /// What its video jobs' ids start with, which routes a follow-up.
-    pub job_ids: Option<&'static str>,
     /// Whether its clients take only some of the requests it matches,
     /// which another format of their endpoint takes otherwise.
     pub claims: bool,
@@ -153,7 +156,6 @@ impl KnownFormat {
             kind,
             endpoints: Vec::new(),
             websocket: false,
-            job_ids: None,
             claims: false,
             serve: None,
             model: Model::none(),
@@ -176,11 +178,6 @@ impl KnownFormat {
 
     pub fn model(mut self, model: Model) -> Self {
         self.model = model;
-        self
-    }
-
-    fn job_ids(mut self, prefix: &'static str) -> Self {
-        self.job_ids = Some(prefix);
         self
     }
 
@@ -247,7 +244,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::CHAT_COMPLETIONS, OpenAiChat).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
-        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta).websocket(),
+        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta::DEFAULT).websocket(),
         session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),
@@ -265,7 +262,6 @@ pub fn formats() -> Vec<KnownFormat> {
         // Only a `Create` names a model; a follow-up goes by its job's id
         // ([`crate::jobs`]).
         KnownFormat::of(kind::VIDEO, endpoints::VIDEOS, OpenAiVideos)
-            .job_ids("video_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBEDDINGS, OpenAiEmbeddings).model(Model::of(
             embedding::Input::model,
@@ -277,12 +273,18 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
         KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
+        KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
         KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
+        KnownFormat::provider_only(kind::VIDEO, &DashScopeVideos),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
             Model::of(embedding::Input::model, embedding::Input::set_model),
         ),
-        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos).job_ids("gen-vid-"),
-        KnownFormat::provider_only(kind::VIDEO, &TogetherVideos).job_ids("together_"),
+        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos),
+        KnownFormat::provider_only(kind::VIDEO, &TogetherVideos),
+        KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos),
+        KnownFormat::provider_only(kind::VIDEO, &ZaiVideos),
+        KnownFormat::provider_only(kind::VIDEO, &MiniMaxVideos),
+        KnownFormat::provider_only(kind::SPEECH, &MiniMaxSpeech),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
@@ -300,7 +302,6 @@ pub fn formats() -> Vec<KnownFormat> {
         .model(realtime()),
         session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
         KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
-            .job_ids("veo_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::claiming(
             kind::DECISION,

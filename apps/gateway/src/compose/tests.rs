@@ -763,8 +763,52 @@ fn empiriolabs_is_called_at_each_of_its_apis() {
             ("openai-speech", api),
             ("openai-realtime", "wss://api.empiriolabs.ai/v1"),
             ("decisions", api),
+            ("empiriolabs-videos", "https://api.empiriolabs.ai"),
         ]
     );
+}
+
+/// The formats and base URLs a provider of `vendor` is planned with.
+fn planned(vendor: &str, more: &str) -> Vec<(String, String)> {
+    let text = format!("providers = {{ p = {{ vendor = \"{vendor}\", key = \"k\"{more} }} }}\n");
+    let plan = plan(&text).unwrap_or_else(|e| panic!("{e}"));
+    let entries = plan.upstreams[0].entries.iter();
+    entries
+        .map(|e| (e.format.clone(), e.base_url.clone()))
+        .collect()
+}
+
+#[test]
+fn realtime_is_called_where_each_vendor_serves_it() {
+    let at = |vendor: &str, more: &str, format: &str| {
+        let entries = planned(vendor, more);
+        let entry = entries.into_iter().find(|(f, _)| f == format);
+        entry.map(|(_, base_url)| base_url)
+    };
+    let xai = at("xai", "", "openai-realtime");
+    assert_eq!(xai.as_deref(), Some("wss://api.x.ai/v1"));
+    // Azure's is at its resource, as its chat is, in the session's scheme.
+    let resource = ", base_url = \"https://r.test/openai/v1\"";
+    let azure = at("azure", resource, "openai-realtime");
+    assert_eq!(azure.as_deref(), Some("wss://r.test/openai/v1"));
+    let qwen = at("qwen", "", "openai-realtime-beta");
+    assert_eq!(
+        qwen.as_deref(),
+        Some("wss://dashscope-intl.aliyuncs.com/api-ws/v1")
+    );
+}
+
+#[test]
+fn azure_realtime_takes_its_key_in_api_key() {
+    let text = "providers = { az = { vendor = \"azure\", base_url = \"https://r.test/openai/v1\", key = \"a\", formats = [\"openai-realtime\"] } }\n";
+    let plan = plan(text).unwrap_or_else(|e| panic!("{e}"));
+    let parts = plan.upstreams[0].provider.parts().unwrap_or_default();
+    let headers = parts.first().map(|p| p.headers.clone()).unwrap_or_default();
+    assert_eq!(
+        headers.get("api-key").and_then(|v| v.to_str().ok()),
+        Some("a")
+    );
+    assert!(!headers.contains_key("authorization"));
 }
 
 #[test]

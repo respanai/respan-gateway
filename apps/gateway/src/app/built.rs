@@ -13,6 +13,7 @@ use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_media::video::{LocateContent, VideoJobs};
 use respan_gateway_media_http::gemini::GeminiVeo;
+use respan_gateway_media_http::job_ids;
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
@@ -274,7 +275,7 @@ fn with_plugins(
     let gateway = gateway
         .plugin(routing(plan, formats, tool_loop.is_some()))
         .plugin(mcp_router);
-    let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
+    let gateway = gateway.plugin(video_jobs(plan)).plugin(locate);
     // A provider without a key of its own gets the client's.
     let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
     let keyless = keyless.flat_map(|u| u.entries.iter().map(|e| e.internal.clone()));
@@ -308,16 +309,12 @@ fn with_plugins(
     (gateway, closer, aggregate_closer)
 }
 
-/// Video jobs' follow-ups, to the provider of each format whose job ids
-/// the format spells.
-fn video_jobs(plan: &Plan, formats: &[KnownFormat]) -> VideoJobs {
-    let spelling = |format: &str| {
-        let known = formats.iter().find(|f| f.name == format);
-        known.and_then(|f| f.job_ids)
-    };
+/// Video jobs' follow-ups, to the provider of each video format, by how
+/// the format spells its jobs' ids.
+fn video_jobs(plan: &Plan) -> VideoJobs {
     let entries = plan.upstreams.iter();
     let entries = entries.flat_map(|u| u.entries.iter().map(move |e| (u, e)));
-    entries.fold(VideoJobs::new(), |jobs, (u, e)| match spelling(&e.format) {
+    entries.fold(VideoJobs::new(), |jobs, (u, e)| match job_ids(&e.format) {
         Some(spelling) => jobs.provider(&u.name, &e.internal, spelling),
         None => jobs,
     })

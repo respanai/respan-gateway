@@ -3,9 +3,11 @@
 //! to end against their live APIs. A vendor moves to green once it is.
 
 pub mod azure;
+pub mod baseten;
 pub mod bedrock;
 pub mod cerebras;
 pub mod cloudflare;
+pub mod concentrate;
 pub mod deepinfra;
 pub mod deepseek;
 pub mod empiriolabs;
@@ -18,6 +20,8 @@ pub mod nace;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
+pub mod primeintellect;
+pub mod qwen;
 pub mod stepfun;
 pub mod together;
 pub mod vllm;
@@ -50,8 +54,12 @@ pub const ALL: &[&Vendor] = &[
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
     &phonic::VENDOR,
+    &qwen::VENDOR,
     &morph::VENDOR,
     &stepfun::VENDOR,
+    &baseten::VENDOR,
+    &concentrate::VENDOR,
+    &primeintellect::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,
@@ -77,4 +85,22 @@ fn json_answer(head: &ResponseHead) -> bool {
     let essence = content_type(head).and_then(|t| t.split(';').next());
     head.status.is_success()
         && essence.is_some_and(|e| e.trim().eq_ignore_ascii_case("application/json"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_vendor_with_no_formats_given_serves_decisions_at_its_own_base() {
+        let at = |vendor: &Vendor| vendor.format("decisions").map(|(_, url)| url);
+        assert_eq!(
+            at(&deepinfra::VENDOR),
+            Some(Some("https://api.deepinfra.com/v1"))
+        );
+        assert_eq!(
+            at(&perplexity::VENDOR),
+            Some(Some("https://api.perplexity.ai/v1"))
+        );
+    }
 }

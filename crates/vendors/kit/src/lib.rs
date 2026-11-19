@@ -13,9 +13,11 @@
 //! dialect of a spec. The kit runs nothing of a vendor's beside its
 //! formats. What vendors share is here too: every spec's format, as a
 //! provider of no vendor speaks it ([`FORMATS`]), and what vendors of Chat
-//! Completions share in their dialects ([`chat`]).
+//! Completions share in their dialects ([`chat`]), and vendors of
+//! decisions ([`decisions`]).
 
 pub mod chat;
+pub mod decisions;
 mod formats;
 pub mod models;
 mod provider;

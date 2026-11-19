@@ -9,13 +9,18 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
-use respan_gateway_media_http::dashscope::{DashScopeSpeech, DashScopeTranscriptions};
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiVeo};
+use respan_gateway_media_http::dashscope::{
+    DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
+use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_media_http::together::TogetherVideos;
+use respan_gateway_media_http::zai::ZaiVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_realtime_ws::{
     GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
@@ -32,7 +37,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &GeminiGenerate,
     &BedrockConverse,
     &OpenAiRealtime,
-    &OpenAiRealtimeBeta,
+    &OpenAiRealtimeBeta::DEFAULT,
     &OpenAiLive,
     &GeminiLive,
     &MistralRealtime,
@@ -45,12 +50,18 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &GeminiVeo,
     &OpenRouterVideos,
     &TogetherVideos,
+    &EmpirioLabsVideos,
+    &ZaiVideos,
+    &MiniMaxVideos,
+    &MiniMaxSpeech,
     &GeminiImages,
     &BedrockEmbeddings,
     &BedrockImages,
     &GeminiEmbeddings,
+    &GeminiSpeech,
     &DashScopeSpeech,
     &DashScopeTranscriptions,
+    &DashScopeVideos,
     &Decisions,
     &OpenAiDecisions::DEFAULT,
     &GeminiDecisions,

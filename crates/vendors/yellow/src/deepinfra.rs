@@ -1,9 +1,11 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
-//! transcriptions, as OpenAI serves them, and videos in its dialect.
+//! transcriptions, as OpenAI serves them, videos in its dialect, and
+//! decisions.
 
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
+use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -23,6 +25,9 @@ use respan_gateway_vendor_kit::{
 /// Where its API is.
 const BASE_URL: &str = "https://api.deepinfra.com/v1/openai";
 
+/// Where its decisions are: not under `/openai`.
+const DECISIONS_BASE_URL: &str = "https://api.deepinfra.com/v1";
+
 /// DeepInfra.
 pub const VENDOR: Vendor = Vendor {
     id: "deepinfra",
@@ -34,6 +39,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiSpeech, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
         (&Dialected::new(OpenAiVideos, DeepInfra), Some(BASE_URL)),
+        (&Decisions, Some(DECISIONS_BASE_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT

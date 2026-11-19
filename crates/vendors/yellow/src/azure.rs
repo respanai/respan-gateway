@@ -1,8 +1,10 @@
-//! Azure OpenAI: Chat Completions, at a resource's own URL
-//! (`https://<resource>.openai.azure.com/openai/v1`).
+//! Azure OpenAI: Chat Completions, decisions and Realtime, at a resource's
+//! own URL (`https://<resource>.openai.azure.com/openai/v1`).
 
 use respan_gateway_conversation::{Input, Output};
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_realtime as realtime;
+use respan_gateway_realtime_ws::OpenAiRealtime;
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, KeyIn, Vendor};
 
@@ -19,6 +21,7 @@ pub const VENDOR: Vendor = Vendor {
             ),
             None,
         ),
+        (&Dialected::new(OpenAiRealtime, AzureRealtime), None),
     ],
     ..Vendor::DEFAULT
 };
@@ -42,6 +45,18 @@ pub struct AzureDecisions;
 impl Dialect for AzureDecisions {
     type Input = respan_gateway_decision::Input;
     type Output = respan_gateway_decision::Output;
+    fn key(&self) -> Option<KeyIn> {
+        Some(KeyIn::Header("api-key"))
+    }
+}
+
+/// Azure's Realtime: OpenAI's GA protocol at a resource's
+/// `/openai/v1/realtime`, the deployment at `?model=`, its key in `api-key`.
+#[derive(Debug, Clone, Copy)]
+pub struct AzureRealtime;
+impl Dialect for AzureRealtime {
+    type Input = realtime::Input;
+    type Output = realtime::Output;
     fn key(&self) -> Option<KeyIn> {
         Some(KeyIn::Header("api-key"))
     }

@@ -3,6 +3,12 @@
 `respan-gateway-media-http` is the [media kinds](../../kinds/media/README.md)
 over HTTP.
 
+`JOB_IDS` is what each video format starts its jobs' ids with, by the
+format's name, and `job_ids(format)` one format's: a host routes a job's
+follow-up by it (`video::VideoJobs`), and a Veo client's poll or download
+is the gateway's only for an id spelled so. A new video format is a row
+there.
+
 `openai::{OpenAiImages, OpenAiTranscriptions, OpenAiSpeech, OpenAiVideos,
 OpenAiEmbeddings}`, named `openai-images`, `openai-transcriptions`,
 `openai-speech`, `openai-videos` and `openai-embeddings`: OpenAI's endpoints, as OpenAI and compatible vendors serve
@@ -41,7 +47,9 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
   `text/plain`; a client that asked for text a provider gave as JSON gets
   the transcript's text, or SubRip or WebVTT of its segments.
 - Audio is relayed chunk by chunk as it comes, the provider read no faster
-  than the client takes it, as the content type its `response_format` names;
+  than the client takes it. Speech asked with no `response_format` is asked
+  for as `mp3`; its raw audio is labelled as its first bytes show (WAV, MP3,
+  FLAC, AAC), else as its `response_format` names, and PCM always as asked;
   a video's content likewise, as its variant's: `video/mp4`, `image/webp` for
   a thumbnail, `image/jpeg` for a spritesheet.
 - A video's `seconds` is a string in OpenAI's API, as it is written; a
@@ -185,10 +193,88 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   data URL of its bytes, as the first of the media's `frame_images`, and its
   `together-videos` native fields (`resolution`, `ratio`, `generate_audio`,
   `negative_prompt`, `seed`) as they are.
-- `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
-  are the kind's, its error `{code, message}`; its model, size and length
+- `GET /v2/videos/{id}` polls it: `queued`, `in_progress`, `completed` and
+  `failed` are the kind's, its error `{code, message}`; `cancelled` is
+  `failed`, with that as the error unless one is said; its model, size and length
   are the job's; the `video_url` of its `outputs` is its video, and their
   `cost`, what it charged, the job's native `cost`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
+`gemini::GeminiSpeech`, named `gemini-speech`: Gemini's speech models
+(`gemini-3.8-flash-tts`) on `POST /interactions`, as a provider only, its key
+in `x-goog-api-key`.
+
+- The text is one user turn, `instructions` its `speech_metadata` `style`, a
+  voice a prebuilt voice of the `speech_config`, and the audio format the
+  `response_format`'s `mime_type`: `mp3` (unless asked), `wav` or `pcm`
+  (`audio/l16`, 16-bit at 24 kHz). Another format, a `speed` and
+  `instructions` with no voice (Gemini refuses a style without one) are
+  refused, 400, before the call.
+- The audio is the answer's base64 `audio` content, the whole of it at once;
+  usage is its input and output tokens, the rest, such as the tokens of each
+  modality, a native `{"usage": {..}}`.
+
+`empiriolabs::EmpirioLabsVideos`, named `empiriolabs-videos`: EmpirioLabs
+AI's video generation, as a provider only, its key a bearer token, its base
+URL the API's host with no version (`https://api.empiriolabs.ai`). Its job
+ids are the provider's after `empiriolabs_`, which `video::VideoJobs` routes
+a follow-up by.
+
+- `POST /v1/videos/generations` makes a job: the kind's `seconds` go as its
+  `duration`, its reference image, a URL or a data URL of its bytes, as its
+  `image`, its `size` as a `resolution` (`<short side>p`, for 360, 480,
+  540, 720, 768 or 1080) and an `aspect_ratio` (16:9, 9:16, 1:1, 4:3, 3:4,
+  3:2, 2:3 or 21:9, the nearest within 5%), and its `empiriolabs-videos`
+  native fields (`generate_audio`, `mode`, and a `resolution` or
+  `aspect_ratio` the `size` does not say) as they are. Any other `size` is
+  refused, 400, before any call; a model that lacks the
+  resolution answers with its own error.
+- `GET /v1/jobs/{id}` polls it: `processing`, `completed` and `failed` are
+  the kind's, `cancelled` is `failed`, with that as the error unless one is
+  said, its error `{code, message}`; its model is
+  the job's; the `url`s of its `result`'s `data` are its videos, their
+  `duration_seconds` its length, and the `usage`'s `cost_usd`, what it
+  charged, the job's native `cost_usd`.
+- It serves a video only at those URLs, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
+`zai::ZaiVideos`, named `zai-videos`: Z.ai's CogVideoX video generation on
+its international site, as a provider only, its key a bearer token, its base
+URL the API with its version (`https://api.z.ai/api/paas/v4`). Its job ids
+are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
+
+- `POST /videos/generations` makes a job: the kind's `seconds` go as
+  `duration` and its `size` as `size`, as they are, its reference image, a
+  URL or a data URL of its bytes, as `image_url`, and its `zai-videos`
+  native fields (`quality`, `with_audio`, `fps`) as they are.
+- `GET /async-result/{id}` polls it: `PROCESSING`, `SUCCESS` and `FAIL` are
+  the kind's; the `url` of its `video_result` is its video.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
+`minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
+generation (its `/v2` API, the H3 models), as a provider only, its key a
+bearer token, its base URL the API's host with no version
+(`https://api.minimax.io`). Its job ids are MiniMax's after `minimax_`,
+which `video::VideoJobs` routes a follow-up by.
+
+- `POST /v2/video_generation` makes a job: the kind's `seconds` go as its
+  `duration`, its prompt as the `text` of its `content`, its reference image
+  as the `first_frame` image there, its `size` as a `ratio` and a
+  `resolution` (`480P` or `768P` by its short side, the ratio the one of
+  MiniMax's nearest, within 5%: 864x480 is 16:9, 480P), and its
+  `minimax-videos` native fields (`resolution`, `ratio`, `generate_audio`,
+  `extra`) as they are, where the `size` has not said them. Any other
+  `size` is refused, 400, before any call.
+- `GET /v2/query/video_generation/{id}` polls it: `queued`, `running`,
+  `succeeded` and `failed` are the kind's, its error `{code, message}`;
+  `cancelled` is `failed`, with that as the error unless one is said. The
+  `content.url` of its task, a time-limited URL, is its video, and its
+  `usage`, what it bills, the job's native `usage`.
 - It serves the video only at that URL, so content is refused, 400
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
@@ -298,3 +384,47 @@ its key a bearer token.
   `output.text`, or its first choice's text, is the transcript; its usage is
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
+
+`dashscope::DashScopeVideos`, named `dashscope-videos`: Alibaba Cloud Model
+Studio's Wan video generation, as a provider only, at the same base URL. Its
+job ids are DashScope's task ids after `dashscope_`, which `video::VideoJobs`
+routes a follow-up by.
+
+- A `POST` to `/services/aigc/video-generation/video-synthesis`, asked to run
+  as a task (`X-DashScope-Async: enable`), makes a job: the kind's prompt and
+  reference image are the `input`'s `prompt` and `img_url`, its `seconds` and
+  `size` (as `832*480`) the `parameters`' `duration` and `size`, and its
+  `dashscope-videos` native fields the body's, an `input` or `parameters`
+  object laid into those field by field (`negative_prompt`, `resolution`,
+  `seed`, `prompt_extend`).
+- `GET /tasks/{id}` polls it: `PENDING`, `RUNNING`, `SUCCEEDED` and `FAILED`
+  are the kind's, its error the output's `code` and `message`; `CANCELED` and
+  `UNKNOWN` are `failed`, with that as the error unless one is said. Its model, length and size are the job's,
+  the `output.video_url` (valid for 24 hours) its video, and the `usage` its
+  native `usage`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
+`minimax::MiniMaxSpeech`, named `minimax-speech`: MiniMax's speech synthesis
+on its international API, as a provider only. A provider's base URL is
+`https://api.minimax.io/v1`, its key a bearer token.
+
+- A `POST` to `/t2a_v2`, the audio asked in hex, never as a URL. The text,
+  model, voice (`voice_setting.voice_id`), speed (`voice_setting.speed`) and
+  audio format (`audio_setting.format`, `mp3` unless asked) are its body;
+  native `voice_setting` and `audio_setting` fields (`vol`, `pitch`,
+  `sample_rate`) join them, and other native fields (`language_boost`) sit at
+  the top. `pcm` and `opus` are asked at 24 kHz unless a `sample_rate` is native (MiniMax's 32 kHz is refused for Opus). A
+  request without a voice, with `instructions`, or of a format but `mp3`,
+  `pcm`, `flac`, `wav` and `opus`, is refused, 400, before the call.
+- `mp3`, `pcm` and `opus` are streamed: each event's hex `data.audio` is the
+  next chunk of audio, and the last (`data.status: 2`), which MiniMax makes
+  repeat the whole audio, is asked not to (`exclude_aggregated_audio`). `wav`
+  (whose streamed header has no length) and `flac` are asked whole. The
+  `extra_info` (the characters billed, the audio's length) is a native
+  `{"extra_info": {..}}`.
+- MiniMax answers an error as a success whose `base_resp.status_code` is not
+  0: it is a 400 for a parameter or voice refused (2013, 1042, 2054), 401 for
+  a key (1004, 2049), 402 for a balance (1008), 429 for a limit (1002, 1039),
+  else a 502.

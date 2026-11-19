@@ -1,6 +1,6 @@
 //! EmpirioLabs AI: Chat Completions, Responses, Messages, the Gemini API,
-//! images, embeddings, speech, Realtime and decisions, as OpenAI, Anthropic,
-//! Google and Respan serve them, images and speech in its dialect.
+//! images, embeddings, speech, Realtime, decisions and videos, as OpenAI,
+//! Anthropic, Google and Respan serve them, images and speech in its dialect.
 
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::media_url;
@@ -9,17 +9,20 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Extensions, Fault, Filter};
 use respan_gateway_decision_http::Decisions;
-use respan_gateway_http::http::header::{ACCEPT, HeaderValue};
+use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::header::{ACCEPT, CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
 use respan_gateway_media_http::{
     Natives,
     openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
 };
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{OpenAiRealtime, SessionModel, requested_model};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Dialect, Dialected, Modality, Model, Models, Price, Rewrite,
@@ -31,6 +34,9 @@ const BASE_URL: &str = "https://api.empiriolabs.ai/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its videos are: the format adds the `/v1`.
+const VIDEOS_URL: &str = "https://api.empiriolabs.ai";
 
 /// Where its Realtime is.
 const REALTIME_URL: &str = "wss://api.empiriolabs.ai/v1";
@@ -61,6 +67,7 @@ pub const VENDOR: Vendor = Vendor {
             Some(REALTIME_URL),
         ),
         (&Decisions, Some(BASE_URL)),
+        (&EmpirioLabsVideos, Some(VIDEOS_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
@@ -108,12 +115,15 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
     Ok(())
 }
 
-/// EmpirioLabs AI's speech, as it departs from OpenAI's: its
-/// `/audio/speech` answers the audio at a URL of its storage unless the
-/// call accepts audio, so it is asked for the audio's bytes
-/// (`Accept: application/octet-stream`). It is not asked for OpenAI's
-/// events (`stream_format`); a client that asked still gets a stream,
-/// framed at the client edge.
+/// EmpirioLabs AI's speech, as it departs from OpenAI's: asked for its
+/// audio's bytes, it counts no usage, so it is asked for JSON, the audio
+/// inline (`b64_json: true`), in the format asked for, named both as its
+/// `response_format`, which Qwen's and StepFun's models honor, and its
+/// `output_format`, which Gemini's do. Its
+/// answer is read as OpenAI's events: the audio, then its usage, as
+/// `input_tokens` and `output_tokens`. It is not asked for OpenAI's events
+/// (`stream_format`); a client that asked still gets a stream, framed at
+/// the client edge.
 #[derive(Debug, Clone, Copy)]
 pub struct EmpirioLabsSpeech;
 
@@ -122,10 +132,62 @@ impl Dialect for EmpirioLabsSpeech {
     type Output = speech::Output;
 
     fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        let audio = HeaderValue::from_static("application/octet-stream");
-        head.headers.insert(ACCEPT, audio);
-        Ok(Some(Box::new(|body| crate::without(body, "stream_format"))))
+        let json = HeaderValue::from_static("application/json");
+        head.headers.insert(ACCEPT, json);
+        Ok(Some(Box::new(inline_audio)))
     }
+
+    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        if !crate::json_answer(head) {
+            return None;
+        }
+        let events = HeaderValue::from_static("text/event-stream");
+        head.headers.insert(CONTENT_TYPE, events);
+        Some(Box::new(speech_events))
+    }
+}
+
+/// A speech call asking for its audio inline, in the format it asked for.
+fn inline_audio(body: Bytes) -> Result<Bytes, Fault> {
+    let unwritten = |e| Fault::internal("a call is no JSON object").with_source(e);
+    let mut call: Map<String, Value> = serde_json::from_slice(&body).map_err(unwritten)?;
+    call.shift_remove("stream_format");
+    if let Some(format) = call.get("response_format").cloned() {
+        call.entry("output_format").or_insert(format);
+    }
+    call.insert("b64_json".into(), true.into());
+    serde_json::to_vec(&call)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// Its JSON answer as OpenAI's speech events: each clip's audio, then the
+/// usage, its prompt and completion tokens as input and output tokens.
+fn speech_events(raw: Bytes) -> Result<Bytes, Fault> {
+    let answer: Value = serde_json::from_slice(&raw)
+        .map_err(|_| Fault::upstream("empiriolabs speech answered no JSON"))?;
+    let clips = answer["data"].as_array().into_iter().flatten();
+    let audio: Vec<&Value> = clips.filter_map(|clip| clip.get("b64_json")).collect();
+    if audio.is_empty() {
+        return Err(Fault::upstream(
+            "empiriolabs speech answered no 'b64_json' audio",
+        ));
+    }
+    let mut usage = answer["usage"].as_object().cloned().unwrap_or_default();
+    for (theirs, ours) in [
+        ("prompt_tokens", "input_tokens"),
+        ("completion_tokens", "output_tokens"),
+    ] {
+        if let Some(count) = usage.shift_remove(theirs) {
+            usage.insert(ours.into(), count);
+        }
+    }
+    let deltas = audio
+        .into_iter()
+        .map(|a| json!({ "type": "speech.audio.delta", "audio": a }));
+    let done = json!({ "type": "speech.audio.done", "usage": usage });
+    let events = deltas.chain([done]).map(|e| format!("data: {e}\n\n"));
+    Ok(Bytes::from(events.collect::<String>()))
 }
 
 /// Its Realtime: a transcription session names its model at `?model=`
@@ -182,6 +244,7 @@ const KINDS: &[(&str, &str, &str)] = &[
     ("image", "POST /v1/images/generations", "image"),
     ("audio", "POST /v1/audio/speech", "speech"),
     ("decision", "POST /v1/decisions", "decision"),
+    ("video", "POST /v1/videos/generations", "video"),
 ];
 
 /// Where it serves chat, which a model of another category may be too.
@@ -192,9 +255,9 @@ const REALTIME: &str = "WEBSOCKET /v1/realtime";
 
 /// The models of its list, each of the kind its category's endpoint is,
 /// else a chat if it is served at Chat Completions, else a realtime one if
-/// it is served at Realtime; one served at none, such as a video or
-/// transcription model, which it answers as jobs, a reranker or a music
-/// model, is none the gateway serves, and is left out.
+/// it is served at Realtime; one served at none, such as a transcription
+/// model, which it answers as jobs, a reranker or a music model, is none
+/// the gateway serves, and is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -246,9 +309,9 @@ fn without_price(m: &Value) -> Value {
 
 /// A model's price, for a kind billed by the token: its `pricing` in
 /// dollars per token, the first tier's if it has tiers by context length.
-/// An image's, by the item, is none.
+/// An image's, by the item, and a video's, by the job, are none.
 fn price(m: &Value, kind: &str) -> Option<Price> {
-    if kind == "image" {
+    if matches!(kind, "image" | "video") {
         return None;
     }
     let pricing = &m["pricing"];
@@ -264,8 +327,6 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use respan_gateway_http::bytes::Bytes;
-    use serde_json::json;
 
     fn entry(id: &str, category: &str, endpoints: &[&str]) -> Value {
         json!({ "id": id, "object": "model", "category": category,
@@ -298,12 +359,13 @@ mod tests {
                 said("glm-5-3", "chat"),
                 said("text-embedding-v4", "embedding"),
                 said("flux-2-klein-4b", "image"),
+                said("wan-2-2", "video"),
                 said("qwen-audio-3-0-tts", "speech"),
                 said("aplomb-1", "decision"),
                 said("perplexity-sonar", "chat"),
                 said("glm-tts", "speech"),
             ],
-            "video, transcription jobs and a reranker are none it serves"
+            "transcription jobs and a reranker are none it serves"
         );
     }
 
@@ -389,17 +451,5 @@ mod tests {
         taken_image(&mut masked).expect("taken");
         let fields = OpenAiImages::fields(&masked.native);
         assert!(!fields.contains_key("mask"), "a mask is dropped");
-    }
-
-    #[test]
-    fn speech_is_asked_for_as_audio_at_its_endpoint() {
-        let mut head = http::Request::new(()).into_parts().0;
-        head.uri = http::Uri::from_static("/audio/speech");
-        let rewrite = EmpirioLabsSpeech.request(&mut head).expect("a call");
-        assert_eq!(head.uri.path(), "/audio/speech");
-        assert_eq!(head.headers[ACCEPT], "application/octet-stream");
-        let call = Bytes::from_static(br#"{"input":"Hi.","speed":1.5,"stream_format":"sse"}"#);
-        let call = rewrite.expect("a rewrite")(call).expect("a call");
-        assert_eq!(call, &br#"{"input":"Hi.","speed":1.5}"#[..]);
     }
 }
