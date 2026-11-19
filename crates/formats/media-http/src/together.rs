@@ -1,16 +1,14 @@
 //! Together's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`TogetherVideos`].
 
-use crate::edge::{bind_provider, sends};
-use respan_gateway_conversation::{Media, MediaSource};
+use crate::edge::{bind_jobs, dimensions, gets, job_error, job_of, posts, unsupported, video_at};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "together-videos";
@@ -66,52 +64,24 @@ impl Format<ProviderIo, Output, Input> for TogetherVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
-        }))
+        Ok(bind_jobs(io, NAME, call, read_job))
     }
-}
-
-/// An operation Together has no form for, refused.
-fn unsupported(input: &Input) -> Fault {
-    let what = match input {
-        Input::Native { .. } => "no video operation of another format",
-        Input::Content { .. } => {
-            "no video content: it serves a video at the `video_url` of its job's `outputs`"
-        }
-        _ => "no video operation of this kind",
-    };
-    Fault::bad_request(format!("Together has {what}")).with(ErrorCode("unsupported".into()))
-}
-
-/// Together's id of a job `id`, if it is one of this format's.
-fn job_of(id: &str) -> Result<&str, Fault> {
-    let job = id.strip_prefix(PREFIX).filter(|job| !job.is_empty());
-    job.ok_or_else(|| Fault::not_found(format!("no Together video job is {id:?}")))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
-    let (method, path, body) = match input {
-        Input::Create(create) => (Method::POST, VIDEOS.to_owned(), Some(create_body(create)?)),
+    match input {
+        Input::Create(create) => posts(head, VIDEOS, &create_body(create)?),
         Input::Retrieve { id } => {
-            let path = format!("{VIDEOS}/{}", escape(job_of(id)?));
-            (Method::GET, path, None)
+            let id = job_of("Together", PREFIX, id)?;
+            gets(head, &format!("{VIDEOS}/{}", escape(id)))
         }
-        _ => return Err(unsupported(input)),
-    };
-    head.method = method;
-    set_path(head, &path)?;
-    let Some(body) = body else {
-        return Ok(sends(Bytes::new()));
-    };
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Ok(sends(body))
+        _ => Err(unsupported("Together", input)),
+    }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model = model
         .ok_or_else(|| Fault::bad_request("a video needs a model, such as google/veo-3.1-lite"))?;
@@ -122,13 +92,11 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
         v.insert("seconds".into(), seconds.to_string().into());
     }
     if let Some(size) = &create.size {
-        let (width, height) = (size.split_once('x'))
-            .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
-            .ok_or_else(|| {
-                Fault::bad_request(format!(
-                    "'size' {size:?} is not a width by height, such as 1280x720"
-                ))
-            })?;
+        let (width, height) = dimensions(size).ok_or_else(|| {
+            Fault::bad_request(format!(
+                "'size' {size:?} is not a width by height, such as 1280x720"
+            ))
+        })?;
         v.insert("width".into(), width.into());
         v.insert("height".into(), height.into());
     }
@@ -137,9 +105,7 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
         v.insert("media".into(), json!({ "frame_images": [frame] }));
     }
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
 /// The job of an answer `raw`.
@@ -158,15 +124,9 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.model = v["model"].as_str().map(str::to_owned);
     job.seconds = v["seconds"].as_str().and_then(|s| s.parse().ok());
     job.size = v["size"].as_str().map(str::to_owned);
-    let error = &v["error"];
-    job.error = error["message"].as_str().map(|message| {
-        let code = error["code"].as_str().map(str::to_owned);
-        JobError::new(code, message)
-    });
+    job.error = job_error(&v["error"]);
     let outputs = &v["outputs"];
-    job.videos = (outputs["video_url"].as_str().into_iter())
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
-        .collect();
+    job.videos = (outputs["video_url"].as_str().map(video_at).into_iter()).collect();
     if let Some(cost) = outputs.get("cost").filter(|cost| cost.is_number()) {
         job.native = Native::json::<Key>(json!({ "cost": cost }));
     }
@@ -178,7 +138,9 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use crate::Natives;
-    use respan_gateway_http::http;
+    use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::http::{self, Method};
+    use respan_gateway_media::video::JobError;
 
     fn head() -> RequestHead {
         http::Request::new(()).into_parts().0
@@ -201,9 +163,8 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         ));
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "google/veo-3.1-lite", "prompt": "a wave", "seconds": "4",
                 "width": 1280, "height": 720,
                 "media": { "frame_images": [{ "input_image": "https://a.example/cat.png",
