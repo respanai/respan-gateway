@@ -1,5 +1,6 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images, embeddings, transcriptions, speech and videos.
+//! models, and images, embeddings, transcriptions, speech, videos and
+//! decisions.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -8,6 +9,7 @@ use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter};
+use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -26,6 +28,10 @@ const BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://openrouter.ai/api";
+
+/// Where its decisions are, in alpha: System One's contract, at
+/// `/api/alpha/decisions`.
+const DECISIONS_URL: &str = "https://openrouter.ai/api/alpha";
 
 /// OpenRouter. Its models' names are `<vendor>/<model>`: a configured
 /// provider named `<vendor>` takes the name first. A chat goes in its
@@ -51,6 +57,7 @@ pub const VENDOR: Vendor = Vendor {
             Some(BASE_URL),
         ),
         (&OpenRouterVideos, Some(BASE_URL)),
+        (&Decisions, Some(DECISIONS_URL)),
     ],
     ..Vendor::DEFAULT
 };
@@ -279,11 +286,13 @@ mod tests {
                 AnthropicMessages::NAME
             ]
         );
-        // Messages' base leaves out the `/v1` its format adds.
+        // Messages' base leaves out the `/v1` its format adds; decisions
+        // are in alpha.
         assert!(VENDOR.formats.iter().all(|(f, base)| *base
-            == Some(match f.name() == AnthropicMessages::NAME {
-                true => MESSAGES_URL,
-                false => BASE_URL,
+            == Some(match f.name() {
+                AnthropicMessages::NAME => MESSAGES_URL,
+                "decisions" => DECISIONS_URL,
+                _ => BASE_URL,
             })));
     }
 

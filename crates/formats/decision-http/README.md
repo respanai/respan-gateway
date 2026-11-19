@@ -4,14 +4,16 @@
 
 | Format | Endpoint | Served by |
 | --- | --- | --- |
-| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`) |
+| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`); Concentrate (`vendor = "concentrate"`) |
 | `gemini-decisions` (`GeminiDecisions`) | `POST /v1beta/decisions` in the standalone gateway | Gemini (`vendor = "gemini"`) |
-| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), Fireworks (`vendor = "fireworks"`) and Morph (`vendor = "morph"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`), DeepInfra (`vendor = "deepinfra"`) and Perplexity (`vendor = "perplexity"`); or any compatible base URL |
+| `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), Fireworks (`vendor = "fireworks"`), Morph (`vendor = "morph"`), Baseten (`vendor = "baseten"`) and Concentrate (`vendor = "concentrate"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`), DeepInfra (`vendor = "deepinfra"`), Perplexity (`vendor = "perplexity"`) and OpenRouter (`vendor = "openrouter"`); Prime Intellect (`vendor = "primeintellect"`), at `/evaluations` in its dialect; or any compatible base URL |
 
 A provider is called at `/decisions`. A vendor that departs from the
 contract lays its dialect over the format
 (`respan_gateway_http::dialect::Dialected`), a provider format of the
-spec's name: TypeSafe's, Fireworks' and Morph's move the call to `/systemone`.
+spec's name: TypeSafe's, Fireworks', Morph's, Baseten's and Concentrate's move
+the call to `/systemone`; Prime Intellect's asks a `noul` as a `boolean` at
+`/evaluations`, and reads its `probability` and camel-cased usage back.
 
 A request is `{"model", "state", "questions": {id: question}}`, each question
 `{"type", "instructions", "criteria"}`: `noul` with criteria
