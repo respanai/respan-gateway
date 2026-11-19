@@ -2,12 +2,11 @@
 //! images in its dialect; its Grok Voice models speak OpenAI Realtime at
 //! `wss://api.x.ai/v1/realtime`.
 
-use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_media::image;
 use respan_gateway_media_http::openai::OpenAiImages;
-use respan_gateway_media_http::{Natives, dimensions, nearest_aspect};
+use respan_gateway_media_http::{Natives, named_aspect};
 use respan_gateway_realtime_ws::OpenAiRealtime;
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor};
@@ -67,16 +66,10 @@ impl Dialect for XaiImages {
 /// images as URLs.
 fn drawn(input: &mut image::Input) -> Result<(), Fault> {
     crate::as_urls(&mut input.images);
-    let Some(size) = input.size.take().filter(|s| s != "auto") else {
+    let size = input.size.take();
+    let Some((ratio, resolution)) = size.as_deref().map(sized).transpose()?.flatten() else {
         return Ok(());
     };
-    let (ratio, resolution) = sized(&size).ok_or_else(|| {
-        let ratios = ASPECT_RATIOS.map(|(name, ..)| name).join(", ");
-        invalid(
-            "size",
-            &format!("is not of an aspect ratio xAI draws: {ratios}"),
-        )
-    })?;
     input.native = OpenAiImages::with_fields(&input.native, |fields| {
         fields.entry("aspect_ratio").or_insert(ratio.into());
         fields.entry("resolution").or_insert(resolution.into());
@@ -84,12 +77,10 @@ fn drawn(input: &mut image::Input) -> Result<(), Fault> {
     Ok(())
 }
 
-/// The aspect ratio and resolution of a size `WxH`.
-fn sized(size: &str) -> Option<(&'static str, &'static str)> {
-    let (w, h) = dimensions(size)?;
-    let (name, ..) = nearest_aspect(w, h, &ASPECT_RATIOS)?;
-    let resolution = if w.max(h) > 1024 { "2k" } else { "1k" };
-    Some((name, resolution))
+/// The aspect ratio and resolution of a size `WxH`; none for `auto`.
+fn sized(size: &str) -> Result<Option<(&'static str, &'static str)>, Fault> {
+    let aspect = named_aspect(size, &ASPECT_RATIOS, "xAI")?;
+    Ok(aspect.map(|((ratio, ..), long)| (ratio, if long > 1024 { "2k" } else { "1k" })))
 }
 
 #[cfg(test)]
@@ -110,8 +101,8 @@ mod tests {
             fields,
             json!({ "aspect_ratio": "16:9", "resolution": "2k" })
         );
-        assert_eq!(sized("1024x1024"), Some(("1:1", "1k")));
-        assert_eq!(sized("1080x2340"), Some(("9:19.5", "2k")));
+        assert_eq!(sized("1024x1024").expect("drawn"), Some(("1:1", "1k")));
+        assert_eq!(sized("1080x2340").expect("drawn"), Some(("9:19.5", "2k")));
         input.size = Some("1100x1000".into());
         assert!(drawn(&mut input).is_err(), "no ratio xAI draws");
     }

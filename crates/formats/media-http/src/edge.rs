@@ -1,6 +1,7 @@
 //! What the HTTP formats of this crate share.
 
 use respan_gateway_conversation::{Media, MediaSource};
+use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::read_provider_error;
 use respan_gateway_core::{Connection, ErrorCode, Fault};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
@@ -144,7 +145,7 @@ pub(crate) fn video_at(url: &str) -> Media {
 }
 
 /// The width and height of a size `WxH`, neither of them zero.
-pub fn dimensions(size: &str) -> Option<(u32, u32)> {
+pub(crate) fn dimensions(size: &str) -> Option<(u32, u32)> {
     let (w, h) = size.split_once(['x', 'X'])?;
     let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
     (w > 0 && h > 0).then_some((w, h))
@@ -156,14 +157,32 @@ pub(crate) fn nearest_ratio(width: u32, height: u32, ratios: &[(u32, u32)]) -> O
     nearest(width, height, ratios, |&(a, b)| (a, b)).copied()
 }
 
-/// The named aspect ratio of `ratios`, each a name, a width and a height,
-/// nearest to a `width` by `height`, within 5%.
-pub fn nearest_aspect(
-    width: u32,
-    height: u32,
-    ratios: &[(&'static str, u32, u32)],
-) -> Option<(&'static str, u32, u32)> {
-    nearest(width, height, ratios, |&(_, a, b)| (a, b)).copied()
+/// An aspect ratio: its name, a width and a height.
+pub(crate) type Aspect = (&'static str, u32, u32);
+
+/// The aspect ratio of `ratios` nearest to a size `WxH`, within 5%, and the
+/// size's long side; none for `auto`. A size of no such ratio is refused,
+/// 400, naming the ratios `who` draws.
+pub fn named_aspect(
+    size: &str,
+    ratios: &[Aspect],
+    who: &str,
+) -> Result<Option<(Aspect, u32)>, Fault> {
+    if size == "auto" {
+        return Ok(None);
+    }
+    let found = dimensions(size).and_then(|(w, h)| {
+        let best = nearest(w, h, ratios, |&(_, a, b)| (a, b))?;
+        Some((*best, w.max(h)))
+    });
+    found.map(Some).ok_or_else(|| {
+        let names: Vec<&str> = ratios.iter().map(|(name, ..)| *name).collect();
+        let names = names.join(", ");
+        invalid(
+            "size",
+            &format!("is not of an aspect ratio {who} draws: {names}"),
+        )
+    })
 }
 
 /// The entry of `ratios` whose width to height, by `of`, is nearest to a

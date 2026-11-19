@@ -3,7 +3,7 @@
 //! [`GeminiImages`].
 
 use super::{is_segment, refusal};
-use crate::edge::{bind_provider, dimensions, nearest_aspect, sends};
+use crate::edge::{bind_provider, named_aspect, sends};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{base64_bytes, invalid};
 use respan_gateway_conversation_http::gemini::{call_of, media_part, sse, usage_body, usage_of};
@@ -161,20 +161,8 @@ fn body_of(input: &Input) -> Result<Map<String, Value>, Fault> {
 /// Gemini's aspect ratio of a size `WxH`, and its image size if above 1K;
 /// none for `auto`.
 fn aspect_of(size: &str) -> Result<Option<(&'static str, Option<&'static str>)>, Fault> {
-    if size == "auto" {
+    let Some(((aspect, aw, ah), long)) = named_aspect(size, &ASPECTS, "Gemini")? else {
         return Ok(None);
-    }
-    let nearest =
-        dimensions(size).and_then(|(w, h)| Some((nearest_aspect(w, h, &ASPECTS)?, w.max(h))));
-    let Some(((aspect, aw, ah), long)) = nearest else {
-        let aspects: Vec<&str> = ASPECTS.iter().map(|(a, ..)| *a).collect();
-        return Err(invalid(
-            "size",
-            &format!(
-                "is not of an aspect ratio Gemini draws: {}",
-                aspects.join(", ")
-            ),
-        ));
     };
     let times = f64::from(long) / f64::from(aw.max(ah));
     let size = match times {

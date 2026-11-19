@@ -7,7 +7,7 @@ use crate::Natives;
 use crate::edge::{bind_provider, boolean, dimensions, sends, whole_number};
 use crate::openai::OpenAiImages;
 use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{invalid, media_url};
+use respan_gateway_conversation_http::fields::{invalid, media_url, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
@@ -104,9 +104,7 @@ fn body(input: &Input) -> Result<Map<String, Value>, Fault> {
     }
     passed(native, &mut parameters)?;
     let mut v = Map::new();
-    if let Some(model) = &input.model {
-        v.insert("model".into(), model.clone().into());
-    }
+    set(&mut v, "model", input.model.clone());
     let message = json!({ "role": "user", "content": content });
     v.insert("input".into(), json!({ "messages": [message] }));
     v.insert("parameters".into(), parameters.into());
