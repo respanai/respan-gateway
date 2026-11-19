@@ -1,19 +1,14 @@
 //! Z.ai's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`ZaiVideos`].
 
-use crate::edge::{
-    bind_provider, fetched, fetches, fetching, gets, job_of, on_hosts, posts, unsupported, video_at,
-};
+use crate::edge::{bind_provider, gets, job_of, posts, unsupported, video_at};
 use percent_encoding::percent_decode_str;
 use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::Uri;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{
-    Connect, Decoder, Encoder, ProviderIo, Reach, Upstream, Whole, native::Json,
-};
+use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -35,11 +30,9 @@ pub(crate) const PREFIX: &str = "zai_";
 ///
 /// A job's id is Z.ai's after `zai_`. It is `PROCESSING`, `SUCCESS` once its
 /// video is made, or `FAIL`; a state it adds is the format's own. Its video
-/// is the `url` of its `video_result` ([`Job::videos`]). Content is a `GET` of that URL, needed in
-/// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
-/// finds it), with no key, on Z.ai's own hosts (`z.ai`) alone.
-/// Another format's operation, such as OpenAI's remix, delete, list or
-/// thumbnail, is refused, 400, before any call.
+/// is the `url` of its `video_result` ([`Job::videos`]). It serves the video
+/// only there, so content, like another format's operation, such as OpenAI's
+/// remix, delete, list or thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ZaiVideos;
 
@@ -48,22 +41,10 @@ impl ZaiVideos {
     pub const NAME: &'static str = NAME;
 }
 
-/// Where it serves its jobs' videos: Z.ai's own hosts, over HTTPS.
-fn video_host(uri: &Uri) -> bool {
-    on_hosts(uri, &["z.ai"])
-}
-
-/// A bearer key, over HTTP, beside its base URL; a video is fetched where
-/// its job names it, with no key.
+/// A bearer key, over HTTP, beside its base URL.
 impl Upstream for ZaiVideos {
     fn name(&self) -> &str {
         NAME
-    }
-
-    fn reach(&self) -> Reach {
-        Reach::Http {
-            follow: Some(video_host),
-        }
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -77,10 +58,7 @@ impl Format<ProviderIo, Output, Input> for ZaiVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(fetching(io), NAME, call, |head, sent| {
-            if let Some(content) = fetched(head, sent) {
-                return Some(content);
-            }
+        Ok(bind_provider(io, NAME, call, |_, sent| {
             // A poll's answer need not repeat its id: it is the one asked for.
             let asked = (sent.uri().path().rsplit_once("/async-result/"))
                 .map(|(_, id)| percent_decode_str(id).decode_utf8_lossy().into_owned());
@@ -98,7 +76,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let id = job_of("Z.ai", PREFIX, id)?;
             gets(head, &format!("/async-result/{}", escape(id)))
         }
-        Input::Content { url, .. } => fetches(head, "Z.ai", url.as_deref(), video_host),
         _ => Err(unsupported("Z.ai", input)),
     }
 }
@@ -176,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_its_content_fetched_at_its_url() {
+    fn a_job_is_polled_by_its_id_and_its_content_refused() {
         let mut head = http::Request::new(()).into_parts().0;
         let retrieve = Input::Retrieve {
             id: "zai_8868".into(),
@@ -184,18 +161,12 @@ mod tests {
         call(&mut head, &retrieve).expect("a call");
         assert_eq!(head.method, Method::GET);
         assert_eq!(head.uri.path(), "/async-result/8868");
-        // Its content is fetched where its job names it, on its own hosts alone.
         let content = Input::Content {
             id: "zai_8868".into(),
-            url: Some("https://mfile.z.ai/v.mp4?sig=1".into()),
+            url: None,
         };
-        call(&mut head, &content).expect("a call");
-        assert_eq!(head.uri, "https://mfile.z.ai/v.mp4?sig=1");
-        assert!(video_host(&head.uri));
-        assert!(!video_host(&Uri::from_static(
-            "https://evil.example/mfile.z.ai"
-        )));
-        assert!(!video_host(&Uri::from_static("http://mfile.z.ai/v.mp4")));
+        let refused = call(&mut head, &content).err().expect("refused");
+        assert_eq!(refused.code(), "unsupported");
     }
 
     #[test]

@@ -3,11 +3,10 @@
 `respan-gateway-media-http` is the [media kinds](../../kinds/media/README.md)
 over HTTP.
 
-`VIDEO_FORMATS` lists the video formats, and `video_format(name)` finds
-one: what its jobs' ids start with (`job_ids`), by which a host routes a
-job's follow-up (`video::VideoJobs`) and a Veo client's poll or download is
-known as the gateway's, and whether its content needs the job retrieved
-first (`located`, for `video::LocateContent`). A new video format is a row
+`JOB_IDS` is what each video format starts its jobs' ids with, by the
+format's name, and `job_ids(format)` one format's: a host routes a job's
+follow-up by it (`video::VideoJobs`), and a Veo client's poll or download
+is the gateway's only for an id spelled so. A new video format is a row
 there.
 
 `openai::{OpenAiImages, OpenAiTranscriptions, OpenAiSpeech, OpenAiVideos,
@@ -199,11 +198,9 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   `failed`, with that as the error unless one is said; its model, size and length
   are the job's; the `video_url` of its `outputs` is its video, and their
   `cost`, what it charged, the job's native `cost`.
-- Content is a `GET` of the URL its job names, with no key, which
-  `video::LocateContent` finds first: an HTTPS URL on a host of Together's (`together.ai`, `together.xyz`),
-  else the call is not made. Another format's operation, such as OpenAI's
-  remix, delete, list or thumbnail, is refused, 400 `unsupported`, before
-  any call.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `gemini::GeminiSpeech`, named `gemini-speech`: Gemini's speech models
 (`gemini-3.8-flash-tts`) on `POST /interactions`, as a provider only, its key
@@ -240,11 +237,9 @@ a follow-up by.
   the job's; the `url`s of its `result`'s `data` are its videos, their
   `duration_seconds` its length, and the `usage`'s `cost_usd`, what it
   charged, the job's native `cost_usd`.
-- Content is a `GET` of the URL its job names, with no key, which
-  `video::LocateContent` finds first: an HTTPS URL on a host of its own (`empiriolabs.ai`),
-  else the call is not made. Another format's operation, such as OpenAI's
-  remix, delete, list or thumbnail, is refused, 400 `unsupported`, before
-  any call.
+- It serves a video only at those URLs, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `zai::ZaiVideos`, named `zai-videos`: Z.ai's CogVideoX video generation on
 its international site, as a provider only, its key a bearer token, its base
@@ -257,11 +252,9 @@ are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
   native fields (`quality`, `with_audio`, `fps`) as they are.
 - `GET /async-result/{id}` polls it: `PROCESSING`, `SUCCESS` and `FAIL` are
   the kind's; the `url` of its `video_result` is its video.
-- Content is a `GET` of the URL its job names, with no key, which
-  `video::LocateContent` finds first: an HTTPS URL on a host of Z.ai's (`z.ai`),
-  else the call is not made. Another format's operation, such as OpenAI's
-  remix, delete, list or thumbnail, is refused, 400 `unsupported`, before
-  any call.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
 generation (its `/v2` API, the H3 models), as a provider only, its key a
@@ -282,11 +275,9 @@ which `video::VideoJobs` routes a follow-up by.
   `cancelled` is `failed`, with that as the error unless one is said. The
   `content.url` of its task, a time-limited URL, is its video, and its
   `usage`, what it bills, the job's native `usage`.
-- Content is a `GET` of the URL its job names, with no key, which
-  `video::LocateContent` finds first: an HTTPS URL on a host of MiniMax's (`minimax.io`),
-  else the call is not made. Another format's operation, such as OpenAI's
-  remix, delete, list or thumbnail, is refused, 400 `unsupported`, before
-  any call.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
@@ -411,11 +402,9 @@ routes a follow-up by.
   `UNKNOWN` are `failed`, with that as the error unless one is said. Its model, length and size are the job's,
   the `output.video_url` (valid for 24 hours) its video, and the `usage` its
   native `usage`.
-- Content is a `GET` of the URL its job names, with no key, which
-  `video::LocateContent` finds first: an HTTPS URL on a host of Alibaba Cloud's (`aliyuncs.com`),
-  else the call is not made. Another format's operation, such as OpenAI's
-  remix, delete, list or thumbnail, is refused, 400 `unsupported`, before
-  any call.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
 
 `minimax::MiniMaxSpeech`, named `minimax-speech`: MiniMax's speech synthesis
 on its international API, as a provider only. A provider's base URL is

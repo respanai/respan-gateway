@@ -107,11 +107,6 @@ impl HttpTransport {
     /// A call that leaves its origin leaves its credentials behind: its
     /// `Authorization`, `Cookie` and every header or query parameter that
     /// names a key, token or secret.
-    ///
-    /// A `GET` or `HEAD` call whose URI is whole, as a format writes one to
-    /// fetch what its provider serves elsewhere, is sent there, not to the
-    /// base URL, if `allow` accepts it, and carries no credentials either;
-    /// any other whole URI is refused, `internal`.
     pub fn follow_redirects(
         mut self,
         allow: impl Fn(&Uri) -> bool + Send + Sync + 'static,
@@ -122,10 +117,7 @@ impl HttpTransport {
 
     /// Send an encoded call and return its response.
     pub async fn send(&self, mut call: http::Request<Body>) -> Sent {
-        match call.uri().authority().is_some() {
-            true => self.elsewhere(&mut call)?,
-            false => prepare_call(&mut call, &self.base, &self.headers)?,
-        }
+        prepare_call(&mut call, &self.base, &self.headers)?;
         let (mut parts, body) = call.into_parts();
         let no_body = !body.is_streaming() && body.full_bytes().is_none_or(|b| b.is_empty());
         let reads = matches!(parts.method, Method::GET | Method::HEAD);
@@ -181,21 +173,6 @@ impl HttpTransport {
             .map(|body| Body::stream(body.map_err(broke).into_data_stream()));
         strip_origin_headers(resp.headers_mut());
         Ok((resp, None))
-    }
-
-    /// Make `call`, whose URI is whole, the request sent there: with no
-    /// credentials, the transport's or the call's own. `Err` with `internal`
-    /// unless it is a `GET` or `HEAD` to a URI the redirects followed allow.
-    fn elsewhere(&self, call: &mut http::Request<Body>) -> Result<(), Fault> {
-        let reads = matches!(*call.method(), Method::GET | Method::HEAD);
-        let allowed = self.follow.as_ref().is_some_and(|allow| allow(call.uri()));
-        if !(reads && allowed) {
-            return Err(Fault::internal(
-                "a call names an origin its provider's format may not reach",
-            ));
-        }
-        leave_origin(call.headers_mut());
-        Ok(())
     }
 
     /// A provider factory sharing this client's pool and configuration.
@@ -283,30 +260,6 @@ mod tests {
 
     fn answer(body: impl Into<Bytes>) -> http::Response<Body> {
         http::Response::new(Body::full(body))
-    }
-
-    #[test]
-    fn a_whole_uri_is_called_keyless_only_where_redirects_may_go() {
-        let call = |method: Method, uri: &'static str| {
-            let mut call = http::Request::new(Body::full(Bytes::new()));
-            *call.method_mut() = method;
-            *call.uri_mut() = Uri::from_static(uri);
-            let key = http::HeaderValue::from_static("Bearer k");
-            call.headers_mut().insert(http::header::AUTHORIZATION, key);
-            call
-        };
-        let transport = HttpTransport::new("https://api.example/v1").expect("a transport");
-        let mut video = call(Method::GET, "https://cdn.example/v.mp4?sig=1");
-        // A format that follows no redirects reaches its base alone.
-        assert!(transport.elsewhere(&mut video).is_err());
-        let transport = transport.follow_redirects(|uri| uri.host() == Some("cdn.example"));
-        transport.elsewhere(&mut video).expect("allowed");
-        assert_eq!(video.uri(), "https://cdn.example/v.mp4?sig=1");
-        assert!(video.headers().is_empty());
-        let mut other = call(Method::GET, "https://evil.example/v.mp4");
-        assert!(transport.elsewhere(&mut other).is_err());
-        let mut post = call(Method::POST, "https://cdn.example/v.mp4");
-        assert!(transport.elsewhere(&mut post).is_err());
     }
 
     #[tokio::test]

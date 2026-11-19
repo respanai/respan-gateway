@@ -2,16 +2,15 @@
 //! [`video`](respan_gateway_media::video) kind, [`EmpirioLabsVideos`].
 
 use crate::edge::{
-    bind_jobs, dimensions, ended_as, fetches, gets, job_error, job_of, nearest_ratio, on_hosts,
-    posts, unsupported, video_at,
+    bind_jobs, dimensions, ended_as, gets, job_error, job_of, nearest_ratio, posts, unsupported,
+    video_at,
 };
 use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::Uri;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{Connect, Encoder, ProviderIo, Reach, Upstream, native::Json};
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -58,11 +57,9 @@ const ASPECTS: [(u32, u32); 8] = [
 /// `cancelled` is failed, as that. Its
 /// videos are the `url`s of its `result`'s `data` ([`Job::videos`]), and the
 /// `cost_usd` of its `usage`, what it charged, the job's native `cost_usd`.
-/// Content is a `GET` of that URL, needed in
-/// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
-/// finds it), with no key, on its own hosts (`empiriolabs.ai`) alone.
-/// Another format's operation, such as OpenAI's remix, delete, list or
-/// thumbnail, is refused, 400, before any call.
+/// It serves a video only there, so content, like another format's
+/// operation, such as OpenAI's remix, delete, list or thumbnail, is
+/// refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EmpirioLabsVideos;
 
@@ -71,22 +68,10 @@ impl EmpirioLabsVideos {
     pub const NAME: &'static str = NAME;
 }
 
-/// Where it serves its jobs' videos: its own hosts, over HTTPS.
-fn video_host(uri: &Uri) -> bool {
-    on_hosts(uri, &["empiriolabs.ai"])
-}
-
-/// A bearer key, over HTTP, beside its base URL; a video is fetched where
-/// its job names it, with no key.
+/// A bearer key, over HTTP, beside its base URL.
 impl Upstream for EmpirioLabsVideos {
     fn name(&self) -> &str {
         NAME
-    }
-
-    fn reach(&self) -> Reach {
-        Reach::Http {
-            follow: Some(video_host),
-        }
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -112,7 +97,6 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let id = job_of("EmpirioLabs AI", PREFIX, id)?;
             gets(head, &format!("/v1/jobs/{}", escape(id)))
         }
-        Input::Content { url, .. } => fetches(head, "EmpirioLabs AI", url.as_deref(), video_host),
         _ => Err(unsupported("EmpirioLabs AI", input)),
     }
 }
@@ -242,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_its_content_fetched_at_its_url() {
+    fn a_job_is_polled_by_its_id_and_its_content_refused() {
         let mut head = head();
         let retrieve = Input::Retrieve {
             id: "empiriolabs_f040-ec72".into(),
@@ -250,20 +234,12 @@ mod tests {
         call(&mut head, &retrieve).expect("a call");
         assert_eq!(head.method, Method::GET);
         assert_eq!(head.uri.path(), "/v1/jobs/f040-ec72");
-        // Its content is fetched where its job names it, on its own hosts alone.
         let content = Input::Content {
             id: "empiriolabs_f040-ec72".into(),
-            url: Some("https://media.empiriolabs.ai/v.mp4?sig=1".into()),
+            url: None,
         };
-        call(&mut head, &content).expect("a call");
-        assert_eq!(head.uri, "https://media.empiriolabs.ai/v.mp4?sig=1");
-        assert!(video_host(&head.uri));
-        assert!(!video_host(&Uri::from_static(
-            "https://evil.example/media.empiriolabs.ai"
-        )));
-        assert!(!video_host(&Uri::from_static(
-            "http://media.empiriolabs.ai/v.mp4"
-        )));
+        let refused = call(&mut head, &content).err().expect("refused");
+        assert_eq!(refused.code(), "unsupported");
     }
 
     #[test]

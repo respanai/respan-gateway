@@ -34,64 +34,32 @@ pub mod openrouter;
 pub mod together;
 pub mod zai;
 
-/// A video format of this crate, as a host wires it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct VideoFormat {
-    /// Its name.
-    pub name: &'static str,
-    /// What its jobs' ids start with, which routes a follow-up to the job's
-    /// provider ([`VideoJobs`](respan_gateway_media::video::VideoJobs)): its
-    /// provider's own spelling, or, where its provider's ids are bare, the
-    /// format's.
-    pub job_ids: &'static str,
-    /// Whether a job's content needs the job retrieved first
-    /// ([`LocateContent`](respan_gateway_media::video::LocateContent)): it
-    /// is at the URL the job names, or its provider answers for a job not
-    /// finished as for none.
-    pub located: bool,
-}
-
-impl VideoFormat {
-    const fn new(name: &'static str, job_ids: &'static str, located: bool) -> Self {
-        Self {
-            name,
-            job_ids,
-            located,
-        }
-    }
-}
-
-/// Every video format of this crate.
-pub const VIDEO_FORMATS: &[VideoFormat] = &[
-    VideoFormat::new(openai::OpenAiVideos::NAME, "video_", false),
-    VideoFormat::new(gemini::GeminiVeo::NAME, gemini::veo::PREFIX, true),
-    VideoFormat::new(openrouter::OpenRouterVideos::NAME, "gen-vid-", true),
-    VideoFormat::new(together::TogetherVideos::NAME, together::PREFIX, true),
-    VideoFormat::new(
-        empiriolabs::EmpirioLabsVideos::NAME,
-        empiriolabs::PREFIX,
-        true,
-    ),
-    VideoFormat::new(
-        dashscope::DashScopeVideos::NAME,
-        dashscope::videos::PREFIX,
-        true,
-    ),
-    VideoFormat::new(zai::ZaiVideos::NAME, zai::PREFIX, true),
-    VideoFormat::new(minimax::MiniMaxVideos::NAME, minimax::videos::PREFIX, true),
+/// What each video format of this crate starts its jobs' ids with, by the
+/// format's name: its provider's own spelling, or, where its provider's ids
+/// are bare, the format's.
+pub const JOB_IDS: &[(&str, &str)] = &[
+    (openai::OpenAiVideos::NAME, "video_"),
+    (gemini::GeminiVeo::NAME, gemini::veo::PREFIX),
+    (openrouter::OpenRouterVideos::NAME, "gen-vid-"),
+    (together::TogetherVideos::NAME, together::PREFIX),
+    (empiriolabs::EmpirioLabsVideos::NAME, empiriolabs::PREFIX),
+    (dashscope::DashScopeVideos::NAME, dashscope::videos::PREFIX),
+    (zai::ZaiVideos::NAME, zai::PREFIX),
+    (minimax::MiniMaxVideos::NAME, minimax::videos::PREFIX),
 ];
 
-/// The video format named `format`, if it is one of this crate's.
-pub fn video_format(format: &str) -> Option<&'static VideoFormat> {
-    VIDEO_FORMATS.iter().find(|known| known.name == format)
+/// What the video format named `format` starts its jobs' ids with, which
+/// routes a follow-up to the job's provider.
+pub fn job_ids(format: &str) -> Option<&'static str> {
+    let known = JOB_IDS.iter().find(|(name, _)| *name == format);
+    known.map(|(_, ids)| *ids)
 }
 
 /// Whether `id` is spelled as a job id a video format of this crate gives
 /// out, perhaps wrapped in its provider's name (`<provider>~<id>`).
 pub(crate) fn issued(id: &str) -> bool {
     let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
-    (VIDEO_FORMATS.iter()).any(|known| inner.starts_with(known.job_ids))
+    JOB_IDS.iter().any(|(_, ids)| inner.starts_with(ids))
 }
 
 /// What only format `F` of this crate reads of a value: no other crate can name it.

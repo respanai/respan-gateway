@@ -49,10 +49,9 @@ spell ids alike, such as two deployments of one vendor, have their ids
 wrapped on the way out as `<provider>~<id>`, a `Job`'s and the `ids` of a
 format's own answer, and unwrapped before the call.
 
-Most providers serve a finished job's content only at the URLs the job
-names (`Job::videos`), on their API as Veo does or on other hosts of theirs:
-`video::LocateContent`, given those providers' names and registered after
-the router, retrieves the job before a `Content` request goes on, and sets
-its `url`, which the provider's format fetches. Content not ready is
+Some providers serve a finished job's content only at the URLs the job
+names (`Job::videos`), as Veo does: `video::LocateContent`, given those
+providers' names and registered after the router, retrieves the job before
+a `Content` request goes on, and sets its `url`. Content not ready is
 refused, 400 `video_not_ready`; a provider that says so less plainly, as
 OpenRouter does, is given to it for that alone.

@@ -9,7 +9,6 @@ use respan_gateway_http::http::{
     self, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::set_path;
-use respan_gateway_http::rules::success;
 use respan_gateway_http::{Decoder, Encoder, ProviderIo, Sse, Whole};
 use respan_gateway_media::video;
 use serde_json::{Map, Value};
@@ -94,8 +93,7 @@ pub(crate) fn posts<I: 'static>(
 }
 
 /// The provider edge of `format`, a format of video jobs: `call` is its
-/// call, and each answer one job, read by `read`, or, of a call
-/// [elsewhere](fetches), a video's content.
+/// call, and each answer one job, read by `read`.
 pub(crate) fn bind_jobs(
     io: ProviderIo,
     format: &'static str,
@@ -104,94 +102,17 @@ pub(crate) fn bind_jobs(
     + 'static,
     read: fn(Bytes, &mut Vec<video::Output>) -> Result<(), Fault>,
 ) -> Connection<video::Output, video::Input> {
-    bind_provider(fetching(io), format, call, move |head, sent| {
-        fetched(head, sent).or_else(|| Some(Box::new(Whole::new(read))))
+    bind_provider(io, format, call, move |_, _| {
+        Some(Box::new(Whole::new(read)) as Box<dyn Decoder<video::Output>>)
     })
 }
 
-/// `io`, taking any answer to a call [elsewhere](fetches) for a success,
-/// which [`fetched`] reads: a refusal there is no answer of the provider's
-/// API, and its status says nothing of the provider's key.
-pub(crate) fn fetching(io: ProviderIo) -> ProviderIo {
-    io.with_success(|answer, call| call.uri.authority().is_some() || success(answer, call))
-}
-
-/// The decoder of an answer to a call [elsewhere](fetches), `None` for one
-/// to the provider's API: a video's content, or, refused, as when its URL
-/// expired, an `upstream` fault.
-pub(crate) fn fetched(
-    head: &ResponseHead,
-    sent: &http::Request<Bytes>,
-) -> Option<Box<dyn Decoder<video::Output>>> {
-    sent.uri().authority()?;
-    Some(match head.status.is_success() {
-        true => content(),
-        false => Box::new(Unfetched(head.status)),
-    })
-}
-
-/// A refused fetch of a video, its body unread: it fails as it ends.
-struct Unfetched(http::StatusCode);
-
-impl Decoder<video::Output> for Unfetched {
-    fn decode(&mut self, _: Bytes, _: &mut Vec<video::Output>) -> Result<(), Fault> {
-        Ok(())
-    }
-
-    fn end(&mut self, _: Result<(), Fault>, _: &mut Vec<video::Output>) -> Result<(), Fault> {
-        Err(Fault::upstream(format!(
-            "the job's video is not served where the job names it ({}): it may have expired",
-            self.0.as_u16()
-        )))
-    }
-}
-
-/// A `GET` of a finished job's video at the `url` the job names, a whole
-/// URL on one of `hosts` ([`on_hosts`]): `who` serves it there, not at its
-/// API, so its key stays behind. The request needs the URL, which
-/// [`LocateContent`](video::LocateContent) finds.
-pub(crate) fn fetches<I: 'static>(
-    head: &mut RequestHead,
-    who: &str,
-    url: Option<&str>,
-    hosts: fn(&http::Uri) -> bool,
-) -> Result<Box<dyn Encoder<I>>, Fault> {
-    let url = url.ok_or_else(|| {
-        Fault::config(format!(
-            "{who}'s content is at the URL its job names, which the request needs"
-        ))
-    })?;
-    let unusable = || Fault::upstream(format!("{who}'s job names its video at no URL"));
-    let uri = url.parse::<http::Uri>().map_err(|_| unusable())?;
-    if uri.authority().is_none() {
-        return Err(unusable());
-    }
-    if !hosts(&uri) {
-        return Err(Fault::upstream(format!(
-            "{who}'s job names its video on a host not {who}'s"
-        )));
-    }
-    head.method = http::Method::GET;
-    head.uri = uri;
-    Ok(sends(Bytes::new()))
-}
-
-/// Whether `uri` is HTTPS, at its default port, on one of `domains` or a
-/// host below one: where a format's provider serves its jobs' videos.
-pub(crate) fn on_hosts(uri: &http::Uri, domains: &[&str]) -> bool {
-    let host = uri.host().unwrap_or_default();
-    let below = |domain: &&str| {
-        host.strip_suffix(domain)
-            .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
-    };
-    uri.scheme_str() == Some("https") && uri.port().is_none() && domains.iter().any(below)
-}
-
-/// A video operation `who` has no form for, refused: another format's, or
-/// one of the kind it does not serve.
+/// A video operation `who` has no form for, refused: content, where it
+/// serves a video only at the URL its job names, or another's operation.
 pub(crate) fn unsupported(who: &str, input: &video::Input) -> Fault {
     let what = match input {
         video::Input::Native { .. } => "operation of another format",
+        video::Input::Content { .. } => "content: it serves a video at the URL its job names",
         _ => "operation of this kind",
     };
     Fault::bad_request(format!("{who} has no video {what}")).with(ErrorCode("unsupported".into()))
