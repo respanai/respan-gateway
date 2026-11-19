@@ -39,7 +39,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images` |
-| | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images` |
+| | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `minimax-videos`, `minimax-speech` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
@@ -67,6 +67,9 @@ client framing after generation completes, rather than MiniMax's image-by-image
 stream. Masks and transparent backgrounds are refused before sending.
 This integration has not been verified against the live API.
 
+MiniMax speech, `minimax-speech`, is called at the same base URL, `/t2a_v2`; the
+key is a bearer token.
+
 ## Base URLs
 
 A provider's `base_url` is the one its own SDK takes. OpenAI-compatible ones
@@ -81,8 +84,9 @@ EmpirioLabs AI's and OpenRouter's for `anthropic-messages`: `https://api.empirio
 formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `openai-videos`, `openai-embeddings`), `openrouter-videos` and
 `openai-responses` take the same base URL as `openai-chat`; Together's
-`together-videos` and EmpirioLabs AI's `empiriolabs-videos` take their host
-alone, `https://api.together.xyz` and `https://api.empiriolabs.ai`. Gemini's own formats, `gemini-generate`
+`together-videos`, EmpirioLabs AI's `empiriolabs-videos` and MiniMax's
+`minimax-videos` take their host alone, `https://api.together.xyz`,
+`https://api.empiriolabs.ai` and `https://api.minimax.io`. Gemini's own formats, `gemini-generate`
 (`generateContent` and `streamGenerateContent`, the model in the path),
 `gemini-images` (its image models' `generateContent`), `gemini-speech` (its
 speech models' `interactions`), `gemini-veo` and

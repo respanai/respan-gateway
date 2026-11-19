@@ -589,7 +589,7 @@ fn route(method: &Method, uri: &Uri) -> Option<Route> {
 }
 
 /// Whether `id` is spelled as a job id the gateway gives out, Veo's,
-/// OpenAI's, OpenRouter's, Together's, EmpirioLabs AI's, DashScope's or Z.ai's, perhaps wrapped in its
+/// OpenAI's, OpenRouter's, Together's, EmpirioLabs AI's, DashScope's, Z.ai's or MiniMax's, perhaps wrapped in its
 /// provider's name (`<provider>~<id>`): none of Google's own files or operations is, so
 /// those pass through.
 fn issued(id: &str) -> bool {
@@ -602,6 +602,7 @@ fn issued(id: &str) -> bool {
         "empiriolabs_",
         "dashscope_",
         "zai_",
+        "minimax_",
     ]
     .iter()
     .any(|s| inner.starts_with(s))

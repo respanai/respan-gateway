@@ -248,6 +248,29 @@ are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
 
+`minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
+generation (its `/v2` API, the H3 models), as a provider only, its key a
+bearer token, its base URL the API's host with no version
+(`https://api.minimax.io`). Its job ids are MiniMax's after `minimax_`,
+which `video::VideoJobs` routes a follow-up by.
+
+- `POST /v2/video_generation` makes a job: the kind's `seconds` go as its
+  `duration`, its prompt as the `text` of its `content`, its reference image
+  as the `first_frame` image there, its `size` as a `ratio` and a
+  `resolution` (`480P` or `768P` by its short side, the ratio the one of
+  MiniMax's nearest, within 5%: 864x480 is 16:9, 480P), and its
+  `minimax-videos` native fields (`resolution`, `ratio`, `generate_audio`,
+  `extra`) as they are, where the `size` has not said them. Any other
+  `size` is refused, 400, before any call.
+- `GET /v2/query/video_generation/{id}` polls it: `queued`, `running`,
+  `succeeded` and `failed` are the kind's, its error `{code, message}`;
+  any other state, such as `cancelled`, is the format's own. The
+  `content.url` of its task, a time-limited URL, is its video, and its
+  `usage`, what it bills, the job's native `usage`.
+- It serves the video only at that URL, so content is refused, 400
+  `unsupported`, before any call, as is another format's operation, such as
+  OpenAI's remix, delete, list or thumbnail.
+
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
 `x-goog-api-key`.
@@ -374,3 +397,26 @@ routes a follow-up by.
 - It serves the video only at that URL, so content is refused, 400
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
+
+`minimax::MiniMaxSpeech`, named `minimax-speech`: MiniMax's speech synthesis
+on its international API, as a provider only. A provider's base URL is
+`https://api.minimax.io/v1`, its key a bearer token.
+
+- A `POST` to `/t2a_v2`, the audio asked in hex, never as a URL. The text,
+  model, voice (`voice_setting.voice_id`), speed (`voice_setting.speed`) and
+  audio format (`audio_setting.format`, `mp3` unless asked) are its body;
+  native `voice_setting` and `audio_setting` fields (`vol`, `pitch`,
+  `sample_rate`) join them, and other native fields (`language_boost`) sit at
+  the top. `pcm` and `opus` are asked at 24 kHz unless a `sample_rate` is native (MiniMax's 32 kHz is refused for Opus). A
+  request without a voice, with `instructions`, or of a format but `mp3`,
+  `pcm`, `flac`, `wav` and `opus`, is refused, 400, before the call.
+- `mp3`, `pcm` and `opus` are streamed: each event's hex `data.audio` is the
+  next chunk of audio, and the last (`data.status: 2`), which MiniMax makes
+  repeat the whole audio, is asked not to (`exclude_aggregated_audio`). `wav`
+  (whose streamed header has no length) and `flac` are asked whole. The
+  `extra_info` (the characters billed, the audio's length) is a native
+  `{"extra_info": {..}}`.
+- MiniMax answers an error as a success whose `base_resp.status_code` is not
+  0: it is a 400 for a parameter or voice refused (2013, 1042, 2054), 401 for
+  a key (1004, 2049), 402 for a balance (1008), 429 for a limit (1002, 1039),
+  else a 502.
