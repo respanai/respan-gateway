@@ -1,14 +1,16 @@
-//! Alibaba Cloud Model Studio's audio and video models on DashScope's own
-//! API, over HTTP: speech synthesis ([`DashScopeSpeech`]), recognition
-//! ([`DashScopeTranscriptions`]) and video generation
-//! ([`DashScopeVideos`]), provider formats only. A provider's base
+//! Alibaba Cloud Model Studio's audio, image and video models on DashScope's
+//! own API, over HTTP: speech synthesis ([`DashScopeSpeech`]), recognition
+//! ([`DashScopeTranscriptions`]), image generation ([`DashScopeImages`]) and
+//! video generation ([`DashScopeVideos`]), provider formats only. A provider's base
 //! URL is its region's API, with the version,
 //! `https://dashscope-intl.aliyuncs.com/api/v1`, its key a bearer token.
 
+mod images;
 mod speech;
 mod transcriptions;
 pub(crate) mod videos;
 
+pub use images::DashScopeImages;
 pub use speech::DashScopeSpeech;
 pub use transcriptions::DashScopeTranscriptions;
 pub use videos::DashScopeVideos;

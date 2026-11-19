@@ -133,9 +133,10 @@ Its InvokeModel formats, `bedrock-embeddings` (Cohere Embed and Titan) and
 `bedrock-images` (Stability AI's models and services), are called at the same
 base URL, `https://bedrock-runtime.<region>.amazonaws.com`.
 
-DashScope's own formats, `dashscope-speech`, `dashscope-transcriptions` and
-`dashscope-videos` (Alibaba Cloud Model Studio's speech synthesis,
-recognition and Wan video generation, which its
+DashScope's own formats, `dashscope-speech`, `dashscope-transcriptions`,
+`dashscope-images` and `dashscope-videos` (Alibaba Cloud Model Studio's
+speech synthesis, recognition, Qwen-Image and Wan image generation and Wan
+video generation, which its
 OpenAI-compatible endpoint does not serve), take its region's API with the
 version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 
