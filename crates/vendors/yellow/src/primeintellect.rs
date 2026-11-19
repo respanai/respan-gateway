@@ -70,7 +70,10 @@ fn answered(raw: Bytes) -> Result<Bytes, Fault> {
     };
     let answers = answer.get_mut("answers").and_then(Value::as_object_mut);
     for each in answers.into_iter().flat_map(|a| a.values_mut()) {
-        let Some(each) = each.as_object_mut().filter(|a| a["type"] == "boolean") else {
+        let Some(each) = each
+            .as_object_mut()
+            .filter(|a| a.get("type").and_then(Value::as_str) == Some("boolean"))
+        else {
             continue;
         };
         each.insert("type".into(), "noul".into());
