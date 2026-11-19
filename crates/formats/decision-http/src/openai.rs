@@ -109,24 +109,11 @@ impl Format<ClientIo, Input, Output> for OpenAiDecisions {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        Ok(io.with_error(refusal).bind(
-            |_| {
-                Box::new(|raw: Bytes, out: &mut Vec<Input>| {
-                    out.push(decode_request(&raw)?);
-                    Ok(())
-                })
-            },
-            |reply| {
-                let mut head = reply.head();
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                // An answer is written as the client asked its question.
-                let asked = serde_json::from_slice::<Value>(reply.request().body());
-                let asked = asked.unwrap_or_default()["questions"].clone();
-                let encoder = All::new(move |e: &[Output]| encode_response(e, &asked));
-                Ok(reply.write(head, Box::new(encoder)))
-            },
-        ))
+        serve(io, refusal, decode_request, |events, request| {
+            // An answer is written as the client asked its question.
+            let asked = serde_json::from_slice::<Value>(request).unwrap_or_default();
+            encode_response(events, &asked["questions"])
+        })
     }
 }
 
@@ -149,31 +136,13 @@ impl Format<ProviderIo, Output, Input> for OpenAiDecisions {
     /// A call: a `POST` of the whole request to `/decisions`, its answer
     /// read against the questions it sent.
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(io.with_refusal(read_provider_error).bind(
-            move |head, input: Option<&Input>| {
-                let input = input.ok_or_else(|| {
-                    Fault::config(format!("{OPENAI} does not accept streaming inputs"))
-                })?;
-                head.method = Method::POST;
-                set_path(head, PATH)?;
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                let body = to_bytes(&encode_request(input)?)?;
-                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                    out.push(body.clone());
-                    Ok(())
-                }) as Box<dyn Encoder<Input>>)
-            },
-            |_, sent| {
-                let sent = serde_json::from_slice::<Value>(sent.body()).unwrap_or_default();
-                let asked = sent["questions"].as_array().cloned().unwrap_or_default();
-                Some(
-                    Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
-                        decode_response(&raw, &asked, out)
-                    })) as Box<dyn Decoder<Output>>,
-                )
-            },
-        ))
+        call(io, OPENAI, encode_request, |sent| {
+            let sent = serde_json::from_slice::<Value>(sent.body()).unwrap_or_default();
+            let asked = sent["questions"].as_array().cloned().unwrap_or_default();
+            Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
+                decode_response(&raw, &asked, out)
+            }))
+        })
     }
 }
 
