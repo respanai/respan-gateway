@@ -244,6 +244,7 @@ const KINDS: &[(&str, &str, &str)] = &[
     ("image", "POST /v1/images/generations", "image"),
     ("audio", "POST /v1/audio/speech", "speech"),
     ("decision", "POST /v1/decisions", "decision"),
+    ("video", "POST /v1/videos/generations", "video"),
 ];
 
 /// Where it serves chat, which a model of another category may be too.
@@ -254,9 +255,9 @@ const REALTIME: &str = "WEBSOCKET /v1/realtime";
 
 /// The models of its list, each of the kind its category's endpoint is,
 /// else a chat if it is served at Chat Completions, else a realtime one if
-/// it is served at Realtime; one served at none, such as a video or
-/// transcription model, which it answers as jobs, a reranker or a music
-/// model, is none the gateway serves, and is left out.
+/// it is served at Realtime; one served at none, such as a transcription
+/// model, which it answers as jobs, a reranker or a music model, is none
+/// the gateway serves, and is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -308,9 +309,9 @@ fn without_price(m: &Value) -> Value {
 
 /// A model's price, for a kind billed by the token: its `pricing` in
 /// dollars per token, the first tier's if it has tiers by context length.
-/// An image's, by the item, is none.
+/// An image's, by the item, and a video's, by the job, are none.
 fn price(m: &Value, kind: &str) -> Option<Price> {
-    if kind == "image" {
+    if matches!(kind, "image" | "video") {
         return None;
     }
     let pricing = &m["pricing"];
@@ -358,12 +359,13 @@ mod tests {
                 said("glm-5-3", "chat"),
                 said("text-embedding-v4", "embedding"),
                 said("flux-2-klein-4b", "image"),
+                said("wan-2-2", "video"),
                 said("qwen-audio-3-0-tts", "speech"),
                 said("aplomb-1", "decision"),
                 said("perplexity-sonar", "chat"),
                 said("glm-tts", "speech"),
             ],
-            "video, transcription jobs and a reranker are none it serves"
+            "transcription jobs and a reranker are none it serves"
         );
     }
 
