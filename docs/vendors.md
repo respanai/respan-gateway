@@ -38,12 +38,12 @@ Each vendor is in one of two tiers:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos` |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images`, `openai-realtime` |
 | | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `minimax-videos`, `minimax-speech` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
-| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions` |
+| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions`, `openai-realtime` |
 | | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings`, `bedrock-images` |
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
@@ -54,6 +54,7 @@ Each vendor is in one of two tiers:
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
 | | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
+| | Qwen | `qwen` | `DASHSCOPE_API_KEY` | `openai-chat`, `dashscope-speech`, `dashscope-transcriptions`, `dashscope-videos`, `openai-realtime-beta` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -98,7 +99,10 @@ provider with a `base_url` names the formats it covers, or gives each format
 its own URL in `formats`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
 at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
-at `?model=` too) and
+at `?model=` too; xAI's, which its Grok Voice models speak, at
+`wss://api.x.ai/v1`; Azure OpenAI's at its resource's
+`wss://<resource>.openai.azure.com/openai/v1`, the deployment at `?model=`
+and the key in `api-key`) and
 `openai-live` (OpenAI's Live API, which its Live models
 such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://generativelanguage.googleapis.com` for `gemini-live`,
@@ -112,6 +116,10 @@ A provider that still speaks OpenAI Realtime's beta protocol takes
 `openai-realtime-beta` and its own `wss://` base URL, such as
 `wss://api.stepfun.ai/v1`: the key a bearer token and the model at
 `?model=`, its clients speaking `openai-realtime`.
+Qwen's Omni Realtime models speak it too, at
+`wss://dashscope-intl.aliyuncs.com/api-ws/v1`. It hears PCM at 16 kHz, which
+the user's audio is converted to, and speaks it at 24 kHz; a session names
+neither format to it.
 Perplexity's Agent API speaks `openai-responses` at
 `https://api.perplexity.ai/v1`; its models are named `<vendor>/<model>`,
 such as `openai/gpt-5.6-sol`. Its `decisions` are at the same base, and

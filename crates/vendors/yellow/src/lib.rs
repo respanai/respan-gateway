@@ -17,6 +17,7 @@ pub mod morph;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
+pub mod qwen;
 pub mod stepfun;
 pub mod together;
 pub mod vllm;
@@ -48,6 +49,7 @@ pub const ALL: &[&Vendor] = &[
     &empiriolabs::VENDOR,
     &deepinfra::VENDOR,
     &phonic::VENDOR,
+    &qwen::VENDOR,
     &morph::VENDOR,
     &stepfun::VENDOR,
 ];

@@ -15,7 +15,10 @@ use crate::audio::Convert;
 use crate::foreign;
 use crate::json::{self, merge, string, take, text, untranslatable_output};
 
-/// A provider's frames as events, and the session's seconds.
+/// A provider's frames as events, and the session's seconds. A tool's call
+/// ends the response it is made in, as its client answers a call once its
+/// response is done, and the audio after it begins another: where Phonic
+/// said neither, the response's start and end are made up.
 pub(super) struct Provider {
     /// The session as its `config` started it.
     applied: Applied,
@@ -25,6 +28,11 @@ pub(super) struct Provider {
     billed: Option<Instant>,
     /// Whether a word of the user's turn was told.
     heard: bool,
+    /// Whether a response is being made.
+    open: bool,
+    /// Whether Phonic says the model is speaking, which its audio, sent
+    /// between its turns too, does not.
+    speaking: bool,
 }
 
 impl Provider {
@@ -34,6 +42,8 @@ impl Provider {
             clock,
             billed: None,
             heard: false,
+            open: false,
+            speaking: false,
         }
     }
 
@@ -67,6 +77,9 @@ impl Provider {
                     return false;
                 };
                 let said = take(v, &["text"], string, text).unwrap_or_default();
+                if self.speaking && !std::mem::replace(&mut self.open, true) {
+                    out.push(Output::ResponseStart { native: made_up() });
+                }
                 if !said.is_empty() {
                     out.push(Output::Transcript {
                         text: said,
@@ -110,18 +123,61 @@ impl Provider {
                 at_ms: None,
                 native: Native::json::<Key>(rest),
             },
-            "assistant_started_speaking" => Output::ResponseStart {
-                native: Native::json::<Key>(rest),
-            },
-            "assistant_finished_speaking" => Output::ResponseDone {
-                status: Status::Completed,
-                native: Native::json::<Key>(rest),
-            },
+            "assistant_started_speaking" => {
+                (self.open, self.speaking) = (true, true);
+                Output::ResponseStart {
+                    native: Native::json::<Key>(rest),
+                }
+            }
+            // After a tool's call that no audio followed, no response is
+            // left to end.
+            "assistant_finished_speaking" | "interrupted_response"
+                if !std::mem::take(&mut self.open) =>
+            {
+                self.speaking = false;
+                return false;
+            }
+            "assistant_finished_speaking" => {
+                self.speaking = false;
+                Output::ResponseDone {
+                    status: Status::Completed,
+                    native: Native::json::<Key>(rest),
+                }
+            }
             // What it said before the user spoke over it stays native.
-            "interrupted_response" => Output::ResponseDone {
-                status: Status::Interrupted,
-                native: Native::json::<Key>(rest),
-            },
+            "interrupted_response" => {
+                self.speaking = false;
+                Output::ResponseDone {
+                    status: Status::Interrupted,
+                    native: Native::json::<Key>(rest),
+                }
+            }
+            "tool_call" => {
+                let id = take(v, &["tool_call_id"], string, text);
+                let name = take(v, &["tool_name"], string, text);
+                let arguments = take(
+                    v,
+                    &["parameters"],
+                    |p| Some(p.to_string()),
+                    |s| serde_json::from_str(s).ok(),
+                );
+                let (Some(id), Some(name), Some(arguments)) = (id, name, arguments) else {
+                    return false;
+                };
+                if !std::mem::take(&mut self.open) {
+                    out.push(Output::ResponseStart { native: made_up() });
+                }
+                out.push(Output::ToolCall {
+                    id,
+                    name,
+                    arguments,
+                    native: Native::json::<Key>(rest),
+                });
+                Output::ResponseDone {
+                    status: Status::Completed,
+                    native: made_up(),
+                }
+            }
             "error" => {
                 let Some(message) = take(v, &["error", "message"], string, text) else {
                     return false;
@@ -163,6 +219,17 @@ impl Decoder<Output> for Provider {
         self.bill(out);
         end
     }
+}
+
+/// The native of a response's start or end that Phonic did not say: its
+/// own, with no field, which its client's writer does not write.
+fn made_up() -> Native {
+    Native::own::<Key>()
+}
+
+/// Whether `native` is a made-up response's ([`made_up`]).
+fn is_made_up(native: &Native) -> bool {
+    native.value::<Key>().is_some() && native.fields::<Key>().is_empty()
 }
 
 /// The events written to the client. Its readiness answers its `config`, so
@@ -257,6 +324,11 @@ impl Client {
         let refuse = |what: &str| Err(untranslatable_output(NAME, what));
         let typed = |kind: &str| json!({"type": kind});
         let (mut v, native) = match event {
+            Output::ResponseStart { native } | Output::ResponseDone { native, .. }
+                if is_made_up(native) =>
+            {
+                return Ok(None);
+            }
             Output::Opened(s) | Output::Updated(s) => {
                 if std::mem::replace(&mut self.ready, true) {
                     return Ok(None);
@@ -291,7 +363,19 @@ impl Client {
                 native,
             ),
             Output::Text { .. } => return refuse("text"),
-            Output::ToolCall { .. } => return refuse("a tool's call"),
+            Output::ToolCall {
+                id,
+                name,
+                arguments,
+                native,
+            } => {
+                let Ok(parameters) = serde_json::from_str::<Value>(arguments) else {
+                    return refuse("a tool's call whose arguments are not JSON");
+                };
+                let v = json!({"type": "tool_call", "tool_call_id": id, "tool_name": name,
+                    "parameters": parameters});
+                (v, native)
+            }
             Output::Native(native) => return Ok(native.value::<Key>().cloned()),
             _ => return Ok(None),
         };
