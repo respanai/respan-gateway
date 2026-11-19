@@ -3,6 +3,12 @@
 `respan-gateway-media-http` is the [media kinds](../../kinds/media/README.md)
 over HTTP.
 
+`JOB_IDS` is what each video format starts its jobs' ids with, by the
+format's name, and `job_ids(format)` one format's: a host routes a job's
+follow-up by it (`video::VideoJobs`), and a Veo client's poll or download
+is the gateway's only for an id spelled so. A new video format is a row
+there.
+
 `openai::{OpenAiImages, OpenAiTranscriptions, OpenAiSpeech, OpenAiVideos,
 OpenAiEmbeddings}`, named `openai-images`, `openai-transcriptions`,
 `openai-speech`, `openai-videos` and `openai-embeddings`: OpenAI's endpoints, as OpenAI and compatible vendors serve
@@ -187,8 +193,9 @@ Together's after `together_`, which `video::VideoJobs` routes a follow-up by.
   data URL of its bytes, as the first of the media's `frame_images`, and its
   `together-videos` native fields (`resolution`, `ratio`, `generate_audio`,
   `negative_prompt`, `seed`) as they are.
-- `GET /v2/videos/{id}` polls it: `in_progress`, `completed` and `failed`
-  are the kind's, its error `{code, message}`; its model, size and length
+- `GET /v2/videos/{id}` polls it: `queued`, `in_progress`, `completed` and
+  `failed` are the kind's, its error `{code, message}`; `cancelled` is
+  `failed`, with that as the error unless one is said; its model, size and length
   are the job's; the `video_url` of its `outputs` is its video, and their
   `cost`, what it charged, the job's native `cost`.
 - It serves the video only at that URL, so content is refused, 400
@@ -225,7 +232,8 @@ a follow-up by.
   refused, 400, before any call; a model that lacks the
   resolution answers with its own error.
 - `GET /v1/jobs/{id}` polls it: `processing`, `completed` and `failed` are
-  the kind's, `cancelled` its own, its error `{code, message}`; its model is
+  the kind's, `cancelled` is `failed`, with that as the error unless one is
+  said, its error `{code, message}`; its model is
   the job's; the `url`s of its `result`'s `data` are its videos, their
   `duration_seconds` its length, and the `usage`'s `cost_usd`, what it
   charged, the job's native `cost_usd`.
@@ -264,7 +272,7 @@ which `video::VideoJobs` routes a follow-up by.
   `size` is refused, 400, before any call.
 - `GET /v2/query/video_generation/{id}` polls it: `queued`, `running`,
   `succeeded` and `failed` are the kind's, its error `{code, message}`;
-  any other state, such as `cancelled`, is the format's own. The
+  `cancelled` is `failed`, with that as the error unless one is said. The
   `content.url` of its task, a time-limited URL, is its video, and its
   `usage`, what it bills, the job's native `usage`.
 - It serves the video only at that URL, so content is refused, 400
@@ -391,7 +399,7 @@ routes a follow-up by.
   `seed`, `prompt_extend`).
 - `GET /tasks/{id}` polls it: `PENDING`, `RUNNING`, `SUCCEEDED` and `FAILED`
   are the kind's, its error the output's `code` and `message`; `CANCELED` and
-  `UNKNOWN` are the format's own. Its model, length and size are the job's,
+  `UNKNOWN` are `failed`, with that as the error unless one is said. Its model, length and size are the job's,
   the `output.video_url` (valid for 24 hours) its video, and the `usage` its
   native `usage`.
 - It serves the video only at that URL, so content is refused, 400

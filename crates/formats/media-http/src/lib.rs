@@ -34,6 +34,34 @@ pub mod openrouter;
 pub mod together;
 pub mod zai;
 
+/// What each video format of this crate starts its jobs' ids with, by the
+/// format's name: its provider's own spelling, or, where its provider's ids
+/// are bare, the format's.
+pub const JOB_IDS: &[(&str, &str)] = &[
+    (openai::OpenAiVideos::NAME, "video_"),
+    (gemini::GeminiVeo::NAME, gemini::veo::PREFIX),
+    (openrouter::OpenRouterVideos::NAME, "gen-vid-"),
+    (together::TogetherVideos::NAME, together::PREFIX),
+    (empiriolabs::EmpirioLabsVideos::NAME, empiriolabs::PREFIX),
+    (dashscope::DashScopeVideos::NAME, dashscope::videos::PREFIX),
+    (zai::ZaiVideos::NAME, zai::PREFIX),
+    (minimax::MiniMaxVideos::NAME, minimax::videos::PREFIX),
+];
+
+/// What the video format named `format` starts its jobs' ids with, which
+/// routes a follow-up to the job's provider.
+pub fn job_ids(format: &str) -> Option<&'static str> {
+    let known = JOB_IDS.iter().find(|(name, _)| *name == format);
+    known.map(|(_, ids)| *ids)
+}
+
+/// Whether `id` is spelled as a job id a video format of this crate gives
+/// out, perhaps wrapped in its provider's name (`<provider>~<id>`).
+pub(crate) fn issued(id: &str) -> bool {
+    let inner = id.split_once('~').map_or(id, |(_, inner)| inner);
+    JOB_IDS.iter().any(|(_, ids)| inner.starts_with(ids))
+}
+
 /// What only format `F` of this crate reads of a value: no other crate can name it.
 struct Own<F>(std::marker::PhantomData<fn() -> F>);
 

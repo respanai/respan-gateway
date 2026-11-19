@@ -7,7 +7,7 @@
 
 mod speech;
 mod transcriptions;
-mod videos;
+pub(crate) mod videos;
 
 pub use speech::DashScopeSpeech;
 pub use transcriptions::DashScopeTranscriptions;

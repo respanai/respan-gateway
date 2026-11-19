@@ -2,7 +2,8 @@
 //! [`video`](respan_gateway_media::video) kind, [`EmpirioLabsVideos`].
 
 use crate::edge::{
-    bind_jobs, dimensions, gets, job_error, job_of, nearest_ratio, posts, unsupported, video_at,
+    bind_jobs, dimensions, ended_as, gets, job_error, job_of, nearest_ratio, posts, unsupported,
+    video_at,
 };
 use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
@@ -18,7 +19,7 @@ const NAME: &str = "empiriolabs-videos";
 type Key = crate::Own<EmpirioLabsVideos>;
 
 /// What starts the id of a job of EmpirioLabs AI's: its own ids are bare UUIDs.
-const PREFIX: &str = "empiriolabs_";
+pub(crate) const PREFIX: &str = "empiriolabs_";
 
 /// The short sides, in pixels, of the resolutions its models document
 /// (`480p`, `720p`, ...).
@@ -53,7 +54,7 @@ const ASPECTS: [(u32, u32); 8] = [
 ///
 /// A job's id is the provider's after `empiriolabs_`. It is `processing`,
 /// `completed` once its video is made, or `failed` with the error it gives;
-/// `cancelled`, a state the kind has no form for, is the format's own. Its
+/// `cancelled` is failed, as that. Its
 /// videos are the `url`s of its `result`'s `data` ([`Job::videos`]), and the
 /// `cost_usd` of its `usage`, what it charged, the job's native `cost_usd`.
 /// It serves a video only there, so content, like another format's
@@ -143,16 +144,20 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let id = v["job_id"]
         .as_str()
         .ok_or_else(|| unreadable("has no id"))?;
-    let status = match v["status"].as_str() {
+    let state = v["status"].as_str();
+    let status = match state {
         Some("processing") => Status::InProgress,
         Some("completed") => Status::Completed,
-        Some("failed") => Status::Failed,
+        Some("failed" | "cancelled") => Status::Failed,
         Some(other) => Status::Native(Native::json::<Key>(other)),
         None => return Err(unreadable("has no status")),
     };
     let mut job = Job::new(format!("{PREFIX}{id}"), status);
     job.model = v["model"].as_str().map(str::to_owned);
-    job.error = job_error(&v["error"]);
+    job.error = match state {
+        Some(ended @ "cancelled") => ended_as(job_error(&v["error"]), ended),
+        _ => job_error(&v["error"]),
+    };
     let result = &v["result"];
     let data = result["data"].as_array().map_or(&[][..], Vec::as_slice);
     job.seconds = (data.first()).and_then(|d| u32::try_from(d["duration_seconds"].as_u64()?).ok());

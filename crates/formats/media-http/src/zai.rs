@@ -17,7 +17,7 @@ const NAME: &str = "zai-videos";
 type Key = crate::Own<ZaiVideos>;
 
 /// What starts the id of a job of Z.ai's: its own ids are bare numbers.
-const PREFIX: &str = "zai_";
+pub(crate) const PREFIX: &str = "zai_";
 
 /// Z.ai's video generation (CogVideoX): `POST /videos/generations` makes a
 /// job and `GET /async-result/{id}` polls it, at the API's version, its base
