@@ -2,15 +2,16 @@
 //! of the [`video`](respan_gateway_media::video) kind, [`MiniMaxVideos`].
 
 use crate::edge::{
-    bind_jobs, dimensions, ended_as, gets, job_error, job_of, nearest_ratio, posts, unsupported,
-    video_at,
+    bind_jobs, dimensions, ended_as, fetches, gets, job_error, job_of, nearest_ratio, on_hosts,
+    posts, unsupported, video_at,
 };
 use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Uri;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Reach, Upstream, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -41,9 +42,11 @@ const RATIOS: [(u32, u32); 6] = [(21, 9), (16, 9), (4, 3), (1, 1), (3, 4), (9, 1
 /// `succeeded` once its video is made, or `failed` with the error MiniMax
 /// gives, or `cancelled`, which is failed, as that. Its video is the `content.url` of
 /// its task ([`Job::videos`]), a time-limited URL, and its `usage`, what it
-/// bills, the job's native `usage`. It serves the video only there, so
-/// content, like another format's operation, such as OpenAI's remix, delete,
-/// list or thumbnail, is refused, 400, before any call.
+/// bills, the job's native `usage`. Content is a `GET` of that URL, needed in
+/// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
+/// finds it), with no key, on MiniMax's own hosts (`minimax.io`) alone.
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MiniMaxVideos;
 
@@ -52,10 +55,22 @@ impl MiniMaxVideos {
     pub const NAME: &'static str = NAME;
 }
 
-/// A bearer key, over HTTP, beside its base URL.
+/// Where it serves its jobs' videos: MiniMax's own hosts, its CDN among them, over HTTPS.
+fn video_host(uri: &Uri) -> bool {
+    on_hosts(uri, &["minimax.io"])
+}
+
+/// A bearer key, over HTTP, beside its base URL; a video is fetched where
+/// its job names it, with no key.
 impl Upstream for MiniMaxVideos {
     fn name(&self) -> &str {
         NAME
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Http {
+            follow: Some(video_host),
+        }
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -81,6 +96,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let id = job_of("MiniMax", PREFIX, id)?;
             gets(head, &format!("/v2/query/video_generation/{}", escape(id)))
         }
+        Input::Content { url, .. } => fetches(head, "MiniMax", url.as_deref(), video_host),
         _ => Err(unsupported("MiniMax", input)),
     }
 }
@@ -231,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_its_content_refused() {
+    fn a_job_is_polled_by_its_id_and_its_content_fetched_at_its_url() {
         let mut head = head();
         let retrieve = Input::Retrieve {
             id: "minimax_4240".into(),
@@ -239,12 +255,20 @@ mod tests {
         call(&mut head, &retrieve).expect("a call");
         assert_eq!(head.method, Method::GET);
         assert_eq!(head.uri.path(), "/v2/query/video_generation/4240");
+        // Its content is fetched where its job names it, on its own hosts alone.
         let content = Input::Content {
             id: "minimax_4240".into(),
-            url: None,
+            url: Some("https://video-product.cdn.minimax.io/v.mp4?sig=1".into()),
         };
-        let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
+        call(&mut head, &content).expect("a call");
+        assert_eq!(head.uri, "https://video-product.cdn.minimax.io/v.mp4?sig=1");
+        assert!(video_host(&head.uri));
+        assert!(!video_host(&Uri::from_static(
+            "https://evil.example/video-product.cdn.minimax.io"
+        )));
+        assert!(!video_host(&Uri::from_static(
+            "http://video-product.cdn.minimax.io/v.mp4"
+        )));
     }
 
     #[test]

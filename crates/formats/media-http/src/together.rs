@@ -1,13 +1,16 @@
 //! Together's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`TogetherVideos`].
 
-use crate::edge::{bind_jobs, dimensions, gets, job_error, job_of, posts, unsupported, video_at};
+use crate::edge::{
+    bind_jobs, dimensions, fetches, gets, job_error, job_of, on_hosts, posts, unsupported, video_at,
+};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Uri;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Reach, Upstream, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -36,9 +39,11 @@ const VIDEOS: &str = "/v2/videos";
 /// `completed` once its video is made, or `failed` with the error Together
 /// gives; a state it adds is the format's own. Its video is the `video_url`
 /// of its `outputs` ([`Job::videos`]), and the `cost` there, what it
-/// charged, the job's native `cost`. It serves the video only there, so
-/// content, like another format's operation, such as OpenAI's remix,
-/// delete, list or thumbnail, is refused, 400, before any call.
+/// charged, the job's native `cost`. Content is a `GET` of that URL, needed in
+/// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
+/// finds it), with no key, on Together's own hosts (`together.ai`, `together.xyz`) alone.
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TogetherVideos;
 
@@ -47,10 +52,22 @@ impl TogetherVideos {
     pub const NAME: &'static str = NAME;
 }
 
-/// A bearer key, over HTTP, beside its base URL.
+/// Where it serves its jobs' videos: Together's own hosts, over HTTPS.
+fn video_host(uri: &Uri) -> bool {
+    on_hosts(uri, &["together.ai", "together.xyz"])
+}
+
+/// A bearer key, over HTTP, beside its base URL; a video is fetched where
+/// its job names it, with no key.
 impl Upstream for TogetherVideos {
     fn name(&self) -> &str {
         NAME
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Http {
+            follow: Some(video_host),
+        }
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -76,6 +93,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let id = job_of("Together", PREFIX, id)?;
             gets(head, &format!("{VIDEOS}/{}", escape(id)))
         }
+        Input::Content { url, .. } => fetches(head, "Together", url.as_deref(), video_host),
         _ => Err(unsupported("Together", input)),
     }
 }
@@ -177,7 +195,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_its_content_refused() {
+    fn a_job_is_polled_by_its_id_and_its_content_fetched_at_its_url() {
         let mut head = head();
         let retrieve = Input::Retrieve {
             id: "together_01a1-ecb7".into(),
@@ -185,12 +203,20 @@ mod tests {
         call(&mut head, &retrieve).expect("a call");
         assert_eq!(head.method, Method::GET);
         assert_eq!(head.uri.path(), "/v2/videos/01a1-ecb7");
+        // Its content is fetched where its job names it, on its own hosts alone.
         let content = Input::Content {
             id: "together_01a1-ecb7".into(),
-            url: None,
+            url: Some("https://api.together.ai/v.mp4?sig=1".into()),
         };
-        let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
+        call(&mut head, &content).expect("a call");
+        assert_eq!(head.uri, "https://api.together.ai/v.mp4?sig=1");
+        assert!(video_host(&head.uri));
+        assert!(!video_host(&Uri::from_static(
+            "https://evil.example/api.together.ai"
+        )));
+        assert!(!video_host(&Uri::from_static(
+            "http://api.together.ai/v.mp4"
+        )));
         // An id not of this format's is no job of Together's.
         let foreign = Input::Retrieve {
             id: "video_1".into(),

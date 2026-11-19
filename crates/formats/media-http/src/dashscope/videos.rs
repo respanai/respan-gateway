@@ -2,14 +2,17 @@
 //! of the [`video`](respan_gateway_media::video) kind, [`DashScopeVideos`].
 
 use super::says_error;
-use crate::edge::{bind_jobs, ended_as, gets, job_error, job_of, posts, unsupported, video_at};
+use crate::edge::{
+    bind_jobs, ended_as, fetches, gets, job_error, job_of, on_hosts, posts, unsupported, video_at,
+};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Uri;
 use respan_gateway_http::http::header::{HeaderName, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::path::escape;
-use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Reach, Upstream, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -40,10 +43,11 @@ const SYNTHESIS: &str = "/services/aigc/video-generation/video-synthesis";
 /// `RUNNING` in progress, `SUCCEEDED` completed and `FAILED` failed with
 /// the `code` and `message` it gives; `CANCELED` and `UNKNOWN`, a task
 /// gone, are failed, as that. Its video is the `video_url` of its output, valid for 24
-/// hours, and the `usage` it reports the job's native `usage`. It serves
-/// the video only there, so content, like another format's operation, such
-/// as OpenAI's remix, delete, list or thumbnail, is refused, 400, before
-/// any call.
+/// hours, and the `usage` it reports the job's native `usage`. Content is a `GET` of that URL, needed in
+/// the request ([`LocateContent`](respan_gateway_media::video::LocateContent)
+/// finds it), with no key, on Alibaba Cloud's hosts (`aliyuncs.com`) alone.
+/// Another format's operation, such as OpenAI's remix, delete, list or
+/// thumbnail, is refused, 400, before any call.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DashScopeVideos;
 
@@ -52,10 +56,22 @@ impl DashScopeVideos {
     pub const NAME: &'static str = NAME;
 }
 
-/// A bearer key, over HTTP, beside its base URL.
+/// Where it serves its jobs' videos: Alibaba Cloud's, its object storage among them, over HTTPS.
+fn video_host(uri: &Uri) -> bool {
+    on_hosts(uri, &["aliyuncs.com"])
+}
+
+/// A bearer key, over HTTP, beside its base URL; a video is fetched where
+/// its job names it, with no key.
 impl Upstream for DashScopeVideos {
     fn name(&self) -> &str {
         NAME
+    }
+
+    fn reach(&self) -> Reach {
+        Reach::Http {
+            follow: Some(video_host),
+        }
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -86,6 +102,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
             let id = job_of("DashScope", PREFIX, id)?;
             gets(head, &format!("/tasks/{}", escape(id)))
         }
+        Input::Content { url, .. } => fetches(head, "DashScope", url.as_deref(), video_host),
         _ => Err(unsupported("DashScope", input)),
     }
 }
@@ -201,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn a_job_is_polled_by_its_id_and_its_content_refused() {
+    fn a_job_is_polled_by_its_id_and_its_content_fetched_at_its_url() {
         let mut head = head();
         let retrieve = Input::Retrieve {
             id: "dashscope_1e8f-7dff".into(),
@@ -209,12 +226,23 @@ mod tests {
         call(&mut head, &retrieve).expect("a call");
         assert_eq!(head.method, Method::GET);
         assert_eq!(head.uri.path(), "/tasks/1e8f-7dff");
+        // Its content is fetched where its job names it, on its own hosts alone.
         let content = Input::Content {
             id: "dashscope_1e8f-7dff".into(),
-            url: None,
+            url: Some("https://bucket.oss-cn-shanghai.aliyuncs.com/v.mp4?sig=1".into()),
         };
-        let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
+        call(&mut head, &content).expect("a call");
+        assert_eq!(
+            head.uri,
+            "https://bucket.oss-cn-shanghai.aliyuncs.com/v.mp4?sig=1"
+        );
+        assert!(video_host(&head.uri));
+        assert!(!video_host(&Uri::from_static(
+            "https://evil.example/bucket.oss-cn-shanghai.aliyuncs.com"
+        )));
+        assert!(!video_host(&Uri::from_static(
+            "http://bucket.oss-cn-shanghai.aliyuncs.com/v.mp4"
+        )));
     }
 
     #[test]

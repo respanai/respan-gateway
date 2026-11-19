@@ -12,9 +12,7 @@ use respan_gateway_core::Gateway;
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_media::video::{LocateContent, VideoJobs};
-use respan_gateway_media_http::gemini::GeminiVeo;
-use respan_gateway_media_http::job_ids;
-use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::video_format;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
 use respan_gateway_plugin_relay::Relay;
@@ -228,11 +226,9 @@ fn with_plugins(
         })
         .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
         .collect();
-    // Veo serves a job's content only where the job says, and OpenRouter
-    // answers for one not finished as for one it never made.
-    let located = [GeminiVeo::NAME, OpenRouterVideos::NAME];
+    // A video format whose jobs' content needs the job retrieved first.
     let located = (plan.upstreams.iter().flat_map(|u| &u.entries))
-        .filter(|e| located.contains(&e.format.as_str()));
+        .filter(|e| video_format(&e.format).is_some_and(|f| f.located));
     let locate = located.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
     // The tool loop answers the request itself, so it comes after every plugin
     // that routes or edits it; what ends its sessions comes before them all.
@@ -314,9 +310,11 @@ fn with_plugins(
 fn video_jobs(plan: &Plan) -> VideoJobs {
     let entries = plan.upstreams.iter();
     let entries = entries.flat_map(|u| u.entries.iter().map(move |e| (u, e)));
-    entries.fold(VideoJobs::new(), |jobs, (u, e)| match job_ids(&e.format) {
-        Some(spelling) => jobs.provider(&u.name, &e.internal, spelling),
-        None => jobs,
+    entries.fold(VideoJobs::new(), |jobs, (u, e)| {
+        match video_format(&e.format) {
+            Some(format) => jobs.provider(&u.name, &e.internal, format.job_ids),
+            None => jobs,
+        }
     })
 }
 

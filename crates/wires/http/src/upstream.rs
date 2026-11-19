@@ -27,7 +27,9 @@ pub enum KeyIn {
 #[derive(Debug, Clone, Copy)]
 pub enum Reach {
     /// Over HTTP, following the redirects `follow` allows, if any: a call
-    /// that follows one waits at most 10 s to connect.
+    /// that follows one waits at most 10 s to connect. A `GET` its format
+    /// writes with a whole URI that `follow` allows goes there, as a
+    /// redirect would, with no key.
     Http {
         /// The redirects followed.
         follow: Option<fn(&Uri) -> bool>,
