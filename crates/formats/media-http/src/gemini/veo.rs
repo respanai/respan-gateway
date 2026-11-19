@@ -2,13 +2,13 @@
 //! [`video`](respan_gateway_media::video) kind, [`GeminiVeo`].
 
 use super::{is_segment, refusal};
-use crate::edge::{bind_provider, content, sends};
+use crate::edge::{bind_provider, content, dimensions, sends, unsupported};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::gemini;
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
@@ -148,15 +148,6 @@ impl Format<ProviderIo, Output, Input> for GeminiVeo {
     }
 }
 
-/// An operation Veo has no form for, refused.
-fn unsupported(input: &Input) -> Fault {
-    let what = match input {
-        Input::Native { .. } => "operation of another format",
-        _ => "operation of this kind",
-    };
-    Fault::bad_request(format!("Veo has no video {what}")).with(ErrorCode("unsupported".into()))
-}
-
 /// The operation a job `id` names, else a 404.
 fn operation_of(id: &str) -> Result<String, Fault> {
     GeminiVeo::operation(id).ok_or_else(|| Fault::not_found(format!("no Veo video has id {id}")))
@@ -210,7 +201,7 @@ fn call(head: &mut RequestHead, input: &Input) -> Result<(Box<dyn Encoder<Input>
             })?;
             (Method::GET, content_path(url)?, None, Call::Content)
         }
-        _ => return Err(unsupported(input)),
+        _ => return Err(unsupported("Veo", input)),
     };
     head.method = method;
     head.uri = path
@@ -311,16 +302,12 @@ fn omni_body(model: &str, create: &Create) -> Result<Bytes, Fault> {
 
 /// Veo's aspect ratio and resolution of a size `WxH`.
 fn aspect_of(size: &str) -> Result<(&'static str, &'static str), Fault> {
-    let parsed = size.split_once(['x', 'X']).and_then(|(w, h)| {
-        let (w, h) = (w.trim().parse::<u32>().ok()?, h.trim().parse::<u32>().ok()?);
-        (w > 0 && h > 0).then_some((w, h))
-    });
     let refused = || {
         Fault::bad_request(format!(
             "'size' {size} is not one Veo makes: it makes 16:9 and 9:16 videos"
         ))
     };
-    let (w, h) = parsed.ok_or_else(refused)?;
+    let (w, h) = dimensions(size).ok_or_else(refused)?;
     let (long, short) = (w.max(h), w.min(h));
     if w == h || (f64::from(long) / f64::from(short) - 16.0 / 9.0).abs() > 0.05 {
         return Err(refused());

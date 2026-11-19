@@ -1,14 +1,12 @@
 //! OpenRouter's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`OpenRouterVideos`].
 
-use crate::edge::{bind_provider, content, sends};
-use respan_gateway_conversation::{Media, MediaSource};
+use crate::edge::{bind_provider, content, gets, posts, unsupported, video_at};
 use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
 use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
 use serde_json::{Map, Value, json};
@@ -74,41 +72,19 @@ impl Format<ProviderIo, Output, Input> for OpenRouterVideos {
     }
 }
 
-/// An operation OpenRouter has no form for, refused.
-fn unsupported(input: &Input) -> Fault {
-    let what = match input {
-        Input::Native { .. } => "operation of another format",
-        _ => "operation of this kind",
-    };
-    Fault::bad_request(format!("OpenRouter has no video {what}"))
-        .with(ErrorCode("unsupported".into()))
-}
-
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
     let path = |id: &str, rest: &str| format!("/videos/{}{rest}", escape(id));
-    let (method, path, body) = match input {
-        Input::Create(create) => (
-            Method::POST,
-            "/videos".to_owned(),
-            Some(create_body(create)?),
-        ),
-        Input::Retrieve { id } => (Method::GET, path(id, ""), None),
-        Input::Content { id, .. } => (Method::GET, path(id, CONTENT), None),
-        _ => return Err(unsupported(input)),
-    };
-    head.method = method;
-    set_path(head, &path)?;
-    let Some(body) = body else {
-        return Ok(sends(Bytes::new()));
-    };
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Ok(sends(body))
+    match input {
+        Input::Create(create) => posts(head, "/videos", &create_body(create)?),
+        Input::Retrieve { id } => gets(head, &path(id, "")),
+        Input::Content { id, .. } => gets(head, &path(id, CONTENT)),
+        _ => Err(unsupported("OpenRouter", input)),
+    }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model =
         model.ok_or_else(|| Fault::bad_request("a video needs a model, such as tbc/mischief-1"))?;
@@ -127,9 +103,7 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
         v.insert("frame_images".into(), vec![frame].into());
     }
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
 /// The job of an answer `raw`.
@@ -157,7 +131,7 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.error = error.map(|m| JobError::new(None, m));
     job.videos = (v["unsigned_urls"].as_array().into_iter().flatten())
         .filter_map(Value::as_str)
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
+        .map(video_at)
         .collect();
     if let Some(usage) = v.get("usage").filter(|usage| usage.is_object()) {
         job.native = Native::json::<Key>(json!({ "usage": usage }));
@@ -170,7 +144,8 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use crate::Natives;
-    use respan_gateway_http::http;
+    use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::http::{self, Method};
 
     fn head() -> RequestHead {
         http::Request::new(()).into_parts().0
@@ -193,9 +168,8 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         ));
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "x-ai/grok-imagine-video-1.5-lite", "prompt": "a wave",
                 "duration": 2, "size": "854x480",
                 "frame_images": [{ "type": "image_url", "frame_type": "first_frame",
