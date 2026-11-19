@@ -162,10 +162,10 @@ What one spec has and the other has not is emulated, dropped or refused:
   push to talk: the user's first audio of a turn unmutes it, and its commit
   mutes it, with a second of silence, which Phonic waits for before it
   answers. It hears audio only as fast as it plays, so audio sent faster is
-  cut at its commit. Voice detection and transcription settings are
-  dropped; anything else it has none of, such as text output, a tool choice
-  but `auto`, a commit under its voice detection, messages, cancels and a
-  response to nothing it answers, is refused.
+  cut at its commit. Voice detection and transcription settings and
+  another format's tool choice are dropped; anything else it has none of,
+  such as text output, a commit under its voice detection, messages,
+  cancels and a response to nothing it answers, is refused.
 - From Phonic: the first session told of is its
   `ready_to_start_conversation`; the model's transcript goes with its next
   audio chunk, or with an empty one at its turn's end, the user's a word at a time, another format's parts of a
