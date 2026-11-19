@@ -5,13 +5,10 @@
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::Fault;
-use respan_gateway_decision::{Input, Output};
 use respan_gateway_decision_http::Decisions;
-use respan_gateway_http::http::request::Parts as RequestHead;
-use respan_gateway_http::path::set_path;
 
-use respan_gateway_vendor_kit::{Dialect, Dialected, KeyIn, Rewrite, Vendor};
+use respan_gateway_vendor_kit::decisions::SystemOne;
+use respan_gateway_vendor_kit::{Dialect, Dialected, KeyIn, Vendor};
 
 /// Where its Model APIs are.
 const BASE_URL: &str = "https://inference.baseten.co/v1";
@@ -31,7 +28,7 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(AnthropicMessages, Messages),
             Some(MESSAGES_URL),
         ),
-        (&Dialected::new(Decisions, Baseten), Some(BASE_URL)),
+        (&Dialected::new(Decisions, SystemOne), Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
@@ -46,20 +43,5 @@ impl Dialect for Messages {
 
     fn key(&self) -> Option<KeyIn> {
         Some(KeyIn::Bearer)
-    }
-}
-
-/// Baseten's decisions in System One's contract, which it serves at
-/// `/systemone`.
-#[derive(Debug, Clone, Copy)]
-pub struct Baseten;
-
-impl Dialect for Baseten {
-    type Input = Input;
-    type Output = Output;
-
-    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        set_path(head, "/systemone")?;
-        Ok(None)
     }
 }

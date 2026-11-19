@@ -85,23 +85,9 @@ impl Format<ClientIo, Input, Output> for Decisions {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        Ok(io.with_error(refusal).bind(
-            |_| {
-                Box::new(|raw: Bytes, out: &mut Vec<Input>| {
-                    out.push(decode_request(&raw)?);
-                    Ok(())
-                })
-            },
-            |reply| {
-                let mut head = reply.head();
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                let request = reply.request().body().clone();
-                let encoder =
-                    All::new(move |e: &[Output]| encode_response(e, &Asked::new(&request)));
-                Ok(reply.write(head, Box::new(encoder)))
-            },
-        ))
+        serve(io, refusal, decode_request, |events, request| {
+            encode_response(events, &Asked::new(request))
+        })
     }
 }
 
@@ -123,24 +109,64 @@ impl Format<ProviderIo, Output, Input> for Decisions {
 
     /// A call: a `POST` of the whole request to `/decisions`.
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(io.with_refusal(read_provider_error).bind(
-            move |head, input: Option<&Input>| {
-                let input = input.ok_or_else(|| {
-                    Fault::config(format!("{NAME} does not accept streaming inputs"))
-                })?;
-                head.method = Method::POST;
-                set_path(head, PATH)?;
-                let json = HeaderValue::from_static("application/json");
-                head.headers.insert(CONTENT_TYPE, json);
-                let body = to_bytes(&encode_request(input)?)?;
-                Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
-                    out.push(body.clone());
-                    Ok(())
-                }) as Box<dyn Encoder<Input>>)
-            },
-            |_, _| Some(Box::new(Whole::new(decode_response)) as Box<dyn Decoder<Output>>),
-        ))
+        call(io, NAME, encode_request, |_| {
+            Box::new(Whole::new(decode_response))
+        })
     }
+}
+
+/// A client's connection: its request read whole by `decode`, answered
+/// whole in JSON by `encode` from the events and the request's body, a
+/// fault written by `refusal`.
+fn serve(
+    io: ClientIo,
+    refusal: fn(&Fault, &http::Request<Bytes>, &mut ResponseHead) -> Bytes,
+    decode: fn(&[u8]) -> Result<Input, Fault>,
+    encode: fn(&[Output], &[u8]) -> Result<Bytes, Fault>,
+) -> Result<Connection<Input, Output>, Fault> {
+    Ok(io.with_error(refusal).bind(
+        move |_| {
+            Box::new(move |raw: Bytes, out: &mut Vec<Input>| {
+                out.push(decode(&raw)?);
+                Ok(())
+            })
+        },
+        move |reply| {
+            let mut head = reply.head();
+            let json = HeaderValue::from_static("application/json");
+            head.headers.insert(CONTENT_TYPE, json);
+            let request = reply.request().body().clone();
+            let encoder = All::new(move |e: &[Output]| encode(e, &request));
+            Ok(reply.write(head, Box::new(encoder)))
+        },
+    ))
+}
+
+/// A call of format `name`: a `POST` of the whole request `encode` writes
+/// to `/decisions`, its answer read by the decoder `decode` gives for the
+/// call as sent.
+fn call(
+    io: ProviderIo,
+    name: &'static str,
+    encode: fn(&Input) -> Result<Map<String, Value>, Fault>,
+    decode: fn(&http::Request<Bytes>) -> Box<dyn Decoder<Output>>,
+) -> Result<Connection<Output, Input>, Fault> {
+    Ok(io.with_refusal(read_provider_error).bind(
+        move |head, input: Option<&Input>| {
+            let input = input
+                .ok_or_else(|| Fault::config(format!("{name} does not accept streaming inputs")))?;
+            head.method = Method::POST;
+            set_path(head, PATH)?;
+            let json = HeaderValue::from_static("application/json");
+            head.headers.insert(CONTENT_TYPE, json);
+            let body = to_bytes(&encode(input)?)?;
+            Ok(Box::new(move |_: &Input, out: &mut Vec<Bytes>| {
+                out.push(body.clone());
+                Ok(())
+            }) as Box<dyn Encoder<Input>>)
+        },
+        move |_, sent| Some(decode(sent)),
+    ))
 }
 
 /// A refusal of media evidence, which only Gemini's format has a form for.
