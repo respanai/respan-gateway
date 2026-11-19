@@ -2,16 +2,15 @@
 //! of the [`video`](respan_gateway_media::video) kind, [`DashScopeVideos`].
 
 use super::says_error;
-use crate::edge::{bind_provider, sends};
-use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use crate::edge::{bind_jobs, gets, job_error, job_of, posts, unsupported, video_at};
+use respan_gateway_conversation_http::fields::{media_url, merge_missing, set};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderName, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
+use respan_gateway_http::http::header::{HeaderName, HeaderValue};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "dashscope-videos";
@@ -70,69 +69,43 @@ impl Format<ProviderIo, Output, Input> for DashScopeVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
-        }))
+        Ok(bind_jobs(io, NAME, call, read_job))
     }
-}
-
-/// An operation DashScope has no form for, refused.
-fn unsupported(input: &Input) -> Fault {
-    let what = match input {
-        Input::Native { .. } => "no video operation of another format",
-        Input::Content { .. } => {
-            "no video content: it serves a video at the `video_url` of its job"
-        }
-        _ => "no video operation of this kind",
-    };
-    Fault::bad_request(format!("DashScope has {what}")).with(ErrorCode("unsupported".into()))
-}
-
-/// DashScope's id of a job `id`, if it is one of this format's.
-fn job_of(id: &str) -> Result<&str, Fault> {
-    let job = id.strip_prefix(PREFIX).filter(|job| !job.is_empty());
-    job.ok_or_else(|| Fault::not_found(format!("no DashScope video job is {id:?}")))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
     match input {
         Input::Create(create) => {
-            let body = create_body(create)?;
-            head.method = Method::POST;
-            set_path(head, SYNTHESIS)?;
-            let json = HeaderValue::from_static("application/json");
-            head.headers.insert(CONTENT_TYPE, json);
+            let call = posts(head, SYNTHESIS, &create_body(create)?)?;
             let asynchronous = HeaderValue::from_static("enable");
             (head.headers).insert(HeaderName::from_static("x-dashscope-async"), asynchronous);
-            Ok(sends(body))
+            Ok(call)
         }
         Input::Retrieve { id } => {
-            head.method = Method::GET;
-            set_path(head, &format!("/tasks/{}", escape(job_of(id)?)))?;
-            Ok(sends(Bytes::new()))
+            let id = job_of("DashScope", PREFIX, id)?;
+            gets(head, &format!("/tasks/{}", escape(id)))
         }
-        _ => Err(unsupported(input)),
+        _ => Err(unsupported("DashScope", input)),
     }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model = model
         .ok_or_else(|| Fault::bad_request("a video needs a model, such as wan2.2-t2v-plus"))?;
     let mut input = Map::new();
     input.insert("prompt".into(), create.prompt.clone().into());
-    if let Some(reference) = &create.reference {
-        input.insert("img_url".into(), media_url(reference).into());
-    }
+    set(
+        &mut input,
+        "img_url",
+        create.reference.as_ref().map(media_url),
+    );
     let mut parameters = Map::new();
-    if let Some(seconds) = create.seconds {
-        parameters.insert("duration".into(), seconds.into());
-    }
-    if let Some(size) = &create.size {
-        parameters.insert("size".into(), size.replace('x', "*").into());
-    }
+    set(&mut parameters, "duration", create.seconds);
+    let size = create.size.as_ref().map(|size| size.replace('x', "*"));
+    set(&mut parameters, "size", size);
     let mut v = Map::new();
     v.insert("model".into(), model.into());
     v.insert("input".into(), input.into());
@@ -140,9 +113,7 @@ fn create_body(create: &Create) -> Result<Bytes, Fault> {
         v.insert("parameters".into(), parameters.into());
     }
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
 /// The job of an answer `raw`: a task made or polled.
@@ -173,13 +144,8 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     job.size = usage["video_ratio"]
         .as_str()
         .map(|size| size.replace('*', "x"));
-    job.error = task["message"].as_str().map(|message| {
-        let code = task["code"].as_str().map(str::to_owned);
-        JobError::new(code, message)
-    });
-    job.videos = (task["video_url"].as_str().into_iter())
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
-        .collect();
+    job.error = job_error(task);
+    job.videos = (task["video_url"].as_str().map(video_at).into_iter()).collect();
     if usage.is_object() {
         job.native = Native::json::<Key>(json!({ "usage": usage }));
     }
@@ -191,7 +157,8 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use crate::Natives;
-    use respan_gateway_http::http;
+    use respan_gateway_http::http::{self, Method};
+    use respan_gateway_media::video::JobError;
 
     fn head() -> RequestHead {
         http::Request::new(()).into_parts().0
@@ -219,9 +186,8 @@ mod tests {
         assert_eq!(head.uri.path(), SYNTHESIS);
         assert_eq!(head.headers["x-dashscope-async"], "enable");
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "wan2.2-t2v-plus",
                 "input": { "prompt": "a wave", "negative_prompt": "blur" },
                 "parameters": { "duration": 5, "size": "832*480", "seed": 7 } })
@@ -244,16 +210,6 @@ mod tests {
             url: None,
         };
         let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
-        let foreign = Input::Retrieve {
-            id: "video_1".into(),
-        };
-        assert!(call(&mut head, &foreign).is_err());
-        let remix = Input::Native {
-            id: Some("dashscope_1".into()),
-            native: Native::json::<()>(json!({"method": "POST"})),
-        };
-        let refused = call(&mut head, &remix).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
     }
 
