@@ -205,10 +205,10 @@ a follow-up by.
   `duration`, its reference image, a URL or a data URL of its bytes, as its
   `image`, its `size` as a `resolution` (`<short side>p`, for 360, 480,
   540, 720, 768 or 1080) and an `aspect_ratio` (16:9, 9:16, 1:1, 4:3, 3:4,
-  3:2, 2:3 or 21:9, to a pixel's rounding), and its `empiriolabs-videos`
+  3:2, 2:3 or 21:9, the nearest within 5%), and its `empiriolabs-videos`
   native fields (`generate_audio`, `mode`, and a `resolution` or
   `aspect_ratio` the `size` does not say) as they are. Any other `size` is
-  refused, 400 `unsupported`, before any call; a model that lacks the
+  refused, 400, before any call; a model that lacks the
   resolution answers with its own error.
 - `GET /v1/jobs/{id}` polls it: `processing`, `completed` and `failed` are
   the kind's, `cancelled` its own, its error `{code, message}`; its model is

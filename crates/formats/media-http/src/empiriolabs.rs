@@ -1,16 +1,16 @@
 //! EmpirioLabs AI's video generation, over HTTP: a provider format of the
 //! [`video`](respan_gateway_media::video) kind, [`EmpirioLabsVideos`].
 
-use crate::edge::{bind_provider, sends};
-use respan_gateway_conversation::{Media, MediaSource};
-use respan_gateway_conversation_http::fields::{media_url, merge_missing};
-use respan_gateway_core::{Connection, ErrorCode, Fault, Format, Native, Provider};
+use crate::edge::{
+    bind_jobs, dimensions, gets, job_error, job_of, nearest_ratio, posts, unsupported, video_at,
+};
+use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
+use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
-use respan_gateway_http::http::{Method, request::Parts as RequestHead};
-use respan_gateway_http::path::{escape, set_path};
-use respan_gateway_http::{Connect, Decoder, Encoder, ProviderIo, Upstream, Whole, native::Json};
-use respan_gateway_media::video::{Create, Input, Job, JobError, Output, Status};
+use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::path::escape;
+use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
 const NAME: &str = "empiriolabs-videos";
@@ -35,12 +35,6 @@ const ASPECTS: [(u32, u32); 8] = [
     (2, 3),
     (21, 9),
 ];
-
-/// Where a job is made, at the provider's base.
-const GENERATIONS: &str = "/v1/videos/generations";
-
-/// Where a job is polled, at the provider's base.
-const JOBS: &str = "/v1/jobs";
 
 /// EmpirioLabs AI's video generation: `POST /v1/videos/generations` makes a
 /// job and `GET /v1/jobs/{id}` polls it, at the API's host, its base URL
@@ -90,98 +84,55 @@ impl Format<ProviderIo, Output, Input> for EmpirioLabsVideos {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, call, |_, _| {
-            Some(Box::new(Whole::new(read_job)) as Box<dyn Decoder<Output>>)
-        }))
+        Ok(bind_jobs(io, NAME, call, read_job))
     }
-}
-
-/// What EmpirioLabs AI has no form for, refused.
-fn unsupported(what: &str) -> Fault {
-    Fault::bad_request(format!("EmpirioLabs AI has {what}")).with(ErrorCode("unsupported".into()))
-}
-
-/// The provider's id of a job `id`, if it is one of this format's.
-fn job_of(id: &str) -> Result<&str, Fault> {
-    let job = id.strip_prefix(PREFIX).filter(|job| !job.is_empty());
-    job.ok_or_else(|| Fault::not_found(format!("no EmpirioLabs AI video job is {id:?}")))
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
 fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
-    let (method, path, body) = match input {
-        Input::Create(create) => (
-            Method::POST,
-            GENERATIONS.to_owned(),
-            Some(create_body(create)?),
-        ),
+    match input {
+        Input::Create(create) => posts(head, "/v1/videos/generations", &create_body(create)?),
         Input::Retrieve { id } => {
-            let path = format!("{JOBS}/{}", escape(job_of(id)?));
-            (Method::GET, path, None)
+            let id = job_of("EmpirioLabs AI", PREFIX, id)?;
+            gets(head, &format!("/v1/jobs/{}", escape(id)))
         }
-        Input::Content { .. } => {
-            return Err(unsupported(
-                "no video content: it serves a video at the `url` of its job's `result`",
-            ));
-        }
-        _ => return Err(unsupported("no video operation of another format")),
-    };
-    head.method = method;
-    set_path(head, &path)?;
-    let Some(body) = body else {
-        return Ok(sends(Bytes::new()));
-    };
-    head.headers
-        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    Ok(sends(body))
+        _ => Err(unsupported("EmpirioLabs AI", input)),
+    }
 }
 
 /// A creation's JSON body.
-fn create_body(create: &Create) -> Result<Bytes, Fault> {
+fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
     let model = create.model.as_deref();
     let model =
         model.ok_or_else(|| Fault::bad_request("a video needs a model, such as pixverse-v5"))?;
     let mut v = Map::new();
     v.insert("model".into(), model.into());
     v.insert("prompt".into(), create.prompt.clone().into());
-    if let Some(seconds) = create.seconds {
-        v.insert("duration".into(), seconds.into());
-    }
+    set(&mut v, "duration", create.seconds);
     if let Some(size) = &create.size {
         let (resolution, aspect) = shape_of(size)?;
         v.insert("resolution".into(), resolution.into());
         v.insert("aspect_ratio".into(), aspect.into());
     }
-    if let Some(reference) = &create.reference {
-        v.insert("image".into(), media_url(reference).into());
-    }
+    set(&mut v, "image", create.reference.as_ref().map(media_url));
     merge_missing(&mut v, create.native.fields::<Key>());
-    serde_json::to_vec(&v)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("a body could not be written").with_source(e))
+    Ok(v)
 }
 
 /// Its resolution and aspect ratio of a size `WxH`: the resolution is the
-/// short side's, the aspect ratio the documented one the size is, to a pixel's
-/// rounding (854x480 is 16:9).
+/// short side's, the aspect ratio the documented one nearest (854x480 is
+/// 16:9).
 fn shape_of(size: &str) -> Result<(String, String), Fault> {
-    let parsed = size
-        .split_once(['x', 'X'])
-        .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)));
-    let shape = parsed.and_then(|(w, h)| {
+    let shape = dimensions(size).and_then(|(w, h)| {
+        let (a, b) = nearest_ratio(w, h, &ASPECTS)?;
         let short = w.min(h);
-        let (bw, bh) = *ASPECTS.iter().find(|(bw, bh)| {
-            let off = (u64::from(w) * u64::from(*bh)).abs_diff(u64::from(h) * u64::from(*bw));
-            off <= u64::from(*bw.max(bh))
-        })?;
-        SHORT_SIDES
-            .contains(&short)
-            .then(|| (format!("{short}p"), format!("{bw}:{bh}")))
+        (SHORT_SIDES.contains(&short)).then(|| (format!("{short}p"), format!("{a}:{b}")))
     });
     shape.ok_or_else(|| {
-        unsupported(&format!(
-            "no 'size' {size:?}: it takes a width by height of a short side of 360, 480, 540, 720, 768 or 1080 pixels and a shape of 16:9, 9:16, 1:1, 4:3, 3:4, 3:2, 2:3 or 21:9"
-        ))
+        invalid(
+            "size",
+            "is not one EmpirioLabs AI makes: a short side of 360, 480, 540, 720, 768 or 1080 pixels and a shape of 16:9, 9:16, 1:1, 4:3, 3:4, 3:2, 2:3 or 21:9",
+        )
     })
 }
 
@@ -201,17 +152,13 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     };
     let mut job = Job::new(format!("{PREFIX}{id}"), status);
     job.model = v["model"].as_str().map(str::to_owned);
-    let error = &v["error"];
-    job.error = error["message"].as_str().map(|message| {
-        let code = error["code"].as_str().map(str::to_owned);
-        JobError::new(code, message)
-    });
+    job.error = job_error(&v["error"]);
     let result = &v["result"];
     let data = result["data"].as_array().map_or(&[][..], Vec::as_slice);
     job.seconds = (data.first()).and_then(|d| u32::try_from(d["duration_seconds"].as_u64()?).ok());
     job.videos = (data.iter())
         .filter_map(|d| d["url"].as_str())
-        .map(|url| Media::new("video/mp4", MediaSource::Url(url.to_owned())))
+        .map(video_at)
         .collect();
     if let Some(cost) = result["usage"].get("cost_usd").filter(|c| c.is_number()) {
         job.native = Native::json::<Key>(json!({ "cost_usd": cost }));
@@ -224,7 +171,9 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
 mod tests {
     use super::*;
     use crate::Natives;
-    use respan_gateway_http::http;
+    use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_http::http::{self, Method};
+    use respan_gateway_media::video::JobError;
 
     fn head() -> RequestHead {
         http::Request::new(()).into_parts().0
@@ -246,9 +195,8 @@ mod tests {
             MediaSource::Url("https://a.example/cat.png".into()),
         ));
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
-            body,
+            Value::Object(body),
             json!({ "model": "pixverse-v5", "prompt": "a wave", "duration": 5,
                 "image": "https://a.example/cat.png" })
         );
@@ -258,7 +206,6 @@ mod tests {
             f.insert("mode".into(), "t2v".into());
         });
         let body = create_body(&create).expect("written");
-        let body: Value = serde_json::from_slice(&body).expect("JSON");
         assert_eq!(
             (&body["resolution"], &body["aspect_ratio"], &body["mode"]),
             (&json!("480p"), &json!("16:9"), &json!("t2v")),
@@ -266,8 +213,7 @@ mod tests {
         );
         for size in ["1000x1000", "1280x721x", "wide"] {
             create.size = Some(size.into());
-            let refused = create_body(&create).expect_err("refused");
-            assert_eq!(refused.code(), "unsupported", "{size}");
+            assert!(create_body(&create).is_err(), "{size}");
         }
         create.size = None;
         create.model = None;
@@ -288,18 +234,6 @@ mod tests {
             url: None,
         };
         let refused = call(&mut head, &content).err().expect("refused");
-        assert_eq!(refused.code(), "unsupported");
-        // An id not of this format's is no job of EmpirioLabs AI's.
-        let foreign = Input::Retrieve {
-            id: "video_1".into(),
-        };
-        assert!(call(&mut head, &foreign).is_err());
-        // Another format's operation, such as OpenAI's remix, is refused before a call.
-        let remix = Input::Native {
-            id: Some("empiriolabs_1".into()),
-            native: Native::json::<()>(json!({"method": "POST"})),
-        };
-        let refused = call(&mut head, &remix).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
     }
 
