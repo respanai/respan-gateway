@@ -244,7 +244,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::CHAT_COMPLETIONS, OpenAiChat).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
-        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta).websocket(),
+        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta::DEFAULT).websocket(),
         session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),

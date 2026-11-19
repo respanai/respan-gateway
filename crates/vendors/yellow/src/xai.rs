@@ -1,5 +1,6 @@
-//! xAI: Chat Completions and images, as OpenAI serves them, images in its
-//! dialect.
+//! xAI: Chat Completions, images and Realtime, as OpenAI serves them,
+//! images in its dialect; its Grok Voice models speak OpenAI Realtime at
+//! `wss://api.x.ai/v1/realtime`.
 
 use respan_gateway_conversation::MediaSource;
 use respan_gateway_conversation_http::fields::{invalid, media_url};
@@ -8,6 +9,7 @@ use respan_gateway_core::{Fault, Filter};
 use respan_gateway_media::image;
 use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::OpenAiImages;
+use respan_gateway_realtime_ws::OpenAiRealtime;
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Vendor};
 
@@ -21,6 +23,7 @@ pub const VENDOR: Vendor = Vendor {
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
         (&Dialected::new(OpenAiImages, XaiImages), Some(BASE_URL)),
+        (&OpenAiRealtime, Some(BASE_URL)),
     ],
     ..Vendor::DEFAULT
 };
