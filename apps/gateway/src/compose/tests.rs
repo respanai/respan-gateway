@@ -811,7 +811,7 @@ fn azure_realtime_takes_its_key_in_api_key() {
 }
 
 #[test]
-fn veo_is_served_to_its_clients() {
+fn omni_is_served_to_its_clients() {
     let text =
         "providers = { g = { vendor = \"gemini\", key = \"k\" } }\nformats = [\"gemini-omni\"]\n";
     let served = plan(text).map(|p| p.serve);

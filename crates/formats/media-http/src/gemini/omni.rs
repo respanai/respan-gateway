@@ -724,7 +724,7 @@ mod tests {
         let polled = call(&mut head, &Input::Retrieve { id: old });
         assert!(matches!(polled, Ok((_, Call::File))));
         assert_eq!(head.uri.path(), "/files/f1x2");
-        // A job of the dead Veo operation API names no file: a 404.
+        // An id of the dead Veo operation API names no file: a 404.
         let dead = format!(
             "veo_{}",
             URL_SAFE_NO_PAD.encode("models/veo-3.0/operations/a1")
