@@ -3,7 +3,7 @@
 //!
 //! - [`openai`]: OpenAI's media endpoints, as OpenAI and compatible vendors
 //!   serve them, one format per kind.
-//! - [`gemini`]: Google's Veo, image and embedding models, as the Gemini
+//! - [`gemini`]: Gemini Omni's videos, image and embedding models, as the Gemini
 //!   API serves them, of the video, image and embedding kinds.
 //! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
 //!   on InvokeModel.
@@ -42,7 +42,8 @@ pub use edge::named_aspect;
 /// are bare, the format's.
 pub const JOB_IDS: &[(&str, &str)] = &[
     (openai::OpenAiVideos::NAME, "video_"),
-    (gemini::GeminiVeo::NAME, gemini::veo::PREFIX),
+    (gemini::GeminiOmni::NAME, gemini::omni::PREFIX),
+    (gemini::GeminiOmni::NAME, gemini::omni::LEGACY_PREFIX),
     (openrouter::OpenRouterVideos::NAME, "gen-vid-"),
     (together::TogetherVideos::NAME, together::PREFIX),
     (empiriolabs::EmpirioLabsVideos::NAME, empiriolabs::PREFIX),
@@ -52,9 +53,10 @@ pub const JOB_IDS: &[(&str, &str)] = &[
 ];
 
 /// What the video format named `format` starts its jobs' ids with, which
-/// routes a follow-up to the job's provider.
-pub fn job_ids(format: &str) -> Option<&'static str> {
-    let known = JOB_IDS.iter().find(|(name, _)| *name == format);
+/// routes a follow-up to the job's provider: the spelling it gives now, then
+/// those it gave before.
+pub fn job_ids(format: &str) -> impl Iterator<Item = &'static str> {
+    let known = JOB_IDS.iter().filter(move |(name, _)| *name == format);
     known.map(|(_, ids)| *ids)
 }
 
@@ -88,7 +90,7 @@ impl Natives for empiriolabs::EmpirioLabsVideos {}
 impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiSpeech {}
-impl Natives for gemini::GeminiVeo {}
+impl Natives for gemini::GeminiOmni {}
 impl Natives for minimax::MiniMaxVideos {}
 impl Natives for openrouter::OpenRouterVideos {}
 impl Natives for dashscope::DashScopeImages {}

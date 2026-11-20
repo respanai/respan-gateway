@@ -142,7 +142,7 @@ pub struct Job {
     // WARN: openrouter-videos names none.
     pub model: Option<String>,
     /// When its content will be gone, in seconds since the Unix epoch.
-    // WARN: gemini-veo says none.
+    // WARN: gemini-omni says none.
     pub expires_at: Option<u64>,
     /// The video's length, in seconds.
     // WARN: openrouter-videos says none.
@@ -223,7 +223,7 @@ impl JobError {
 }
 
 /// For a provider that serves a finished job's content only at the URLs
-/// the job names ([`Job::videos`]), as Veo does: a `Content` request without
+/// the job names ([`Job::videos`]), as Gemini Omni does: a `Content` request without
 /// a `url` whose target is one of its providers first retrieves the job
 /// from it, then goes on with the URL of the job's first video. A job not
 /// finished is refused, 400, as content not ready; register it after the
@@ -308,7 +308,7 @@ struct Maker {
 
 /// Sends a job's follow-up (`Retrieve`, `Content`, and a native operation
 /// on it or a page after it) to the provider that made the job, which only
-/// the job's id says: by its spelling (OpenAI's start `video_`, Veo's `veo_`), or, when several
+/// the job's id says: by its spelling (OpenAI's start `video_`, Gemini Omni's `omni_`), or, when several
 /// providers spell their ids alike, by the provider's name it wraps them in
 /// on the way out, `<provider>~<id>`, and unwraps on the way in. An id
 /// spelled as several providers' goes to the target if it is one of them,
@@ -430,7 +430,8 @@ mod tests {
         VideoJobs::new()
             .provider("east", "east:openai-videos", "video_")
             .provider("west", "west:openai-videos", "video_")
-            .provider("gemini", "gemini:gemini-veo", "veo_")
+            .provider("gemini", "gemini:gemini-omni", "omni_")
+            .provider("gemini", "gemini:gemini-omni", "veo_")
     }
 
     fn maker(id: &str, target: Option<&str>) -> Option<(String, String)> {
@@ -443,6 +444,8 @@ mod tests {
     fn a_job_goes_to_its_maker() {
         let to = |provider: &str, id: &str| Some((provider.to_owned(), id.to_owned()));
         assert_eq!(maker("west~video_1", None), to("west", "video_1"));
+        assert_eq!(maker("omni_abc", Some("east")), to("gemini", "omni_abc"));
+        // Ids issued as `veo_` still go to their maker.
         assert_eq!(maker("veo_abc", Some("east")), to("gemini", "veo_abc"));
         assert_eq!(maker("video_1", None), to("east", "video_1"));
         assert_eq!(
@@ -456,7 +459,7 @@ mod tests {
     #[test]
     fn only_ids_spelled_alike_are_wrapped() {
         let shared: Vec<_> = jobs().makers.iter().map(|m| m.shared).collect();
-        assert_eq!(shared, [true, true, false]);
+        assert_eq!(shared, [true, true, false, false]);
     }
 
     #[test]

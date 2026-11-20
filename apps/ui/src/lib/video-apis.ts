@@ -6,10 +6,10 @@ import type { ApiOption, Json } from "@/lib/playground-apis";
 
 /** A video job, as the page reads it whatever the API. */
 export interface VideoJob {
-  /** What the job is polled by: OpenAI's id, or Veo's operation name. */
+  /** What the job is polled by: OpenAI's id, or Gemini's operation name. */
   id: string;
   status: "queued" | "in_progress" | "completed" | "failed";
-  /** In percent; none from an API that says none, as Veo. */
+  /** In percent; none from an API that says none, as Gemini Omni. */
   progress?: number;
   error?: string;
 }
@@ -43,12 +43,12 @@ const openaiVideos: VideoApi = {
 const generated = (op: Json) => op.response?.generateVideoResponse;
 
 /**
- * Gemini's Veo: a long-running operation, polled by its name until done,
+ * Gemini Omni: a long-running operation, polled by its name until done,
  * its video at the URI it names (the gateway's, whoever made it).
  */
-const geminiVeo: VideoApi = {
-  id: "gemini-veo",
-  label: "Gemini Veo",
+const geminiOmni: VideoApi = {
+  id: "gemini-omni",
+  label: "Gemini Omni",
   endpoint: "/v1beta/models/{model}:predictLongRunning",
   create: (model, prompt, seconds) => ({
     path: `/v1beta/models/${encodeURIComponent(model)}:predictLongRunning`,
@@ -69,4 +69,4 @@ const geminiVeo: VideoApi = {
   },
 };
 
-export const videoApis: VideoApi[] = [openaiVideos, geminiVeo];
+export const videoApis: VideoApi[] = [openaiVideos, geminiOmni];

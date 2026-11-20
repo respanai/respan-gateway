@@ -22,7 +22,7 @@ use respan_gateway_media_http::dashscope::{
     DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -230,7 +230,7 @@ mod endpoints {
         "GET /v1/videos/{id}/content",
         "POST /v1/videos/{id}/remix",
     ];
-    pub const VEO: &[&str] = &[
+    pub const OMNI: &[&str] = &[
         "POST /v1beta/models/{model}:predictLongRunning",
         "GET /v1beta/{operation}",
         "GET /v1beta/files/{id}:download",
@@ -302,7 +302,7 @@ pub fn formats() -> Vec<KnownFormat> {
         )
         .model(realtime()),
         session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
-        KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
+        KnownFormat::of(kind::VIDEO, endpoints::OMNI, GeminiOmni)
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::claiming(
             kind::DECISION,
