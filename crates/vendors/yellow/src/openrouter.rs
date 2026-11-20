@@ -11,6 +11,7 @@ use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
@@ -184,7 +185,7 @@ impl Dialect for OpenRouterTranscriptions {
     type Input = transcription::Input;
     type Output = transcription::Output;
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         crate::json_answer(head).then(|| Box::new(timed) as Rewrite)
     }
 }

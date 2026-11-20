@@ -4,6 +4,7 @@
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_media::image;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
@@ -51,7 +52,7 @@ impl Dialect for MiniMaxImages {
         Ok(Some(Box::new(body)))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         head.status
             .is_success()
             .then(|| Box::new(successful_images) as Rewrite)

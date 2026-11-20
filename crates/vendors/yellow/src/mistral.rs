@@ -6,6 +6,7 @@ use base64::Engine as _;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -59,7 +60,7 @@ impl Dialect for Mistral {
         Ok(Some(Box::new(unstreamed)))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         if !crate::json_answer(head) {
             return None;
         }
@@ -114,8 +115,8 @@ mod tests {
         answer.body(()).expect("head").into_parts().0
     }
 
-    fn sent() -> RequestHead {
-        http::Request::new(()).into_parts().0
+    fn sent() -> Request<Bytes> {
+        Request::new(Bytes::new())
     }
 
     #[test]

@@ -7,7 +7,7 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
 use respan_gateway_media_http::Natives;
@@ -62,7 +62,7 @@ impl Dialect for DeepInfra {
         Some(Box::new(referenced))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
 }
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn only_a_json_success_is_read_as_a_job() {
-        let sent = http::Request::new(()).into_parts().0;
+        let sent = http::Request::new(Bytes::new());
         let rewritten = |status, content_type| {
             let mut head = head(status, content_type);
             DeepInfra.response(&sent, &mut head).is_some()

@@ -56,6 +56,7 @@ stream. `request` and `response` see the call and its answer on the wire,
 their heads and, if they say how (`Rewrite`), their whole bodies: they are
 `ProviderIo::with_request` and `ProviderIo::with_response`, which run on a
 call after its format wrote it and on an answer before its format reads it.
+`response` is given the call as its format wrote it, body included.
 `key` says where the vendor takes its key, if not where the format does. A
 dialect never learns who the client is: what is native to a format reaches
 only a client of that format, which is the formats' rule, not the vendor's.
