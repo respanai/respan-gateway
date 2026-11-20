@@ -49,6 +49,14 @@ pub trait Dialect: Clone + Send + Sync + 'static {
         None
     }
 
+    /// Where the call goes, if its body says: its head's path edited, given
+    /// the whole body the format wrote, before [`request`](Dialect::request).
+    /// Not run for live input, whose body streams.
+    fn route(&self, head: &mut RequestHead, body: &Bytes) -> Result<(), Fault> {
+        let _ = (head, body);
+        Ok(())
+    }
+
     /// The call as the format wrote it, before it is sent and before its
     /// transport puts the key on it: its head edited, and its whole body
     /// rewritten if this says how. `Err` fails it unsent.
@@ -128,7 +136,12 @@ where
     fn bind(&self, io: ProviderIo) -> Result<Connection<D::Output, D::Input>, Fault> {
         let (request, response) = (self.dialect.clone(), self.dialect.clone());
         let io = io
-            .with_request(move |head| request.request(head))
+            .with_request(move |head, body| {
+                if let Some(body) = body {
+                    request.route(head, body)?;
+                }
+                request.request(head)
+            })
             .with_response(move |sent, head| response.response(sent, head));
         let (opening, sink) = self.format.bind(io)?;
         let sink = match self.dialect.inputs() {
@@ -228,6 +241,12 @@ mod tests {
 
         fn outputs(&self) -> Option<Box<dyn Filter<Bytes>>> {
             Some(Box::new(Ended))
+        }
+
+        fn route(&self, head: &mut RequestHead, body: &Bytes) -> Result<(), Fault> {
+            // The call as the format wrote it, its body whole.
+            assert_eq!((head.uri.path(), &body[..]), ("/echo", &b"HI"[..]));
+            Ok(())
         }
 
         fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {

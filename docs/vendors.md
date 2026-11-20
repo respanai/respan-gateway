@@ -102,7 +102,9 @@ speech models' `interactions`), `gemini-veo` and
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. DeepInfra serves `decisions` at
-`https://api.deepinfra.com/v1`, not under its `/openai` base, so a DeepInfra
+`https://api.deepinfra.com/v1`, not under its `/openai` base, and so does
+`openai-images`, whose edits of models that take a list of images are calls
+to `/inference/{model}` (its `/openai` edits take one `image`), so a DeepInfra
 provider with a `base_url` names the formats it covers, or gives each format
 its own URL in `formats`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's

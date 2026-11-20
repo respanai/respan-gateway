@@ -72,7 +72,8 @@ pub struct ProviderIo {
 pub type Rewrite = Box<dyn FnOnce(Bytes) -> Result<Bytes, Fault> + Send>;
 
 /// What changes a call ([`ProviderIo::with_request`]).
-type RequestHook = Box<dyn FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send>;
+type RequestHook =
+    Box<dyn FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault> + Send>;
 
 /// What changes an answer ([`ProviderIo::with_response`]).
 type ResponseHook =
@@ -118,13 +119,16 @@ impl ProviderIo {
 
     /// Change the call after its format wrote it, before it is sent:
     /// `request` edits its head, which carries the call's [`Extensions`]
-    /// while it does, and may rewrite its whole body, which a
+    /// while it does, given the call's whole body, or `None` for live input,
+    /// and may rewrite its whole body, which a
     /// call of live input, whose body streams, cannot have. `Err` fails the
     /// call unsent. The format still reads its answer against the call as
     /// it wrote it.
     pub fn with_request(
         mut self,
-        request: impl FnOnce(&mut RequestHead) -> Result<Option<Rewrite>, Fault> + Send + 'static,
+        request: impl FnOnce(&mut RequestHead, Option<&Bytes>) -> Result<Option<Rewrite>, Fault>
+        + Send
+        + 'static,
     ) -> Self {
         self.request = Some(Box::new(request));
         self
@@ -338,7 +342,7 @@ fn changed(
     extensions: &Extensions,
 ) -> Result<(RequestHead, Body), Fault> {
     head.extensions.insert(extensions.clone());
-    let rewrite = request(&mut head);
+    let rewrite = request(&mut head, body.full_bytes());
     head.extensions.remove::<Extensions>();
     let Some(rewrite) = rewrite? else {
         return Ok((head, body));

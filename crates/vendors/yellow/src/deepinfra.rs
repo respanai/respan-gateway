@@ -1,6 +1,5 @@
-//! DeepInfra: Chat Completions, images, embeddings, speech and
-//! transcriptions, as OpenAI serves them, videos in its dialect, and
-//! decisions.
+//! DeepInfra: Chat Completions, embeddings, speech and transcriptions, as
+//! OpenAI serves them, images and videos in its dialect, and decisions.
 
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
@@ -8,14 +7,16 @@ use respan_gateway_core::{Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::Request;
+use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
-use respan_gateway_media::video;
-use respan_gateway_media_http::Natives;
+use respan_gateway_http::path::{path_ends_with, set_path};
+use respan_gateway_media::{image, video};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::{Natives, named_aspect};
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Dialect, Dialected, Model, Models, Price, Rewrite, Vendor, VendorProvider,
@@ -25,7 +26,7 @@ use respan_gateway_vendor_kit::{
 /// Where its API is.
 const BASE_URL: &str = "https://api.deepinfra.com/v1/openai";
 
-/// Where its decisions are: not under `/openai`.
+/// Where its decisions and its images are: not under `/openai`.
 const DECISIONS_BASE_URL: &str = "https://api.deepinfra.com/v1";
 
 /// DeepInfra.
@@ -34,7 +35,10 @@ pub const VENDOR: Vendor = Vendor {
     key_env: &["DEEPINFRA_API_KEY"],
     formats: &[
         (&OpenAiChat, Some(BASE_URL)),
-        (&OpenAiImages, Some(BASE_URL)),
+        (
+            &Dialected::new(OpenAiImages, DeepInfraImages),
+            Some(DECISIONS_BASE_URL),
+        ),
         (&OpenAiEmbeddings, Some(BASE_URL)),
         (&OpenAiSpeech, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
@@ -65,6 +69,164 @@ impl Dialect for DeepInfra {
     fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
+}
+
+/// The edit models whose input has a list of images, each with the field
+/// that list is and how it takes a size. Its OpenAI-compatible edits take one
+/// `image` file, which they put in a model's `image` field and no other, so
+/// these are called at `/inference/{model}` with their own fields.
+const LISTED: &[(&str, &str, Sizer)] = &[
+    ("Wan-AI/Wan2.6-Image-Edit", "image_urls", alibaba_size),
+    ("Wan-AI/Wan2.7-Image-Edit", "image_urls", alibaba_size),
+    ("Qwen/Qwen-Image-Edit", "image_urls", alibaba_size),
+    ("Qwen/Qwen-Image-Edit-Max", "image_urls", alibaba_size),
+    ("PrunaAI/p-image-Edit", "images", pruna_size),
+];
+
+/// How a model takes a size: it writes its fields given a size `WxH`.
+type Sizer = fn(&mut Map<String, Value>, &str) -> Result<(), Fault>;
+
+/// Alibaba's models take a size as `W*H`.
+fn alibaba_size(fields: &mut Map<String, Value>, size: &str) -> Result<(), Fault> {
+    fields.insert("size".into(), size.replace('x', "*").into());
+    Ok(())
+}
+
+/// The aspect ratios Pruna draws, as it names them, each a width to a height.
+const PRUNA_RATIOS: [(&str, u32, u32); 7] = [
+    ("1:1", 1, 1),
+    ("16:9", 16, 9),
+    ("9:16", 9, 16),
+    ("4:3", 4, 3),
+    ("3:4", 3, 4),
+    ("3:2", 3, 2),
+    ("2:3", 2, 3),
+];
+
+/// Pruna's models take an `aspect_ratio`, the nearest it draws within 5%, else
+/// the size is refused, 400; `auto` sends none.
+fn pruna_size(fields: &mut Map<String, Value>, size: &str) -> Result<(), Fault> {
+    if let Some(((ratio, ..), _)) = named_aspect(size, &PRUNA_RATIOS, "Pruna")? {
+        fields.insert("aspect_ratio".into(), ratio.into());
+    }
+    Ok(())
+}
+
+/// The row of [`LISTED`] for a model.
+fn listed_model(model: Option<&str>) -> Option<&'static (&'static str, &'static str, Sizer)> {
+    LISTED.iter().find(|(id, ..)| Some(*id) == model)
+}
+
+/// The row of [`LISTED`] for the model an OpenAI-shaped JSON `body` names.
+fn listed_in(body: &[u8]) -> Option<&'static (&'static str, &'static str, Sizer)> {
+    let call: Value = serde_json::from_slice(body).ok()?;
+    listed_model(call["model"].as_str())
+}
+
+/// DeepInfra's images, at its `/v1`: a generation, and an edit of most
+/// models, under `/openai` as OpenAI's. An edit of a model of [`LISTED`] is
+/// a call to `/inference/{model}`, sent as JSON with the model's own fields:
+/// its images as a list in the field it is, its count as `num_images`, its
+/// size as it takes it, and the answer's `images` (URLs, or data URLs of
+/// the bytes) read as OpenAI's `data`. The mask is dropped, as they take none.
+#[derive(Debug, Clone, Copy)]
+pub struct DeepInfraImages;
+
+impl Dialect for DeepInfraImages {
+    type Input = image::Input;
+    type Output = image::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<image::Input>>> {
+        Some(Box::new(|input: &mut image::Input| {
+            if listed_model(input.model.as_deref()).is_some() {
+                crate::as_urls(&mut input.images);
+            }
+            Ok(())
+        }))
+    }
+
+    fn route(&self, head: &mut RequestHead, body: &Bytes) -> Result<(), Fault> {
+        if path_ends_with(&head.uri, "/images/edits")
+            && let Some((model, ..)) = listed_in(body)
+        {
+            return set_path(head, &format!("/inference/{model}"));
+        }
+        Ok(())
+    }
+
+    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        if head.uri.path().starts_with("/inference/") {
+            return Ok(Some(Box::new(inferred)));
+        }
+        let path = format!("/openai{}", head.uri.path());
+        set_path(head, &path)?;
+        Ok(None)
+    }
+
+    fn response(&self, sent: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
+        let edit = path_ends_with(sent.uri(), "/images/edits");
+        let listed = edit && listed_in(sent.body()).is_some();
+        (listed && crate::json_answer(head)).then(|| Box::new(drawn) as Rewrite)
+    }
+}
+
+/// What an OpenAI edit has no field for in the call of a listed model: its
+/// own, dropped.
+const OPENAI_ONLY: &[&str] = &[
+    "model",
+    "stream",
+    "mask",
+    "response_format",
+    "user",
+    "quality",
+    "output_format",
+];
+
+/// An OpenAI edit as its model's own input.
+fn inferred(raw: Bytes) -> Result<Bytes, Fault> {
+    let unwritten = |e| Fault::internal("an image edit is no JSON object").with_source(e);
+    let mut call: Map<String, Value> = serde_json::from_slice(&raw).map_err(unwritten)?;
+    let Some((_, list, sized)) = listed_model(call["model"].as_str()) else {
+        return Ok(raw);
+    };
+    let urls = call.shift_remove("images").and_then(|images| match images {
+        Value::Array(images) => Some(images),
+        _ => None,
+    });
+    let urls = urls.into_iter().flatten();
+    let urls: Vec<Value> = urls.filter_map(|i| i.get("image_url").cloned()).collect();
+    let count = call.shift_remove("n").unwrap_or(1.into());
+    let size = call.get("size").and_then(Value::as_str).map(str::to_owned);
+    call.retain(|name, _| !OPENAI_ONLY.contains(&name.as_str()) && name != "size");
+    call.insert(list.to_string(), urls.into());
+    call.insert("num_images".into(), count);
+    if let Some(size) = size {
+        sized(&mut call, &size)?;
+    }
+    serde_json::to_vec(&call)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// Its answer to an edit, `{"images": [..]}`, as OpenAI's `{"data": [..]}`:
+/// a data URL is the image's bytes as `b64_json`, any other URL the image's.
+fn drawn(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(answer) = serde_json::from_slice::<Value>(&raw) else {
+        return Ok(raw);
+    };
+    let image = |url: &Value| match url.as_str()?.split_once(";base64,") {
+        Some((_, bytes)) => Some(json!({ "b64_json": bytes })),
+        None => Some(json!({ "url": url })),
+    };
+    let images = answer["images"].as_array().into_iter().flatten();
+    let created = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let answer =
+        json!({ "created": created, "data": images.filter_map(image).collect::<Vec<_>>() });
+    serde_json::to_vec(&answer)
+        .map(Bytes::from)
+        .map_err(|e| Fault::internal("an image answer is no JSON").with_source(e))
 }
 
 /// The states of its jobs OpenAI names otherwise, each with OpenAI's name.
@@ -163,7 +325,6 @@ fn price(p: &Value) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use serde_json::json;
 
     fn head(status: u16, content_type: &str) -> ResponseHead {
         let answer = http::Response::builder()
@@ -276,5 +437,127 @@ mod tests {
         assert_eq!(chat.price, Some(Price::new(0.12, 0.5, Some(0.06))));
         assert_eq!(models[1].price, Some(Price::new(0.01, 0.0, None)));
         assert_eq!(models[2].price, None);
+    }
+
+    fn edit_body(model: &str) -> Bytes {
+        let call = json!({
+            "model": model, "prompt": "make it blue", "n": 2, "size": "1024x768",
+            "mask": { "image_url": "data:image/png;base64,bWFzaw==" }, "seed": 7,
+            "images": [{ "image_url": "https://x/a.png" }, { "image_url": "data:image/png;base64,cG5n" }],
+        });
+        Bytes::from(call.to_string())
+    }
+
+    fn inferred_as(model: &str) -> Value {
+        let native = inferred(edit_body(model)).expect("native");
+        serde_json::from_slice(&native).expect("JSON")
+    }
+
+    #[test]
+    fn an_alibaba_edit_names_its_images_in_image_urls() {
+        let urls = json!(["https://x/a.png", "data:image/png;base64,cG5n"]);
+        assert_eq!(
+            inferred_as("Wan-AI/Wan2.6-Image-Edit"),
+            json!({ "prompt": "make it blue", "num_images": 2, "size": "1024*768", "seed": 7, "image_urls": urls })
+        );
+    }
+
+    #[test]
+    fn a_pruna_edit_names_its_images_in_images_and_its_size_as_an_aspect_ratio() {
+        let urls = json!(["https://x/a.png", "data:image/png;base64,cG5n"]);
+        assert_eq!(
+            inferred_as("PrunaAI/p-image-Edit"),
+            json!({ "prompt": "make it blue", "num_images": 2, "aspect_ratio": "4:3", "seed": 7, "images": urls })
+        );
+    }
+
+    #[test]
+    fn a_size_of_no_aspect_ratio_pruna_draws_is_refused() {
+        let body = |size: &str| {
+            let call = json!({ "model": "PrunaAI/p-image-Edit", "prompt": "a", "size": size, "images": [] });
+            Bytes::from(call.to_string())
+        };
+        assert!(inferred(body("1024x256")).is_err());
+        let auto = inferred(body("auto")).expect("native");
+        let auto: Value = serde_json::from_slice(&auto).expect("JSON");
+        assert_eq!(auto.get("aspect_ratio"), None);
+    }
+
+    #[test]
+    fn an_edit_of_a_listed_model_goes_to_its_inference_and_the_rest_under_openai() {
+        let call = |path: &str| {
+            http::Request::post(path)
+                .body(())
+                .expect("call")
+                .into_parts()
+                .0
+        };
+        let mut edit = call("/images/edits");
+        DeepInfraImages
+            .route(&mut edit, &edit_body("PrunaAI/p-image-Edit"))
+            .expect("routed");
+        assert!(DeepInfraImages.request(&mut edit).expect("sent").is_some());
+        assert_eq!(edit.uri.path(), "/inference/PrunaAI/p-image-Edit");
+        let others = [
+            (
+                "/images/edits",
+                edit_body("black-forest-labs/FLUX.1-Kontext-dev"),
+            ),
+            ("/images/generations", edit_body("PrunaAI/p-image-Edit")),
+        ];
+        for (path, body) in others {
+            let mut head = call(path);
+            DeepInfraImages.route(&mut head, &body).expect("routed");
+            assert!(DeepInfraImages.request(&mut head).expect("sent").is_none());
+            assert_eq!(head.uri.path(), format!("/openai{path}"));
+        }
+    }
+
+    #[test]
+    fn the_bytes_of_a_listed_edits_images_are_sent_as_data_urls() {
+        let edit = |model: &str| {
+            let mut input = image::Input::new("make it blue");
+            input.model = Some(model.into());
+            let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
+            input.images.push(Media::new("image/png", bytes));
+            input
+        };
+        let sources = |model: &str| {
+            let mut input = edit(model);
+            let mut filter = DeepInfraImages.inputs().expect("a filter");
+            let mut out = Vec::new();
+            filter.edit(input.clone(), &mut out).expect("filtered");
+            input = out.remove(0);
+            input.images[0].source.clone()
+        };
+        let data = MediaSource::Url("data:image/png;base64,cG5n".into());
+        assert_eq!(sources("Wan-AI/Wan2.6-Image-Edit"), data);
+        let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
+        assert_eq!(sources("black-forest-labs/FLUX.1-Kontext-dev"), bytes);
+    }
+
+    #[test]
+    fn its_images_read_as_openais_data() {
+        let answer = json!({ "request_id": "r", "images": ["data:image/jpeg;base64,/9j/", "https://x/i.png"] });
+        let read = drawn(Bytes::from(answer.to_string())).expect("an answer");
+        let read: Value = serde_json::from_slice(&read).expect("JSON");
+        assert_eq!(
+            read["data"],
+            json!([{ "b64_json": "/9j/" }, { "url": "https://x/i.png" }])
+        );
+        let sent = http::Request::post("/images/edits")
+            .body(edit_body("Wan-AI/Wan2.6-Image-Edit"))
+            .expect("sent");
+        let answers = |status, content_type| {
+            let mut head = head(status, content_type);
+            DeepInfraImages.response(&sent, &mut head).is_some()
+        };
+        assert!(answers(200, "application/json"));
+        assert!(!answers(400, "application/json"));
+        let generated = http::Request::post("/images/generations")
+            .body(edit_body("Wan-AI/Wan2.6-Image-Edit"))
+            .expect("sent");
+        let mut head = head(200, "application/json");
+        assert!(DeepInfraImages.response(&generated, &mut head).is_none());
     }
 }
