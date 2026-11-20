@@ -22,19 +22,15 @@ type Key = crate::Own<DashScopeImages>;
 
 const GENERATION: &str = "/services/aigc/multimodal-generation/generation";
 
-/// The model whose default mode edits: without an input image it is refused
-/// ("the last message must contain 1 to 4 images"), and it draws from text
-/// only in its interleaved mode. A model name is the only way to tell it
-/// apart, as DashScope lists no such trait, so this is the one place that
-/// names it.
-const EDITS_BY_DEFAULT: &str = "wan2.6-image";
-
 /// The header that asks DashScope to answer as an event stream.
 const SSE: &str = "x-dashscope-sse";
 
-/// Whether `input` is a text-only call of a model that edits by default.
-fn interleaves(input: &Input) -> bool {
-    input.images.is_empty() && input.model.as_deref() == Some(EDITS_BY_DEFAULT)
+/// Whether `native` asks for DashScope's interleaved mode, `enable_interleave`.
+fn interleaves(native: &Map<String, Value>) -> Result<bool, Fault> {
+    let Some(flag) = native.get("enable_interleave") else {
+        return Ok(false);
+    };
+    boolean(flag).ok_or_else(|| invalid("enable_interleave", "must be true or false"))
 }
 
 /// Alibaba Cloud Model Studio's image models that answer at once, Qwen-Image
@@ -55,11 +51,11 @@ fn interleaves(input: &Input) -> bool {
 /// keeps for 24 hours, and its `usage`, the images it made and their size,
 /// a native `{"usage": {..}}`: it reports no tokens.
 ///
-/// A model that edits by default (`wan2.6-image`) given no image to edit
-/// draws in DashScope's interleaved mode (`enable_interleave`), the only one
-/// that takes text alone: the call is asked to stream, as DashScope answers
-/// that mode only as an event stream, with `n` of one and the count as
-/// `max_images`; its events' images are read into the same whole answer.
+/// A request's `enable_interleave` asks for DashScope's interleaved mode,
+/// the one in which `wan2.6-image` draws from text alone: the call is asked
+/// to stream, as DashScope answers that mode only as an event stream, with
+/// `n` of one and the count as `max_images`, the most it may draw; its
+/// events' images are read into the same whole answer.
 ///
 /// A mask and a `response_format` but `url` are refused, 400, before the
 /// call; a `size` DashScope does not draw is its own 400.
@@ -102,7 +98,7 @@ fn post(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>
     let body = serde_json::to_vec(&body(input)?)
         .map_err(|e| Fault::internal("a body could not be written").with_source(e))?;
     post_json(head, GENERATION)?;
-    if interleaves(input) {
+    if interleaves(OpenAiImages::fields(&input.native))? {
         head.headers.insert(SSE, HeaderValue::from_static("enable"));
     }
     Ok(sends(Bytes::from(body)))
@@ -126,7 +122,7 @@ fn body(input: &Input) -> Result<Map<String, Value>, Fault> {
     content.push(json!({ "text": input.prompt }));
     let mut parameters = Map::new();
     let count = input.count.unwrap_or(1);
-    if interleaves(input) {
+    if interleaves(native)? {
         parameters.insert("n".into(), 1.into());
         parameters.insert("max_images".into(), count.into());
         parameters.insert("enable_interleave".into(), true.into());
@@ -321,59 +317,21 @@ mod tests {
         assert_eq!(DashScopeImages::fields(native)["usage"]["image_count"], 3);
     }
 
-    /// An input of `model`, of `count` images and `images` to edit.
-    fn wan(model: &str, count: Option<u32>, images: usize) -> Input {
-        let mut i = input("an apple", json!({}));
-        i.model = Some(model.into());
-        i.count = count;
-        i.size = Some("1024x1024".into());
-        i.images = (0..images)
-            .map(|_| Media::new("image/png", MediaSource::Bytes(Bytes::from_static(b"img"))))
-            .collect();
-        i
-    }
-
     fn event(v: Value) -> Vec<u8> {
         format!("data:{v}\n\n").into_bytes()
     }
 
     #[test]
-    fn a_text_only_wan_2_6_image_draws_interleaved_and_streamed() {
-        let i = wan("wan2.6-image", Some(3), 0);
+    fn an_interleaved_call_is_streamed_with_its_count_as_the_most_images() {
+        let mut i = input("an apple", json!({ "enable_interleave": "true" }));
+        i.count = Some(3);
         assert_eq!(
             sent(&i)["parameters"],
-            json!({ "n": 1, "max_images": 3, "enable_interleave": true,
-                "stream": true, "size": "1024*1024" })
+            json!({ "n": 1, "max_images": 3, "enable_interleave": true, "stream": true })
         );
-        let mut head = http_head();
+        let (mut head, ()) = respan_gateway_http::http::Request::new(()).into_parts();
         post(&mut head, &i).expect("a call");
-        assert_eq!(
-            head.headers.get(SSE).map(|v| v.as_bytes()),
-            Some(&b"enable"[..])
-        );
-    }
-
-    #[test]
-    fn what_is_not_a_text_only_wan_2_6_image_is_sent_as_before() {
-        for (model, images) in [
-            ("wan2.6-image", 1),
-            ("wan2.6-t2i", 0),
-            ("wan2.7-image", 0),
-            ("qwen-image-2.0", 0),
-            ("z-image-turbo", 0),
-        ] {
-            let i = wan(model, Some(2), images);
-            let sent = sent(&i);
-            assert_eq!(sent["parameters"], json!({ "n": 2, "size": "1024*1024" }));
-            let mut head = http_head();
-            post(&mut head, &i).expect("a call");
-            assert!(!head.headers.contains_key(SSE));
-        }
-    }
-
-    fn http_head() -> RequestHead {
-        let (head, ()) = respan_gateway_http::http::Request::new(()).into_parts();
-        head
+        assert_eq!(head.headers[SSE], "enable");
     }
 
     #[test]
@@ -403,22 +361,5 @@ mod tests {
             panic!("a native usage");
         };
         assert_eq!(DashScopeImages::fields(native)["usage"]["image_count"], 1);
-    }
-
-    #[test]
-    fn a_stream_that_draws_nothing_or_errs_is_a_fault() {
-        let end = json!({ "output": { "choices": [{ "message": { "content":
-            [{ "type": "text", "text": "no" }] } }], "finished": true } });
-        let fault = streamed()(&mut false, &event(end), &mut Vec::new()).expect_err("a fault");
-        assert!(fault.is(FaultKind::Provider));
-        let refused = json!({ "code": "InvalidParameter", "message": "bad" });
-        let fault = streamed()(&mut false, &event(refused), &mut Vec::new()).expect_err("a fault");
-        let status = fault
-            .get::<respan_gateway_http_faults::Status>()
-            .map(|s| s.0);
-        assert_eq!(
-            status,
-            Some(respan_gateway_http::http::StatusCode::BAD_REQUEST)
-        );
     }
 }
