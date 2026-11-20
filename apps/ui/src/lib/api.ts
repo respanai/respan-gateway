@@ -78,6 +78,19 @@ export interface Provider {
   avg_latency_ms: number | null;
 }
 
+/** What `GET /ui/api/clients` answers for one client key. */
+export interface ClientUsage {
+  /** The key's name, as the config's `client_keys` names it. */
+  name: string;
+  requests: number;
+  errors: number;
+  avg_latency_ms: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  /** Total cost in US dollars; present when `prices:` is configured. */
+  cost_usd?: number;
+}
+
 /** An MCP server the gateway fronts, served to clients at `endpoint`. */
 export interface McpServer {
   name: string;
@@ -441,6 +454,8 @@ export const api = {
   overview: (signal?: AbortSignal) => getJson<Overview>("/ui/api/overview", signal),
   providers: (signal?: AbortSignal) =>
     getJson<{ providers: Provider[] }>("/ui/api/providers", signal).then((r) => r.providers),
+  clients: (signal?: AbortSignal) =>
+    getJson<{ clients: ClientUsage[] }>("/ui/api/clients", signal).then((r) => r.clients),
   mcpOverview: (signal?: AbortSignal) => getJson<McpOverview>("/ui/api/mcp", signal),
   mcpTools: (name: string, refresh: boolean, signal?: AbortSignal) =>
     getJson<McpTools>(`/ui/api/mcp/${encodeURIComponent(name)}/tools${refresh ? "?refresh=true" : ""}`, signal),
