@@ -2,12 +2,19 @@
 //! taken back as `reasoning_content`, where every vendor that reasons over
 //! Chat Completions says it, and OpenAI's own spec has no field. The format
 //! reads it in an answer, and writes it to its client; a call to a vendor
-//! that takes it back writes it with [`write_reasoning`].
+//! that takes it back writes it with [`write_reasoning`]. OpenAI's models
+//! take their limit as `max_completion_tokens`, wherever they are served:
+//! [`OpenAi`] is the dialect of every vendor of them.
 
-use respan_gateway_conversation::{Content, Input, Message, Role};
+use respan_gateway_conversation::{Content, Input, Message, Output, Role};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_core::Result;
+use respan_gateway_core::{Fault, Result};
+use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::request::Parts as RequestHead;
+use serde_json::{Map, Value};
+
+use crate::{Dialect, Rewrite};
 
 /// Write each assistant message's reasoning as its `reasoning_content`, as
 /// a filter of a call's input ([`Dialect::inputs`]).
@@ -45,4 +52,55 @@ fn write_message_reasoning(message: &mut Message) {
     message.native = OpenAiChat::with_fields(&message.native, |fields| {
         fields.insert("reasoning_content".into(), text.into());
     });
+}
+
+/// Chat Completions as OpenAI's models take it, at OpenAI or any vendor that
+/// serves them: the limit as `max_completion_tokens`, as their reasoning
+/// models take no `max_tokens`, whatever the client spelled.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenAi;
+
+impl Dialect for OpenAi {
+    type Input = Input;
+    type Output = Output;
+
+    fn request(&self, _: &mut RequestHead) -> Result<Option<Rewrite>> {
+        Ok(Some(Box::new(completion_limit)))
+    }
+}
+
+/// A call's JSON with its `max_tokens` as `max_completion_tokens`.
+fn completion_limit(body: Bytes) -> Result<Bytes> {
+    if !body.windows(12).any(|w| w == b"\"max_tokens\"") {
+        return Ok(body);
+    }
+    let unwritten = |e| Fault::internal("a call is no JSON object").with_source(e);
+    let mut call: Map<String, Value> = serde_json::from_slice(&body).map_err(unwritten)?;
+    let Some(limit) = call.shift_remove("max_tokens") else {
+        return Ok(body);
+    };
+    call.entry("max_completion_tokens").or_insert(limit);
+    serde_json::to_vec(&call)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn its_chat_limit_is_max_completion_tokens() {
+        let sent = |body: &str| {
+            let out = completion_limit(Bytes::from(body.to_owned())).expect("written");
+            serde_json::from_slice::<Value>(&out).expect("json")
+        };
+        let renamed = sent(r#"{"model":"gpt-5-mini","max_tokens":7,"messages":[]}"#);
+        assert_eq!(renamed["max_completion_tokens"], 7);
+        assert!(renamed.get("max_tokens").is_none());
+        let both = sent(r#"{"max_tokens":7,"max_completion_tokens":7}"#);
+        assert_eq!(both, serde_json::json!({ "max_completion_tokens": 7 }));
+        let body = Bytes::from_static(br#"{"max_completion_tokens":7}"#);
+        assert_eq!(completion_limit(body.clone()).ok(), Some(body));
+    }
 }

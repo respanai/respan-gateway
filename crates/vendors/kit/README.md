@@ -27,7 +27,8 @@ and what vendors share. The vendors themselves are
   it.
 - `chat`: what vendors of Chat Completions share in their dialects:
   reasoning taken back as `reasoning_content` (`write_reasoning`, a filter
-  of a call's input).
+  of a call's input), and `OpenAi`, the dialect of every vendor of OpenAI's
+  models, whose limit is `max_completion_tokens`.
 - `Dialect` and `Dialected`: a vendor's dialect of a spec, laid over the
   spec's format (`respan_gateway_http::dialect`).
 

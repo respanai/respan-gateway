@@ -1,11 +1,13 @@
 //! Azure OpenAI: Chat Completions, decisions and Realtime, at a resource's
-//! own URL (`https://<resource>.openai.azure.com/openai/v1`).
+//! own URL (`https://<resource>.openai.azure.com/openai/v1`). Its Chat
+//! Completions serve OpenAI's models on OpenAI's wire, so it is OpenAI's
+//! dialect, its key a Bearer one, as the v1 surface takes it.
 
-use respan_gateway_conversation::{Input, Output};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::OpenAiRealtime;
 
+use respan_gateway_vendor_kit::chat::OpenAi;
 use respan_gateway_vendor_kit::{Dialect, Dialected, KeyIn, Vendor};
 
 /// Azure OpenAI. It has no base URL of its own: a resource has one.
@@ -13,7 +15,7 @@ pub const VENDOR: Vendor = Vendor {
     id: "azure",
     key_env: &["AZURE_OPENAI_API_KEY"],
     formats: &[
-        (&Dialected::new(OpenAiChat, Azure), None),
+        (&Dialected::new(OpenAiChat, OpenAi), None),
         (
             &Dialected::new(
                 respan_gateway_decision_http::OpenAiDecisions::DEFAULT,
@@ -25,19 +27,6 @@ pub const VENDOR: Vendor = Vendor {
     ],
     ..Vendor::DEFAULT
 };
-
-/// Azure's Chat Completions: its key in `api-key`.
-#[derive(Debug, Clone, Copy)]
-pub struct Azure;
-
-impl Dialect for Azure {
-    type Input = Input;
-    type Output = Output;
-
-    fn key(&self) -> Option<KeyIn> {
-        Some(KeyIn::Header("api-key"))
-    }
-}
 
 /// Azure Decisions authentication.
 #[derive(Debug, Clone, Copy)]
