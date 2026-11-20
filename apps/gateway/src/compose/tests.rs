@@ -417,8 +417,7 @@ fn a_key_goes_where_its_own_vendor_takes_it() {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
-    assert_eq!(auth(0, "api-key").as_deref(), Some("a"));
-    assert_eq!(auth(0, "authorization"), None);
+    assert_eq!(auth(0, "authorization").as_deref(), Some("Bearer a"));
     assert_eq!(auth(1, "authorization").as_deref(), Some("Bearer o"));
     assert_eq!(auth(2, "authorization").as_deref(), Some("Bearer p"));
     // A vendor's dialect is no format of its own.
