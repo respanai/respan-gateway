@@ -389,6 +389,12 @@ there.
   and `seed`, as OpenAI's clients send them, a form's text read as a number
   or a boolean. Other fields of another format, such as a `quality`, are
   dropped.
+- `wan2.6-image` edits by default and refuses a call of no image, so a
+  text-only one is sent in its interleaved mode: `enable_interleave` and
+  `stream` true, `n` of one and the count as `max_images`, with
+  `X-DashScope-SSE: enable`, as DashScope answers that mode only as an
+  event stream. Its events' images are read into the same whole answer, its
+  captions dropped. Every other call is sent as above.
 - An answer's images are those of its choices' content, at URLs DashScope
   keeps for 24 hours; its `usage`, the images it made and their size, is a
   native `{"usage": {..}}`, as it reports no tokens.
