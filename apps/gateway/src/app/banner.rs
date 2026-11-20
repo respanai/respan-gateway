@@ -64,6 +64,7 @@ impl Built {
             }
         }
         endpoints.push("GET /healthz".to_owned());
+        endpoints.push("GET /metrics".to_owned());
         row("endpoints", endpoints);
         if self.config.ui {
             row("web ui", vec![format!("{base}/ui/")]);

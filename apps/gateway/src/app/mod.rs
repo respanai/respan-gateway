@@ -39,8 +39,8 @@ const SHUTDOWN: Duration = Duration::from_secs(30);
 const BODY_LIMIT: usize = respan_gateway_http::call::MAX_BODY;
 
 /// A gateway built from a [`Config`], and its HTTP application: the
-/// formats served, `/healthz`, `/v1/models`, the request log, and the web
-/// UI with its admin API.
+/// formats served, `/healthz`, `/metrics`, `/v1/models`, the request log,
+/// and the web UI with its admin API.
 ///
 /// Serve it with [`serve`](Self::serve), or hand requests to its
 /// [`router`](Self::router) in process:

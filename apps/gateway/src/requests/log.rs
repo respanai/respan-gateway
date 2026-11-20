@@ -37,7 +37,7 @@ pub struct Totals {
 pub struct ProviderStats {
     pub requests: u64,
     pub errors: u64,
-    total_ms: u64,
+    pub total_ms: u64,
 }
 
 impl ProviderStats {
