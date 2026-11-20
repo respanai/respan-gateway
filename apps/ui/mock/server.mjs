@@ -36,7 +36,7 @@ const kindOf = {
   "openai-transcriptions": "transcription",
   "openai-speech": "speech",
   "openai-videos": "video",
-  "gemini-veo": "video",
+  "gemini-omni": "video",
   "openai-embeddings": "embedding",
 };
 
@@ -72,7 +72,7 @@ const providers = [
       "gemini-generate",
       "gemini-live",
       "openai-images",
-      "gemini-veo",
+      "gemini-omni",
       "openai-embeddings",
     ],
     "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -1029,7 +1029,7 @@ async function videos(req, res, path) {
   if (req.method === "POST" && !id) {
     const body = JSON.parse((await readBody(req)).toString() || "{}");
     const job = {
-      id: `veo_${Math.random().toString(36).slice(2, 10)}`,
+      id: `omni_${Math.random().toString(36).slice(2, 10)}`,
       created: Date.now(),
       model: body.model ?? "gemini-omni-1.1-flash",
       seconds: body.seconds ?? "4",
