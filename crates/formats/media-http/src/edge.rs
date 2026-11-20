@@ -3,7 +3,7 @@
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::read_provider_error;
-use respan_gateway_core::{Connection, ErrorCode, Fault};
+use respan_gateway_core::{Connection, Fault};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{
@@ -116,7 +116,7 @@ pub(crate) fn unsupported(who: &str, input: &video::Input) -> Fault {
         video::Input::Content { .. } => "content: it serves a video at the URL its job names",
         _ => "operation of this kind",
     };
-    Fault::bad_request(format!("{who} has no video {what}")).with(ErrorCode("unsupported".into()))
+    respan_gateway_http_faults::unsupported(format!("{who} has no video {what}"))
 }
 
 /// `who`'s own id of a job `id`, which the gateway gives out after

@@ -37,7 +37,7 @@ pub(super) fn decode(mut v: Value) -> Session {
         Some(json!([{"text": t}]))
     });
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.turns = take(v, DETECTION, turns, |t| detection_json(t, refuse).ok());
+    s.turns = take(v, DETECTION, turns, detection_json);
     s.input_transcription = transcription(v, INPUT_TRANSCRIPTION);
     s.output_transcription = transcription(v, OUTPUT_TRANSCRIPTION);
     s.output_audio = Some(AudioFormat::pcm16(24_000));
@@ -61,13 +61,11 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         s.instructions.as_ref().map(|t| json!([{"text": t}])),
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
-    put(
-        DETECTION,
-        s.turns
-            .as_ref()
-            .map(|t| detection_json(t, refuse))
-            .transpose()?,
-    );
+    let turns = s
+        .turns
+        .as_ref()
+        .map(|t| detection_json(t).ok_or_else(|| refuse("this turn detection")));
+    put(DETECTION, turns.transpose()?);
     let transcriptions = [
         (INPUT_TRANSCRIPTION, s.input_transcription),
         (OUTPUT_TRANSCRIPTION, s.output_transcription),
@@ -83,12 +81,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }
     }
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of a
-/// setup are written back as the Live API's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a setup field could not be written back")
 }
 
 /// Whether a transcription is asked for: an object; one that says nothing
@@ -196,11 +188,11 @@ fn turns(v: &Value) -> Option<Turns> {
     Some(Turns::Server(vad))
 }
 
-fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn detection_json(turns: &Turns) -> Option<Value> {
     let vad = match turns {
-        Turns::Manual => return Ok(json!({"disabled": true})),
+        Turns::Manual => return Some(json!({"disabled": true})),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return None,
     };
     let mut v = Map::new();
     if let Some(ms) = vad.silence_ms {
@@ -211,5 +203,5 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
     }
     let mut v = Value::Object(v);
     merge(&mut v, vad.native.fields::<Key>());
-    Ok(v)
+    Some(v)
 }

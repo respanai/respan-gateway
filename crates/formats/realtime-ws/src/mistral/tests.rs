@@ -106,7 +106,7 @@ fn what_it_cannot_do_is_refused() {
         native: Native::default(),
     }])
     .expect_err("refused");
-    assert_eq!(fault.code(), "bad_request");
+    assert_eq!(fault.code(), "unsupported");
 }
 
 #[test]

@@ -7,9 +7,8 @@ use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
 use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
-use respan_gateway_core::{ErrorCode, Fault, Native};
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http_faults as faults;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
 use std::marker::PhantomData;
@@ -552,14 +551,14 @@ pub(crate) const FAILED_RESULT_PREFIX: &str = "Error: ";
 
 /// A request carrying `what` cannot be sent in another format.
 pub(crate) fn untranslatable(what: &str) -> Fault {
-    Fault::bad_request(format!("{what} cannot be translated to another format yet"))
+    faults::unsupported(format!("{what} cannot be translated to another format yet"))
 }
 
-/// A 502 for content the client's format cannot write anew, such as a tool call.
+/// Content the client's format cannot write anew, such as a tool call.
 pub(crate) fn unwritable_content() -> Fault {
-    Fault::new("the response holds content that cannot yet be written anew in this format")
-        .with(ErrorCode("untranslatable".into()))
-        .with(Status(StatusCode::BAD_GATEWAY))
+    faults::untranslatable(
+        "the response holds content that cannot yet be written anew in this format",
+    )
 }
 
 /// A stream that ended before its end event, unless it is `done`.

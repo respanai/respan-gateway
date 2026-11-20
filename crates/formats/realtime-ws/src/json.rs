@@ -5,9 +5,9 @@
 use base64::Engine;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
-use respan_gateway_core::{ErrorCode, Fault};
+use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_ws::CloseCode;
+use respan_gateway_http_faults::{unsupported, untranslatable};
 use serde_json::{Map, Value};
 
 /// The value at `path` in `v`, removed, if `read` reads it and `write`
@@ -108,16 +108,14 @@ pub(crate) fn merge(v: &mut Value, native: &Map<String, Value>) {
 }
 
 /// An input `format` cannot write, which could change the answer: the
-/// client's fault, closing its session 1008.
+/// client's fault.
 pub(crate) fn untranslatable_input(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
-    Fault::bad_request(message).with(CloseCode(1008))
+    unsupported(format!("{what} cannot be translated to {format}"))
 }
 
-/// An output `format` cannot write, which fails the session.
+/// An output `format` cannot write, which fails the session: the gateway's.
 pub(crate) fn untranslatable_output(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
-    Fault::upstream(message).with(ErrorCode("untranslatable".into()))
+    untranslatable(format!("{what} cannot be translated to {format}"))
 }
 
 /// `v` as a frame.
