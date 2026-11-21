@@ -128,13 +128,15 @@ impl<T, D: Decoder<T>> Decoder<T> for Sse<D> {
         if self.inner.done() {
             return Ok(());
         }
-        for event in self.parser.push(raw)? {
+        let mut events = Vec::new();
+        let parsed = self.parser.push_into(raw, &mut events);
+        for event in events {
             if self.inner.done() {
-                break;
+                return Ok(());
             }
             self.inner.decode(event, out)?;
         }
-        Ok(())
+        if self.inner.done() { Ok(()) } else { parsed }
     }
 
     fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<T>) -> Result<(), Fault> {

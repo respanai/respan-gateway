@@ -837,6 +837,70 @@ mod completion_tests {
     }
 
     #[test]
+    fn a_completed_post_ignores_an_oversized_tail_at_every_frame_boundary() {
+        let wire = format!(
+            "data: {{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}\n\ndata: {}",
+            "x".repeat(65)
+        );
+        for cut in 0..=wire.len() {
+            let mut decoder = decoder(Method::POST, request(1));
+            let mut out = Vec::new();
+            decoder.limit(Some(64));
+            decoder.start(&mut out).expect("start");
+            for frame in [&wire.as_bytes()[..cut], &wire.as_bytes()[cut..]] {
+                if !decoder.done() {
+                    decoder
+                        .decode(Bytes::copy_from_slice(frame), &mut out)
+                        .unwrap_or_else(|e| panic!("cut {cut}: {e}"));
+                }
+            }
+            assert!(decoder.done(), "cut {cut}");
+            decoder.end(Ok(()), &mut out).expect("completed request");
+            assert_eq!(answered(&out), vec![json!(1)], "cut {cut}");
+        }
+    }
+
+    #[test]
+    fn an_incomplete_stream_keeps_answers_before_a_tail_limit_error() {
+        let wire = format!(
+            "data: {{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}\n\ndata: {}",
+            "x".repeat(65)
+        );
+        for (method, body) in [
+            (Method::POST, json!([request(1), request(2)])),
+            (Method::GET, Value::Null),
+        ] {
+            let mut decoder = decoder(method.clone(), body);
+            let mut out = Vec::new();
+            decoder.limit(Some(64));
+            decoder.start(&mut out).expect("start");
+            let fault = decoder
+                .decode(Bytes::copy_from_slice(wire.as_bytes()), &mut out)
+                .expect_err("an unfinished stream still enforces its limit");
+            assert_eq!(fault.code(), "upstream", "{method}");
+            assert!(!decoder.done(), "{method}");
+            assert_eq!(answered(&out), vec![json!(1)], "{method}");
+        }
+    }
+
+    #[test]
+    fn an_oversized_unfinished_event_still_fails() {
+        let wire = format!("data: {}", "x".repeat(65));
+        for (method, body) in [(Method::POST, request(1)), (Method::GET, Value::Null)] {
+            let mut decoder = decoder(method.clone(), body);
+            let mut out = Vec::new();
+            decoder.limit(Some(64));
+            decoder.start(&mut out).expect("start");
+            let fault = decoder
+                .decode(Bytes::copy_from_slice(wire.as_bytes()), &mut out)
+                .expect_err("a partial event must remain bounded");
+            assert_eq!(fault.code(), "upstream", "{method}");
+            assert!(!decoder.done(), "{method}");
+            assert!(answered(&out).is_empty(), "{method}");
+        }
+    }
+
+    #[test]
     fn a_completed_post_does_not_read_a_trailing_event_at_eof() {
         let mut decoder = decoder(Method::POST, request(1));
         let mut out = Vec::new();
