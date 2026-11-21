@@ -16,9 +16,13 @@
 //! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
 //! cannot change the answer, or refused: an input `bad_request` coded
-//! `unsupported`; an output the gateway's, coded `untranslatable`. A frame that is not JSON fails: the client's, `bad_request`;
-//! the provider's, `upstream`. A handshake one refuses is answered
-//! text/plain with the fault's error code, never its message.
+//! `unsupported`; an output the gateway's, coded `untranslatable`. A frame
+//! that is not JSON fails: the client's, `bad_request`; the provider's,
+//! `upstream`. A fault that ends a session is told to its client as the
+//! format's error event where it has one, and always as the Close's
+//! reason, its message; a provider's Close after its own error event, or
+//! its `goAway`, is that error, or the session limit it announced. A
+//! handshake one refuses is answered text/plain with the fault's message.
 
 mod audio;
 mod calls;

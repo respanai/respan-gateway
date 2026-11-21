@@ -51,8 +51,10 @@ wire works with the transport and the adapter, such as `passthrough`.
   that left, else the fault's `CloseCode`, 1008 if the client's, or 1011) within `close_send`, and
   the answer ends with the fault. The answer's body dropped: Close 1001.
 - The provider's Close 1000 (or no code) ends the answer clean; another code
-  is an `upstream` fault with its `ProviderClose`, its reason text in the
-  fault's message.
+  is an `upstream` fault with its `ProviderClose`, its code and reason in
+  the fault's message, and a 400 for 1003, 1007, 1008 or 1009 (the provider
+  refused what it was sent). The client's Close carries the fault's message
+  as its reason, cut to 123 bytes: a provider's reason text among it.
 - The provider dropping with no Close, or silent through a ping, is
   `truncated`; a rejected binary frame or a message over `max_message` is
   `upstream`, and the provider is sent Close 1003 or 1009.
@@ -101,7 +103,7 @@ into a session. Where that shows:
   binary audio would require a format that carried each event's frame kind.
 - **Close mapping.** A close is only a clean end, or an `Err` with typed extensions
   (`ProviderClose`, `CloseCode`) on the fault. The client's close code and
-  reason cannot cross.
+  reason cannot cross; the provider's reason text does, in the fault's message.
 - **The Upgrade dance.** A call keeps `Upgrade`, `prepare_call` gives it
   `Connection: upgrade`, and the transport leaves the handshake's own
   `Sec-WebSocket-Key`, `-Version` and `-Extensions` to the WebSocket library.
