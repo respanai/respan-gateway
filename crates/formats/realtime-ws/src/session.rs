@@ -237,9 +237,10 @@ impl Encoder<Output> for Told {
         if fault.is(FaultKind::Abandoned) || self.said.as_deref() == Some(fault.message()) {
             return end;
         }
-        let cause = match fault.kind() {
-            FaultKind::Client => Cause::Invalid,
-            _ => Cause::Provider,
+        // A provider's Close that refused what it was sent is a 400, though upstream.
+        let cause = match respan_gateway_http_faults::status(fault).is_client_error() {
+            true => Cause::Invalid,
+            false => Cause::Provider,
         };
         let error = Output::Error {
             cause,
