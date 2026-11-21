@@ -582,4 +582,19 @@ mod tests {
         assert!(fault.is(FaultKind::Abandoned));
         assert!(stream.next().await.is_none());
     }
+
+    #[test]
+    fn a_providers_close_that_refuses_what_it_was_sent_is_a_400() {
+        let refused = provider_closed(1007, "no TEXT");
+        let status = respan_gateway_http_faults::status(&refused);
+        assert_eq!(
+            refused.message(),
+            "the provider closed the session 1007: no TEXT"
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let failed = provider_closed(1011, "");
+        let status = respan_gateway_http_faults::status(&failed);
+        assert_eq!(failed.message(), "the provider closed the session 1011");
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+    }
 }

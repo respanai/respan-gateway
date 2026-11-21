@@ -375,4 +375,66 @@ mod tests {
             assert_eq!(uri.query().map(|q| q.matches('=').count()), Some(1));
         }
     }
+
+    /// Writes each error event as its cause and message.
+    fn errors() -> Box<dyn Encoder<Output>> {
+        Box::new(|event: &Output, out: &mut Vec<Bytes>| {
+            if let Output::Error { cause, message, .. } = event {
+                out.push(Bytes::from(format!("{cause:?} {message}")));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_failed_session_is_told_to_its_client_once() {
+        let refused = || {
+            Fault::upstream("refused")
+                .with(respan_gateway_http_faults::Status(StatusCode::BAD_REQUEST))
+        };
+        let mut told = Told {
+            write: errors(),
+            said: None,
+        };
+        let mut out = Vec::new();
+        assert!(told.end(Err(refused()), &mut out).is_ok());
+        assert_eq!(out, [Bytes::from_static(b"Invalid refused")]);
+        // The provider said it already: not again, and the end stays a failure.
+        let said = Output::Error {
+            cause: Cause::Provider,
+            message: "refused".into(),
+            native: Native::default(),
+        };
+        let mut out = Vec::new();
+        assert!(told.encode(&said, &mut out).is_ok());
+        assert!(told.end(Err(refused()), &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn a_providers_close_is_the_error_it_sent_before_it() {
+        let read: Read<Output> = Box::new(|raw: Bytes, out: &mut Vec<Output>| {
+            out.push(Output::Error {
+                cause: Cause::Invalid,
+                message: String::from_utf8_lossy(&raw).into_owned(),
+                native: Native::default(),
+            });
+            Ok(())
+        });
+        let mut explained = Explained { read, error: None };
+        let mut out = Vec::new();
+        assert!(
+            explained
+                .decode(Bytes::from_static(b"no such voice"), &mut out)
+                .is_ok()
+        );
+        let closed = Fault::upstream("the provider closed the session 1008")
+            .with(ProviderClose(1008))
+            .with(CloseCode(1008));
+        let fault = explained.end(Err(closed), &mut out).expect_err("a failure");
+        assert_eq!(
+            (fault.code(), fault.message()),
+            ("bad_request", "no such voice")
+        );
+        assert_eq!(fault.get::<CloseCode>().copied(), Some(CloseCode(1008)));
+    }
 }
