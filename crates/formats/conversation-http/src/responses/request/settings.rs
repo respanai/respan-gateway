@@ -1,12 +1,12 @@
 //! The rest of a Responses request: tools and choice, text format, parts and
 //! reasoning.
 
-use super::super::RESPONSES;
 use super::{read::read_media, write::write_media};
+use crate::Schema;
+use crate::responses::OpenAiResponses;
 use crate::schema::{
-    NativeFieldsExt, decode_tools, each_tool, effort_name, native_fields, only, own_native,
-    parse_effort, read_search, reasoning_of, rest_of, set, take_strict, untranslatable,
-    write_search,
+    Own, decode_tools, each_tool, edit_native, effort_for, effort_name, merge_fields, only,
+    parse_effort, read_search, rest_of, set, take_strict, untranslatable, write_search,
 };
 use respan_gateway_conversation::{
     Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -29,7 +29,7 @@ pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
         parallel => parallel.as_bool().map(Some),
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
-    decode_tools(chat, tools, choice, parallel, keys);
+    decode_tools::<OpenAiResponses>(chat, tools, choice, parallel, keys);
 }
 
 fn function_tool(tool: &Value) -> Option<Tool> {
@@ -43,10 +43,10 @@ fn function_tool(tool: &Value) -> Option<Tool> {
     let mut kind = Tool::new(tool["name"].as_str()?, tool["parameters"].clone());
     kind.description = description;
     let fields = rest_of(tool, &["type", "name", "description", "parameters"]);
-    kind.native = native_fields(RESPONSES, fields);
+    kind.native = OpenAiResponses::native(fields);
     // Strict is on unless it is said; no other format has that default.
     kind.strict = None;
-    take_strict(&mut kind);
+    take_strict::<OpenAiResponses>(&mut kind);
     Some(kind)
 }
 
@@ -54,7 +54,8 @@ fn function_tool(tool: &Value) -> Option<Tool> {
 fn web_search(tool: &Value) -> Option<ProviderTool> {
     let kind = tool["type"].as_str()?;
     let search = kind == "web_search" || kind.starts_with("web_search_");
-    (search && kind != "web_search_call").then(|| read_search(RESPONSES, rest_of(tool, &[])))
+    (search && kind != "web_search_call")
+        .then(|| read_search::<OpenAiResponses>(rest_of(tool, &[])))
 }
 
 fn read_choice(choice: &Value) -> Option<ToolChoice> {
@@ -88,13 +89,13 @@ pub(in crate::responses) fn write_tools(
         if let Some(strict) = t.strict {
             tool.insert("strict".into(), strict.into());
         }
-        tool.extend(t.native.fields_for(RESPONSES));
+        tool.extend(OpenAiResponses::fields(&t.native).clone());
         Value::Object(tool)
     };
     let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     for provided in &chat.provider_tools {
         let mut search = Map::from_iter([("type".into(), "web_search".into())]);
-        search.extend(write_search(RESPONSES, provided)?);
+        search.extend(write_search::<OpenAiResponses>(provided)?);
         tools.push(search.into());
     }
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
@@ -138,7 +139,6 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
                 name: raw["name"].as_str().unwrap_or("response").into(),
                 description: raw["description"].as_str().map(str::to_owned),
                 schema: raw["schema"].clone(),
-                strict: raw["strict"].as_bool(),
             })
         }
         _ => None,
@@ -147,48 +147,26 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
         return;
     };
     input.options.response_format = Some(parsed);
-    if let Some(native) = &mut input.native
-        && let Some(Value::Object(text)) = native.fields.get_mut("text")
-    {
-        text.shift_remove("format");
-        if text.is_empty() {
-            native.fields.shift_remove("text");
+    edit_native::<OpenAiResponses, _>(&mut input.native, |native| {
+        let Some(Value::Object(text)) = native.get_mut("text") else {
+            return;
+        };
+        // Its `strict` is Responses' own, which only Responses writes back.
+        match raw.get("strict") {
+            Some(strict) => _ = text.insert("format".into(), json!({ "strict": strict })),
+            None => _ = text.shift_remove("format"),
         }
-    }
-    if input.native.is_empty() {
-        input.native = None;
-    }
+        if text.is_empty() {
+            native.shift_remove("text");
+        }
+    });
 }
 
 /// The request's `text`: its own fields, with the format the kind's
 /// structured output requirement says.
-/// Its `text.verbosity`, which Chat Completions says at the top, out of its
-/// `native`.
-pub(in crate::responses) fn read_verbosity(chat: &mut Input) {
-    let Some(native) = chat.native.as_mut() else {
-        return;
-    };
-    let Some(Value::Object(text)) = native.fields.get_mut("text") else {
-        return;
-    };
-    if !text.get("verbosity").is_some_and(Value::is_string) {
-        return;
-    }
-    chat.options.verbosity = text
-        .shift_remove("verbosity")
-        .and_then(|v| v.as_str().map(str::to_owned));
-    if text.is_empty() {
-        native.fields.shift_remove("text");
-    }
-    chat.native.take_if(|n| n.is_empty());
-}
-
 pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Value>) {
-    let own = input.native.format() == Some(RESPONSES);
-    let mut text = own
-        .then(|| input.native.fields().get("text").cloned())
-        .flatten()
-        .unwrap_or_else(|| json!({}));
+    let own = OpenAiResponses::fields(&input.native).get("text").cloned();
+    let mut text = own.unwrap_or_else(|| json!({}));
     let format = match &input.options.response_format {
         None => None,
         Some(ResponseFormat::Text) => Some(json!({ "type": "text" })),
@@ -197,40 +175,42 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
             name,
             description,
             schema,
-            strict,
         }) => {
             let mut spec = json!({ "type": "json_schema", "name": name, "schema": schema });
             if let Some(description) = description {
                 spec["description"] = description.as_str().into();
             }
-            if let Some(strict) = strict {
-                spec["strict"] = (*strict).into();
+            if let Some(Value::Object(own)) = text.get("format") {
+                merge_fields(&mut spec, own);
             }
             Some(spec)
         }
     };
-    if let (Some(verbosity), Some(text)) = (&input.options.verbosity, text.as_object_mut()) {
-        text.insert("verbosity".into(), verbosity.as_str().into());
-    }
-    if let (Some(format), Some(text)) = (format, text.as_object_mut()) {
-        text.insert("format".into(), format);
+    if let Some(text) = text.as_object_mut() {
+        match format {
+            Some(format) => _ = text.insert("format".into(), format),
+            // A `strict` alone, of a format no longer asked for.
+            None if text.get("format").is_some_and(|f| f["type"].is_null()) => {
+                _ = text.shift_remove("format")
+            }
+            None => {}
+        }
     }
     let empty = text.as_object().is_none_or(Map::is_empty);
     set(out, "text", (!empty).then_some(text));
 }
 
 /// A part the kind has a form for beyond text: an image or a file.
-pub(in crate::responses) fn decode_part(p: &Value) -> Option<Content> {
+pub(in crate::responses) fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
     read_media(p)
 }
 
 /// A part of the kind's beyond text, as Responses writes it.
 pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
     match c {
-        Content::Image(m) | Content::Document(m) => write_media(c, m),
-        Content::Audio(_) => Err(untranslatable("audio in Responses")),
-        Content::Reasoning { .. } => Err(untranslatable("reasoning outside an assistant")),
-        _ => Err(untranslatable("an unsupported kind of part")),
+        Content::Image(m) | Content::Document(m) => Ok(write_media(c, m)),
+        // WARN: audio, and reasoning outside an assistant, have no form here; dropped.
+        _ => Ok(Value::Null),
     }
 }
 
@@ -238,56 +218,50 @@ pub(in crate::responses) fn encode_part(c: &Content) -> Result<Value, Fault> {
 /// (the summaries `concise` and `detailed` have no form in the kind). What
 /// else it holds stays in the request's `native`.
 pub(in crate::responses) fn read_reasoning(input: &mut Input) {
-    let Some(native) = input.native.as_mut() else {
-        return;
-    };
-    let Some(Value::Object(config)) = native.fields.get_mut("reasoning") else {
-        return;
-    };
     let mut r = Reasoning::default();
-    if let Some(effort) = config
-        .get("effort")
-        .and_then(Value::as_str)
-        .and_then(parse_effort)
-    {
-        config.shift_remove("effort");
-        r.effort = Some(effort);
-    }
-    if config.get("summary").and_then(Value::as_str) == Some("auto") {
-        config.shift_remove("summary");
-        r.summary = Some(true);
-    }
-    if config.is_empty() {
-        native.fields.shift_remove("reasoning");
-    }
-    if native.is_empty() {
-        input.native = None;
-    }
+    edit_native::<OpenAiResponses, _>(&mut input.native, |native| {
+        let Some(Value::Object(config)) = native.get_mut("reasoning") else {
+            return;
+        };
+        if let Some(effort) = config
+            .get("effort")
+            .and_then(Value::as_str)
+            .and_then(parse_effort)
+        {
+            config.shift_remove("effort");
+            r.effort = Some(effort);
+        }
+        if config.get("summary").and_then(Value::as_str) == Some("auto") {
+            config.shift_remove("summary");
+            r.summary = Some(true);
+        }
+        if config.is_empty() {
+            native.shift_remove("reasoning");
+        }
+    });
     if r != Reasoning::default() {
         input.options.reasoning = Some(r);
     }
 }
 
 /// The request's `reasoning`: its own fields, with the kind's effort and
-/// summary. Responses has no token budget.
+/// summary. Responses has no token budget: the effort nearest it is written.
 pub(in crate::responses) fn write_reasoning(
     input: &Input,
     out: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
-    let mut config = own_native(input, RESPONSES, "reasoning").unwrap_or_else(|| json!({}));
-    if let Some(r) = reasoning_of(input)? {
-        if r.budget_tokens.is_some() {
-            return Err(untranslatable("a reasoning token budget in Responses"));
+    let mut config = OpenAiResponses::fields(&input.native)
+        .get("reasoning")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let (Some(r), Some(config)) = (&input.options.reasoning, config.as_object_mut()) {
+        if let Some(effort) = r.effort.or(r.budget_tokens.map(effort_for)) {
+            config.insert("effort".into(), effort_name(effort)?.into());
         }
-        if let Some(config) = config.as_object_mut() {
-            if let Some(effort) = r.effort {
-                config.insert("effort".into(), effort_name(effort)?.into());
-            }
-            match r.summary {
-                Some(true) => _ = config.insert("summary".into(), "auto".into()),
-                Some(false) => _ = config.shift_remove("summary"),
-                None => {}
-            }
+        match r.summary {
+            Some(true) => _ = config.insert("summary".into(), "auto".into()),
+            Some(false) => _ = config.shift_remove("summary"),
+            None => {}
         }
     }
     let empty = config.as_object().is_none_or(Map::is_empty);

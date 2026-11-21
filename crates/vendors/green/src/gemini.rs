@@ -1,16 +1,16 @@
-//! Google's Gemini API: Chat Completions and embeddings at its
-//! OpenAI-compatible base, and its own API beside it: `generateContent`,
-//! for chats and images, Gemini Live and Veo.
+//! Google's Gemini API: Chat Completions at its OpenAI-compatible base, and
+//! its own API beside it: `generateContent`, for chats and images, Gemini
+//! Live, Omni videos, speech, embeddings and decisions.
 
 use respan_gateway_conversation::{Content, Input, Output, Role};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_core::{Fault, Filter, NativeFields};
-use serde_json::{Map, Value, json};
+use respan_gateway_core::{Fault, Filter};
+use respan_gateway_decision_http::GeminiDecisions;
+use serde_json::Value;
 
 use respan_gateway_conversation_http::gemini::{GeminiGenerate, needs_signatures};
 use respan_gateway_conversation_http::openai::OpenAiChat;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
-use respan_gateway_media_http::openai::OpenAiEmbeddings;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
 use respan_gateway_realtime_ws::GeminiLive;
 
 use respan_gateway_vendor_kit::{
@@ -18,7 +18,7 @@ use respan_gateway_vendor_kit::{
     built_wrong, http, json as body_json, models,
 };
 
-/// Its own API: `generateContent` and Veo.
+/// Its own API: `generateContent`, Omni videos, speech, embeddings and decisions.
 const API: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 /// Where Live is: its origin, as Live's path is whole.
@@ -40,8 +40,10 @@ pub const VENDOR: Vendor = Vendor {
         (&Dialected::new(OpenAiChat, Gemini), Some(OPENAI_API)),
         (&GeminiLive, Some(LIVE)),
         (&GeminiImages, Some(API)),
-        (&GeminiVeo, Some(API)),
-        (&OpenAiEmbeddings, Some(OPENAI_API)),
+        (&GeminiOmni, Some(API)),
+        (&GeminiDecisions, Some(API)),
+        (&GeminiEmbeddings, Some(API)),
+        (&GeminiSpeech, Some(API)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
@@ -67,44 +69,29 @@ impl Dialect for Gemini {
     }
 }
 
-/// `input`, its calls signed if its model needs them signed.
+/// `input` with, if its model needs them signed, the first call of each
+/// assistant message without a signature signed with the placeholder, as
+/// Gemini returns one only on the first of a turn's parallel calls. Chat
+/// Completions writes each signature in its `extra_content`.
 fn signed(input: &mut Input) -> Result<(), Fault> {
-    if needs_signatures(input.model.as_deref()) {
-        sign_calls(input);
+    if !needs_signatures(input.model.as_deref()) {
+        return Ok(());
     }
-    Ok(())
-}
-
-/// Signs, with the placeholder in its `extra_content`, the first call of
-/// each assistant message that has no signature of its own, as Gemini
-/// returns one only on the first of a turn's parallel calls.
-fn sign_calls(input: &mut Input) {
-    // Another format's fields a translation drops anyway give way to the
-    // signature.
-    let format = OpenAiChat::NAME;
-    let signature = json!({ "google": { "thought_signature": SIGNATURE_PLACEHOLDER } });
-    let own = |native: &mut Option<NativeFields>| {
-        native.take_if(|n| &*n.format != format);
-    };
     for message in input
         .messages
         .iter_mut()
         .filter(|m| m.role == Role::Assistant)
     {
-        let first = message.content.iter_mut().find_map(|part| match part {
-            Content::ToolCall { native, .. } => Some(native),
-            _ => None,
-        });
-        let Some(native) = first else {
-            continue;
-        };
-        own(native);
-        let fields = native
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
-            .entry("extra_content");
-        fields.or_insert_with(|| signature.clone());
+        let content = &mut message.content;
+        let first = content
+            .iter()
+            .position(|c| matches!(c, Content::ToolCall { .. }));
+        let Some(at) = first else { continue };
+        if !matches!(content.get(at + 1), Some(Content::Signature(_))) {
+            content.insert(at + 1, Content::Signature(SIGNATURE_PLACEHOLDER.into()));
+        }
     }
+    Ok(())
 }
 
 /// Its models, as its own API lists them (`{"models": [{"name", ..}]}`),
@@ -115,7 +102,7 @@ fn list_models(p: &VendorProvider) -> BoxFuture<'_, Models> {
         // Its own API's base and key, as either format of it takes them.
         let own = match p.client_of(GeminiGenerate::NAME)? {
             Some(own) => Some(own),
-            None => p.client_of(GeminiVeo::NAME)?,
+            None => p.client_of(GeminiOmni::NAME)?,
         };
         let Some(own) = own else {
             return models::openai(p).await;

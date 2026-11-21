@@ -4,11 +4,13 @@
 //! for, such as a tool the provider runs, stays in the `native` of the
 //! request, the message or the tool.
 
+use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
-    Names, NativeFieldsExt, decode_tools, each_tool, effort_name, encode_content, encode_message,
-    merge_missing, native_fields, only, own_native, read_search, reasoning_of, remainder, rest_of,
-    set, source_url, take_strict, untranslatable, warn_reasoning, write_search,
+    FAILED_RESULT_PREFIX, Names, Own, base64_field, data_media, decode_tools, each_tool,
+    edit_native, effort_for, effort_name, encode_content, encode_message, merge_fields,
+    merge_missing, only, read_search, remainder, required_str, rest_of, set, source_url,
+    take_strict, unless_file_id, unreadable_media, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -18,7 +20,7 @@ use respan_gateway_conversation::{
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
-use crate::openai::{OPENAI, OpenAiChat};
+use crate::openai::{OpenAiChat, sign, take_signature};
 
 /// OpenAI's function tools, choice, `parallel_tool_calls` and
 /// `web_search_options`, as the kind's.
@@ -33,14 +35,12 @@ pub(crate) fn read_openai_tools(v: &Value, chat: &mut Input) {
         parallel => parallel.as_bool().map(Some),
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
-    decode_tools(chat, tools, choice, parallel, keys);
+    decode_tools::<OpenAiChat>(chat, tools, choice, parallel, keys);
     // Any object asks for a search, an empty one too.
     if let Some(Value::Object(options)) = v.get("web_search_options") {
-        let search = read_search(OPENAI, options.clone());
+        let search = read_search::<OpenAiChat>(options.clone());
         chat.provider_tools.push(search);
-        chat.native
-            .fields_mut(OPENAI)
-            .shift_remove("web_search_options");
+        edit_native::<OpenAiChat, _>(&mut chat.native, |n| n.shift_remove("web_search_options"));
     }
 }
 
@@ -55,11 +55,8 @@ fn openai_tool(tool: &Value) -> Option<Tool> {
     };
     let mut kind = Tool::new(function["name"].as_str()?, function["parameters"].clone());
     kind.description = description;
-    kind.native = native_fields(
-        OPENAI,
-        rest_of(function, &["name", "description", "parameters"]),
-    );
-    take_strict(&mut kind);
+    kind.native = OpenAiChat::native(rest_of(function, &["name", "description", "parameters"]));
+    take_strict::<OpenAiChat>(&mut kind);
     Some(kind)
 }
 
@@ -95,20 +92,17 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
         if t.strict == Some(true) {
             function.insert("strict".into(), true.into());
         }
-        function.extend(t.native.fields_for(OPENAI));
+        function.extend(OpenAiChat::fields(&t.native).clone());
         json!({ "type": "function", "function": function })
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
     set(v, "tools", (!tools.is_empty()).then(|| tools.into()));
-    match chat.provider_tools.as_slice() {
-        [] => {}
-        [search @ ProviderTool::WebSearch { .. }] => {
-            v.insert(
-                "web_search_options".into(),
-                write_search(OPENAI, search)?.into(),
-            );
-        }
-        _ => return Err(untranslatable("more than one search in OpenAI Chat")),
+    // WARN: Chat has one search; the others are dropped.
+    if let Some(search @ ProviderTool::WebSearch { .. }) = chat.provider_tools.first() {
+        v.insert(
+            "web_search_options".into(),
+            write_search::<OpenAiChat>(search)?.into(),
+        );
     }
     let choice = match &chat.options.tool_choice {
         None => None,
@@ -135,31 +129,38 @@ pub(crate) fn write_openai_tools(chat: &Input, v: &mut Map<String, Value>) -> Re
 /// assistant's `tool_calls` as calls after its content. What else the kind
 /// cannot say of them stays in the message's `native`.
 pub(crate) fn read_openai_message(m: &Value, message: &mut Message) {
-    if matches!(&message.role, Role::Native { name, .. } if name == "tool") {
+    if matches!(&message.role, Role::Native(n) if OpenAiChat::value(n) == Some(&"tool".into())) {
         let Some(id) = m["tool_call_id"].as_str() else {
             return;
         };
         let content = std::mem::take(&mut message.content);
         message.content = vec![Content::tool_result(id, content, false)];
         message.role = Role::User;
-        if let Some(native) = &mut message.native {
-            native.fields.shift_remove("tool_call_id");
-        }
+        edit_native::<OpenAiChat, _>(&mut message.native, |n| n.shift_remove("tool_call_id"));
         return;
     }
     let calls = m["tool_calls"].as_array().into_iter().flatten();
-    let calls: Option<Vec<Content>> = calls.map(openai_call).collect();
+    let calls: Option<Vec<Vec<Content>>> = calls.map(openai_call).collect();
     if let Some(calls) = calls.filter(|calls| !calls.is_empty()) {
-        message.content.extend(calls);
-        if let Some(native) = &mut message.native {
-            native.fields.shift_remove("tool_calls");
+        message.content.extend(calls.concat());
+        edit_native::<OpenAiChat, _>(&mut message.native, |n| n.shift_remove("tool_calls"));
+    }
+    // A text's signature is the message's: its last text's, even an empty one.
+    let signature = edit_native::<OpenAiChat, _>(&mut message.native, take_signature);
+    if let Some(s) = signature {
+        let text = |c: &Content| matches!(c, Content::Text { .. });
+        let content = &mut message.content;
+        if !content.iter().any(text) {
+            content.insert(0, Content::from(""));
         }
+        let at = content.iter().rposition(text).map_or(0, |at| at + 1);
+        content.insert(at, Content::Signature(s));
     }
 }
 
-/// A function call of `tool_calls`, its own fields beyond the spec's, such
-/// as a provider's signature of it, kept as its `native`.
-fn openai_call(call: &Value) -> Option<Content> {
+/// A function call of `tool_calls`, its own fields beyond the spec's kept
+/// as its `native`, and its signature after it.
+fn openai_call(call: &Value) -> Option<Vec<Content>> {
     let function = &call["function"];
     let function_call = call["type"].is_null() || call["type"] == "function";
     if !function_call || !only(function, &["name", "arguments"]) {
@@ -167,16 +168,19 @@ fn openai_call(call: &Value) -> Option<Content> {
     }
     let (id, name) = (call["id"].as_str()?, function["name"].as_str()?);
     let mut part = Content::tool_call(id, name, function["arguments"].as_str()?);
+    let mut fields = rest_of(call, &["id", "type", "function"]);
+    let signature = take_signature(&mut fields).map(Content::Signature);
     if let Content::ToolCall { native, .. } = &mut part {
-        *native = native_fields(OPENAI, rest_of(call, &["id", "type", "function"]));
+        *native = OpenAiChat::native(fields);
     }
-    Some(part)
+    Some([part].into_iter().chain(signature).collect())
 }
 
-/// The kind's calls as OpenAI's `tool_calls`.
-fn openai_calls(calls: &[&Content]) -> Vec<Value> {
+/// The kind's calls as OpenAI's `tool_calls`, each signed as [`SIGNED`](crate::openai::SIGNED)
+/// says with its signature, if it has one.
+fn openai_calls(calls: &[(&Content, Option<&String>)]) -> Vec<Value> {
     let mut out = Vec::new();
-    for c in calls {
+    for (c, signature) in calls {
         if let Content::ToolCall {
             id,
             name,
@@ -185,10 +189,13 @@ fn openai_calls(calls: &[&Content]) -> Vec<Value> {
             ..
         } = c
         {
-            let own = native.fields_for(OPENAI);
+            let own = OpenAiChat::fields(native).clone();
             let function = json!({ "name": name, "arguments": arguments });
             let mut call = json!({ "id": id, "type": "function", "function": function });
             merge_missing(&mut call, own);
+            if let Some(s) = signature {
+                sign(&mut call, s);
+            }
             out.push(call);
         }
     }
@@ -201,34 +208,27 @@ fn openai_result(
     content: &[Content],
     is_error: bool,
 ) -> Result<Map<String, Value>, Fault> {
-    // OpenAI's tool messages cannot say the call failed.
-    if is_error {
-        return Err(untranslatable("a tool result that is an error"));
-    }
-    let media = |c: &Content| {
-        matches!(
-            c,
-            Content::Image(_) | Content::Audio(_) | Content::Document(_)
-        )
-    };
-    if content.iter().any(media) {
-        return Err(untranslatable("media in an OpenAI tool message"));
-    }
+    // OpenAI's tool messages cannot say the call failed: their text does.
+    let failed = is_error.then(|| Content::from(FAILED_RESULT_PREFIX));
+    let content: Vec<Content> = failed.into_iter().chain(content.iter().cloned()).collect();
     let mut v = Map::new();
     v.insert("role".into(), "tool".into());
     v.insert("tool_call_id".into(), id.into());
-    v.insert("content".into(), encode_content::<OpenAiChat>(content)?);
+    v.insert("content".into(), encode_content::<OpenAiChat>(&content)?);
     Ok(v)
 }
 
 /// A message as OpenAI's: each result a tool message of its own, then, if
-/// it says more, the message and its calls in `tool_calls`. It has no field
-/// for reasoning, which is dropped.
+/// it says more, the message and its calls in `tool_calls`. A tool message
+/// holds text alone, so the results' media leads that message. It has no
+/// field for reasoning, which is dropped. A call's signature and its last
+/// text's go where the reader takes them from ([`SIGNED`](crate::openai::SIGNED)).
 pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<Vec<Value>, Fault> {
     let is = |p: &&Content, result: bool| matches!(p, Content::ToolResult { .. }) == result;
     let results: Vec<&Content> = m.content.iter().filter(|p| is(p, true)).collect();
     let rest: Vec<&Content> = m.content.iter().filter(|p| is(p, false)).collect();
     let mut out = Vec::new();
+    let mut shown = Vec::new();
     for result in &results {
         if let Content::ToolResult {
             id,
@@ -237,45 +237,88 @@ pub(crate) fn write_openai_message(m: &Message, roles: &Names<Role>) -> Result<V
             ..
         } = result
         {
-            out.push(openai_result(id, content, *is_error)?);
+            let (media, mut text): (Vec<_>, Vec<_>) = content.iter().cloned().partition(|c| {
+                matches!(
+                    c,
+                    Content::Image(_) | Content::Audio(_) | Content::Document(_)
+                )
+            });
+            if !media.is_empty() {
+                if text.is_empty() {
+                    text.push("The result is in the next message.".into());
+                }
+                shown.push(format!("Media returned by tool call {id}:").into());
+                shown.extend(media);
+            }
+            out.push(openai_result(id, &text, *is_error)?);
         }
     }
+    let rest: Vec<Content> = shown.into_iter().chain(rest.into_iter().cloned()).collect();
     // A message of one result keeps its other fields, such as a name.
     if let ([only], true) = (&mut out[..], rest.is_empty()) {
-        only.extend(m.native.fields_for(OPENAI));
+        only.extend(OpenAiChat::fields(&m.native).clone());
         return Ok(out.into_iter().map(Value::Object).collect());
     }
     let mut out: Vec<Value> = out.into_iter().map(Value::Object).collect();
     if !rest.is_empty() || results.is_empty() || !m.native.is_empty() {
         let call = |p: &&Content| matches!(p, Content::ToolCall { .. });
-        let calls: Vec<&Content> = rest.iter().copied().filter(call).collect();
+        let after = |at: usize| match rest.get(at + 1) {
+            Some(Content::Signature(s)) => Some(s),
+            _ => None,
+        };
+        let calls: Vec<(&Content, Option<&String>)> = (rest.iter().enumerate())
+            .filter(|(_, p)| call(p))
+            .map(|(at, p)| (p, after(at)))
+            .collect();
+        // A text's signature is the message's: its last text's.
+        let text_signature = rest.windows(2).rev().find_map(|w| match w {
+            [Content::Text { .. }, Content::Signature(s)] => Some(s),
+            _ => None,
+        });
         let mut said = m.clone();
-        said.content = rest.into_iter().filter(|p| !call(p)).cloned().collect();
+        said.content = rest.iter().filter(|p| !call(p)).cloned().collect();
         said.content.retain(|p| match p {
-            Content::Reasoning { native, .. } => {
-                warn_reasoning(OPENAI, native);
-                false
-            }
+            // WARN: Chat has no field for a past turn's reasoning; it is dropped silently.
+            Content::Reasoning { .. } => false,
+            // WARN: Chat has no field for withheld reasoning, nor for a signature but a call's or the last text's; it is dropped silently.
+            Content::Signature(_) | Content::Withheld(_) => false,
             _ => true,
         });
         let mut v = encode_message::<OpenAiChat>(&said, roles)?;
+        if let Some(s) = text_signature {
+            sign(&mut v, s);
+        }
+        // WARN: a message whose every part was dropped is left out.
+        let dropped = v["content"] == json!([]);
         if !calls.is_empty() {
             v["tool_calls"] = openai_calls(&calls).into();
-            if said.content.is_empty() {
+            if said.content.is_empty() || dropped {
                 v["content"] = Value::Null;
             }
+        } else if dropped {
+            return Ok(out);
         }
         out.push(v);
     }
     Ok(out)
 }
 
-/// A part the kind has a form for: an image, audio, or a file of data.
-pub(crate) fn decode_part(v: &Value) -> Option<Content> {
-    let (kind, mime, source, mut fields, name) = match v["type"].as_str()? {
-        "image_url" => {
+/// Whether `format` names an audio format, such as `flac`, and nothing else.
+fn is_format_name(format: &str) -> bool {
+    !format.is_empty()
+        && format
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// A part the kind has a form for: an image, audio, or a file of data, `None`
+/// for one it has no form for. One whose media cannot be read is refused.
+pub(crate) fn decode_part(v: &Value) -> Result<Option<Content>, Fault> {
+    let (kind, mime, source, mut fields, name) = match v["type"].as_str() {
+        Some("image_url") => {
             let image = &v["image_url"];
-            let (mime, src) = source_url(image["url"].as_str()?, "image/*")?;
+            let field = "`image_url.url`";
+            let (mime, src) = source_url(required_str(&image["url"], field)?, "image/*", field)?;
             let mut fields = remainder(v, &["type", "image_url"]);
             let nested = remainder(image, &["url"]);
             if !nested.is_empty() {
@@ -283,31 +326,38 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
             }
             (0, mime, src, fields, None)
         }
-        "input_audio" => {
+        Some("input_audio") => {
             let audio = &v["input_audio"];
-            let mime = match audio["format"].as_str()? {
-                "wav" => "audio/wav",
-                "mp3" => "audio/mpeg",
-                _ => return None,
+            let field = "`input_audio.format`";
+            let format = required_str(&audio["format"], field)?.to_ascii_lowercase();
+            let subtype = match format.as_str() {
+                "wav" => "wav",
+                "mp3" => "mpeg",
+                name if is_format_name(name) => name,
+                _ => return Err(unreadable_media(field, "is not a format name")),
             };
-            let src = MediaSource::Bytes(STANDARD.decode(audio["data"].as_str()?).ok()?.into());
+            let bytes = base64_field(&audio["data"], "`input_audio.data`")?;
+            let src = MediaSource::Bytes(bytes.into());
             let mut fields = remainder(v, &["type", "input_audio"]);
             let nested = remainder(audio, &["data", "format"]);
             if !nested.is_empty() {
                 fields.insert("input_audio".into(), nested.into());
             }
-            (1, mime.into(), src, fields, None)
+            (1, format!("audio/{subtype}"), src, fields, None)
         }
-        "file" => {
+        Some("file") => {
             let file = &v["file"];
             if file.get("filename").is_some_and(|v| !v.is_string()) {
-                return None;
+                return Ok(None);
             }
-            let data = file["file_data"].as_str()?;
-            if !data.starts_with("data:") {
-                return None;
-            }
-            let (mime, src) = source_url(data, "application/octet-stream")?;
+            let Some(data) = file["file_data"].as_str() else {
+                return unless_file_id(file, "`file.file_data` or `file.file_id`");
+            };
+            let field = "`file.file_data`";
+            let Some((mime, bytes)) = data_media(data, field)? else {
+                return Err(unreadable_media(field, "must be a `data:` URL"));
+            };
+            let src = MediaSource::Bytes(bytes.into());
             let mut fields = remainder(v, &["type", "file"]);
             let nested = remainder(file, &["file_data", "filename"]);
             if !nested.is_empty() {
@@ -316,36 +366,35 @@ pub(crate) fn decode_part(v: &Value) -> Option<Content> {
             let name = file["filename"].as_str().map(str::to_owned);
             (2, mime, src, fields, name)
         }
-        _ => return None,
+        _ => return Ok(None),
     };
     let mut media = Media::new(mime, source);
     media.name = name;
-    media.native = native_fields(OPENAI, std::mem::take(&mut fields));
-    Some(match kind {
+    media.native = OpenAiChat::native(std::mem::take(&mut fields));
+    Ok(Some(match kind {
         0 => Content::Image(media),
         1 => Content::Audio(media),
         _ => Content::Document(media),
-    })
+    }))
 }
 
-/// A part of the kind's as OpenAI writes it, refusing what it cannot say.
+/// A part of the kind's as OpenAI writes it, `Null` for one it cannot say.
+// WARN: another part, a document or audio by URL, audio of no format name,
+// and a display name on an image or audio, have no form in Chat; dropped.
 pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
     let (kind, media) = match c {
         Content::Image(m) => ("image", m),
         Content::Audio(m) => ("audio", m),
         Content::Document(m) => ("document", m),
-        _ => return Err(untranslatable("an unsupported kind of part")),
+        _ => return Ok(Value::Null),
     };
-    if media.name.is_some() && kind != "document" {
-        return Err(untranslatable("a display name on image or audio content"));
-    }
-    let native = media.native.fields_for(OPENAI);
+    let native = OpenAiChat::fields(&media.native).clone();
     let url = || media_url(media);
     let mut v = match kind {
         "image" => json!({"type":"image_url","image_url":{"url":url()}}),
         "document" => {
             if matches!(media.source, MediaSource::Url(_)) {
-                return Err(untranslatable("a document URL in OpenAI Chat"));
+                return Ok(Value::Null);
             }
             let mut v = json!({"type":"file","file":{"file_data":url()}});
             if let Some(name) = &media.name {
@@ -355,14 +404,21 @@ pub(crate) fn encode_part(c: &Content) -> Result<Value, Fault> {
         }
         _ => {
             let MediaSource::Bytes(bytes) = &media.source else {
-                return Err(untranslatable("an audio URL in OpenAI Chat"));
+                return Ok(Value::Null);
             };
-            let encoding = match media.mime_type.as_str() {
-                "audio/wav" | "audio/x-wav" => "wav",
-                "audio/mpeg" => "mp3",
-                _ => return Err(untranslatable("this audio MIME type")),
+            let mime = media.mime_type.to_ascii_lowercase();
+            // A type's parameters, such as `codecs`, are not its format.
+            let subtype = mime
+                .strip_prefix("audio/")
+                .and_then(|subtype| subtype.split(';').next())
+                .map(str::trim);
+            let format = match subtype {
+                Some("x-wav") => "wav",
+                Some("mpeg") => "mp3",
+                Some(name) if is_format_name(name) => name,
+                _ => return Ok(Value::Null),
             };
-            json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":encoding}})
+            json!({"type":"input_audio","input_audio":{"data":STANDARD.encode(bytes),"format":format}})
         }
     };
     merge_missing(&mut v, native);
@@ -394,30 +450,36 @@ pub(crate) fn read_response_format(v: &Value, input: &mut Input) {
                 name: spec["name"].as_str().unwrap_or("response").into(),
                 description: spec["description"].as_str().map(str::to_owned),
                 schema: spec["schema"].clone(),
-                strict: spec["strict"].as_bool(),
             })
         }
         _ => None,
     };
     if let Some(parsed) = parsed {
         input.options.response_format = Some(parsed);
-        if let Some(native) = &mut input.native {
-            native.fields.remove("response_format");
-        }
-        if input.native.is_empty() {
-            input.native = None;
-        }
+        // Its `strict` is Chat's own, which only Chat writes back.
+        edit_native::<OpenAiChat, _>(&mut input.native, |native| {
+            match raw["json_schema"].get("strict") {
+                Some(strict) => {
+                    _ = native.insert(
+                        "response_format".into(),
+                        json!({"json_schema": {"strict": strict}}),
+                    )
+                }
+                None => _ = native.remove("response_format"),
+            }
+        });
     }
 }
 
 /// The request's `response_format`: the kind's structured output
 /// requirement, else the request's own.
 pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
+    let own = OpenAiChat::fields(&input.native)
+        .get("response_format")
+        .cloned();
     let Some(requirement) = &input.options.response_format else {
-        let own = input.native.format() == Some(OPENAI);
-        return own
-            .then(|| input.native.fields().get("response_format").cloned())
-            .flatten();
+        // Not a `strict` alone, of a format no longer asked for.
+        return own.filter(|own| own["type"].is_string());
     };
     Some(match requirement {
         ResponseFormat::Text => json!({"type":"text"}),
@@ -426,34 +488,31 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
             name,
             description,
             schema,
-            strict,
         } => {
             let mut spec = json!({"name":name,"schema":schema});
             if let Some(description) = description {
                 spec["description"] = description.clone().into();
             }
-            if let Some(strict) = strict {
-                spec["strict"] = (*strict).into();
+            let mut format = json!({"type":"json_schema","json_schema":spec});
+            if let Some(Value::Object(own)) = own {
+                merge_fields(&mut format, &own);
             }
-            json!({"type":"json_schema","json_schema":spec})
+            format
         }
     })
 }
 
-/// The request's `reasoning_effort`: the kind's effort, else the request's
-/// own. Chat has no token budget, and no field that returns the thinking.
+/// The request's `reasoning_effort`: the kind's effort, or the one nearest
+/// its token budget, else the request's own. Chat drops an ask for a summary.
 pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
-    let Some(r) = reasoning_of(input)? else {
-        return Ok(own_native(input, OPENAI, "reasoning_effort"));
-    };
-    if r.budget_tokens.is_some() {
-        return Err(untranslatable("a reasoning token budget in OpenAI Chat"));
-    }
-    if r.summary == Some(true) {
-        return Err(untranslatable("returned reasoning in OpenAI Chat"));
-    }
-    Ok(match r.effort {
-        Some(effort) => Some(effort_name(effort)?.into()),
-        None => own_native(input, OPENAI, "reasoning_effort"),
-    })
+    let r = input.options.reasoning.as_ref();
+    // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
+    Ok(
+        match r.and_then(|r| r.effort.or(r.budget_tokens.map(effort_for))) {
+            Some(effort) => Some(effort_name(effort)?.into()),
+            None => OpenAiChat::fields(&input.native)
+                .get("reasoning_effort")
+                .cloned(),
+        },
+    )
 }

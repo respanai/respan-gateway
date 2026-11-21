@@ -597,7 +597,7 @@ fn role(role: &Role) -> String {
         Role::Developer => "developer".into(),
         Role::User => "user".into(),
         Role::Assistant => "assistant".into(),
-        Role::Native { name, .. } => name.clone(),
+        // WARN: a native role is its format's alone to name; written as `other`.
         _ => "other".into(),
     }
 }

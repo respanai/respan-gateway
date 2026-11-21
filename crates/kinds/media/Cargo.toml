@@ -14,4 +14,3 @@ workspace = true
 bytes.workspace = true
 respan-gateway-conversation.workspace = true
 respan-gateway-core.workspace = true
-serde_json.workspace = true

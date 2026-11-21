@@ -18,6 +18,10 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::rules::header_tokens;
 use respan_gateway_ws::Limits;
 
+mod responses_ws;
+
+pub use responses_ws::{ResponsesWebSocket, ResponsesWebSocketService};
+
 /// The most bytes of a request [`Host`] reads by default.
 const MAX_BODY_BYTES: usize = respan_gateway_http::call::MAX_BODY;
 

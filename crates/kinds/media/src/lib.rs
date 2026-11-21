@@ -2,7 +2,7 @@
 //! The media kinds: each operation is a kind of its own, an `Input` in and
 //! an `Output` out, in a module of its name.
 //!
-//! - [`embedding`]: vectors for texts.
+//! - [`embedding`]: vectors for texts and media.
 //! - [`image`]: images generated from a prompt, or edits of source images.
 //! - [`transcription`]: speech to text, or a translation of it to English.
 //! - [`speech`]: text to speech.
@@ -11,15 +11,14 @@
 //! Media are the conversation kind's [`Media`] and usage its [`Usage`]; a
 //! kind has a type of its own only where neither says it, such as a
 //! [`transcription::Transcript`]. What a kind has no form for stays as the
-//! format that decoded it has it ([`NativeFields`], [`NativeValue`]), and
-//! only that format writes it. Values are plain data: they say what they
+//! format that decoded it has it ([`Native`]), and only that format reads
+//! or writes it. Values are plain data: they say what they
 //! hold and compare by it, and keep nothing of the bytes they came as.
 //!
 //! The crate is the kinds' types alone, with no I/O; their formats over
 //! HTTP are `respan-gateway-media-http`'s.
 //!
-//! [`NativeFields`]: respan_gateway_core::NativeFields
-//! [`NativeValue`]: respan_gateway_core::NativeValue
+//! [`Native`]: respan_gateway_core::Native
 
 pub mod embedding;
 pub mod image;

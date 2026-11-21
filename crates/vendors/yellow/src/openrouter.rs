@@ -1,18 +1,26 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images.
+//! models, and images, embeddings, transcriptions, speech, videos and
+//! decisions.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, media_url, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter, NativeFields, NativeValue};
+use respan_gateway_core::{Fault, Filter};
+use respan_gateway_decision_http::Decisions;
+use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
-use respan_gateway_media::image;
-use respan_gateway_media_http::openai::OpenAiImages;
-use serde_json::{Map, Value, json};
+use respan_gateway_media::{image, speech, transcription};
+use respan_gateway_media_http::openai::{
+    OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
+};
+use respan_gateway_media_http::{Natives, openrouter::OpenRouterVideos};
+use serde_json::{Value, json};
 
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
 
@@ -21,6 +29,10 @@ const BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://openrouter.ai/api";
+
+/// Where its decisions are, in alpha: System One's contract, at
+/// `/api/alpha/decisions`.
+const DECISIONS_URL: &str = "https://openrouter.ai/api/alpha";
 
 /// OpenRouter. Its models' names are `<vendor>/<model>`: a configured
 /// provider named `<vendor>` takes the name first. A chat goes in its
@@ -36,6 +48,17 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(OpenAiImages, OpenRouterImages),
             Some(BASE_URL),
         ),
+        (&OpenAiEmbeddings, Some(BASE_URL)),
+        (
+            &Dialected::new(OpenAiTranscriptions, OpenRouterTranscriptions),
+            Some(BASE_URL),
+        ),
+        (
+            &Dialected::new(OpenAiSpeech, OpenRouterSpeech),
+            Some(BASE_URL),
+        ),
+        (&OpenRouterVideos, Some(BASE_URL)),
+        (&Decisions, Some(DECISIONS_URL)),
     ],
     ..Vendor::DEFAULT
 };
@@ -54,19 +77,14 @@ impl Dialect for OpenRouter {
     }
 }
 
-/// `input` with a thinking budget as its `reasoning.max_tokens`, unless
-/// another format's fields leave no room for its own.
+/// `input` with a thinking budget as its `reasoning.max_tokens`.
 fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
-    let budget = input
+    let Some(budget) = input
         .options
         .reasoning
         .as_ref()
-        .and_then(|r| r.budget_tokens);
-    let own = input
-        .native
-        .as_ref()
-        .is_none_or(|n| n.is_empty() || &*n.format == OpenAiChat::NAME);
-    let (Some(budget), true) = (budget, own) else {
+        .and_then(|r| r.budget_tokens)
+    else {
         return Ok(());
     };
     let withheld = input.options.reasoning.take().and_then(|r| r.summary) == Some(false);
@@ -74,11 +92,9 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
     if withheld {
         reasoning["exclude"] = true.into();
     }
-    let native = input
-        .native
-        .get_or_insert_with(|| NativeFields::new(OpenAiChat::NAME, Map::new()));
-    native.format = OpenAiChat::NAME.into();
-    native.fields.entry("reasoning").or_insert(reasoning);
+    input.native = OpenAiChat::with_fields(&input.native, |fields| {
+        fields.entry("reasoning").or_insert(reasoning);
+    });
     Ok(())
 }
 
@@ -86,7 +102,7 @@ fn reasoning_limit(input: &mut Input) -> Result<(), Fault> {
 /// both at `/images`, an edit's images as JSON `input_references`, each a
 /// URL or a data URL of its bytes, and its usage counted in Chat
 /// Completions' `prompt_tokens` and `completion_tokens`. It takes no mask,
-/// which fails `bad_request` before sending.
+/// which is dropped.
 #[derive(Debug, Clone, Copy)]
 pub struct OpenRouterImages;
 
@@ -110,22 +126,20 @@ impl Dialect for OpenRouterImages {
 
 /// `input` with its images in `input_references`, and no mask.
 fn referenced(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request("OpenRouter edits an image with no mask"));
-    }
-    if input.images.is_empty() {
-        return Ok(());
-    }
-    let mut fields = kept(OpenAiImages::NAME, &input.native);
-    let references = input
-        .images
-        .drain(..)
-        .map(|m| json!({ "type": "image_url", "image_url": { "url": media_url(&m) } }));
-    fields.insert(
-        "input_references".into(),
-        references.collect::<Vec<Value>>().into(),
-    );
-    input.native = native_of(OpenAiImages::NAME, fields);
+    input.native = OpenAiImages::with_fields(&input.native, |fields| {
+        // WARN: OpenRouter takes no mask; it is dropped.
+        fields.shift_remove("mask");
+        if !input.images.is_empty() {
+            let references = input
+                .images
+                .drain(..)
+                .map(|m| json!({ "type": "image_url", "image_url": { "url": media_url(&m) } }));
+            fields.insert(
+                "input_references".into(),
+                references.collect::<Vec<Value>>().into(),
+            );
+        }
+    });
     Ok(())
 }
 
@@ -138,8 +152,8 @@ impl Filter<image::Output> for Counted {
             out.push(value);
             return Ok(());
         };
-        let mut v = (*native.value).clone();
-        let Some(usage) = v["usage"].as_object_mut() else {
+        let usage = OpenAiImages::fields(native).get("usage");
+        let Some(mut usage) = usage.and_then(Value::as_object).cloned() else {
             out.push(value);
             return Ok(());
         };
@@ -154,18 +168,76 @@ impl Filter<image::Output> for Counted {
             input.unwrap_or(0),
             output.unwrap_or(0),
         )));
-        out.push(image::Output::Native(NativeValue::new(
-            native.format.clone(),
-            v,
-        )));
+        let native =
+            OpenAiImages::with_fields(native, |f| _ = f.insert("usage".into(), usage.into()));
+        out.push(image::Output::Native(native));
         Ok(())
     }
+}
+
+/// OpenRouter's transcriptions, as they depart from OpenAI's: a model
+/// billed by the second answers its usage's `seconds` with no `type`,
+/// which is read as OpenAI's `duration`.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterTranscriptions;
+
+impl Dialect for OpenRouterTranscriptions {
+    type Input = transcription::Input;
+    type Output = transcription::Output;
+
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
+        crate::json_answer(head).then(|| Box::new(timed) as Rewrite)
+    }
+}
+
+/// An answer with its usage of `seconds` typed a `duration`; any other as
+/// it came.
+fn timed(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut answer) = serde_json::from_slice::<Value>(&raw) else {
+        return Ok(raw);
+    };
+    match answer["usage"].as_object_mut() {
+        Some(usage) if usage.contains_key("seconds") && !usage.contains_key("type") => {
+            usage.insert("type".into(), "duration".into());
+        }
+        _ => return Ok(raw),
+    }
+    let unwritten = |e| Fault::internal("an answer is no JSON").with_source(e);
+    serde_json::to_vec(&answer)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// OpenRouter's speech, as it departs from OpenAI's: asked for no
+/// `response_format` it answers `pcm`, so it is asked for `mp3`, which
+/// OpenAI answers then. A model that speaks `pcm` alone, as Gemini's and
+/// HeyGen's do, refuses that itself, and is to be asked for `pcm`. Its
+/// `pcm` is 16-bit as OpenAI's, at 24 kHz or, from some models, such as
+/// Fish Audio's and HeyGen's, 44.1 kHz.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenRouterSpeech;
+
+impl Dialect for OpenRouterSpeech {
+    type Input = speech::Input;
+    type Output = speech::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
+        Some(Box::new(in_mp3))
+    }
+}
+
+/// `input` asking for `mp3`, unless it asks for a format.
+fn in_mp3(input: &mut speech::Input) -> Result<(), Fault> {
+    input.audio_format.get_or_insert_with(|| "mp3".into());
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
+    use respan_gateway_core::Native;
+    use serde_json::from_value;
 
     #[test]
     fn an_edits_images_are_its_input_references() {
@@ -174,18 +246,17 @@ mod tests {
             "image/png",
             MediaSource::Url("https://a.example/cat.png".into()),
         )];
+        let mask = json!({ "mask": { "image_url": "https://a.example/mask.png" } });
+        input.native =
+            OpenAiImages::with_fields(&input.native, |f| *f = from_value(mask).expect("an object"));
         referenced(&mut input).expect("taken");
         assert!(input.images.is_empty());
-        let fields = kept(OpenAiImages::NAME, &input.native);
+        let fields = OpenAiImages::fields(&input.native);
         assert_eq!(
             fields["input_references"],
             json!([{ "type": "image_url", "image_url": { "url": "https://a.example/cat.png" } }])
         );
-        input.mask = Some(Media::new(
-            "image/png",
-            MediaSource::Url("https://a.example/mask.png".into()),
-        ));
-        assert!(referenced(&mut input).is_err());
+        assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 
     #[test]
@@ -193,13 +264,15 @@ mod tests {
         let usage =
             json!({ "usage": { "prompt_tokens": 6, "completion_tokens": 1290, "cost": 0.04 } });
         let mut out = Vec::new();
-        let native = NativeValue::new(OpenAiImages::NAME, usage);
+        let native = OpenAiImages::with_fields(&Native::default(), |f| {
+            *f = from_value(usage).expect("an object")
+        });
         Counted
             .edit(image::Output::Native(native), &mut out)
             .expect("counted");
         assert!(matches!(&out[0], image::Output::Usage(u) if *u == Usage::new(6, 1290)));
         assert!(
-            matches!(&out[1], image::Output::Native(n) if *n.value == json!({ "usage": { "cost": 0.04 } }))
+            matches!(&out[1], image::Output::Native(n) if Value::Object(OpenAiImages::fields(n).clone()) == json!({ "usage": { "cost": 0.04 } }))
         );
     }
 
@@ -214,11 +287,13 @@ mod tests {
                 AnthropicMessages::NAME
             ]
         );
-        // Messages' base leaves out the `/v1` its format adds.
+        // Messages' base leaves out the `/v1` its format adds; decisions
+        // are in alpha.
         assert!(VENDOR.formats.iter().all(|(f, base)| *base
-            == Some(match f.name() == AnthropicMessages::NAME {
-                true => MESSAGES_URL,
-                false => BASE_URL,
+            == Some(match f.name() {
+                AnthropicMessages::NAME => MESSAGES_URL,
+                "decisions" => DECISIONS_URL,
+                _ => BASE_URL,
             })));
     }
 
@@ -250,21 +325,26 @@ mod tests {
     #[test]
     fn a_thinking_budget_is_its_reasoning_limit() {
         use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-        let mut messages = AnthropicMessages.decode_json(&json!({
-            "max_tokens": 9000,
-            "messages": [{ "role": "user", "content": "hi" }],
-            "thinking": { "type": "enabled", "budget_tokens": 2048 },
-        }));
+        let mut messages = AnthropicMessages
+            .decode_json(&json!({
+                "max_tokens": 9000,
+                "messages": [{ "role": "user", "content": "hi" }],
+                "thinking": { "type": "enabled", "budget_tokens": 2048 },
+                "context_management": { "edits": [] },
+            }))
+            .expect("read");
         reasoning_limit(&mut messages).expect("taken");
         assert!(messages.options.reasoning.is_none());
         let sent = OpenAiChat.encode_request(&messages).expect("written");
         assert_eq!(sent["reasoning"], json!({ "max_tokens": 2048 }));
         assert!(sent.get("reasoning_effort").is_none());
         // Without a budget the input is as it came.
-        let plain = AnthropicMessages.decode_json(&json!({
-            "max_tokens": 9,
-            "messages": [{ "role": "user", "content": "hi" }],
-        }));
+        let plain = AnthropicMessages
+            .decode_json(&json!({
+                "max_tokens": 9,
+                "messages": [{ "role": "user", "content": "hi" }],
+            }))
+            .expect("read");
         let mut taken = plain.clone();
         reasoning_limit(&mut taken).expect("taken");
         assert_eq!(taken, plain);
@@ -278,5 +358,29 @@ mod tests {
         let mut head = call.into_parts().0;
         OpenRouterImages.request(&mut head).expect("a path");
         assert_eq!(head.uri.path(), "/images");
+    }
+
+    #[test]
+    fn its_seconds_of_audio_are_a_duration() {
+        let timed = |v: Value| -> Value {
+            let raw = Bytes::from(v.to_string());
+            serde_json::from_slice(&timed(raw).expect("read")).expect("JSON")
+        };
+        assert_eq!(
+            timed(json!({ "text": "hi", "usage": { "seconds": 2, "cost": 0.0002 } }))["usage"],
+            json!({ "seconds": 2, "cost": 0.0002, "type": "duration" })
+        );
+        let tokens = json!({ "text": "hi", "usage": { "input_tokens": 19, "output_tokens": 10 } });
+        assert_eq!(timed(tokens.clone()), tokens);
+    }
+
+    #[test]
+    fn speech_of_no_format_is_asked_in_mp3() {
+        let mut input = speech::Input::new("hi");
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("mp3"));
+        input.audio_format = Some("pcm".into());
+        in_mp3(&mut input).expect("taken");
+        assert_eq!(input.audio_format.as_deref(), Some("pcm"));
     }
 }

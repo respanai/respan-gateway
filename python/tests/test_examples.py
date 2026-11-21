@@ -27,6 +27,16 @@ def test_example_runs(fake, name, capsys):
     assert capsys.readouterr().out
 
 
+def test_fallback_example_falls_back(fake, capsys):
+    config = config_for(fake)
+    config["providers"]["down"] = {"formats": ["openai-chat"], "base_url": "http://127.0.0.1:9/v1"}
+    config["routes"] = {"smart": {"to": ["down/fake-1", "openai/fake-1"], "backoff": "10ms"}}
+    with rg.Gateway(config=config) as gw:
+        assert load("fallback").main(gw)
+        assert gw.requests(limit=1)[0]["provider"] == "openai"
+    assert "answered by openai" in capsys.readouterr().out
+
+
 def test_gateway_prints_nothing_per_request_by_default(fake, capfd):
     with rg.Gateway(config=config_for(fake)) as gw:
         gw.request("POST", "/v1/chat/completions", json=CHAT)

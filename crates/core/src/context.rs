@@ -309,7 +309,7 @@ impl ClientContext {
     /// `take_until` ends the stream cleanly, so the call ends `abandoned`, as
     /// if the client had left. To end it with a reason, cut with a fault:
     /// a last item `Err(Fault::new(message))`, as `MaxLength` in
-    /// `examples/realtime.rs` does.
+    /// `examples/recipes/realtime.rs` does.
     ///
     /// The stream takes the place of the one it wraps.
     /// Wraps and filters apply in plugin

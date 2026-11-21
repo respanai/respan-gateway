@@ -30,11 +30,10 @@ pub struct Input {
 }
 
 impl Input {
-    /// A request of `method` with `messages`, in no session, written as a
-    /// batch only if `batch` is set (MCP 2025-06-18 has none).
+    /// A request of `method` with `messages`, in no session and not a batch
+    /// (MCP 2025-06-18 has none).
     pub fn new(method: Method, messages: Vec<Message>) -> Self {
         Self {
-            batch: false,
             method,
             messages,
             ..Self::default()

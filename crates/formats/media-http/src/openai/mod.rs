@@ -32,23 +32,23 @@ pub use speech::OpenAiSpeech;
 pub use transcriptions::OpenAiTranscriptions;
 pub use videos::OpenAiVideos;
 
-use crate::edge::{bind_provider, sends};
+use crate::edge::{bind_provider, boolean, sends, whole_number};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{
-    self, kept, merge_missing, native_of, rest_of, set, unix_now,
+    self, base64_bytes, merge_missing, rest_of, set, unix_now,
 };
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::{Schema, read_provider_error};
-use respan_gateway_core::{Connection, ErrorCode, Fault, NativeValue};
+use respan_gateway_core::{Connection, ErrorCode, EventSink, Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_http::http::{
     self, HeaderMap, HeaderValue, request::Parts as RequestHead, response::Parts as ResponseHead,
 };
 use respan_gateway_http::path::path_ends_with;
-use respan_gateway_http::{ClientIo, Encoder, ProviderIo, raw::Original};
+use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, raw::Original};
 use serde_json::{Map, Value, json};
 use std::sync::LazyLock;
 
@@ -170,15 +170,20 @@ const MIME: &[(&str, &str)] = &[
 ];
 
 /// The type a file's first bytes say, for the formats these endpoints take.
-fn sniff(content: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff(content: &[u8]) -> Option<&'static str> {
     let at = |from: usize, magic: &[u8]| content.get(from..from + magic.len()) == Some(magic);
+    let sync = |mask: u8, value: u8| {
+        content.first() == Some(&0xFF) && content.get(1).is_some_and(|b| b & mask == value)
+    };
     Some(match () {
         _ if at(0, b"\x89PNG") => "image/png",
         _ if at(0, b"\xFF\xD8\xFF") => "image/jpeg",
         _ if at(0, b"GIF8") => "image/gif",
         _ if at(0, b"RIFF") && at(8, b"WEBP") => "image/webp",
         _ if at(0, b"RIFF") && at(8, b"WAVE") => "audio/wav",
-        _ if at(0, b"ID3") || content.first() == Some(&0xFF) => "audio/mpeg",
+        // ADTS: its frame sync, then layer 0.
+        _ if sync(0xF6, 0xF0) => "audio/aac",
+        _ if at(0, b"ID3") || sync(0xE0, 0xE0) => "audio/mpeg",
         _ if at(0, b"OggS") => "audio/ogg",
         _ if at(0, b"fLaC") => "audio/flac",
         _ if at(0, b"\x1A\x45\xDF\xA3") => "audio/webm",
@@ -242,9 +247,7 @@ fn take_number(map: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, F
 fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fault> {
     let count = match map.remove(key) {
         None | Some(Value::Null) => return Ok(None),
-        Some(Value::Number(n)) => n.as_u64(),
-        Some(Value::String(s)) => s.trim().parse().ok(),
-        Some(_) => None,
+        Some(v) => whole_number(&v),
     };
     count
         .and_then(|n| u32::try_from(n).ok())
@@ -254,11 +257,7 @@ fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fa
 
 /// Whether a field says true: JSON's `true`, or a form's `true`.
 fn is_true(v: Option<&Value>) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => s.eq_ignore_ascii_case("true"),
-        _ => false,
-    }
+    v.and_then(boolean).unwrap_or(false)
 }
 
 /// `seconds` as JSON: a whole number as one, as OpenAI writes it.
@@ -295,10 +294,10 @@ fn write_usage(usage: &Usage) -> Map<String, Value> {
 }
 
 /// The fields of a usage object the kind has no place for, as an event of
-/// `format`, `{"usage": {..}}`, which its encoders write into the usage they
-/// write; none if there are none.
-fn usage_extras(format: &str, extras: Map<String, Value>) -> Option<NativeValue> {
-    (!extras.is_empty()).then(|| NativeValue::new(format, json!({ "usage": extras })))
+/// the format `K` names, `{"usage": {..}}`, which its encoders write into
+/// the usage they write; none if there are none.
+fn usage_extras<K: 'static>(extras: Map<String, Value>) -> Option<Native> {
+    (!extras.is_empty()).then(|| Native::json::<K>(json!({ "usage": extras })))
 }
 
 /// The usage fields of an event [`usage_extras`] made.
@@ -314,7 +313,7 @@ fn b64(bytes: &[u8]) -> String {
 
 /// Base64 `text` as bytes.
 fn unb64(text: &str) -> Option<Bytes> {
-    STANDARD.decode(text.trim()).ok().map(Bytes::from)
+    base64_bytes(text).map(Bytes::from)
 }
 
 /// `v` as JSON bytes.
@@ -413,6 +412,25 @@ where
     I: Clone + Send + Sync + 'static,
     O: Clone + Send + Sync + 'static,
 {
+    respond_client(io, decode, move |reply, fields| {
+        let mut head = reply.head();
+        let encoder = encoder(reply.request(), fields, &mut head);
+        reply.write(head, encoder)
+    })
+}
+
+/// The client edge of a format: a request decoded by `decode`, and its
+/// response the sink `respond` makes of its [`Reply`] and the fields of the
+/// client's request.
+fn respond_client<I, O>(
+    io: ClientIo,
+    decode: fn(&RequestHead, &Form) -> Result<I, Fault>,
+    respond: impl FnOnce(Reply, &Map<String, Value>) -> EventSink<O> + Send + 'static,
+) -> Connection<I, O>
+where
+    I: Clone + Send + Sync + 'static,
+    O: Clone + Send + Sync + 'static,
+{
     let original = io.extensions().get::<Original>().cloned();
     let read = original.clone();
     io.with_error(refusal).bind(
@@ -428,12 +446,7 @@ where
                 Ok(())
             })
         },
-        move |reply| {
-            let mut head = reply.head();
-            let fields = asked(original.as_ref());
-            let encoder = encoder(reply.request(), fields, &mut head);
-            Ok(reply.write(head, encoder))
-        },
+        move |reply| Ok(respond(reply, asked(original.as_ref()))),
     )
 }
 

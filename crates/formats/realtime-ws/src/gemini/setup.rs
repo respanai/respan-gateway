@@ -1,11 +1,12 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
-use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, ToolChoice, Turns, Vad};
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
+use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, Turns, Vad};
 use serde_json::{Map, Value, json};
 
-use super::NAME;
-use crate::json::{self, at, merge, number, own, set, string, take, text};
+use super::Key;
+use crate::json::{at, merge, string, take, text};
 
 const MODEL: &[&str] = &["setup", "model"];
 const MODALITIES: &[&str] = &["setup", "generationConfig", "responseModalities"];
@@ -17,11 +18,9 @@ const VOICE: &[&str] = &[
     "prebuiltVoiceConfig",
     "voiceName",
 ];
-const MAX_OUTPUT_TOKENS: &[&str] = &["setup", "generationConfig", "maxOutputTokens"];
 const INSTRUCTIONS: &[&str] = &["setup", "systemInstruction", "parts"];
 const TOOLS: &[&str] = &["setup", "tools"];
 const DETECTION: &[&str] = &["setup", "realtimeInputConfig", "automaticActivityDetection"];
-const HANDLING: &[&str] = &["setup", "realtimeInputConfig", "activityHandling"];
 const INPUT_TRANSCRIPTION: &[&str] = &["setup", "inputAudioTranscription"];
 const OUTPUT_TRANSCRIPTION: &[&str] = &["setup", "outputAudioTranscription"];
 
@@ -34,37 +33,23 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.model = take(v, MODEL, model, |m| Some(format!("models/{m}").into()));
     s.output = take(v, MODALITIES, modality, |m| modality_json(*m));
     s.voice = take(v, VOICE, string, text);
-    s.max_output_tokens = take(v, MAX_OUTPUT_TOKENS, Value::as_u64, number);
     s.instructions = take(v, INSTRUCTIONS, instructions, |t| {
         Some(json!([{"text": t}]))
     });
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.turns = take(v, DETECTION, turns, |t| detection_json(t, refuse).ok());
-    if let Some(Turns::Server(vad)) = &mut s.turns {
-        vad.interrupt = take(v, HANDLING, handling, |i| handling_json(*i));
-    }
+    s.turns = take(v, DETECTION, turns, detection_json);
     s.input_transcription = transcription(v, INPUT_TRANSCRIPTION);
     s.output_transcription = transcription(v, OUTPUT_TRANSCRIPTION);
     s.output_audio = Some(AudioFormat::pcm16(24_000));
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 
 /// The `setup` message of `s`, refused by `refuse` where it says what the
 /// Live API cannot. Its audio formats are each chunk's own.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
-    if s.tool_choice
-        .as_ref()
-        .is_some_and(|c| *c != ToolChoice::Auto)
-    {
-        return Err(refuse("a tool choice but `auto`"));
-    }
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, path, value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, path, value);
     put(
         MODEL,
         s.model.as_ref().map(|m| format!("models/{m}").into()),
@@ -72,24 +57,15 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     put(MODALITIES, s.output.and_then(modality_json));
     put(VOICE, s.voice.as_ref().and_then(text));
     put(
-        MAX_OUTPUT_TOKENS,
-        s.max_output_tokens.as_ref().and_then(number),
-    );
-    put(
         INSTRUCTIONS,
         s.instructions.as_ref().map(|t| json!([{"text": t}])),
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
-    put(
-        DETECTION,
-        s.turns
-            .as_ref()
-            .map(|t| detection_json(t, refuse))
-            .transpose()?,
-    );
-    if let Some(Turns::Server(vad)) = &s.turns {
-        put(HANDLING, vad.interrupt.and_then(handling_json));
-    }
+    let turns = s
+        .turns
+        .as_ref()
+        .map(|t| detection_json(t).ok_or_else(|| refuse("this turn detection")));
+    put(DETECTION, turns.transpose()?);
     let transcriptions = [
         (INPUT_TRANSCRIPTION, s.input_transcription),
         (OUTPUT_TRANSCRIPTION, s.output_transcription),
@@ -97,7 +73,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     for (path, on) in transcriptions {
         put(path, on.filter(|on| *on).map(|_| json!({})));
     }
-    merge(&mut v, own(&s.native));
+    merge(&mut v, s.native.fields::<Key>());
     // A transcription turned off is no field, whatever its settings were.
     for (path, on) in transcriptions {
         if on == Some(false) {
@@ -105,12 +81,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }
     }
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of a
-/// setup are written back as the Live API's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a setup field could not be written back")
 }
 
 /// Whether a transcription is asked for: an object; one that says nothing
@@ -167,7 +137,7 @@ fn tool(v: &Value) -> Option<Tool> {
     let parameters = schema("parametersJsonSchema", rest).or_else(|| schema("parameters", rest));
     let mut tool = Tool::new(name, parameters.unwrap_or(Value::Null));
     tool.description = take(rest, &["description"], string, text);
-    tool.native = json::native(NAME, std::mem::take(rest));
+    tool.native = Native::json::<Key>(std::mem::take(rest));
     Some(tool)
 }
 
@@ -192,7 +162,7 @@ fn tools_json(tools: &[Tool]) -> Value {
             };
             v[key] = t.parameters.clone();
         }
-        merge(&mut v, own(&t.native));
+        merge(&mut v, t.native.fields::<Key>());
         v
     };
     let declarations: Vec<Value> = tools.iter().map(declaration).collect();
@@ -214,19 +184,16 @@ fn turns(v: &Value) -> Option<Turns> {
     let mut vad = Vad::default();
     vad.silence_ms = take(rest, &["silenceDurationMs"], millis, millis_json);
     vad.prefix_ms = take(rest, &["prefixPaddingMs"], millis, millis_json);
-    vad.native = json::native(NAME, std::mem::take(rest));
+    vad.native = Native::json::<Key>(std::mem::take(rest));
     Some(Turns::Server(vad))
 }
 
-fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+fn detection_json(turns: &Turns) -> Option<Value> {
     let vad = match turns {
-        Turns::Manual => return Ok(json!({"disabled": true})),
+        Turns::Manual => return Some(json!({"disabled": true})),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return None,
     };
-    if vad.respond == Some(false) {
-        return Err(refuse("turns the model does not answer"));
-    }
     let mut v = Map::new();
     if let Some(ms) = vad.silence_ms {
         v.insert("silenceDurationMs".into(), ms.into());
@@ -235,22 +202,6 @@ fn detection_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fau
         v.insert("prefixPaddingMs".into(), ms.into());
     }
     let mut v = Value::Object(v);
-    merge(&mut v, own(&vad.native));
-    Ok(v)
-}
-
-/// Whether the user's activity interrupts the model.
-fn handling(v: &Value) -> Option<bool> {
-    match v.as_str()? {
-        "START_OF_ACTIVITY_INTERRUPTS" => Some(true),
-        "NO_INTERRUPTION" => Some(false),
-        _ => None,
-    }
-}
-
-fn handling_json(interrupts: bool) -> Option<Value> {
-    Some(match interrupts {
-        true => "START_OF_ACTIVITY_INTERRUPTS".into(),
-        false => "NO_INTERRUPTION".into(),
-    })
+    merge(&mut v, vad.native.fields::<Key>());
+    Some(v)
 }

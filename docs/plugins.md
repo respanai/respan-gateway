@@ -228,8 +228,8 @@ Things to know about filters:
 - **A word can be split across deltas** (`"sec"`, `"ret"`). A real redactor
   holds back text that might be the start of a match and releases it later.
   Override `Filter::end` to flush what it held when the stream ends. The
-  [guardrail](../examples/guardrail.rs) example's `Holdback` does this, and
-  the [PII](../examples/pii.rs) example holds back a split placeholder the
+  [guardrail](../examples/recipes/guardrail.rs) example's `Holdback` does this, and
+  the [PII](../examples/recipes/pii.rs) example holds back a split placeholder the
   same way.
 - **Filters are synchronous.** For work that must wait, such as a remote
   classifier or a deadline, wrap the stream instead: `cx.wrap(|events:
@@ -462,7 +462,7 @@ Add more providers, in any format, and route between them with
 `cx.set_target`, or register the first-party `Routing` plugin
 (`respan-gateway-plugin-routing`). The vendor kit (`crates/vendors/kit`) can
 build a provider from a vendor's name and key, as the binary does. The
-[embedded example](../examples/embedded.rs) runs a gateway in process
+[embedded example](../examples/recipes/embedded.rs) runs a gateway in process
 with no HTTP server at all.
 
 ### In this repository's binary
@@ -545,7 +545,7 @@ one:
   [`respan`](../crates/plugins/respan),
   [`routing`](../crates/plugins/routing),
   [`tool-loop`](../crates/plugins/tool-loop).
-- [`examples/`](../examples/README.md), runnable: guardrails, PII
+- [`examples/recipes/`](../examples/recipes/README.md), runnable: guardrails, PII
   redaction across streams, billing and wallets, admission control, durable
   jobs, realtime policies.
 - [`crates/core/README.md`](../crates/core/README.md) and the rustdoc on

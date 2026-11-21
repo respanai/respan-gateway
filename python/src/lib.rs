@@ -199,7 +199,10 @@ impl Head {
 
 async fn open(router: Router, request: Request<Body>, limit: Option<f64>) -> Outcome<Head> {
     within(limit, async move {
-        let response = router.oneshot(request).await.map_err(|e| e.to_string())?;
+        let response = router
+            .oneshot(request)
+            .await
+            .unwrap_or_else(|never| match never {});
         let (head, body) = response.into_parts();
         Ok(Head {
             status: head.status.as_u16(),

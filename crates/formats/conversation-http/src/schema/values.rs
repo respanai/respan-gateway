@@ -2,18 +2,18 @@
 //! the fields a value keeps for its own format, tools, usage totals, the
 //! faults of what cannot be written, and small JSON helpers.
 
-use crate::fields::{self, warn_dropped};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use crate::fields::{self, base64_bytes, data_url};
 use respan_gateway_conversation::{
     Block, Content, Delta, Finish, Input, Message, Output, ProviderTool, Role, Tool, ToolChoice,
 };
-use respan_gateway_conversation::{Effort, MediaSource, Reasoning, Start, Usage};
-use respan_gateway_core::{ErrorCode, Fault, NativeFields, NativeValue};
-use respan_gateway_http::http::StatusCode;
-use respan_gateway_http_faults::Status;
+use respan_gateway_conversation::{Effort, GenerationOptions, MediaSource, Start, Usage};
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http_faults as faults;
 use serde_json::{Map, Value};
 use std::borrow::Cow;
+use std::marker::PhantomData;
 
+use super::Own;
 use super::Schema;
 use super::errors::says;
 
@@ -31,17 +31,55 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
-/// The media type and source of a URL: the data of a `data:` URL, else the
-/// URL, of type `fallback`.
-pub(crate) fn source_url(url: &str, fallback: &str) -> Option<(String, MediaSource)> {
-    match url.strip_prefix("data:") {
-        Some(data) => {
-            let (mime, data) = data.split_once(";base64,")?;
-            let bytes = STANDARD.decode(data).ok()?;
-            Some((mime.into(), MediaSource::Bytes(bytes.into())))
-        }
-        None => Some((fallback.into(), MediaSource::Url(url.into()))),
+/// The refusal of a request whose `field`, as its format names it, holds
+/// media no provider would read, as `what` says.
+pub(crate) fn unreadable_media(field: &str, what: &str) -> Fault {
+    Fault::bad_request(format!("{field} {what}"))
+}
+
+/// The string in `value`, the client's `field`; one that is missing is
+/// refused.
+pub(crate) fn required_str<'a>(value: &'a Value, field: &str) -> Result<&'a str, Fault> {
+    value
+        .as_str()
+        .ok_or_else(|| unreadable_media(field, "is required"))
+}
+
+/// The part of a media `holder` that names no source of its own: one that
+/// names a file by `file_id` is a form the kind cannot carry, `None`; one
+/// that names nothing is refused, as `wanted` says.
+pub(crate) fn unless_file_id(holder: &Value, wanted: &str) -> Result<Option<Content>, Fault> {
+    match holder["file_id"].is_null() {
+        true => Err(unreadable_media(wanted, "is required")),
+        false => Ok(None),
     }
+}
+
+/// The bytes of the base64 in `value`, the client's `field`; a field that is
+/// missing, or whose base64 does not decode, is refused.
+pub(crate) fn base64_field(value: &Value, field: &str) -> Result<Vec<u8>, Fault> {
+    base64_bytes(required_str(value, field)?)
+        .ok_or_else(|| unreadable_media(field, "is not valid base64"))
+}
+
+/// The media type and bytes of `url`, the client's `field`, if it is a
+/// `data:` URL ([`data_url`]); `None` for any other URL. One with no data,
+/// or whose base64 does not decode, is refused.
+pub(crate) fn data_media(url: &str, field: &str) -> Result<Option<(String, Vec<u8>)>, Fault> {
+    data_url(url).map_err(|e| unreadable_media(field, e.reason()))
+}
+
+/// The media type and source of `url`, the client's `field`: the bytes of a
+/// `data:` URL ([`data_media`]), else the URL, of type `fallback`.
+pub(crate) fn source_url(
+    url: &str,
+    fallback: &str,
+    field: &str,
+) -> Result<(String, MediaSource), Fault> {
+    Ok(match data_media(url, field)? {
+        Some((mime, bytes)) => (mime, MediaSource::Bytes(bytes.into())),
+        None => (fallback.into(), MediaSource::Url(url.into())),
+    })
 }
 
 /// A request body that is not a JSON object.
@@ -49,70 +87,46 @@ pub(crate) fn not_an_object() -> Fault {
     Fault::bad_request("request body is not a JSON object")
 }
 
-/// Whether `format` writes `part`: another format's shape it cannot.
-fn own_part(format: &str, part: &mut Content) -> bool {
+/// Whether `C` writes `part`: another format's shape it cannot.
+fn own_part<C: Schema>(part: &mut Content) -> bool {
     if let Content::ToolResult { content, .. } = part {
-        content.retain_mut(|c| own_part(format, c));
+        content.retain_mut(own_part::<C>);
     }
     match part {
-        Content::Native(n) if *n.format != *format => {
-            warn_dropped(format, &n.format, ["part"]);
-            false
-        }
+        // WARN: a part in another format's shape is dropped here, silently.
+        Content::Native(n) => C::value(n).is_some(),
         _ => true,
     }
 }
 
 /// Whether a part, or one in a tool result, is in another format's shape.
-fn holds_foreign(format: &str, part: &Content) -> bool {
+fn holds_foreign<C: Schema>(part: &Content) -> bool {
     match part {
-        Content::Native(n) => *n.format != *format,
-        Content::ToolResult { content, .. } => content.iter().any(|c| holds_foreign(format, c)),
+        Content::Native(n) => C::value(n).is_none(),
+        Content::ToolResult { content, .. } => content.iter().any(holds_foreign::<C>),
         _ => false,
     }
 }
 
 /// `chat` without the parts in another format's shape and the messages in
-/// another format's role, each dropped with a warning.
-pub(crate) fn own_shapes<'a>(chat: &'a Input, format: &str) -> Cow<'a, Input> {
-    let foreign_role =
-        |m: &Message| matches!(&m.role, Role::Native { format: f, .. } if **f != *format);
-    let holds = |m: &Message| foreign_role(m) || m.content.iter().any(|c| holds_foreign(format, c));
+/// another format's role, each dropped.
+pub(crate) fn own_shapes<C: Schema>(chat: &Input) -> Cow<'_, Input> {
+    let foreign_role = |m: &Message| matches!(&m.role, Role::Native(n) if C::value(n).is_none());
+    let holds = |m: &Message| foreign_role(m) || m.content.iter().any(holds_foreign::<C>);
     if !chat.messages.iter().any(holds) {
         return Cow::Borrowed(chat);
     }
     let mut chat = chat.clone();
     chat.messages.retain_mut(|m| {
-        if let Role::Native {
-            format: from, name, ..
-        } = &m.role
-            && foreign_role(m)
-        {
-            warn_dropped(format, from, [name.as_str()]);
+        // WARN: a message in another format's role is dropped here, silently.
+        if foreign_role(m) {
             return false;
         }
         let said = !m.content.is_empty();
-        m.content.retain_mut(|c| own_part(format, c));
+        m.content.retain_mut(own_part::<C>);
         !said || !m.content.is_empty()
     });
     Cow::Owned(chat)
-}
-
-/// Says that `format` goes without reasoning it cannot take back.
-pub(crate) fn warn_reasoning(format: &str, native: &Option<NativeFields>) {
-    warn_dropped(
-        format,
-        native.format().unwrap_or("another format"),
-        ["reasoning"],
-    );
-}
-
-/// `fields` as the native of a value decoded by `format`: none if empty.
-pub(crate) fn native_fields(format: &str, fields: Map<String, Value>) -> Option<NativeFields> {
-    match fields.is_empty() {
-        true => None,
-        false => Some(NativeFields::new(format, fields)),
-    }
 }
 
 /// Merge the fields of `native` into `target`, an object, objects among them
@@ -138,11 +152,11 @@ pub(crate) fn merge_into(into: &mut Map<String, Value>, fields: &Map<String, Val
     }
 }
 
-/// The fields of the native a response's start carries, if it is of
-/// `format`.
-pub(crate) fn own_fields(start: Option<&Start>, format: &str) -> Map<String, Value> {
-    let start = start.filter(|s| s.native.format() == Some(format));
-    start.map(|s| s.native.fields().clone()).unwrap_or_default()
+/// The fields of the native a response's start carries, if they are `C`'s.
+pub(crate) fn own_fields<C: Schema>(start: Option<&Start>) -> Map<String, Value> {
+    start
+        .map(|s| C::fields(&s.native).clone())
+        .unwrap_or_default()
 }
 
 /// Which counts a format's usage object has a field for.
@@ -172,16 +186,6 @@ pub(crate) fn check_usage(usage: &Usage, fields: UsageFields) -> Result<(), Faul
         return Err(unwritable_usage());
     }
     Ok(())
-}
-
-/// A provider's counts with each part within its whole: some report more
-/// reasoning than output, and an answer already given is not failed for it.
-pub(crate) fn parts_within_totals(mut usage: Usage) -> Usage {
-    usage.reasoning_tokens = usage.reasoning_tokens.min(usage.output_tokens);
-    usage.cached_input_tokens = usage.cached_input_tokens.min(usage.input_tokens);
-    let uncached = usage.input_tokens - usage.cached_input_tokens;
-    usage.cache_write_input_tokens = usage.cache_write_input_tokens.min(uncached);
-    usage
 }
 
 /// A provider's usage count at `v`: `None` if it says none (absent or
@@ -245,6 +249,23 @@ pub(crate) fn remainder(v: &Value, keys: &[&str]) -> Map<String, Value> {
     rest.map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
+/// Each part of `parts` with the signature right after it, which seals it.
+pub(crate) fn sealed(parts: &[Content]) -> impl Iterator<Item = (&Content, Option<&str>)> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let part = parts.get(at)?;
+        at += 1;
+        let seal = match parts.get(at) {
+            Some(Content::Signature(s)) => {
+                at += 1;
+                Some(s.as_str())
+            }
+            _ => None,
+        };
+        Some((part, seal))
+    })
+}
+
 /// Add to `base`, an object, the fields of `fields` it lacks: the semantic
 /// fields `base` was written with take precedence over native edits.
 pub(crate) fn merge_missing(base: &mut Value, fields: Map<String, Value>) {
@@ -279,24 +300,28 @@ pub(crate) fn shows(reply: &Output) -> bool {
 pub(crate) fn encode_content<C: Schema>(content: &[Content]) -> Result<Value, Fault> {
     Ok(match content {
         [] => "".into(),
-        [Content::Text { text, native, .. }] if native.fields_for(C::NAME).is_empty() => {
+        [Content::Text { text, native, .. }] if C::fields(native).is_empty() => {
             text.as_str().into()
         }
         parts => parts
             .iter()
             .map(encode_any_part::<C>)
+            .filter(|p| !matches!(p, Ok(Value::Null)))
             .collect::<Result<_, _>>()?,
     })
 }
 
 /// Content of format `C` as parts: a string is one text part.
-pub(crate) fn decode_content<C: Schema>(v: &Value) -> Vec<Content> {
-    match v {
+pub(crate) fn decode_content<C: Schema>(v: &Value) -> Result<Vec<Content>, Fault> {
+    Ok(match v {
         Value::String(text) => vec![Content::from(text.as_str())],
-        Value::Array(parts) => parts.iter().map(decode_any_part::<C>).collect(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(decode_any_part::<C>)
+            .collect::<Result<_, _>>()?,
         Value::Null => Vec::new(),
-        other => vec![Content::native(C::NAME, other.clone())],
-    }
+        other => vec![Content::Native(C::native(other.clone()))],
+    })
 }
 
 /// A part as format `C` has it: text, a part in that format only, or what
@@ -307,12 +332,10 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
             let mut part = Map::new();
             part.insert("type".into(), "text".into());
             part.insert("text".into(), text.as_str().into());
-            part.extend(native.fields_for(C::NAME));
+            part.extend(C::fields(native).clone());
             Ok(part.into())
         }
-        Content::Native(NativeValue { format, value, .. }) if **format == *C::NAME => {
-            Ok(Value::clone(value))
-        }
+        Content::Native(n) => Ok(C::value(n).cloned().unwrap_or_default()),
         other => C::encode_part(other),
     }
 }
@@ -320,69 +343,66 @@ fn encode_any_part<C: Schema>(c: &Content) -> Result<Value, Fault> {
 /// What the format reads of a part as the kind's ([`Schema::decode_part`]); a
 /// text part, whose other fields, such as a cache marker, are its `native`;
 /// or other content, which only a call in the format it is in can send.
-fn decode_any_part<C: Schema>(p: &Value) -> Content {
-    if let Some(part) = C::decode_part(p) {
-        return part;
+fn decode_any_part<C: Schema>(p: &Value) -> Result<Content, Fault> {
+    if let Some(part) = C::decode_part(p)? {
+        return Ok(part);
     }
-    match (p["type"].as_str(), p["text"].as_str()) {
+    Ok(match (p["type"].as_str(), p["text"].as_str()) {
         (Some("text"), Some(text)) => {
             let fields = p.as_object().into_iter().flatten();
             let fields = fields.filter(|(k, v)| *k != "type" && *k != "text" && says(v));
-            let fields = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
+            let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
             let mut part = Content::from(text);
             if let Content::Text { native, .. } = &mut part {
-                *native = native_fields(C::NAME, fields);
+                *native = C::native(fields);
             }
             part
         }
-        _ => Content::native(C::NAME, p.clone()),
-    }
+        _ => Content::Native(C::native(p.clone())),
+    })
 }
 
 /// A message of format `C` as a conversation keeps it: its other fields in
 /// its `native`.
-pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Message {
+pub(crate) fn decode_message<C: Schema>(m: &Value, roles: &Names<Role>) -> Result<Message, Fault> {
     let name = m["role"].as_str().unwrap_or_default();
     let role = roles
         .value(name)
-        .unwrap_or_else(|| Role::native(C::NAME, name));
+        .unwrap_or_else(|| Role::Native(C::native(name)));
     let fields = m.as_object().into_iter().flatten();
     let fields = fields.filter(|(k, v)| *k != "role" && *k != "content" && says(v));
     let mut message = Message::new(role, "");
-    message.content = decode_content::<C>(&m["content"]);
-    message.native = native_fields(
-        C::NAME,
-        fields.map(|(k, v)| (k.clone(), v.clone())).collect(),
-    );
-    message
+    message.content = decode_content::<C>(&m["content"])?;
+    let fields: Map<_, _> = fields.map(|(k, v)| (k.clone(), v.clone())).collect();
+    message.native = C::native(fields);
+    Ok(message)
 }
 
 /// Leave a message no `native` if it says nothing the kind has no form for.
-pub(crate) fn tidy(message: &mut Message) {
-    if message.native.is_empty() {
-        message.native = None;
+pub(crate) fn tidy<C: Schema>(message: &mut Message) {
+    if C::fields(&message.native).is_empty() {
+        message.native = Native::default();
     }
 }
 
 /// A message of format `C` written anew: role, content and its other fields.
 pub(crate) fn encode_message<C: Schema>(m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
     let mut v = Map::new();
-    v.insert("role".into(), role_of(C::NAME, m, roles)?);
+    v.insert("role".into(), role_of::<C>(m, roles));
     v.insert("content".into(), encode_content::<C>(&m.content)?);
-    v.extend(m.native.fields_for(C::NAME));
+    v.extend(C::fields(&m.native).clone());
     Ok(v.into())
 }
 
-/// The role to write, if this format has it.
-fn role_of(format: &str, m: &Message, roles: &Names<Role>) -> Result<Value, Fault> {
+/// The role to write: a user's for one this format lacks.
+fn role_of<C: Schema>(m: &Message, roles: &Names<Role>) -> Value {
     let role = match &m.role {
-        Role::Native {
-            format: f, name, ..
-        } if **f == *format => Some(name.as_str()),
+        Role::Native(n) => C::value(n).and_then(Value::as_str),
         role => roles.name(role),
     };
-    let role = role.map(Value::from);
-    role.ok_or_else(|| untranslatable("a role this format has no place for"))
+    // WARN: a role this format lacks, such as a system message after the
+    // conversation starts, is written as a user's.
+    role.unwrap_or("user").into()
 }
 
 /// The tools of a request: the kind's, the provider's, and whether that is
@@ -393,7 +413,7 @@ type ReadTools = (Vec<Tool>, Vec<ProviderTool>, bool);
 /// that a format's request says in a form the kind has, taking its field,
 /// named in `keys` (none for a format that says it inside another), out of
 /// `chat.native`.
-pub(crate) fn decode_tools(
+pub(crate) fn decode_tools<C: Schema>(
     chat: &mut Input,
     tools: Option<ReadTools>,
     choice: Option<Option<ToolChoice>>,
@@ -404,22 +424,18 @@ pub(crate) fn decode_tools(
         chat.tools = tools;
         chat.provider_tools = provided;
         // Else its format writes the list whole, another what the kind can say.
-        if all && let Some(native) = &mut chat.native {
-            native.fields.shift_remove(keys[0]);
+        if all {
+            take_native::<C, _>(&mut chat.native, keys[0], |_| Some(()));
         }
     }
     if let Some(choice) = choice {
         chat.options.tool_choice = choice;
-        if let Some(native) = &mut chat.native {
-            native.fields.shift_remove(keys[1]);
-        }
+        take_native::<C, _>(&mut chat.native, keys[1], |_| Some(()));
     }
     if let Some(parallel) = parallel {
         chat.options.parallel_tool_calls = parallel;
-        if !keys[2].is_empty()
-            && let Some(native) = &mut chat.native
-        {
-            native.fields.shift_remove(keys[2]);
+        if !keys[2].is_empty() {
+            take_native::<C, _>(&mut chat.native, keys[2], |_| Some(()));
         }
     }
 }
@@ -442,57 +458,35 @@ pub(crate) fn each_tool(
     (v.is_null() || v.is_array()).then_some(out)
 }
 
-/// A web search of `format`, `fields` its native.
-pub(crate) fn read_search(format: &str, fields: Map<String, Value>) -> ProviderTool {
+/// A web search of `C`, `fields` its native.
+pub(crate) fn read_search<C: Schema>(fields: Map<String, Value>) -> ProviderTool {
     ProviderTool::WebSearch {
-        native: native_fields(format, fields),
+        native: C::native(fields),
     }
 }
 
-/// The fields of a provider tool to write in `format`: a web search's own,
+/// The fields of a provider tool to write in `C`: a web search's own,
 /// its hints among them.
-pub(crate) fn write_search(format: &str, tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
+pub(crate) fn write_search<C: Schema>(tool: &ProviderTool) -> Result<Map<String, Value>, Fault> {
     let ProviderTool::WebSearch { native } = tool else {
         return Err(untranslatable(
             "a provider tool this format has no form for",
         ));
     };
-    Ok(native.fields_for(format))
+    Ok(C::fields(native).clone())
 }
 
 /// `key` of `input`'s `native`, out of it if it is a string; one of another
 /// type stays there.
-pub(crate) fn take_text(input: &mut Input, key: &str) -> Option<String> {
-    let native = input.native.as_mut()?;
-    native.fields.get(key)?.as_str()?;
-    let text = native.fields.shift_remove(key)?.as_str().map(str::to_owned);
-    input.native.take_if(|n| n.is_empty());
-    text
+pub(crate) fn take_text<C: Schema>(input: &mut Input, key: &str) -> Option<String> {
+    take_native::<C, _>(&mut input.native, key, |v| v.as_str().map(str::to_owned))
 }
 
 /// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
 /// out of its `native`; one that is no boolean stays there.
-pub(crate) fn take_strict(tool: &mut Tool) {
-    let Some(fields) = tool.native.as_mut().map(|n| &mut n.fields) else {
-        return;
-    };
-    if let Some(strict) = fields.get("strict").and_then(Value::as_bool) {
-        fields.shift_remove("strict");
+pub(crate) fn take_strict<C: Schema>(tool: &mut Tool) {
+    if let Some(strict) = take_native::<C, _>(&mut tool.native, "strict", Value::as_bool) {
         tool.strict = Some(strict);
-    }
-    tool.native.take_if(|n| n.is_empty());
-}
-
-/// Turns a provider's running usage totals into increments.
-#[derive(Debug, Default)]
-pub(crate) struct Totals(Usage);
-
-impl Totals {
-    /// What `total` adds to the totals seen so far; usage only grows.
-    pub fn increment(&mut self, total: &Usage) -> Usage {
-        let step = total.saturating_sub(&self.0);
-        self.0 += &step;
-        step
     }
 }
 
@@ -504,9 +498,9 @@ pub(crate) fn stop_json(stop: &[String]) -> Option<Value> {
 /// A format's names, under its own name, for a conversation type's values;
 /// the first of several is written.
 #[derive(Debug)]
-pub(crate) struct Names<T: 'static>(pub &'static [(&'static str, T)], pub &'static str);
+pub(crate) struct Names<T: 'static, C = ()>(pub &'static [(&'static str, T)], pub PhantomData<C>);
 
-impl<T: PartialEq + Clone> Names<T> {
+impl<T: PartialEq + Clone, C> Names<T, C> {
     /// The value `name` means, if it is one of these.
     pub fn value(&self, name: &str) -> Option<T> {
         self.0
@@ -521,25 +515,26 @@ impl<T: PartialEq + Clone> Names<T> {
     }
 }
 
-impl Names<Finish> {
+impl<C: Schema> Names<Finish, C> {
     /// A provider's reason, as a [`Finish`].
     pub fn finish(&self, reason: &str) -> Finish {
         self.value(reason)
-            .unwrap_or_else(|| Finish::native(self.1, reason))
+            .unwrap_or_else(|| Finish::native(C::native(reason), None))
     }
 
     /// The reason to write: a native one in its own format, else its
-    /// fallback; one without is refused, not invented as a normal completion.
+    /// fallback, else a stop.
     pub fn reason<'a>(&self, finish: &'a Finish) -> Result<&'a str, Fault> {
         match finish {
-            Finish::Native { format, reason, .. } if **format == *self.1 => Ok(reason),
             Finish::Native {
-                fallback: Some(fallback),
-                ..
-            } => self.reason(fallback),
-            Finish::Native { format, reason, .. } => Err(unwritable(Some(format!(
-                "{format}'s finish reason `{reason}`"
-            )))),
+                native, fallback, ..
+            } => match (C::value(native), fallback) {
+                (Some(reason), _) => Ok(reason.as_str().unwrap_or_default()),
+                (None, Some(fallback)) => self.reason(fallback),
+                // WARN: a native reason without a fallback, such as an
+                // OpenAI-compatible vendor's own, is written as a stop.
+                (None, None) => self.reason(&Finish::Stop),
+            },
             _ => self.name(finish).ok_or_else(unwritable_content),
         }
     }
@@ -550,25 +545,20 @@ pub(crate) fn unwritable_usage() -> Fault {
     Fault::config("a plugin's change cannot be made: this format cannot represent the usage")
 }
 
+/// The text a failed tool result leads with in a format that cannot flag it,
+/// as Anthropic's `is_error` and Gemini's `error` do.
+pub(crate) const FAILED_RESULT_PREFIX: &str = "Error: ";
+
 /// A request carrying `what` cannot be sent in another format.
 pub(crate) fn untranslatable(what: &str) -> Fault {
-    Fault::bad_request(format!("{what} cannot be translated to another format yet"))
+    faults::unsupported(format!("{what} cannot be translated to another format yet"))
 }
 
-/// A 502 for content the client's format cannot write anew, such as a tool call.
+/// Content the client's format cannot write anew, such as a tool call.
 pub(crate) fn unwritable_content() -> Fault {
-    unwritable(None)
-}
-
-fn unwritable(what: Option<String>) -> Fault {
-    let message = "the response holds content that cannot yet be written anew in this format";
-    let message = match what {
-        Some(what) => format!("{message}: {what}"),
-        None => message.to_owned(),
-    };
-    Fault::new(message)
-        .with(ErrorCode("untranslatable".into()))
-        .with(Status(StatusCode::BAD_GATEWAY))
+    faults::untranslatable(
+        "the response holds content that cannot yet be written anew in this format",
+    )
 }
 
 /// A stream that ended before its end event, unless it is `done`.
@@ -608,44 +598,7 @@ pub(crate) fn set(v: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     };
 }
 
-/// Conveniences for optional format-tagged fields.
-pub(crate) trait NativeFieldsExt {
-    /// The fields, none if there are none.
-    fn fields(&self) -> &Map<String, Value>;
-    /// The fields to edit, made of `format` if there are none.
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value>;
-    /// The fields to write in `format` ([`fields::kept`]).
-    fn fields_for(&self, format: &str) -> Map<String, Value>;
-    /// The format the fields are of.
-    fn format(&self) -> Option<&str>;
-    /// Whether there are no fields.
-    fn is_empty(&self) -> bool;
-}
-
-impl NativeFieldsExt for Option<NativeFields> {
-    fn fields(&self) -> &Map<String, Value> {
-        static EMPTY: std::sync::OnceLock<Map<String, Value>> = std::sync::OnceLock::new();
-        self.as_ref()
-            .map(|n| &n.fields)
-            .unwrap_or_else(|| EMPTY.get_or_init(Map::new))
-    }
-    fn fields_mut(&mut self, format: &str) -> &mut Map<String, Value> {
-        &mut self
-            .get_or_insert_with(|| NativeFields::new(format, Map::new()))
-            .fields
-    }
-    fn fields_for(&self, format: &str) -> Map<String, Value> {
-        fields::kept(format, self)
-    }
-    fn format(&self) -> Option<&str> {
-        self.as_ref().map(|n| n.format.as_ref())
-    }
-    fn is_empty(&self) -> bool {
-        self.as_ref().is_none_or(NativeFields::is_empty)
-    }
-}
-
-/// An effort as vendors name it: `none` (thinking off) to `max`, refused
+/// An effort as vendors name it: `none` (thinking off) to `xhigh`, refused
 /// for one this format has no name for.
 pub(crate) fn effort_name(effort: Effort) -> Result<&'static str, Fault> {
     Ok(match effort {
@@ -655,7 +608,6 @@ pub(crate) fn effort_name(effort: Effort) -> Result<&'static str, Fault> {
         Effort::Medium => "medium",
         Effort::High => "high",
         Effort::XHigh => "xhigh",
-        Effort::Max => "max",
         _ => return Err(untranslatable("a reasoning effort with no name")),
     })
 }
@@ -670,56 +622,70 @@ pub(crate) fn parse_effort(name: &str) -> Option<Effort> {
         "medium" => Effort::Medium,
         "high" => Effort::High,
         "xhigh" => Effort::XHigh,
-        "max" => Effort::Max,
         _ => return None,
     })
 }
 
-/// The reasoning controls of `input`, refused if they name an effort and a
-/// budget at once, as no vendor takes both.
-pub(crate) fn reasoning_of(input: &Input) -> Result<Option<&Reasoning>, Fault> {
-    match &input.options.reasoning {
-        Some(r) if r.effort.is_some() && r.budget_tokens.is_some() => Err(Fault::bad_request(
-            "reasoning with both an effort and a token budget cannot be written",
-        )),
-        r => Ok(r.as_ref()),
+/// The thinking budget an effort buys a Claude that thinks to a budget, and
+/// each the nearest of the other for a format that takes only one.
+pub(crate) const EFFORT_BUDGETS: &[(&str, u64)] = &[
+    ("low", 1024),
+    ("medium", 2048),
+    ("high", 4096),
+    ("xhigh", 8192),
+    ("max", 16384),
+];
+
+/// The least effort whose budget ([`EFFORT_BUDGETS`]) covers `tokens`, at
+/// most `high`, which every model that takes an effort has.
+pub(crate) fn effort_for(tokens: u64) -> Effort {
+    match tokens {
+        0 => Effort::Off,
+        1..=1024 => Effort::Low,
+        1025..=2048 => Effort::Medium,
+        _ => Effort::High,
     }
+}
+
+/// The output limit `max`, temperature and top_p of `o` as Claude takes
+/// them beside a thinking `budget`.
+// WARN: a limit at or under the budget is raised by it, a temperature above
+// 1 is 1, and beside a budget another temperature or top_p is dropped.
+pub(crate) fn claude_sampling(
+    o: &GenerationOptions,
+    max: Option<u64>,
+    budget: Option<u64>,
+) -> (Option<u64>, Option<f64>, Option<f64>) {
+    let max = max.map(|max| match budget {
+        Some(budget) if max <= budget => budget.saturating_add(max),
+        _ => max,
+    });
+    let temperature = o.temperature.map(|t| t.min(1.0));
+    let temperature = temperature.filter(|t| budget.is_none() || *t == 1.0);
+    let top_p = o.top_p.filter(|p| budget.is_none() || *p >= 0.95);
+    (max, temperature, top_p)
 }
 
 /// The value of the request's native field `key` if `parse` reads all of it,
 /// which then leaves the native.
-pub(crate) fn take_native<T>(
-    input: &mut Input,
+pub(crate) fn take_native<C: Schema, T>(
+    native: &mut Native,
     key: &str,
     parse: impl FnOnce(&Value) -> Option<T>,
 ) -> Option<T> {
-    let native = input.native.as_mut()?;
-    let parsed = parse(native.fields.get(key)?)?;
-    native.fields.shift_remove(key);
-    if native.is_empty() {
-        input.native = None;
-    }
+    let parsed = parse(C::fields(native).get(key)?)?;
+    edit_native::<C, _>(native, |fields| fields.shift_remove(key));
     Some(parsed)
 }
 
-/// The request's own native field `key`, if it is of `format`.
-pub(crate) fn own_native(input: &Input, format: &str, key: &str) -> Option<Value> {
-    (input.native.format() == Some(format))
-        .then(|| input.native.fields().get(key).cloned())
-        .flatten()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn usage_totals_become_increments() {
-        let mut totals = Totals::default();
-        let total = |n| Usage::new(0, n);
-        assert_eq!(totals.increment(&total(1)).output_tokens, 1);
-        assert_eq!(totals.increment(&total(3)).output_tokens, 2);
-        assert!(totals.increment(&total(3)).is_empty());
-        assert!(totals.increment(&total(2)).is_empty(), "never negative");
-    }
+/// `edit` of `C`'s fields in `native`, which it replaces: none if they end
+/// empty; another format's dropped.
+pub(crate) fn edit_native<C: Schema, T>(
+    native: &mut Native,
+    edit: impl FnOnce(&mut Map<String, Value>) -> T,
+) -> T {
+    let mut fields = C::fields(native).clone();
+    let edited = edit(&mut fields);
+    *native = C::native(fields);
+    edited
 }

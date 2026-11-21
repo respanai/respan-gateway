@@ -7,14 +7,24 @@ use respan_gateway_conversation_http::bedrock::BedrockConverse;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
-use respan_gateway_media_http::bedrock::BedrockEmbeddings;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
+use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
+use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{
+    DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
+use respan_gateway_media_http::zai::ZaiVideos;
 use respan_gateway_passthrough_http::Passthrough;
-use respan_gateway_realtime_ws::{GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs};
+use respan_gateway_realtime_ws::{
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
+};
 
 use crate::{Upstream, Vendor};
 
@@ -27,19 +37,35 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &GeminiGenerate,
     &BedrockConverse,
     &OpenAiRealtime,
-    &ResponsesWs,
+    &OpenAiRealtimeBeta::DEFAULT,
+    &OpenAiLive,
     &GeminiLive,
     &MistralRealtime,
+    &PhonicSts,
     &OpenAiImages,
     &OpenAiTranscriptions,
     &OpenAiSpeech,
     &OpenAiEmbeddings,
     &OpenAiVideos,
-    &GeminiVeo,
+    &GeminiOmni,
+    &OpenRouterVideos,
+    &TogetherVideos,
+    &EmpirioLabsVideos,
+    &ZaiVideos,
+    &MiniMaxVideos,
+    &MiniMaxSpeech,
     &GeminiImages,
     &BedrockEmbeddings,
+    &BedrockImages,
+    &GeminiEmbeddings,
+    &GeminiSpeech,
+    &DashScopeImages,
+    &DashScopeSpeech,
+    &DashScopeTranscriptions,
+    &DashScopeVideos,
     &Decisions,
     &OpenAiDecisions::DEFAULT,
+    &GeminiDecisions,
     &Passthrough,
 ];
 

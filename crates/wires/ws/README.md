@@ -5,8 +5,7 @@ an HTTP Upgrade exchange on the HTTP wire: the call's head is the upgrade
 request, the answer's head is the `101`, and the two bodies are streams of
 frames, **one body item per text frame**. This crate is a wire: it knows
 no kind and reads no provider's events. The realtime kind's formats over
-it, one per spec (OpenAI Realtime, Gemini Live, and Responses over
-WebSocket), are
+it, one per spec (OpenAI Realtime, Gemini Live, ...), are
 [`respan-gateway-realtime-ws`](../../formats/realtime-ws/README.md)'s, and
 the vendors that speak them
 [`respan-gateway-vendors`](../../vendors/README.md)'s.
@@ -49,11 +48,11 @@ wire works with the transport and the adapter, such as `passthrough`.
 - The call's body ends clean: the provider is sent Close 1000, and its end,
   however it comes within `close_wait`, ends the answer clean.
 - The call's body ends `Err`: the provider is sent Close (1001 for a client
-  that left, else the fault's `CloseCode` or 1011) within `close_send`, and
+  that left, else the fault's `CloseCode`, 1008 if the client's, or 1011) within `close_send`, and
   the answer ends with the fault. The answer's body dropped: Close 1001.
 - The provider's Close 1000 (or no code) ends the answer clean; another code
-  is an `upstream` fault with its `ProviderClose`. Its reason text is not
-  carried.
+  is an `upstream` fault with its `ProviderClose`, its reason text in the
+  fault's message.
 - The provider dropping with no Close, or silent through a ping, is
   `truncated`; a rejected binary frame or a message over `max_message` is
   `upstream`, and the provider is sent Close 1003 or 1009.
@@ -102,7 +101,7 @@ into a session. Where that shows:
   binary audio would require a format that carried each event's frame kind.
 - **Close mapping.** A close is only a clean end, or an `Err` with typed extensions
   (`ProviderClose`, `CloseCode`) on the fault. The client's close code and
-  reason, and the provider's reason text, cannot cross.
+  reason cannot cross.
 - **The Upgrade dance.** A call keeps `Upgrade`, `prepare_call` gives it
   `Connection: upgrade`, and the transport leaves the handshake's own
   `Sec-WebSocket-Key`, `-Version` and `-Extensions` to the WebSocket library.
@@ -110,4 +109,4 @@ into a session. Where that shows:
   the client offered it and it is no key.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
-[realtime examples](../../../examples/realtime).
+[realtime examples](../../../examples/recipes/realtime.rs).

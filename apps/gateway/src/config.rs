@@ -360,10 +360,8 @@ pub struct PluginsConfig {
     pub hedge: Option<serde::de::IgnoredAny>,
     /// Run tools of tool servers inside chat requests; off if unset.
     pub tool_loop: Option<ToolLoopConfig>,
-    /// Keep the conversation state a client or provider cannot: Responses
-    /// translated to another provider's format, so a client's
-    /// `previous_response_id` works with it, and a Chat client's reasoning
-    /// between tool calls with OpenAI's Responses. On unless
+    /// Keep the conversation of Responses translated to another provider's
+    /// format, so a client's `previous_response_id` works with it. On unless
     /// `enabled = false`.
     #[serde(default)]
     pub responses: ResponsesConfig,
@@ -398,7 +396,8 @@ impl std::fmt::Debug for RespanConfig {
 }
 
 /// The conversation state the gateway keeps
-/// (`respan_gateway_plugin_responses`), in its memory: not across a
+/// (`respan_gateway_plugin_responses`): responses' turns and the
+/// Conversations API's conversations, in its memory: not across a
 /// restart, nor shared between gateways, so a client whose requests reach
 /// several gateways needs them to reach the one that kept its conversation.
 #[derive(Debug, Clone, Deserialize)]

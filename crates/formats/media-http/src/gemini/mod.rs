@@ -1,14 +1,19 @@
-//! Google's media models as the Gemini API serves them, over HTTP: Veo
-//! ([`GeminiVeo`]), and its image models through `generateContent`
-//! ([`GeminiImages`]). A provider's base URL includes the version,
+//! Google's media models as the Gemini API serves them, over HTTP: Gemini Omni's videos
+//! ([`GeminiOmni`]), its image models through `generateContent`
+//! ([`GeminiImages`]), its speech models through `interactions`
+//! ([`GeminiSpeech`]), and its embedding models ([`GeminiEmbeddings`]). A provider's base URL includes the version,
 //! `https://generativelanguage.googleapis.com/v1beta`, and its transport the
 //! key, `x-goog-api-key`.
 
+mod embeddings;
 mod images;
-mod veo;
+pub(crate) mod omni;
+mod speech;
 
+pub use embeddings::GeminiEmbeddings;
 pub use images::GeminiImages;
-pub use veo::GeminiVeo;
+pub use omni::GeminiOmni;
+pub use speech::GeminiSpeech;
 
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;

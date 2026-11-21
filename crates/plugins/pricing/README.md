@@ -28,6 +28,6 @@ outputs, of every kind (tokens, or seconds of audio), as they pass: the
 gateway's request log counts with it too.
 
 It measures. What a host does with a charge, a budget or a wallet, is its
-own; see [the billing examples](../../../examples/README.md#billing-policies).
+own; see [the billing examples](../../../examples/recipes/README.md#billing-policies).
 The binary's catalog holds each provider's list with the config's declared
 `models` laid over it, and it adds each charge to the request's `cost_usd`.

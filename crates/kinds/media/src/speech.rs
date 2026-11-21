@@ -6,8 +6,7 @@
 
 use bytes::Bytes;
 use respan_gateway_conversation::Usage;
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_core::Native;
 
 /// The kind's input: text to speak.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -26,7 +25,7 @@ pub struct Input {
     /// The audio's file format, as the provider names it, such as `mp3`.
     pub audio_format: Option<String>,
     /// The request's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Input {
@@ -57,14 +56,7 @@ pub enum Output {
     Audio(Bytes),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    Native(Native),
 }

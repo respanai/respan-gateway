@@ -13,19 +13,18 @@
 //!
 //! What a format says of a call only in its own fields (OpenAI's items of
 //! a function call, its argument deltas, the call in `response.done`) is
-//! left out with the call: any object that names one of the runner's tools,
-//! or carries the id of one of its calls, is.
+//! left out with the call, by the format, as the loop cannot read them
+//! ([`Calls`]).
 
 use parking_lot::Mutex;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::future::ready;
 use respan_gateway_core::futures::stream::{self, StreamExt};
-use respan_gateway_core::{ClientContext, EventStream, Fault, NativeFields, NativeValue};
+use respan_gateway_core::{ClientContext, EventStream, Fault, Native};
 use respan_gateway_realtime::{Input, Output, Session, Status, Tool, ToolResult};
-use serde_json::{Map, Value};
+use respan_gateway_realtime_ws::Calls;
 use tokio::time::Instant;
 
 use super::tools::{run_tools, spend};
@@ -48,9 +47,8 @@ struct State {
     /// The runner's tools, by the name the model has, but those the client
     /// names too.
     offered: Vec<Tool>,
-    names: HashSet<String>,
-    /// The ids of the runner's calls, and of the items that hold them.
-    ids: HashSet<String>,
+    /// Their names, and the ids of their calls.
+    calls: Calls,
     /// Calls being run.
     running: usize,
     /// A response is being made.
@@ -82,8 +80,10 @@ pub(super) fn run(
     let names = offered.iter().map(|t| t.name.clone()).collect();
     let state = Arc::new(Mutex::new(State {
         offered,
-        names,
-        ids: HashSet::new(),
+        calls: Calls {
+            names,
+            ids: Default::default(),
+        },
         running: 0,
         active: false,
         called: false,
@@ -140,9 +140,9 @@ fn offer(state: &mut State, session: &mut Session) {
     };
     // A tool the client names is the client's.
     for tool in tools.iter() {
-        state.names.remove(&tool.name);
+        state.calls.names.remove(&tool.name);
     }
-    let names = &state.names;
+    let names = &state.calls.names;
     tools.extend(
         state
             .offered
@@ -190,21 +190,21 @@ fn see(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, mut output: Output)
     match &mut output {
         Output::Opened(session) | Output::Updated(session) => {
             if let Some(tools) = &mut session.tools {
-                tools.retain(|t| !state.names.contains(&t.name));
+                tools.retain(|t| !state.calls.names.contains(&t.name));
             }
         }
         Output::ResponseStart { native, .. } => {
             state.active = true;
             (state.called, state.client_called) = (false, false);
-            scrub_fields(state, native);
+            state.calls.fields(native);
         }
         Output::ToolCall {
             id,
             name,
             arguments,
             ..
-        } if state.names.contains(name.as_str()) => {
-            state.ids.insert(id.clone());
+        } if state.calls.names.contains(name.as_str()) => {
+            state.calls.ids.insert(id.clone());
             state.running += 1;
             state.called = true;
             let job = Job::Run {
@@ -225,14 +225,12 @@ fn see(state: &mut State, jobs: &mpsc::UnboundedSender<Job>, mut output: Output)
                 state.respond = false;
                 let _ = jobs.unbounded_send(Job::Respond);
             }
-            scrub_fields(state, native);
+            state.calls.fields(native);
         }
-        Output::Native(NativeValue { value, .. }) => {
-            let mut raw = Value::clone(value);
-            if scrub(state, &mut raw) {
+        Output::Native(native) => {
+            if state.calls.event(native) {
                 return None;
             }
-            *value = Arc::new(raw);
         }
         _ => {}
     }
@@ -247,7 +245,11 @@ async fn answer(
     state: Arc<Mutex<State>>,
 ) -> Vec<Input> {
     let (id, name, arguments) = match job {
-        Job::Respond => return vec![Input::Respond { native: None }],
+        Job::Respond => {
+            return vec![Input::Respond {
+                native: Native::default(),
+            }];
+        }
         Job::Run {
             id,
             name,
@@ -269,72 +271,9 @@ async fn answer(
     state.running = state.running.saturating_sub(1);
     if state.running == 0 && state.respond && !state.active {
         state.respond = false;
-        sent.push(Input::Respond { native: None });
+        sent.push(Input::Respond {
+            native: Native::default(),
+        });
     }
     sent
-}
-
-/// Leaves the runner's calls out of an event's own fields.
-fn scrub_fields(state: &mut State, native: &mut Option<NativeFields>) {
-    if let Some(native) = native {
-        for value in native.fields.values_mut() {
-            prune(state, value);
-        }
-    }
-}
-
-/// Leaves the runner's calls out of a format's own event: `true` if the
-/// event is about one of them (it or an object it holds names one), and is
-/// left out whole.
-fn scrub(state: &mut State, event: &mut Value) -> bool {
-    let Value::Object(fields) = event else {
-        return false;
-    };
-    let held = std::iter::once(&*fields).chain(fields.values().filter_map(Value::as_object));
-    let ours: Vec<&Map<String, Value>> = held.filter(|o| is_ours(state, o)).collect();
-    if !ours.is_empty() {
-        let ids: Vec<String> = ours.iter().flat_map(|o| ids_of(o)).collect();
-        state.ids.extend(ids);
-        return true;
-    }
-    prune(state, event);
-    false
-}
-
-/// Takes the runner's calls out of the arrays in `value`.
-fn prune(state: &mut State, value: &mut Value) {
-    match value {
-        Value::Array(items) => {
-            items.retain(|item| match item.as_object() {
-                Some(o) if is_ours(state, o) => {
-                    let ids: Vec<String> = ids_of(o).collect();
-                    state.ids.extend(ids);
-                    false
-                }
-                _ => true,
-            });
-            items.iter_mut().for_each(|item| prune(state, item));
-        }
-        Value::Object(fields) => fields.values_mut().for_each(|v| prune(state, v)),
-        _ => {}
-    }
-}
-
-/// Whether `object` is one of the runner's calls, or holds one's answer: it
-/// names one of its tools, or carries the id of one of its calls.
-fn is_ours(state: &State, object: &Map<String, Value>) -> bool {
-    let str_of = |key: &str| object.get(key).and_then(Value::as_str);
-    str_of("name").is_some_and(|name| state.names.contains(name))
-        || IDS
-            .iter()
-            .any(|key| str_of(key).is_some_and(|id| state.ids.contains(id)))
-}
-
-/// The keys of the ids a format gives a call, or the item that holds it.
-const IDS: [&str; 3] = ["call_id", "id", "item_id"];
-
-/// The ids an object of a call carries.
-fn ids_of(object: &Map<String, Value>) -> impl Iterator<Item = String> + '_ {
-    IDS.into_iter()
-        .filter_map(|key| object.get(key)?.as_str().map(str::to_owned))
 }

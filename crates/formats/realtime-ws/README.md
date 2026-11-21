@@ -11,12 +11,25 @@ a format per spec:
   `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent`
   after `wss://generativelanguage.googleapis.com`. Its server sends JSON in
   binary frames, which its transport takes as text.
+- `OpenAiRealtimeBeta`, `openai-realtime-beta`: OpenAI Realtime's beta
+  protocol, which providers that adopted it before GA still speak, sent to
+  `/realtime` after the provider's base URL. It is no client's format: GA
+  serves `/realtime`. Each frame is respelled at the wire (some server
+  events' names, a session's fields at its top, its formats' names such as
+  `pcm16`, a model's message parts' types), so it reads and writes as
+  `OpenAiRealtime` does, and its natives are OpenAI Realtime's. A
+  transcription session is refused. Its PCM names no rate: OpenAI heard it
+  at 24 kHz (`OpenAiRealtimeBeta::DEFAULT`), and a provider that hears it at
+  another says so (`OpenAiRealtimeBeta::hearing`), which the user's audio is
+  converted to until a session names a format.
 - `MistralRealtime`, `mistral-realtime`: Mistral's realtime transcription, at
   `/audio/transcriptions/realtime` after `wss://api.mistral.ai/v1`.
-- `ResponsesWs`, `responses-ws`: OpenAI's Responses over WebSocket, at
-  `/responses` after `wss://api.openai.com/v1`. It is not realtime: it
-  streams Responses over a socket, and uses the kind's types only as native
-  events.
+- `OpenAiLive`, `openai-live`: OpenAI's Live API, which its full-duplex
+  Live models (`gpt-live-1`) speak, at `/live/sessions` after
+  `wss://api.openai.com/v1`, with no query.
+- `PhonicSts`, `phonic-sts`: Phonic's speech-to-speech, which its models
+  (`phonic-1`) speak, at `/sts/ws` after `wss://api.phonic.ai/v1`, with no
+  query.
 
 Each is served at a path ending in its own, but not in another's that ends
 in it (Mistral's in OpenAI's `/realtime`), and sends to it;
@@ -53,10 +66,30 @@ them, so `clientContent` and `toolResponse` are written whole.
 `activityStart`, `audioStreamEnd`, `goAway`, `toolCallCancellation` and
 `sessionResumptionUpdate` stay native.
 
-`OpenAiRealtime` and `GeminiLive` write each other's events too: see
-[Translation](#translation). `ResponsesWs` decodes every frame to the
-kind's `Input::Native` or `Output::Native`, tagged with its name, and
-writes no other format's.
+`OpenAiLive` does the same for OpenAI's Live API: the session's start and
+updates (its model, instructions, voice and one audio format), audio both
+ways, both transcripts and errors. Its usage, the session's seconds so far,
+is `Seconds` beyond the last, beside the event, which stays native, as
+delegation and the rest do. It is full duplex: no turns or responses.
+
+`PhonicSts` does the same for Phonic's speech-to-speech: its `config` (its
+model, system prompt, voice and both audio formats), audio both ways, its
+tools' calls (`tool_call`) and answers (`tool_call_output`), the
+user's turns (`user_started_speaking`, `user_finished_speaking`) and
+transcript (`input_text`, a word at a time, spaced as it is told), the
+model's turns
+(`assistant_started_speaking`, `assistant_finished_speaking`,
+`interrupted_response`) and the transcript each audio chunk carries, and
+errors. It bills a conversation by its minutes and says no usage, so the
+seconds since its `conversation_created` are `Seconds` at each frame but
+its audio, and at its end. A tool's call ends the response it is made in,
+and the audio after it begins another, so a response's start or end that
+Phonic did not say is made up, and not written to its own client. A
+`config`'s own tools and push to talk, `say`, `generate_reply` and the rest
+stay native.
+
+`OpenAiRealtime`, `GeminiLive`, `OpenAiLive` and `PhonicSts` write each other's events
+too: see [Translation](#translation).
 
 Plugins filter events with `cx.filter(|e: &mut Output| ..)` (client edge)
 or `px.filter(..)` (provider edge), and drop one with a `Filter` that does
@@ -74,18 +107,21 @@ would send, its usage in `response.done`.
 
 What one spec has and the other has not is emulated, dropped or refused:
 
-- To Gemini: the session is created before its setup; an update that
-  changes nothing is acknowledged, one that changes anything closes the
-  session 1008 (Gemini fixes its setup); `response.cancel` ends the
-  response at once and drops the rest of its turn; with manual turns the
-  user's audio opens an activity and its commit ends it. The usage of a
-  response that ended in calls or an interruption, which Gemini reports
-  after, at its turn's end, is in the next `response.done`.
-  `conversation.item.truncate` is dropped, as Gemini keeps only what it
-  sent; so are ids, tracing, noise reduction, transcription settings and
-  VAD tuning. A message is taken only as the user's text answered at once;
-  history, item edits, response overrides, a commit under server VAD, a
-  tool choice other than `auto` and `create_response: false` are refused.
+- To Gemini: the session is created before its setup; a later session is
+  acknowledged, what it changes dropped (Gemini fixes its setup);
+  `response.cancel` ends the response at once and drops the rest of its
+  turn; with manual turns the user's audio opens an activity and its
+  commit ends it. The usage of a response that ended in calls or an
+  interruption, which Gemini reports after, at its turn's end, is in the
+  next `response.done`. `conversation.item.truncate` is dropped, as Gemini
+  keeps only what it sent; so are ids, tracing, noise reduction,
+  transcription settings, VAD tuning and OpenAI's own tool choice, output
+  limit and `create_response`/`interrupt_response`, as are a commit and a
+  `response.create` to nothing under server VAD (Gemini answers each turn
+  itself). The user's text alone is answered at once; any other message,
+  such as history, is a `clientContent` turn, a system message the user's,
+  its parts but text dropped, and a message with no text dropped whole.
+  Item edits and response overrides are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
   its answers dropped: the user's transcript streams, and is whole at an
@@ -103,6 +139,38 @@ What one spec has and the other has not is emulated, dropped or refused:
   Search, non-blocking functions and video are refused. An error closes a
   Gemini client, which knows a refusal only as a close: 1007 if its cause
   is `Invalid`, and none if `NothingToCancel`.
+  From any client, an audio format OpenAI does not take (PCM at a rate
+  but 24 kHz) is left out, and the audio converted to 24 kHz PCM.
+
+- To OpenAI Live: the session is fixed at its start, in the client's
+  audio format if it takes it, else 24 kHz PCM; a later session is
+  acknowledged, what it changes dropped. Voice detection and transcription
+  settings are dropped; anything else it has none of, such as tools, text
+  output, commits, messages and responses, is refused.
+- From OpenAI Live: the first session told of is its `session.started`;
+  turns, responses, token usage and whole transcripts are not written;
+  text and tools' calls are refused. OpenAI sends a session with a Live
+  model (`gpt-live-` and a version) to its Live API, any other to Realtime.
+- To Phonic: the session is fixed at its `config`, each audio format the
+  client's if it takes it, else 44.1 kHz PCM; a later session is
+  acknowledged, what it changes dropped. Audio is sent in chunks of at most 40 ms, the
+  longest it takes. A voice is kept only from a Phonic client, as another
+  format's names another vendor's. Each tool is one its client runs,
+  defined for the conversation, its arguments always matching its schema;
+  a tool's answer is written as it comes, and the response asked for after
+  it dropped, as Phonic answers it itself. Turns the client ends are its
+  push to talk: the user's first audio of a turn unmutes it, and its commit
+  mutes it, with a second of silence, which Phonic waits for before it
+  answers. It hears audio only as fast as it plays, so audio sent faster is
+  cut at its commit. Voice detection and transcription settings and
+  another format's tool choice are dropped; anything else it has none of,
+  such as text output, a commit under its voice detection, messages,
+  cancels and a response to nothing it answers, is refused.
+- From Phonic: the first session told of is its
+  `ready_to_start_conversation`; the model's transcript goes with its next
+  audio chunk, or with an empty one at its turn's end, the user's a word at a time, another format's parts of a
+  word joined, not whole, and usage is not written;
+  text, and a tool's call whose arguments are not JSON, are refused.
 
 `MistralRealtime` transcribes and says nothing else, so it is the provider of
 an OpenAI Realtime transcription session (`type: "transcription"`), and a
@@ -137,20 +205,24 @@ transcript's deltas and its end, with the usage reported since the last in
 transcription has none of, is not written. So a Mistral client transcribes
 with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
-A refused input is `bad_request`, closing the client 1008; a refused
-output `upstream`. Another format's natives, fields and events alike, are
+A refused input is `bad_request` coded `unsupported`, closing the client
+1008; a refused output the gateway's, coded `untranslatable`. Another format's natives, fields and events alike, are
 dropped by a writer, with a warning at the provider's: what has meaning
-beyond its format belongs in the kind. An error says its
+beyond its format belongs in the kind. OpenAI's and Gemini's
+open their own to code that names them (`fields`, `with_fields`), OpenAI
+Live's for reading (`fields`), Mistral's to say what its transcript heard
+(`heard_seconds`), and `Calls` leaves some tools' calls out of OpenAI's and
+Gemini's. An error says its
 cause as any format reads it (`Cause`: `Invalid`, `NothingToCancel`,
 `Provider`), set by the format that read it from its own codes.
 
 A session's first input arrives only once it is routed, so routing reads
 its model from the handshake: `requested_model(&Original)` is `?model=`,
-OpenAI's and, by the gateway's convention, a Gemini client's. The model
-routing chose goes in the call as `SessionModel`, which OpenAI's and
-Mistral's providers dial (else the client's `?model=`; with neither the
-session is refused), and into the opening `Session` by
-`realtime::set_model`, which Gemini's setup names. Each provider writes its
+OpenAI's and, by the gateway's convention, a Gemini or OpenAI Live
+client's. The model routing chose goes in the call as `SessionModel`, which
+OpenAI's and Mistral's providers dial (else the client's `?model=`; with
+neither the session is refused), and into the opening `Session` by
+`realtime::set_model`, which Gemini's setup and OpenAI Live's start name. Each provider writes its
 own query, never the client's.
 
 A transcription is one from its connect, as OpenAI's is: its client asks
@@ -161,4 +233,4 @@ first session is then a transcription, unless it says otherwise; a session
 that says nothing of it is a conversation.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
-[realtime examples](../../../examples/realtime).
+[realtime examples](../../../examples/recipes/realtime.rs).

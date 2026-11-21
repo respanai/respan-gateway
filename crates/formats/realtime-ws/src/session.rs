@@ -4,16 +4,14 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, NativeValue};
+use respan_gateway_core::{Connection, EventStream, Fault};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
-use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
+use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo, Reach};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
-
-use serde_json::Value;
 
 /// Reads one frame as zero or more events.
 pub(crate) type Read<T> = Box<dyn Decoder<T>>;
@@ -31,13 +29,14 @@ pub(crate) fn say() -> (Say, Said) {
     mpsc::unbounded()
 }
 
-/// Every spec of the crate, which a client's request is matched against
-/// together, and whose natives each other's writers know what to do with.
-pub(crate) const SPECS: [&Spec; 4] = [
+/// Every spec of the crate: what a client's upgrade request is matched
+/// against.
+pub(crate) const SPECS: [&Spec; 5] = [
     &crate::openai::SPEC,
     &crate::gemini::SPEC,
     &crate::mistral::SPEC,
-    &crate::responses::SPEC,
+    &crate::live::SPEC,
+    &crate::phonic::SPEC,
 ];
 
 /// What a spec says of its session.
@@ -71,6 +70,14 @@ impl Spec {
                 .any(|v| v.eq_ignore_ascii_case("websocket"))
             && at(self.path)
             && !SPECS.iter().any(|other| longer(other) && at(other.path))
+    }
+
+    /// How its provider is reached: as a session, in binary frames if the
+    /// spec sends them.
+    pub(crate) fn reach(&self) -> Reach {
+        Reach::Session {
+            binary_text: self.binary_text,
+        }
     }
 
     /// A transport to its provider at `base_url`, taking binary text if the
@@ -168,6 +175,14 @@ impl Spec {
     }
 }
 
+/// The model a call dials: the one routing chose, else the one its
+/// client's handshake asks for, if either names one.
+pub(crate) fn dialled_model(io: &ProviderIo) -> Option<String> {
+    let chosen = io.extensions().get::<crate::SessionModel>();
+    let asked = || crate::requested_model(io.extensions().get::<h::raw::Original>()?);
+    chosen.map(|m| m.0.clone()).or_else(asked)
+}
+
 /// The model at `?model=` of a client's handshake, unescaped, if it names one.
 pub(crate) fn model_at(uri: &Uri) -> Option<String> {
     let query = uri.query()?.as_bytes();
@@ -228,76 +243,9 @@ fn offer_beside_the_clients(
     Ok(())
 }
 
-/// A client's session of `name`'s native events alone: each frame one
-/// `Input::Native`, and only `Output::Native` of `name` written. A frame that
-/// is not JSON is the client's fault, `bad_request`.
-pub(crate) fn native_client(name: &'static str) -> (Read<Input>, Box<dyn Encoder<Output>>) {
-    let read = move |raw: Bytes, out: &mut Vec<Input>| {
-        let json: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
-        out.push(Input::native(name, json));
-        Ok(())
-    };
-    let write = move |event: &Output, out: &mut Vec<Bytes>| {
-        out.push(match event {
-            Output::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
-        });
-        Ok(())
-    };
-    (Box::new(read), Box::new(write))
-}
-
-/// A provider's session of `name`'s native events alone: only
-/// `Input::Native` of `name` written, and each frame one `Output::Native`. A
-/// frame that is not JSON is the provider's fault, `upstream`.
-pub(crate) fn native_provider(name: &'static str) -> (Box<dyn Encoder<Input>>, Read<Output>) {
-    let write = move |event: &Input, out: &mut Vec<Bytes>| {
-        out.push(match event {
-            Input::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
-        });
-        Ok(())
-    };
-    let read = move |raw: Bytes, out: &mut Vec<Output>| {
-        let json: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
-        out.push(Output::native(name, json));
-        Ok(())
-    };
-    (Box::new(write), Box::new(read))
-}
-
-/// A native event's JSON as its frame. An event of another format, or one
-/// the kind has a form for, which this format does not translate, is
-/// the gateway's misconfiguration or a plugin's, not the client's: `config`.
-fn written(format: &str, event: Option<&NativeValue>) -> Result<Bytes, Fault> {
-    let Some(event) = event.filter(|event| event.format.as_ref() == format) else {
-        return Err(Fault::config(
-            "a realtime event requires explicit translation to another format",
-        ));
-    };
-    serde_json::to_vec(&*event.value)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("an event could not be written").with_source(e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_native_events_of_the_format_are_written() {
-        let event = NativeValue::new("one", serde_json::json!({"text":"edited"}));
-        assert_eq!(
-            written("one", Some(&event)).expect("same format"),
-            Bytes::from_static(br#"{"text":"edited"}"#)
-        );
-        for refused in [written("two", Some(&event)), written("one", None)] {
-            let refused = refused.expect_err("foreign event");
-            assert!(refused.code() == "config");
-        }
-    }
 
     /// Regression: a model was put in the query as it was, so `a b` broke
     /// the URL and `x&foo=bar` added a parameter.
