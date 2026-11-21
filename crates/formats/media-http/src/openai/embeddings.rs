@@ -290,7 +290,7 @@ fn decode_whole(raw: Bytes, asked: Option<usize>, out: &mut Vec<Output>) -> Resu
     let held = v["data"].as_array().map_or(0, Vec::len);
     match asked {
         Some(asked) if asked != held => {
-            let what = format!("holds {held} vectors for {asked} inputs");
+            let what = format!("holds a vector count of {held} for an input count of {asked}");
             return Err(unreadable(NAME, &what));
         }
         None if held == 0 => return Err(unreadable(NAME, "holds no vectors")),
