@@ -32,6 +32,7 @@
 
 mod decode;
 mod encode;
+pub(crate) mod generation;
 mod output_schema;
 mod request;
 #[cfg(test)]

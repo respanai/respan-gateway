@@ -15,6 +15,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
 
+use super::generation::Generation;
 use super::{ROLES, SIGNATURE, SYNTHETIC};
 use crate::schema::{
     Own, arguments_object, base64_field, edit_native, effort_name, merge_fields, merge_missing,
@@ -311,9 +312,7 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
 /// Whether a call to `model` signs the function calls in its history: one
 /// to any model but those before Gemini 3.
 pub fn needs_signatures(model: Option<&str>) -> bool {
-    let model = model.unwrap_or_default();
-    let model = model.strip_prefix("models/").unwrap_or(model);
-    !(model.starts_with("gemini-1") || model.starts_with("gemini-2"))
+    Generation::of(model.unwrap_or_default()).is_none_or(|g| g.needs_signatures())
 }
 
 /// The first call of each `model` content in request `v` signed with the
@@ -789,26 +788,6 @@ fn read_thinking(config: &mut Map<String, Value>) -> Option<Reasoning> {
 /// Thinking budgets per effort on Gemini 2.5; `minimal`'s is per model.
 const EFFORT_BUDGETS: &[(&str, u64)] = &[("low", 1024), ("medium", 2048), ("high", 4096)];
 
-/// The least thinking budget of a Gemini 2.5 `model`.
-fn minimal_budget(model: &str) -> u64 {
-    if model.contains("flash-lite") {
-        512
-    } else if model.contains("2.5-pro") || model.contains("2-5-pro") {
-        128
-    } else if model.contains("flash") {
-        1
-    } else {
-        128
-    }
-}
-
-/// The major version of a Gemini `model`, if its name says one.
-fn gemini_version(model: &str) -> Option<u32> {
-    let (_, after) = model.split_once("gemini-")?;
-    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse().ok()
-}
-
 /// A call whose `thinkingConfig` is an effort the kind wrote, its level or
 /// a budget of 0 for none, as a client of another format names it: on
 /// Gemini 3 and later, the level the model has for it (the flash line has
@@ -817,8 +796,7 @@ fn gemini_version(model: &str) -> Option<u32> {
 /// thinking budget for it (none is 0); before 2.5, which does not think,
 /// none. Thoughts are included but for none.
 pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
-    let model = model.to_ascii_lowercase();
-    let Some(version) = gemini_version(&model) else {
+    let Some(gemini) = Generation::of(&model.to_ascii_lowercase()) else {
         return;
     };
     let Some(Value::Object(config)) = v.get_mut("generationConfig") else {
@@ -836,18 +814,16 @@ pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
         _ => return,
     };
     let none = effort == "none";
-    let older = version < 2 || model.contains("gemini-2.0") || model.contains("gemini-2-0");
+    let older = gemini.older();
     if older {
         thinking.shift_remove("thinkingLevel");
         thinking.shift_remove("thinkingBudget");
-    } else if version >= 3 {
-        let flash = model.contains("gemini-3-flash") || model.contains("gemini-3.1-flash");
-        let medium = flash || model.contains("gemini-3.1-pro-preview");
-        let floor = if flash { "minimal" } else { "low" };
+    } else if gemini.version >= 3 {
+        let floor = gemini.level_floor();
         let level = match effort.as_str() {
             "minimal" | "none" => floor,
             "low" => "low",
-            "medium" if medium => "medium",
+            "medium" if gemini.has_medium() => "medium",
             _ => "high",
         };
         thinking.shift_remove("thinkingBudget");
@@ -855,7 +831,7 @@ pub(crate) fn effort_thinking(model: &str, v: &mut Map<String, Value>) {
     } else {
         let budget = match effort.as_str() {
             "none" => 0,
-            "minimal" => minimal_budget(&model),
+            "minimal" => gemini.minimal_budget(),
             effort => EFFORT_BUDGETS
                 .iter()
                 .find(|(e, _)| *e == effort)

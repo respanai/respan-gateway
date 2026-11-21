@@ -4,12 +4,12 @@
 //! reads it in an answer, and writes it to its client; a call to a vendor
 //! that takes it back writes it with [`write_reasoning`]. OpenAI's models
 //! take their limit as `max_completion_tokens`, wherever they are served:
-//! [`OpenAi`] is the dialect of every vendor of them. [`in_responses`] says
-//! which chats those models only take over Responses.
+//! [`OpenAi`] is the dialect of every vendor of them. [`in_responses`] asks
+//! their [`Generation`] whether a chat goes to Responses.
 
 use respan_gateway_conversation::{Content, Input, Message, Output, Role};
 use respan_gateway_conversation_http::Schema;
-use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_conversation_http::openai::{Generation, OpenAiChat};
 use respan_gateway_core::{Fault, Result};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
@@ -86,30 +86,10 @@ fn completion_limit(body: Bytes) -> Result<Bytes> {
         .map_err(unwritten)
 }
 
-/// The models only Responses serves, by a part of their names.
-const RESPONSES_ONLY: &[&str] = &["-pro", "codex", "deep-research", "computer-use"];
-
-/// Whether a chat to `model` goes to Responses: a model only it serves, or,
-/// if it offers `tools` ([`Ask::tools`]), gpt-5.4 or later, whose reasoning
-/// Chat Completions refuses with function tools (from gpt-5.6 they reason
-/// unless told not to). Any other chat stays in Chat Completions, which
-/// takes what Responses cannot, such as `stop`, `seed` and `n`.
+/// Whether a chat to `model` goes to Responses, as its [`Generation`] says;
+/// `tools` is whether it offers any ([`Ask::tools`]).
 pub fn in_responses(model: &str, tools: bool) -> bool {
-    if RESPONSES_ONLY.iter().any(|p| model.contains(p)) {
-        return true;
-    }
-    if !tools {
-        return false;
-    }
-    let Some(version) = model.strip_prefix("gpt-") else {
-        return false;
-    };
-    let version = version.split('-').next().unwrap_or_default();
-    let (major, minor) = version.split_once('.').unwrap_or((version, "0"));
-    match (major.parse::<u32>(), minor.parse::<u32>()) {
-        (Ok(major), Ok(minor)) => (major, minor) >= (5, 4),
-        _ => false,
-    }
+    Generation::of(model).in_responses(tools)
 }
 
 #[cfg(test)]
@@ -129,24 +109,5 @@ mod tests {
         assert_eq!(both, serde_json::json!({ "max_completion_tokens": 7 }));
         let body = Bytes::from_static(br#"{"max_completion_tokens":7}"#);
         assert_eq!(completion_limit(body.clone()).ok(), Some(body));
-    }
-
-    #[test]
-    fn a_chat_goes_to_responses_for_a_model_only_it_serves_or_tools_it_refuses() {
-        for model in [
-            "gpt-5.5-pro",
-            "gpt-5-codex",
-            "o3-deep-research",
-            "computer-use-preview",
-        ] {
-            assert!(in_responses(model, false), "{model}");
-        }
-        for model in ["gpt-5.4", "gpt-5.6-terra", "gpt-6-luna"] {
-            assert!(in_responses(model, true), "{model}");
-            assert!(!in_responses(model, false), "{model} without tools");
-        }
-        for model in ["gpt-5.2", "gpt-5-mini", "gpt-4o", "o4-mini"] {
-            assert!(!in_responses(model, true), "{model}");
-        }
     }
 }

@@ -11,6 +11,7 @@ use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
 use super::{AUDIO, DOCUMENTS, IMAGES, ROLES, format_of};
+use crate::anthropic::generation::Generation;
 use crate::anthropic::{effort_name, effort_thinking, fit_thinking, write_thinking};
 use crate::schema::{arguments_object, claude_sampling, sealed, set, stop_json, untranslatable};
 
@@ -253,7 +254,10 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
 /// Converse's temperature is at most 1, too.
 fn claude_call(chat: &Input, v: &mut Map<String, Value>) -> Map<String, Value> {
     let o = &chat.options;
-    let claude = chat.model.as_deref().is_some_and(|m| m.contains("claude"));
+    let claude = chat
+        .model
+        .as_deref()
+        .is_some_and(|m| Generation::of(m).is_some());
     // WARN: an effort Anthropic has no level for is dropped.
     let effort = o.reasoning.as_ref().and_then(|r| r.effort);
     let effort = effort.and_then(|e| effort_name(e).ok().flatten());

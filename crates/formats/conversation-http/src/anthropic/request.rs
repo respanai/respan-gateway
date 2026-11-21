@@ -19,6 +19,7 @@ use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
 
 use crate::anthropic::AnthropicMessages;
+use crate::anthropic::generation::{Generation, Thinks};
 use crate::anthropic::output_schema::output_schema;
 
 /// Anthropic's custom tools and choice, with whether calls may be
@@ -444,79 +445,6 @@ pub(crate) fn read_thinking(input: &mut Input) {
         });
 }
 
-/// How a Claude model thinks.
-enum Thinks {
-    /// Adaptively, to an effort: Claude 4.6 and later.
-    Adaptively,
-    /// To a token budget: Claude 3.7 to 4.5.
-    ToBudget,
-    /// Not at all: Claude 3 but 3.7.
-    Never,
-}
-
-fn thinks(model: &str) -> Thinks {
-    let budgeted = [
-        "-4-0", "-4.0", "-4-1", "-4.1", "-4-5", "-4.5", "-4-2025", "-4@",
-    ];
-    let family = |family: &str| {
-        model.ends_with(&format!("{family}-4"))
-            || budgeted
-                .iter()
-                .any(|v| model.contains(&format!("{family}{v}")))
-    };
-    if model.contains("claude-3-7") || model.contains("3-7-sonnet") {
-        Thinks::ToBudget
-    } else if model.contains("claude-3") {
-        Thinks::Never
-    } else if ["opus", "sonnet", "haiku"].iter().any(|f| family(f)) {
-        Thinks::ToBudget
-    } else {
-        Thinks::Adaptively
-    }
-}
-
-/// Whether Claude `model` is of a `family` at `from` or later, as
-/// `claude-opus-5-5` is Opus 5.5; a dated model is of its major's `.0`.
-fn at_least(model: &str, (family, from): &(&str, (u32, u32))) -> bool {
-    fn number(s: &str) -> Option<(u32, &str)> {
-        let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-        let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
-        Some((n, &s[digits..]))
-    }
-    let Some((major, rest)) = model
-        .split_once(&format!("{family}-"))
-        .and_then(|(_, r)| number(r))
-    else {
-        return false;
-    };
-    let minor = rest.strip_prefix(['-', '.']).and_then(number);
-    (major, minor.map_or(0, |(minor, _)| minor)) >= *from
-}
-
-/// Whether Claude `model` takes a forced tool choice: Opus and Sonnet 5.5,
-/// and Fable and Mythos 5.1, and later refuse one.
-fn forces_tools(model: &str) -> bool {
-    let refusing = [
-        ("opus", (5, 5)),
-        ("sonnet", (5, 5)),
-        ("fable", (5, 1)),
-        ("mythos", (5, 1)),
-    ];
-    !refusing.iter().any(|f| at_least(model, f))
-}
-
-/// Whether Claude `model` takes `thinking: {type: "disabled"}`: Opus and
-/// Sonnet 5.5, Fable and Mythos, and later refuse it.
-fn disables_thinking(model: &str) -> bool {
-    let refusing = [
-        ("opus", (5, 5)),
-        ("sonnet", (5, 5)),
-        ("fable", (5, 0)),
-        ("mythos", (5, 0)),
-    ];
-    !refusing.iter().any(|f| at_least(model, f))
-}
-
 /// The kind of a block or tool choice in Anthropic's terms (`type`) or
 /// Converse's (its one key).
 fn kind(b: &Value) -> Option<&str> {
@@ -571,14 +499,17 @@ fn can_think(v: &Map<String, Value>) -> bool {
 pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
     let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
     let model = model.to_ascii_lowercase();
-    if !model.contains("claude") || v.contains_key("thinking") {
+    let Some(claude) = Generation::of(&model) else {
+        return;
+    };
+    if v.contains_key("thinking") {
         return;
     }
     let effort = v.get("output_config").and_then(|c| c.get("effort"));
     let Some(effort) = effort.and_then(Value::as_str).map(str::to_owned) else {
         return;
     };
-    let thinks = thinks(&model);
+    let thinks = claude.thinks();
     let thinking = match (&thinks, can_think(v)) {
         (Thinks::Adaptively, true) => Some(json!({ "type": "adaptive" })),
         (Thinks::ToBudget, true) => {
@@ -619,13 +550,13 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
 pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
     let model = model.to_ascii_lowercase();
-    if !model.contains("claude") {
+    let Some(claude) = Generation::of(&model) else {
         return;
-    }
+    };
     let choice = v.get_mut("tool_choice").and_then(Value::as_object_mut);
     let forced = choice.filter(|c| matches!(c["type"].as_str(), Some("any" | "tool")));
     let forced = match forced {
-        Some(choice) if !forces_tools(&model) => {
+        Some(choice) if !claude.forces_tools() => {
             // WARN: a forced tool choice this Claude refuses is `auto`.
             choice.insert("type".into(), "auto".into());
             choice.remove("name");
@@ -633,7 +564,7 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
         }
         forced => forced.is_some(),
     };
-    let thinks = thinks(&model);
+    let thinks = claude.thinks();
     let thinking = v.get("thinking").cloned().unwrap_or_default();
     // WARN: a thinking budget, and `disabled` where it is refused, are the
     // nearest effort on Claude 4.6 and later, thinking adaptively for a budget.
@@ -642,7 +573,7 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
             v.insert("thinking".into(), json!({ "type": "adaptive" }));
             Some(effort_for(thinking["budget_tokens"].as_u64().unwrap_or(0)))
         }
-        (Thinks::Adaptively, Some("disabled")) if !disables_thinking(&model) => {
+        (Thinks::Adaptively, Some("disabled")) if !claude.disables_thinking() => {
             v.remove("thinking");
             Some(Effort::Low)
         }

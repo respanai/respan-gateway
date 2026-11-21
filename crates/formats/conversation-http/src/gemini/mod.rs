@@ -80,6 +80,7 @@
 
 mod decode;
 mod encode;
+mod generation;
 mod request;
 #[cfg(test)]
 mod tests;

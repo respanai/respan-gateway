@@ -55,6 +55,7 @@
 
 mod decode;
 mod encode;
+mod generation;
 mod request;
 #[cfg(test)]
 mod tests;
@@ -78,6 +79,7 @@ use std::marker::PhantomData;
 
 use decode::OpenAiDecoder;
 use encode::{Chunks, call_json, envelope, merge_call, merge_choice};
+pub use generation::Generation;
 use request::{
     read_openai_message, read_openai_tools, read_response_format, write_openai_message,
     write_openai_tools, write_reasoning, write_response_format,
