@@ -9,6 +9,7 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::cohere::CohereRerank;
 use respan_gateway_media_http::dashscope::{
     DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
@@ -46,6 +47,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &OpenAiTranscriptions,
     &OpenAiSpeech,
     &OpenAiEmbeddings,
+    &CohereRerank,
     &OpenAiVideos,
     &GeminiOmni,
     &OpenRouterVideos,

@@ -48,6 +48,20 @@ const KINDS: &[(&str, &str)] = &[
     ("moderation", "moderation"),
 ];
 
+/// The kind each of Together's `type`s says a model is.
+const TYPES: &[(&str, &str)] = &[
+    ("chat", "chat"),
+    ("language", "chat"),
+    ("code", "chat"),
+    ("image", "image"),
+    ("embedding", "embedding"),
+    ("rerank", "rerank"),
+    ("audio", "speech"),
+    ("transcribe", "transcription"),
+    ("video", "video"),
+    ("moderation", "moderation"),
+];
+
 /// One entry of an OpenAI-compatible list.
 fn compatible(m: &Value) -> Option<Model> {
     let text = |keys: &[&str]| keys.iter().find_map(|k| m[k].as_str().map(str::to_owned));
@@ -70,9 +84,12 @@ fn compatible(m: &Value) -> Option<Model> {
         .for_each(|can| model.can(can));
     // Mistral's: each a flag, which says its kind too.
     let flagged = |flag: &&(&str, &str)| m["capabilities"][flag.0] == true;
+    // Together's: a `type`.
+    let typed = |t: &&(&str, &str)| m["type"] == t.0;
     model.kind = KINDS
         .iter()
         .find(flagged)
+        .or_else(|| TYPES.iter().find(typed))
         .map(|(_, kind)| (*kind).to_owned());
     let said = m["capabilities"].as_object().into_iter().flatten();
     for (name, _) in said.filter(|(_, on)| **on == true) {
@@ -135,9 +152,9 @@ mod tests {
               "pricing": { "prompt": "0.000003", "completion": "0.000015", "input_cache_read": "0.0000003",
                            "input_cache_write": "0.00000375" },
               "supported_parameters": ["tools", "reasoning", "temperature"] },
-            // Together's: per-million prices, a display name.
+            // Together's: per-million prices, a display name, a type.
             { "id": "meta-llama/Llama-3", "display_name": "Llama 3", "context_length": 8192,
-              "pricing": { "input": 0.88, "output": 0.88 } },
+              "type": "chat", "pricing": { "input": 0.88, "output": 0.88 } },
             // Mistral's: capabilities, a context length of its own name.
             { "id": "mistral-small", "max_context_length": 32000, "description": "Small",
               "capabilities": { "completion_chat": true, "vision": true, "function_calling": true } },
@@ -195,6 +212,35 @@ mod tests {
                 said("speech"),
                 said("moderation"),
                 None,
+            ]
+        );
+    }
+
+    #[test]
+    fn togethers_types_say_its_models_kinds() {
+        let answer = json!([
+            { "id": "Salesforce/Llama-Rank-V1", "type": "rerank", "pricing": { "input": 0.1, "output": 0.1 } },
+            { "id": "BAAI/bge-base-en-v1.5", "type": "embedding" },
+            { "id": "black-forest-labs/FLUX.1-schnell", "type": "image" },
+            { "id": "Qwen/Qwen3-Coder", "type": "code" },
+            { "id": "cartesia/sonic-3", "type": "audio" },
+            { "id": "openai/whisper-large-v3", "type": "transcribe" },
+            { "id": "minimax/hailuo-02", "type": "video" },
+            { "id": "anthropic-like", "type": "model" },
+        ]);
+        let kinds: Vec<_> = listed(&answer).into_iter().map(|m| m.kind).collect();
+        let said = |k: &str| Some(k.to_owned());
+        assert_eq!(
+            kinds,
+            [
+                said("rerank"),
+                said("embedding"),
+                said("image"),
+                said("chat"),
+                said("speech"),
+                said("transcription"),
+                said("video"),
+                None
             ]
         );
     }

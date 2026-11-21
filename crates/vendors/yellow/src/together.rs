@@ -1,7 +1,8 @@
 //! Together: Chat Completions, images and embeddings, as OpenAI serves them,
-//! and videos.
+//! rerank as Cohere does, and videos.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
+use respan_gateway_media_http::cohere::CohereRerank;
 use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiImages};
 use respan_gateway_media_http::together::TogetherVideos;
 
@@ -21,6 +22,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiChat, Some(BASE_URL)),
         (&OpenAiImages, Some(BASE_URL)),
         (&OpenAiEmbeddings, Some(BASE_URL)),
+        (&CohereRerank, Some(BASE_URL)),
         (&TogetherVideos, Some(VIDEOS_URL)),
     ],
     ..Vendor::DEFAULT

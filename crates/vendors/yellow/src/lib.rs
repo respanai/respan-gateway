@@ -7,6 +7,7 @@ pub mod baseten;
 pub mod bedrock;
 pub mod cerebras;
 pub mod cloudflare;
+pub mod cohere;
 pub mod concentrate;
 pub mod deepinfra;
 pub mod deepseek;
@@ -60,6 +61,7 @@ pub const ALL: &[&Vendor] = &[
     &baseten::VENDOR,
     &concentrate::VENDOR,
     &primeintellect::VENDOR,
+    &cohere::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,

@@ -1,6 +1,6 @@
 //! OpenRouter: Chat Completions, Responses and Messages, for many vendors'
-//! models, and images, embeddings, transcriptions, speech, videos and
-//! decisions.
+//! models, and images, embeddings, transcriptions, speech, videos,
+//! decisions, and rerank as Cohere does.
 
 use respan_gateway_conversation::{Input, Output, Usage};
 use respan_gateway_conversation_http::Schema;
@@ -16,6 +16,7 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::path::set_path;
 use respan_gateway_media::{image, speech, transcription};
+use respan_gateway_media_http::cohere::CohereRerank;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions,
 };
@@ -58,6 +59,7 @@ pub const VENDOR: Vendor = Vendor {
             Some(BASE_URL),
         ),
         (&OpenRouterVideos, Some(BASE_URL)),
+        (&CohereRerank, Some(BASE_URL)),
         (&Decisions, Some(DECISIONS_URL)),
     ],
     ..Vendor::DEFAULT

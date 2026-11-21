@@ -6,6 +6,7 @@ import anthropic from "@lobehub/icons-static-svg/icons/anthropic.svg?url";
 import azure from "@lobehub/icons-static-svg/icons/azure-color.svg?url";
 import cerebras from "@lobehub/icons-static-svg/icons/cerebras-color.svg?url";
 import cloudflare from "@lobehub/icons-static-svg/icons/cloudflare-color.svg?url";
+import cohere from "@lobehub/icons-static-svg/icons/cohere-color.svg?url";
 import deepinfra from "@lobehub/icons-static-svg/icons/deepinfra-color.svg?url";
 import deepseek from "@lobehub/icons-static-svg/icons/deepseek-color.svg?url";
 import fireworks from "@lobehub/icons-static-svg/icons/fireworks-color.svg?url";
@@ -30,6 +31,7 @@ const icons: Record<string, VendorIcon> = {
   azure: { src: azure, mono: false },
   cerebras: { src: cerebras, mono: false },
   cloudflare: { src: cloudflare, mono: false },
+  cohere: { src: cohere, mono: false },
   deepinfra: { src: deepinfra, mono: false },
   deepseek: { src: deepseek, mono: false },
   fireworks: { src: fireworks, mono: false },
@@ -50,6 +52,8 @@ const domains: [string, string][] = [
   ["azure.com", "azure"],
   ["cerebras.ai", "cerebras"],
   ["cloudflare.com", "cloudflare"],
+  ["cohere.ai", "cohere"],
+  ["cohere.com", "cohere"],
   ["deepinfra.com", "deepinfra"],
   ["deepseek.com", "deepseek"],
   ["fireworks.ai", "fireworks"],

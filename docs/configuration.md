@@ -89,7 +89,7 @@ A provider is a `vendor` with its key, or any compatible endpoint given
 `respan`, `typesafe`, `groq`, `deepseek`, `openrouter`, `xai`, `mistral`,
 `together`, `fireworks`, `ollama`, `azure`, `vllm`, `cloudflare`, `cerebras`,
 `perplexity`, `deepinfra`, `empiriolabs`, `phonic`, `morph`, `stepfun`, `qwen`,
-`baseten`, `concentrate` and `primeintellect`. Each vendor's tier, key, formats and
+`baseten`, `concentrate`, `primeintellect` and `cohere`. Each vendor's tier, key, formats and
 base URL are in [Vendors](vendors.md).
 
 ## Network

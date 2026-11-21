@@ -109,5 +109,6 @@ export const playgroundTab: Partial<Record<Kind, string>> = {
   transcription: "transcribe",
   speech: "speech",
   embedding: "embeddings",
+  rerank: "rerank",
   video: "video",
 };

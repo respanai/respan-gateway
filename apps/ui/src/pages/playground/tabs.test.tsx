@@ -5,6 +5,7 @@ import { json, renderApp, serve } from "@/test/render";
 import { ChatTab } from "./chat";
 import { EmbeddingsTab } from "./embeddings";
 import { ImageTab } from "./image";
+import { RerankTab } from "./rerank";
 import { SpeechTab } from "./speech";
 import { TranscribeTab } from "./transcribe";
 
@@ -149,6 +150,34 @@ describe("EmbeddingsTab", () => {
   });
 });
 
+describe("RerankTab", () => {
+  it("sends each line as a document and lists them best first with their scores", async () => {
+    const calls = serve({
+      "GET /v1/models": models,
+      "POST /v2/rerank": () =>
+        json({
+          results: [
+            { index: 1, relevance_score: 0.83 },
+            { index: 0, relevance_score: 0.02 },
+          ],
+          usage: { search_units: 1 },
+        }),
+    });
+    renderApp(<RerankTab />);
+    await userEvent.type(screen.getByLabelText("Query"), "capital of France");
+    await userEvent.type(screen.getByLabelText("Documents, one per line"), "Bananas are yellow{Enter}{Enter}Paris is the capital");
+    await userEvent.click(screen.getByRole("button", { name: "Rerank" }));
+    const ranked = await screen.findAllByRole("listitem");
+    expect(ranked.map((r) => r.textContent)).toEqual(["#1Paris is the capital0.8300", "#2Bananas are yellow0.0200"]);
+    expect(screen.getByText("1 search unit")).toBeInTheDocument();
+    expect(sentJson(calls, "POST /v2/rerank")).toEqual({
+      model: "rerank-v3.5",
+      query: "capital of France",
+      documents: ["Bananas are yellow", "Paris is the capital"],
+    });
+  });
+});
+
 describe("every tab", () => {
   it("names the API it speaks and links to its kind's requests", async () => {
     serve({ "GET /v1/models": models });
@@ -158,6 +187,7 @@ describe("every tab", () => {
       [<TranscribeTab key="transcribe" />, "transcription", "OpenAI Transcriptions"],
       [<SpeechTab key="speech" />, "speech", "OpenAI Speech"],
       [<EmbeddingsTab key="embedding" />, "embedding", "OpenAI Embeddings"],
+      [<RerankTab key="rerank" />, "rerank", "Cohere Rerank"],
     ] as const;
     for (const [tab, kind, api] of tabs) {
       const { unmount } = renderApp(tab);

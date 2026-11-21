@@ -250,7 +250,7 @@ class Gateway:
 
         Each is a dict with `id` (as clients name it), `owned_by` (the
         provider) and `kind` (`chat`, `embedding`, `image`, `transcription`,
-        `speech`, `video` or `realtime`); `kind` filters them. This asks
+        `speech`, `rerank`, `video` or `realtime`); `kind` filters them. This asks
         every provider, so it takes as long as the slowest.
         """
         return _models(self._admin("/v1/models"), kind)

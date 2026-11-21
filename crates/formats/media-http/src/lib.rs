@@ -16,6 +16,7 @@
 //! - [`together`]: Together's video generation.
 //! - [`empiriolabs`]: EmpirioLabs AI's video generation.
 //! - [`zai`]: Z.ai's video generation.
+//! - [`cohere`]: Cohere's rerank, as Cohere and compatible vendors serve it.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -25,6 +26,7 @@ use respan_gateway_http::native::Json;
 use serde_json::{Map, Value};
 
 pub mod bedrock;
+pub mod cohere;
 pub mod dashscope;
 mod edge;
 pub mod empiriolabs;
@@ -90,6 +92,7 @@ impl Natives for empiriolabs::EmpirioLabsVideos {}
 impl Natives for gemini::GeminiEmbeddings {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiSpeech {}
+impl Natives for cohere::CohereRerank {}
 impl Natives for gemini::GeminiOmni {}
 impl Natives for minimax::MiniMaxVideos {}
 impl Natives for openrouter::OpenRouterVideos {}

@@ -2,6 +2,7 @@ import {
   AudioLines,
   Clapperboard,
   ImageIcon,
+  ListOrdered,
   MessageSquare,
   Mic,
   Radio,
@@ -15,6 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ChatTab } from "./chat";
 import { EmbeddingsTab } from "./embeddings";
 import { ImageTab } from "./image";
+import { RerankTab } from "./rerank";
 import { SpeechTab } from "./speech";
 import { TranscribeTab } from "./transcribe";
 import { VideoTab } from "./video";
@@ -29,6 +31,7 @@ const tabs: { value: string; label: string; icon: LucideIcon; Panel: ComponentTy
   { value: "transcribe", label: "Transcribe", icon: Mic, Panel: TranscribeTab },
   { value: "speech", label: "Speech", icon: AudioLines, Panel: SpeechTab },
   { value: "embeddings", label: "Embeddings", icon: Sigma, Panel: EmbeddingsTab },
+  { value: "rerank", label: "Rerank", icon: ListOrdered, Panel: RerankTab },
   { value: "video", label: "Video", icon: Clapperboard, Panel: VideoTab },
 ];
 
