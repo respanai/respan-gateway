@@ -32,7 +32,7 @@ pub use speech::OpenAiSpeech;
 pub use transcriptions::OpenAiTranscriptions;
 pub use videos::OpenAiVideos;
 
-use crate::edge::{bind_provider, sends};
+use crate::edge::{bind_provider, boolean, sends, whole_number};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation::{Media, MediaSource, Usage};
@@ -247,9 +247,7 @@ fn take_number(map: &mut Map<String, Value>, key: &str) -> Result<Option<f64>, F
 fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fault> {
     let count = match map.remove(key) {
         None | Some(Value::Null) => return Ok(None),
-        Some(Value::Number(n)) => n.as_u64(),
-        Some(Value::String(s)) => s.trim().parse().ok(),
-        Some(_) => None,
+        Some(v) => whole_number(&v),
     };
     count
         .and_then(|n| u32::try_from(n).ok())
@@ -259,11 +257,7 @@ fn take_count(map: &mut Map<String, Value>, key: &str) -> Result<Option<u32>, Fa
 
 /// Whether a field says true: JSON's `true`, or a form's `true`.
 fn is_true(v: Option<&Value>) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => s.eq_ignore_ascii_case("true"),
-        _ => false,
-    }
+    v.and_then(boolean).unwrap_or(false)
 }
 
 /// `seconds` as JSON: a whole number as one, as OpenAI writes it.

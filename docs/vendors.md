@@ -26,7 +26,7 @@ Each vendor is in one of two tiers:
 |:-:|---|---|---|---|
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `openai-live`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/anthropic-dark.svg"><img src="assets/vendors/anthropic.svg" width="20" height="20" alt=""></picture> | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `anthropic-messages` |
-| <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-generate`, `openai-chat`, `gemini-live`, `gemini-images`, `gemini-veo`, `gemini-decisions`, `gemini-embeddings`, `gemini-speech` |
+| <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-generate`, `openai-chat`, `gemini-live`, `gemini-images`, `gemini-omni`, `gemini-decisions`, `gemini-embeddings`, `gemini-speech` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/respan-dark.svg"><img src="assets/vendors/respan.svg" width="20" height="20" alt=""></picture> | Respan | `respan` | `RESPAN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `decisions` |
 | <img src="assets/vendors/typesafe.png" width="20" height="20" alt=""> | TypeSafe | `typesafe` | `TYPESAFE_API_KEY` | `decisions` |
@@ -44,7 +44,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
 | | Nace (Drex) | `nace` | `NACE_API_KEY` | `decisions` (at `/systemone`), `openai-decisions` |
-| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-decisions`, `openai-realtime` |
+| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-decisions`, `openai-realtime` |
 | | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings`, `bedrock-images` |
 | <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
 | <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
@@ -55,7 +55,7 @@ Each vendor is in one of two tiers:
 | | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
 | | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
-| | Qwen | `qwen` | `DASHSCOPE_API_KEY` | `openai-chat`, `dashscope-speech`, `dashscope-transcriptions`, `dashscope-videos`, `openai-realtime-beta` |
+| | Qwen | `qwen` | `DASHSCOPE_API_KEY` | `openai-chat`, `dashscope-speech`, `dashscope-transcriptions`, `dashscope-images`, `dashscope-videos`, `openai-realtime-beta` |
 | | Baseten | `baseten` | `BASETEN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `decisions` (at `/systemone`) |
 | | Concentrate | `concentrate` | `CONCENTRATE_API_KEY` | `openai-chat`, `openai-responses`, `decisions` (at `/systemone`), `openai-decisions` |
 | | Prime Intellect | `primeintellect` | `PRIME_API_KEY` | `openai-chat`, `decisions` (its evaluations, at `/evaluations`) |
@@ -74,6 +74,11 @@ This integration has not been verified against the live API.
 
 MiniMax speech, `minimax-speech`, is called at the same base URL, `/t2a_v2`; the
 key is a bearer token.
+
+xAI's images take no `size`: it is sent as the nearest `aspect_ratio` xAI
+draws (within 5%, else 400) and a `resolution`, `2k` above 1024 pixels on the
+long side, else `1k`. xAI takes no form, so an edit's images are sent in JSON
+as data URLs of their bytes.
 
 ## Base URLs
 
@@ -94,7 +99,7 @@ formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `https://api.empiriolabs.ai` and `https://api.minimax.io`. Gemini's own formats, `gemini-generate`
 (`generateContent` and `streamGenerateContent`, the model in the path),
 `gemini-images` (its image models' `generateContent`), `gemini-speech` (its
-speech models' `interactions`), `gemini-veo` and
+speech models' `interactions`), `gemini-omni` and
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
 `https://api.empiriolabs.ai/v1beta`. DeepInfra serves `decisions` at
@@ -142,9 +147,10 @@ Its InvokeModel formats, `bedrock-embeddings` (Cohere Embed and Titan) and
 `bedrock-images` (Stability AI's models and services), are called at the same
 base URL, `https://bedrock-runtime.<region>.amazonaws.com`.
 
-DashScope's own formats, `dashscope-speech`, `dashscope-transcriptions` and
-`dashscope-videos` (Alibaba Cloud Model Studio's speech synthesis,
-recognition and Wan video generation, which its
+DashScope's own formats, `dashscope-speech`, `dashscope-transcriptions`,
+`dashscope-images` and `dashscope-videos` (Alibaba Cloud Model Studio's
+speech synthesis, recognition, Qwen-Image and Wan image generation and Wan
+video generation, which its
 OpenAI-compatible endpoint does not serve), take its region's API with the
 version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 

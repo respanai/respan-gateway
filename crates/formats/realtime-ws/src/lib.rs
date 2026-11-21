@@ -15,8 +15,8 @@
 //! format keeps what each event says, not its exact bytes. Each writes the
 //! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
-//! cannot change the answer, or refused: an input `bad_request`, closing
-//! the client 1008; an output `upstream`. A frame that is not JSON fails: the client's, `bad_request`;
+//! cannot change the answer, or refused: an input `bad_request` coded
+//! `unsupported`; an output the gateway's, coded `untranslatable`. A frame that is not JSON fails: the client's, `bad_request`;
 //! the provider's, `upstream`. A handshake one refuses is answered
 //! text/plain with the fault's error code, never its message.
 

@@ -65,8 +65,7 @@ impl Provider {
     }
 
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        let mut v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's message is not JSON"))?;
+        let mut v = json::provider_event(&raw)?;
         if !v.is_object() {
             out.push(Output::Native(Native::json::<Key>(v)));
             return Ok(());
@@ -531,10 +530,7 @@ impl Client {
             Output::ResponseDone { .. } => self.answering.store(false, Ordering::Relaxed),
             _ => {}
         }
-        for v in self.encode(&event)? {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.encode(&event)?, out)
     }
 
     fn encode(&mut self, event: &Output) -> Result<Vec<Value>, Fault> {

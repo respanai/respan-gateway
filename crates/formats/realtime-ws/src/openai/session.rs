@@ -8,7 +8,7 @@ use respan_gateway_realtime::{
 use serde_json::{Map, Value, json};
 
 use super::Key;
-use crate::json::{at, merge, number, set, string, take, text};
+use crate::json::{at, merge, number, string, take, text};
 
 const TYPE: &[&str] = &["session", "type"];
 const MODEL: &[&str] = &["session", "model"];
@@ -34,7 +34,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.voice = take(v, VOICE, string, text);
     s.input_audio = take_format(v, INPUT_FORMAT);
     s.output_audio = take_format(v, OUTPUT_FORMAT);
-    s.turns = take(v, TURN_DETECTION, turns, |t| turns_json(t, refuse).ok());
+    s.turns = take(v, TURN_DETECTION, turns, turns_json);
     // A transcription's settings, such as its model, stay where they are.
     s.input_transcription = take(
         v,
@@ -53,11 +53,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// refused by `refuse` where it holds another format's fields.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, &path[1..], value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, &path[1..], value);
     put(TYPE, s.purpose.and_then(purpose_json));
     put(MODEL, s.model.as_ref().and_then(text));
     put(INSTRUCTIONS, s.instructions.as_ref().and_then(text));
@@ -71,13 +67,11 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         let format = format.map(|f| audio_format_json(f).ok_or_else(|| refuse("an audio format")));
         put(path, format.transpose()?);
     }
-    put(
-        TURN_DETECTION,
-        s.turns
-            .as_ref()
-            .map(|t| turns_json(t, refuse))
-            .transpose()?,
-    );
+    let turns = s
+        .turns
+        .as_ref()
+        .map(|t| turns_json(t).ok_or_else(|| refuse("this turn detection")));
+    put(TURN_DETECTION, turns.transpose()?);
     put(
         TRANSCRIPTION,
         s.input_transcription.map(|on| match on {
@@ -87,12 +81,6 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of an
-/// OpenAI frame are written back as OpenAI's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a session field could not be written back")
 }
 
 fn purpose(v: &Value) -> Option<Purpose> {
@@ -188,12 +176,12 @@ fn turns(v: &Value) -> Option<Turns> {
 }
 
 /// Turn detection as GA has it: none for manual turns, else server VAD, or
-/// what type its native names.
-fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// what type its native names; none for another detection.
+fn turns_json(turns: &Turns) -> Option<Value> {
     let vad = match turns {
-        Turns::Manual => return Ok(Value::Null),
+        Turns::Manual => return Some(Value::Null),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return None,
     };
     let mut v = Map::new();
     let mut put = |key: &str, value: Option<Value>| {
@@ -208,7 +196,7 @@ fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     if v.get("type").is_none() {
         v["type"] = "server_vad".into();
     }
-    Ok(v)
+    Some(v)
 }
 
 fn tools(v: &Value) -> Option<Vec<Tool>> {

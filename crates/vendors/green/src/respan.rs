@@ -10,12 +10,11 @@ use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_decision_http::Decisions;
 use serde_json::Value;
 
+use respan_gateway_vendor_kit::chat::in_responses;
 use respan_gateway_vendor_kit::{
     Ask, Body, BoxFuture, Capability, Modality, Model, Models, Price, Vendor, VendorProvider,
     built_wrong, http, json, time,
 };
-
-use crate::openai::in_responses;
 
 /// Where its API is: Chat Completions and Responses at its root, the
 /// others under their vendor's name.

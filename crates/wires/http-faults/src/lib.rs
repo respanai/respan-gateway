@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime};
 use bytes::Bytes;
 use http::StatusCode;
 use http::header::RETRY_AFTER;
-use respan_gateway_core::{Fault, RetryAfter};
+use respan_gateway_core::{ErrorCode, Fault, RetryAfter};
 
 /// The HTTP status a fault asks for, as an extension ([`Fault::with`]): a plugin's
 /// `Fault::new(msg).with(Status(StatusCode::TOO_MANY_REQUESTS))`, a
@@ -119,6 +119,20 @@ pub fn over_limit(limit: usize) -> Fault {
     ))
 }
 
+/// What the client asked for that a format or provider cannot take: a 400
+/// coded `unsupported`.
+pub fn unsupported(message: impl Into<String>) -> Fault {
+    Fault::bad_request(message).with(ErrorCode("unsupported".into()))
+}
+
+/// What the gateway cannot write in the client's format: a 502 coded
+/// `untranslatable`, the gateway's.
+pub fn untranslatable(message: impl Into<String>) -> Fault {
+    Fault::new(message)
+        .with(ErrorCode("untranslatable".into()))
+        .with(Status(StatusCode::BAD_GATEWAY))
+}
+
 /// The wait an answer's `Retry-After` asks for, if it asks for one.
 pub fn waits(headers: &http::HeaderMap) -> Option<RetryAfter> {
     let value = headers.get(RETRY_AFTER)?.to_str().ok()?;
@@ -141,7 +155,6 @@ fn retry_after(value: &str, now: SystemTime) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_core::ErrorCode;
 
     // An answer that is no error says a 502; an unasked 101 carries no
     // answer, as it was never relayed.

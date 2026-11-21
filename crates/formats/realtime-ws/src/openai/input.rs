@@ -33,8 +33,7 @@ impl Client {
     }
 
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Input>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
+        let v = json::client_event(&raw)?;
         let mut event = decode(v, self.input);
         if let Some((model, purpose)) = self.opening.take() {
             match &mut event {
@@ -221,10 +220,7 @@ impl Provider {
         let Some(event) = foreign::admit::<Key>(NAME, event) else {
             return Ok(());
         };
-        if let Some(v) = self.encode(&event)? {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.encode(&event)?, out)
     }
 
     fn encode(&mut self, event: &Input) -> Result<Option<Value>, Fault> {

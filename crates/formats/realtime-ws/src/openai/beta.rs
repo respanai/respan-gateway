@@ -125,9 +125,7 @@ impl Upstream for OpenAiRealtimeBeta {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -175,11 +173,11 @@ fn respelled(frame: &Bytes, respell: fn(&mut Map<String, Value>)) -> Result<Byte
 
 /// A client's event, as GA's writer wrote it, spelled as the beta did.
 fn to_beta(event: &mut Map<String, Value>) {
-    if let Some(Value::Object(session)) = event.get_mut("session") {
-        session.remove("type");
+    if let Some(session) = event.get_mut("session") {
+        json::remove(session, &["type"]);
         fields_to_beta(session);
     }
-    if let Some(Value::Object(response)) = event.get_mut("response") {
+    if let Some(response) = event.get_mut("response") {
         fields_to_beta(response);
     }
     respell_parts(event, |t| {
@@ -198,11 +196,11 @@ fn to_ga(event: &mut Map<String, Value>) {
     if let Some(ga) = renamed {
         event.insert("type".into(), ga.into());
     }
-    if let Some(Value::Object(session)) = event.get_mut("session") {
-        session.insert("type".into(), "realtime".into());
+    if let Some(session @ Value::Object(_)) = event.get_mut("session") {
+        json::set(session, &["type"], "realtime".into());
         fields_to_ga(session);
     }
-    if let Some(Value::Object(response)) = event.get_mut("response") {
+    if let Some(response) = event.get_mut("response") {
         fields_to_ga(response);
     }
     respell_parts(event, |t| {
@@ -211,28 +209,27 @@ fn to_ga(event: &mut Map<String, Value>) {
 }
 
 /// A session's or response's fields, as GA's writer wrote them, spelled as
-/// the beta did.
-fn fields_to_beta(object: &mut Map<String, Value>) {
-    if let Some(modalities) = object.remove("output_modalities") {
-        object.insert("modalities".into(), modalities_to_beta(modalities));
+/// the beta did; what their moves leave empty is dropped.
+fn fields_to_beta(object: &mut Value) {
+    if let Some(modalities) = json::remove(object, &["output_modalities"]) {
+        json::set(object, &["modalities"], modalities_to_beta(modalities));
     }
     for (name, path) in MOVED {
-        if let Some(value) = take_at(object, path) {
-            object.insert((*name).into(), format_to_beta(value));
+        if let Some(value) = json::remove(object, path) {
+            json::set(object, &[*name], format_to_beta(value));
         }
     }
-    drop_empty_audio(object);
 }
 
 /// A session's or response's fields, spelled as the beta did, as GA's
 /// reader reads them.
-fn fields_to_ga(object: &mut Map<String, Value>) {
-    if let Some(modalities) = object.remove("modalities") {
-        object.insert("output_modalities".into(), modalities_to_ga(modalities));
+fn fields_to_ga(object: &mut Value) {
+    if let Some(modalities) = json::remove(object, &["modalities"]) {
+        json::set(object, &["output_modalities"], modalities_to_ga(modalities));
     }
     for (name, path) in MOVED {
-        if let Some(value) = object.remove(*name) {
-            put_at(object, path, format_to_ga(value));
+        if let Some(value) = json::remove(object, &[*name]) {
+            json::set(object, path, format_to_ga(value));
         }
     }
 }
@@ -301,53 +298,6 @@ fn respell_part(part: &mut Value, respell: &impl Fn(&str) -> Option<&'static str
     let respelled = part["type"].as_str().and_then(respell);
     if let (Some(t), Some(part)) = (respelled, part.as_object_mut()) {
         part.insert("type".into(), t.into());
-    }
-}
-
-/// The value at `path` in `object`, taken out of it.
-fn take_at(object: &mut Map<String, Value>, path: &[&str]) -> Option<Value> {
-    let (last, parents) = path.split_last()?;
-    let mut at = object;
-    for name in parents {
-        at = at.get_mut(*name)?.as_object_mut()?;
-    }
-    at.remove(*last)
-}
-
-/// `value` put at `path` in `object`, making the objects on the way.
-fn put_at(object: &mut Map<String, Value>, path: &[&str], value: Value) {
-    let Some((last, parents)) = path.split_last() else {
-        return;
-    };
-    let mut at = object;
-    for name in parents {
-        let next = at.entry(*name).or_insert_with(|| json!({}));
-        let Some(next) = next.as_object_mut() else {
-            return;
-        };
-        at = next;
-    }
-    at.insert((*last).into(), value);
-}
-
-/// `object`'s `audio`, and its `input` and `output`, dropped where the
-/// fields moved out of them left them empty.
-fn drop_empty_audio(object: &mut Map<String, Value>) {
-    if let Some(Value::Object(audio)) = object.get_mut("audio") {
-        drop_if_empty(audio, "input");
-        drop_if_empty(audio, "output");
-    }
-    drop_if_empty(object, "audio");
-}
-
-/// The field `name` of `object` dropped if it is an empty object.
-fn drop_if_empty(object: &mut Map<String, Value>, name: &str) {
-    if object
-        .get(name)
-        .and_then(Value::as_object)
-        .is_some_and(Map::is_empty)
-    {
-        object.remove(name);
     }
 }
 

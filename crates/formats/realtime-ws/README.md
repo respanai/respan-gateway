@@ -205,8 +205,8 @@ transcript's deltas and its end, with the usage reported since the last in
 transcription has none of, is not written. So a Mistral client transcribes
 with OpenAI's or Gemini's models, and a relay to Mistral says what it said.
 
-A refused input is `bad_request`, closing the client 1008; a refused
-output `upstream`. Another format's natives, fields and events alike, are
+A refused input is `bad_request` coded `unsupported`, closing the client
+1008; a refused output the gateway's, coded `untranslatable`. Another format's natives, fields and events alike, are
 dropped by a writer, with a warning at the provider's: what has meaning
 beyond its format belongs in the kind. OpenAI's and Gemini's
 open their own to code that names them (`fields`, `with_fields`), OpenAI

@@ -9,7 +9,7 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
-use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
+use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo, Reach};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
@@ -70,6 +70,14 @@ impl Spec {
                 .any(|v| v.eq_ignore_ascii_case("websocket"))
             && at(self.path)
             && !SPECS.iter().any(|other| longer(other) && at(other.path))
+    }
+
+    /// How its provider is reached: as a session, in binary frames if the
+    /// spec sends them.
+    pub(crate) fn reach(&self) -> Reach {
+        Reach::Session {
+            binary_text: self.binary_text,
+        }
     }
 
     /// A transport to its provider at `base_url`, taking binary text if the
@@ -165,6 +173,14 @@ impl Spec {
         };
         (opening, sink)
     }
+}
+
+/// The model a call dials: the one routing chose, else the one its
+/// client's handshake asks for, if either names one.
+pub(crate) fn dialled_model(io: &ProviderIo) -> Option<String> {
+    let chosen = io.extensions().get::<crate::SessionModel>();
+    let asked = || crate::requested_model(io.extensions().get::<h::raw::Original>()?);
+    chosen.map(|m| m.0.clone()).or_else(asked)
 }
 
 /// The model at `?model=` of a client's handshake, unescaped, if it names one.

@@ -1,13 +1,13 @@
-//! What the codecs share: a frame's fields taken as the kind's, what is left
-//! kept as its format's, audio in base64, and the faults of what a format
-//! cannot write.
+//! What the codecs share: frames read and written as JSON events, a frame's
+//! fields taken as the kind's, what is left kept as its format's, audio in
+//! base64, and the faults of what a format cannot write.
 
 use base64::Engine;
 use base64::engine::DecodePaddingMode;
 use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD};
-use respan_gateway_core::{ErrorCode, Fault};
+use respan_gateway_core::Fault;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_ws::CloseCode;
+use respan_gateway_http_faults::{unsupported, untranslatable};
 use serde_json::{Map, Value};
 
 /// The value at `path` in `v`, removed, if `read` reads it and `write`
@@ -34,27 +34,41 @@ pub(crate) fn at<'a>(v: &'a Value, path: &[&str]) -> Option<&'a Value> {
     path.iter().try_fold(v, |v, key| v.as_object()?.get(*key))
 }
 
-/// Set the value at `path` in `v`, making the objects on the way.
+/// Set the value at `path` in `v`, making the objects on the way in place
+/// of what is not one.
 pub(crate) fn set(v: &mut Value, path: &[&str], value: Value) {
-    match path.split_first() {
-        None => *v = value,
-        Some((first, rest)) => set(&mut v[*first], rest, value),
+    let Some((first, rest)) = path.split_first() else {
+        *v = value;
+        return;
+    };
+    if !v.is_object() {
+        *v = Value::Object(Map::new());
+    }
+    if let Value::Object(fields) = v {
+        set(fields.entry(*first).or_insert(Value::Null), rest, value);
     }
 }
 
-/// Remove the value at `path` in `v`, and each object that leaves empty.
-pub(crate) fn remove(v: &mut Value, path: &[&str]) {
-    let (Some(fields), Some((first, rest))) = (v.as_object_mut(), path.split_first()) else {
-        return;
-    };
-    if rest.is_empty() {
-        fields.shift_remove(*first);
-    } else if let Some(child) = fields.get_mut(*first) {
-        remove(child, rest);
-        if child.as_object().is_some_and(Map::is_empty) {
-            fields.shift_remove(*first);
-        }
+/// Set the value at `path` in `v` to `value`, if there is one.
+pub(crate) fn put(v: &mut Value, path: &[&str], value: Option<Value>) {
+    if let Some(value) = value {
+        set(v, path, value);
     }
+}
+
+/// Remove the value at `path` in `v`, and each object that leaves empty:
+/// the value removed, if there was one.
+pub(crate) fn remove(v: &mut Value, path: &[&str]) -> Option<Value> {
+    let (fields, (first, rest)) = (v.as_object_mut()?, path.split_first()?);
+    if rest.is_empty() {
+        return fields.shift_remove(*first);
+    }
+    let child = fields.get_mut(*first)?;
+    let removed = remove(child, rest);
+    if child.as_object().is_some_and(Map::is_empty) {
+        fields.shift_remove(*first);
+    }
+    removed
 }
 
 /// A string as itself.
@@ -94,16 +108,14 @@ pub(crate) fn merge(v: &mut Value, native: &Map<String, Value>) {
 }
 
 /// An input `format` cannot write, which could change the answer: the
-/// client's fault, closing its session 1008.
+/// client's fault.
 pub(crate) fn untranslatable_input(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
-    Fault::bad_request(message).with(CloseCode(1008))
+    unsupported(format!("{what} cannot be translated to {format}"))
 }
 
-/// An output `format` cannot write, which fails the session.
+/// An output `format` cannot write, which fails the session: the gateway's.
 pub(crate) fn untranslatable_output(format: &str, what: &str) -> Fault {
-    let message = format!("{what} cannot be translated to {format}");
-    Fault::upstream(message).with(ErrorCode("untranslatable".into()))
+    untranslatable(format!("{what} cannot be translated to {format}"))
 }
 
 /// `v` as a frame.
@@ -111,6 +123,31 @@ pub(crate) fn frame(v: &Value) -> Result<Bytes, Fault> {
     serde_json::to_vec(v)
         .map(Bytes::from)
         .map_err(|e| Fault::internal("an event could not be written").with_source(e))
+}
+
+/// Each of `values` as a frame, in `out`.
+pub(crate) fn frames(
+    values: impl IntoIterator<Item = Value>,
+    out: &mut Vec<Bytes>,
+) -> Result<(), Fault> {
+    for v in values {
+        out.push(frame(&v)?);
+    }
+    Ok(())
+}
+
+/// A client's frame as its JSON event: one that is not JSON is the
+/// client's fault.
+pub(crate) fn client_event(raw: &[u8]) -> Result<Value, Fault> {
+    serde_json::from_slice(raw)
+        .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))
+}
+
+/// A provider's frame as its JSON event: one that is not JSON fails the
+/// session.
+pub(crate) fn provider_event(raw: &[u8]) -> Result<Value, Fault> {
+    serde_json::from_slice(raw)
+        .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))
 }
 
 /// Base64 read with or without its padding.

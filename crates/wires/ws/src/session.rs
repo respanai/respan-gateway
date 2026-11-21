@@ -66,16 +66,15 @@ use respan_gateway_http::rules::header_tokens;
 /// | Client's upgrade fails | as when it drops | nothing |
 /// | Client sends a binary frame, or a message over `max_message` | input ends `Err(bad_request)` with its [`CloseCode`]; provider is sent that Close | Close 1003 (binary) or 1009 (too large); the response is read to its end, unsent |
 /// | Provider sends Close 1000 (or no code) | dropped | Close 1000; ends clean |
-/// | Provider sends Close with another code | dropped | an `upstream` fault with that [`ProviderClose`]: Close 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
+/// | Provider sends Close with another code | dropped | an `upstream` fault with that [`ProviderClose`], its reason in the message: Close 1011, or that code if the call was relayed (`respan_gateway_plugin_relay::Relay`) |
 /// | Provider drops, no Close, or is silent through a ping | dropped | Close 1011 `truncated` |
 /// | Provider sends a binary frame or a message over `max_message` | it is sent Close 1003 or 1009 | Close 1011 `upstream` |
 /// | Provider is unreachable, or refuses the upgrade | (no session) | the client's format answers the handshake: 502, or under the provider's status |
 /// | `stop` completes | provider is sent Close 1001 | Close 1001 |
-/// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent Close 1011, or the fault's [`CloseCode`] | Close 1011, or the fault's [`CloseCode`] |
-/// | A fault ends the response | provider is sent Close 1001 | Close 1011, or the fault's [`CloseCode`] (1001 if `abandoned`) |
+/// | A filter or plugin refuses an input | input ends `Err(fault)`; provider is sent the fault's [`CloseCode`], else 1008 if the client's, else 1011 | the same |
+/// | A fault ends the response | provider is sent Close 1001 | the fault's [`CloseCode`], else 1008 if the client's, else 1011 (1001 if `abandoned`) |
 ///
-/// A provider's close reason text is not relayed, nor is a client's close
-/// code or reason. A session that has ended ignores `stop`.
+/// A client's close code or reason is not relayed. A session that has ended ignores `stop`.
 pub async fn serve<S>(
     gateway: &Gateway,
     head: http::request::Parts,
@@ -289,9 +288,10 @@ where
             }
             Sent::Failed(fault) => {
                 end.fail(fault.clone());
-                let code = match fault.is(FaultKind::Abandoned) {
-                    true => 1001,
-                    false => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
+                let code = match fault.kind() {
+                    FaultKind::Abandoned => 1001,
+                    FaultKind::Client => fault.get::<CloseCode>().map_or(1008, |c| c.sendable()),
+                    _ => fault.get::<CloseCode>().map_or(1011, |c| c.sendable()),
                 };
                 close(&mut sink, code, fault.code(), limits.close_send).await;
                 return Err(fault);
@@ -456,11 +456,13 @@ async fn read<S: AsyncRead + AsyncWrite + Unpin>(
                 break refused(1003, "a binary frame: only text frames are carried");
             }
             Some(Ok(Message::Close(frame))) => {
-                let code = frame.map(|f| u16::from(f.code));
+                let code = frame.as_ref().map(|f| u16::from(f.code));
                 let clean = closing.load(Ordering::SeqCst) || matches!(code, None | Some(1000));
                 if let (Edge::Provider { relayed, .. }, false, Some(code)) = (edge, clean, code) {
-                    let mut fault = Fault::upstream("the provider closed the session")
-                        .with(ProviderClose(code));
+                    let why = frame.as_ref().map_or("", |f| f.reason.as_str());
+                    let said = format!("the provider closed the session {code}: {why}");
+                    let mut fault =
+                        Fault::upstream(said.trim_end_matches(": ")).with(ProviderClose(code));
                     if relayed {
                         fault = fault.with(CloseCode(code));
                     }

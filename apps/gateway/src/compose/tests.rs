@@ -265,7 +265,7 @@ fn plan(text: &str) -> Result<Plan, String> {
 #[test]
 fn a_vendor_is_every_format_it_speaks() {
     let plan = plan(
-        "providers = { openai = { vendor = \"openai\", key = \"sk\" }, gemini = { vendor = \"gemini\", key = \"AIza\", formats = { gemini-generate = \"http://g.test/v1beta\", openai-chat = \"http://g.test/v1beta/openai\", gemini-live = \"http://g.test\", openai-images = \"http://g.test/v1beta/openai\", gemini-veo = \"http://g.test/v1beta\", openai-embeddings = \"http://g.test/v1beta/openai\" } } }\n",
+        "providers = { openai = { vendor = \"openai\", key = \"sk\" }, gemini = { vendor = \"gemini\", key = \"AIza\", formats = { gemini-generate = \"http://g.test/v1beta\", openai-chat = \"http://g.test/v1beta/openai\", gemini-live = \"http://g.test\", openai-images = \"http://g.test/v1beta/openai\", gemini-omni = \"http://g.test/v1beta\", openai-embeddings = \"http://g.test/v1beta/openai\" } } }\n",
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let entries = |i: usize| -> Vec<(String, String, String)> {
@@ -335,7 +335,7 @@ fn a_vendor_is_every_format_it_speaks() {
                 "gemini:openai-images",
                 "http://g.test/v1beta/openai"
             ),
-            entry("gemini-veo", "gemini:gemini-veo", "http://g.test/v1beta"),
+            entry("gemini-omni", "gemini:gemini-omni", "http://g.test/v1beta"),
             entry(
                 "openai-embeddings",
                 "gemini:openai-embeddings",
@@ -378,7 +378,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-live",
             "mistral-realtime",
             "phonic-sts",
-            "gemini-veo",
+            "gemini-omni",
             "decisions",
             "openai-decisions",
             "gemini-decisions"
@@ -417,8 +417,7 @@ fn a_key_goes_where_its_own_vendor_takes_it() {
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
     };
-    assert_eq!(auth(0, "api-key").as_deref(), Some("a"));
-    assert_eq!(auth(0, "authorization"), None);
+    assert_eq!(auth(0, "authorization").as_deref(), Some("Bearer a"));
     assert_eq!(auth(1, "authorization").as_deref(), Some("Bearer o"));
     assert_eq!(auth(2, "authorization").as_deref(), Some("Bearer p"));
     // A vendor's dialect is no format of its own.
@@ -812,11 +811,11 @@ fn azure_realtime_takes_its_key_in_api_key() {
 }
 
 #[test]
-fn veo_is_served_to_its_clients() {
+fn omni_is_served_to_its_clients() {
     let text =
-        "providers = { g = { vendor = \"gemini\", key = \"k\" } }\nformats = [\"gemini-veo\"]\n";
+        "providers = { g = { vendor = \"gemini\", key = \"k\" } }\nformats = [\"gemini-omni\"]\n";
     let served = plan(text).map(|p| p.serve);
-    assert_eq!(served, Ok(vec!["gemini-veo".to_owned()]));
+    assert_eq!(served, Ok(vec!["gemini-omni".to_owned()]));
 }
 
 #[test]

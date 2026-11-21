@@ -61,6 +61,8 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - Usage `{"type": "tokens"}` is `Usage`, `{"type": "duration"}` `Seconds`; a
   usage object's other fields, such as `input_token_details`, stay native.
 - A stream that ends before its end event fails `truncated`.
+  OpenAI image streams stop after the requested number of completed images
+  and are truncated if fewer arrive.
 - A client body without its required field (`prompt`, an edit's `image`,
   `file`, `input`) is refused, 400, before any call. A provider's error is
   read leniently, as compatible servers write it, and a client's is written
@@ -108,35 +110,25 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   So a Gemini client draws with OpenAI's models, and Gemini's own image
   models are asked as they were, as chats, which keep a conversation.
 
-`gemini::GeminiVeo`, named `gemini-veo`: Google's Veo as the Gemini API serves it, to clients and providers,
+`gemini::GeminiOmni`, named `gemini-omni`: Gemini Omni's videos as the Gemini API serves them, to clients and providers,
 at `https://generativelanguage.googleapis.com/v1beta` with the key in
 `x-goog-api-key`.
 
-- A `Create` is `POST /models/{model}:predictLongRunning`, which needs a
-  model: its `size` an `aspectRatio` (16:9 or 9:16, the only ones Veo makes,
-  else 400) and a `resolution` (`1080p` from 1080 pixels on the short side,
-  else `720p`), its `seconds` `durationSeconds` (Veo takes 4, 6 or 8, and
-  refuses others itself), its reference image the instance's base64 `image`,
-  and its `gemini-veo` native fields (`negativePrompt`, `personGeneration`)
-  parameters.
-- A job is Veo's long-running operation, its id `veo_` and the operation's
-  name, `models/{model}/operations/{op}`, in unpadded base64url
-  (`GeminiVeo::job_id`, `GeminiVeo::operation`), as a path segment holds
-  it; another id is not found, 404. An operation not done is `in_progress`,
-  done with videos `completed`, done with an error, or with none as when
-  Veo's filters took them all, `failed`.
-- A Gemini Omni model (`gemini-omni-*`), which replaced Veo's previews
-  (shut down 2026-10-22), is created by `POST /interactions`: its prompt,
-  after its reference image if any, the `input`, its `size` the
-  `response_format`'s `aspect_ratio` and `resolution` (with no size, its
-  native `aspectRatio` and `resolution`), its `seconds` the `duration`
-  (`"8s"`); it has no place for Veo's other parameters (`negativePrompt`,
-  `personGeneration`), so those are dropped. Its video is a file of the Files API, asked at a URI, and the
-  file is its job: its name, `files/{id}`, spelled as an operation's,
-  retrieved by `GET /files/{id}`, `in_progress` until the file is `ACTIVE`,
-  `completed` then with the file's download URI as its video, `failed` if
-  `FAILED`. An answer with no video is the provider's fault, 502. The
-  interaction's `usage`, its tokens by modality, is the created job's
+- A `Create` needs a Gemini Omni model (`gemini-omni-*`, else 400) and is
+  `POST /interactions`: its prompt, after its reference image if any, the
+  `input`, its `size` the `response_format`'s `aspect_ratio` and `resolution`
+  (with no size, its native `aspectRatio` and `resolution`; 16:9 or 9:16,
+  else 400), its `seconds` the `duration` (`"8s"`); its other native fields
+  (`negativePrompt`, `personGeneration`) have no place, so they are dropped.
+  Its video is a file of the Files API, asked at a URI, and the file is its
+  job: its name, `files/{id}`, in unpadded base64url after `omni_`
+  (`GeminiOmni::job_id`, `GeminiOmni::file`), as a path segment holds it.
+  An id that starts `veo_`, as these were spelled before, names its file the
+  same, so jobs issued so still poll and fetch; another id is not found, 404.
+  A job is retrieved by `GET /files/{id}`, `in_progress` until the file is
+  `ACTIVE`, `completed` then with the file's download URI as its video,
+  `failed` if `FAILED`. An answer with no video is the provider's fault, 502.
+  The interaction's `usage`, its tokens by modality, is the created job's
   native `usage`; a file reports none.
 - Content is a `GET` of the URL its job names at the provider's base, its
   path after the version, so the key goes to no other host. The Gemini API
@@ -145,11 +137,11 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   answer is a 502. A redirect to another origin leaves the key behind.
 - Another format's operation, such as OpenAI's remix, delete, list or
   thumbnail, is refused, 400 `unsupported`, before any call.
-- What else Veo answers beyond the kind is dropped rather than kept native.
-- A client of it, served by any provider of the kind: it creates with
+- A client of it, served by any provider of the kind, in the Gemini API's
+  long-running operation dialect: it creates with
   `POST .../models/{model}:predictLongRunning` (one instance; its prompt,
   its base64 `image`; `aspectRatio` and `resolution` read as a size,
-  `durationSeconds` as seconds, its other parameters kept as `gemini-veo`
+  `durationSeconds` as seconds, its other parameters kept as `gemini-omni`
   native fields). A job is answered as an operation named
   `models/{model}/operations/{job id}`, polled at `GET .../{name}`, so a
   follow-up reaches the job's provider by its id; done, it names its video
@@ -157,7 +149,7 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   provider's own URL, which would need its key. A failure is the
   operation's `error`, or, filtered, a response of
   `raiMediaFilteredReasons`; a refusal is Google's `{"error": {code,
-  message, status}}`. Veo reports no progress: an operation is done or not.
+  message, status}}`. An operation reports no progress: it is done or not.
   Polling a Gemini Omni operation by its qualified name returns that same
   name, including when the provider reports the video through the Files API.
 
@@ -384,6 +376,26 @@ its key a bearer token.
   `output.text`, or its first choice's text, is the transcript; its usage is
   the seconds billed and its tokens, if any. A translation, a prompt and a
   temperature are refused, 400, before the call.
+
+`dashscope::DashScopeImages`, named `dashscope-images`: Alibaba Cloud Model
+Studio's image models that answer at once, Qwen-Image (`qwen-image-2.0`) and
+Wan from 2.6 (`wan2.6-t2i`), as a provider only, at the same base URL. Older
+Wan models and Qwen-MT-Image draw only as a task, which DashScope refuses
+there.
+
+- A `POST` to `/services/aigc/multimodal-generation/generation` of one user
+  message: the images to edit, each a URL or a data URL of its bytes, then
+  the prompt as text. Its `parameters` are the count as `n`, one unless
+  asked (Wan makes four otherwise), the `size` as `1024*768` (`auto` sends
+  none), and a request's `negative_prompt`, `prompt_extend`, `watermark`
+  and `seed`, as OpenAI's clients send them, a form's text read as a number
+  or a boolean. Other fields of another format, such as a `quality`, are
+  dropped.
+- An answer's images are those of its choices' content, at URLs DashScope
+  keeps for 24 hours; its `usage`, the images it made and their size, is a
+  native `{"usage": {..}}`, as it reports no tokens.
+- A mask and a `response_format` but `url` are refused, 400, before the
+  call; a `size` DashScope does not draw is its own 400.
 
 `dashscope::DashScopeVideos`, named `dashscope-videos`: Alibaba Cloud Model
 Studio's Wan video generation, as a provider only, at the same base URL. Its

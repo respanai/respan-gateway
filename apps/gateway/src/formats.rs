@@ -19,10 +19,10 @@ use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
 use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
 use respan_gateway_media_http::dashscope::{
-    DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+    DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiSpeech, GeminiVeo};
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -230,7 +230,7 @@ mod endpoints {
         "GET /v1/videos/{id}/content",
         "POST /v1/videos/{id}/remix",
     ];
-    pub const VEO: &[&str] = &[
+    pub const OMNI: &[&str] = &[
         "POST /v1beta/models/{model}:predictLongRunning",
         "GET /v1beta/{operation}",
         "GET /v1beta/files/{id}:download",
@@ -272,6 +272,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
         KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::IMAGE, &DashScopeImages),
         KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
         KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
         KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
@@ -301,7 +302,7 @@ pub fn formats() -> Vec<KnownFormat> {
         )
         .model(realtime()),
         session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
-        KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
+        KnownFormat::of(kind::VIDEO, endpoints::OMNI, GeminiOmni)
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::claiming(
             kind::DECISION,

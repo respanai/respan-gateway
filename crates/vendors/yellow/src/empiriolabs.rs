@@ -2,6 +2,8 @@
 //! images, embeddings, speech, Realtime, decisions and videos, as OpenAI,
 //! Anthropic, Google and Respan serve them, images and speech in its dialect.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
 use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
@@ -10,6 +12,7 @@ use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Extensions, Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::header::{ACCEPT, CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -119,8 +122,11 @@ fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
 /// audio's bytes, it counts no usage, so it is asked for JSON, the audio
 /// inline (`b64_json: true`), in the format asked for, named both as its
 /// `response_format`, which Qwen's and StepFun's models honor, and its
-/// `output_format`, which Gemini's do. Its
-/// answer is read as OpenAI's events: the audio, then its usage, as
+/// `output_format`, which Gemini's do. Gemini's models answer `wav` or
+/// `mp3` and no `pcm`, so `pcm` is asked of them as `wav`, and the WAV
+/// they answer is cut to the 16-bit samples it holds, which are OpenAI's
+/// `pcm`, at the rate the model speaks. A model that answers raw `pcm`
+/// is relayed as it is. Its answer is read as OpenAI's events: the audio, then its usage, as
 /// `input_tokens` and `output_tokens`. It is not asked for OpenAI's events
 /// (`stream_format`); a client that asked still gets a stream, framed at
 /// the client edge.
@@ -137,13 +143,15 @@ impl Dialect for EmpirioLabsSpeech {
         Ok(Some(Box::new(inline_audio)))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, sent: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         if !crate::json_answer(head) {
             return None;
         }
         let events = HeaderValue::from_static("text/event-stream");
         head.headers.insert(CONTENT_TYPE, events);
-        Some(Box::new(speech_events))
+        let call: Value = serde_json::from_slice(sent.body()).unwrap_or_default();
+        let pcm = call["response_format"] == "pcm";
+        Some(Box::new(move |raw| speech_events(raw, pcm)))
     }
 }
 
@@ -153,6 +161,11 @@ fn inline_audio(body: Bytes) -> Result<Bytes, Fault> {
     let mut call: Map<String, Value> = serde_json::from_slice(&body).map_err(unwritten)?;
     call.shift_remove("stream_format");
     if let Some(format) = call.get("response_format").cloned() {
+        let format = if format == "pcm" {
+            "wav".into()
+        } else {
+            format
+        };
         call.entry("output_format").or_insert(format);
     }
     call.insert("b64_json".into(), true.into());
@@ -161,9 +174,10 @@ fn inline_audio(body: Bytes) -> Result<Bytes, Fault> {
         .map_err(unwritten)
 }
 
-/// Its JSON answer as OpenAI's speech events: each clip's audio, then the
-/// usage, its prompt and completion tokens as input and output tokens.
-fn speech_events(raw: Bytes) -> Result<Bytes, Fault> {
+/// Its JSON answer as OpenAI's speech events: each clip's audio, as `pcm`
+/// if that was asked, then the usage, its prompt and completion tokens as
+/// input and output tokens.
+fn speech_events(raw: Bytes, pcm: bool) -> Result<Bytes, Fault> {
     let answer: Value = serde_json::from_slice(&raw)
         .map_err(|_| Fault::upstream("empiriolabs speech answered no JSON"))?;
     let clips = answer["data"].as_array().into_iter().flatten();
@@ -182,12 +196,61 @@ fn speech_events(raw: Bytes) -> Result<Bytes, Fault> {
             usage.insert(ours.into(), count);
         }
     }
-    let deltas = audio
-        .into_iter()
-        .map(|a| json!({ "type": "speech.audio.delta", "audio": a }));
+    let mut events = String::new();
+    for clip in audio {
+        let clip = match pcm {
+            true => samples(clip)?,
+            false => clip.clone(),
+        };
+        events += &format!(
+            "data: {}\n\n",
+            json!({ "type": "speech.audio.delta", "audio": clip })
+        );
+    }
     let done = json!({ "type": "speech.audio.done", "usage": usage });
-    let events = deltas.chain([done]).map(|e| format!("data: {e}\n\n"));
-    Ok(Bytes::from(events.collect::<String>()))
+    events += &format!("data: {done}\n\n");
+    Ok(Bytes::from(events))
+}
+
+/// A clip's audio, in base64, as raw samples: a WAV's `data`, else as it is,
+/// which is raw already.
+fn samples(clip: &Value) -> Result<Value, Fault> {
+    let unread = || Fault::upstream("empiriolabs speech answered audio not in base64");
+    let audio = STANDARD.decode(clip.as_str().ok_or_else(unread)?);
+    let audio = audio.map_err(|_| unread())?;
+    let raw = match audio
+        .strip_prefix(b"RIFF")
+        .filter(|a| a.get(4..8) == Some(b"WAVE"))
+    {
+        Some(riff) => wav_data(riff.get(8..).unwrap_or_default())?,
+        None => &audio,
+    };
+    Ok(STANDARD.encode(raw).into())
+}
+
+/// The samples of a 16-bit PCM WAV whose chunks, after its `WAVE`, are
+/// `chunks`: its `data`, as far as it goes if its size says more.
+fn wav_data(mut chunks: &[u8]) -> Result<&[u8], Fault> {
+    let refused = |what: &str| Fault::upstream(format!("empiriolabs speech answered a WAV {what}"));
+    let mut pcm16 = false;
+    while let (Some(id), Some(size)) = (chunks.get(..4), chunks.get(4..8)) {
+        let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]) as usize;
+        let body = chunks.get(8..).unwrap_or_default();
+        match id {
+            b"fmt " => {
+                let format = body
+                    .get(..16)
+                    .ok_or_else(|| refused("with a short 'fmt '"))?;
+                let (tag, bits) = (u16::from_le_bytes([format[0], format[1]]), format[14]);
+                pcm16 = tag == 1 && bits == 16 && format[15] == 0;
+            }
+            b"data" if !pcm16 => return Err(refused("that is not 16-bit PCM")),
+            b"data" => return Ok(&body[..size.min(body.len())]),
+            _ => {}
+        }
+        chunks = body.get(size + size % 2..).unwrap_or_default();
+    }
+    Err(refused("with no 'data'"))
 }
 
 /// Its Realtime: a transcription session names its model at `?model=`

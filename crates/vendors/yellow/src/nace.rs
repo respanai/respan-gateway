@@ -3,6 +3,7 @@
 use respan_gateway_core::Fault;
 use respan_gateway_decision::{Input, Output};
 use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
+use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_http::path::set_path;
 use serde_json::Value;
@@ -55,7 +56,7 @@ impl Dialect for Nace {
         Ok(None)
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &http::Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         // Drex overloads with 529. The shared retry policy recognizes 503;
         // Retry-After determines the delay; retry-after-ms is passed through.
         if head.status.as_u16() == 529 {
@@ -181,7 +182,7 @@ mod tests {
 
     #[test]
     fn an_overload_is_read_as_transient() {
-        let (sent, _) = http::Request::new(()).into_parts();
+        let sent = http::Request::new(Bytes::new());
         for status in [529, 422, 429, 500] {
             let (mut head, _) = http::Response::builder()
                 .status(status)

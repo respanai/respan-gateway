@@ -24,8 +24,7 @@ pub(super) struct Provider {
 
 impl Provider {
     pub(super) fn read(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's event is not JSON"))?;
+        let v = json::provider_event(&raw)?;
         match decode(&v) {
             Some(events) => {
                 for event in &events {
@@ -152,10 +151,7 @@ impl Client {
         let Some(event) = foreign::strip::<Key>(event) else {
             return Ok(());
         };
-        if let Some(v) = self.encode(&event) {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.encode(&event), out)
     }
 
     fn encode(&mut self, event: &Output) -> Option<Value> {

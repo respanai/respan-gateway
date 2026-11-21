@@ -1,11 +1,10 @@
 //! MiniMax's OpenAI-compatible chat and H3 image API, and its own videos and
 //! speech.
 
-use respan_gateway_conversation::MediaSource;
-use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_media::image;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
@@ -53,7 +52,7 @@ impl Dialect for MiniMaxImages {
         Ok(Some(Box::new(body)))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         head.status
             .is_success()
             .then(|| Box::new(successful_images) as Rewrite)
@@ -79,9 +78,7 @@ fn validate(input: &mut image::Input) -> Result<(), Fault> {
     }
     // MiniMax accepts data URLs, including for SDK multipart uploads. Keep
     // the upstream body JSON so the request rewrite also covers file edits.
-    for media in &mut input.images {
-        media.source = MediaSource::Url(media_url(media));
-    }
+    crate::as_urls(&mut input.images);
     Ok(())
 }
 
@@ -119,7 +116,7 @@ fn successful_images(body: Bytes) -> Result<Bytes, Fault> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::Media;
+    use respan_gateway_conversation::{Media, MediaSource};
     use respan_gateway_core::{
         ClientContext, Gateway, Native, Plugin, Provider, Response, Result, async_trait,
     };

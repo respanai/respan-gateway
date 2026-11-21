@@ -197,8 +197,7 @@ impl Provider {
 
 impl Decoder<Output> for Provider {
     fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        let v: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
+        let v = json::provider_event(&raw)?;
         let mut rest = v.clone();
         let kind = take(&mut rest, &["type"], string, text).unwrap_or_default();
         if kind == "conversation_created" {
@@ -279,10 +278,7 @@ impl Client {
         if matches!(event, Output::ResponseDone { .. }) {
             self.unsaid(out)?;
         }
-        if let Some(v) = self.encode(&event)? {
-            out.push(json::frame(&v)?);
-        }
-        Ok(())
+        json::frames(self.encode(&event)?, out)
     }
 
     /// A part of the user's transcript: another format's may be a part of

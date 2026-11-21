@@ -8,7 +8,6 @@ use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
     Audio, AudioFormat, Input, Modality, Output, Purpose, Session, Status, Tool, ToolResult, Turns,
 };
-use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
 
 use super::{Applied, Asked, DEFAULT_FORMAT, input, output};
@@ -195,11 +194,7 @@ fn what_phonic_has_none_of_is_refused() {
         ],
     ] {
         let fault = sent(None, &events).expect_err("refused");
-        assert_eq!(
-            fault.get::<CloseCode>(),
-            Some(&CloseCode(1008)),
-            "{events:?}"
-        );
+        assert_eq!(fault.code(), "unsupported", "{events:?}");
     }
     // A later session is acknowledged, what it changes dropped.
     let (say, mut said) = spec::say();

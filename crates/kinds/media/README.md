@@ -40,7 +40,7 @@ the gateway: a client gives it back as a path segment, and a follow-up
 (`Retrieve`, `Content`, a format's own, read by `Input::job_id()`) must
 reach the provider that made the job. Nothing in the request says which but
 the id's spelling: OpenAI Videos' ids start `video_` (OpenAI's own API was
-removed on 2026-09-24; a compatible provider's), Veo's `veo_`, OpenRouter's
+removed on 2026-09-24; a compatible provider's), Gemini Omni's `omni_` (and `veo_`, as it once spelled them), OpenRouter's
 `gen-vid-`, Together's `together_`, EmpirioLabs AI's `empiriolabs_`, DashScope's `dashscope_`,
 Z.ai's `zai_`, MiniMax's `minimax_`.
 `video::VideoJobs`, registered after the router, sends each follow-up (and
@@ -50,7 +50,7 @@ wrapped on the way out as `<provider>~<id>`, a `Job`'s and the `ids` of a
 format's own answer, and unwrapped before the call.
 
 Some providers serve a finished job's content only at the URLs the job
-names (`Job::videos`), as Veo does: `video::LocateContent`, given those
+names (`Job::videos`), as Gemini Omni does: `video::LocateContent`, given those
 providers' names and registered after the router, retrieves the job before
 a `Content` request goes on, and sets its `url`. Content not ready is
 refused, 400 `video_not_ready`; a provider that says so less plainly, as

@@ -9,14 +9,12 @@ mod tests;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::raw::Original;
 use respan_gateway_http::{ClientIo, ProviderIo, native::Json};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::session::{Spec, model_at, model_query};
-use crate::{SessionModel, requested_model};
+use crate::session::{Spec, dialled_model, model_at, model_query};
 
 const NAME: &str = SPEC.name;
 enum Key {}
@@ -80,9 +78,7 @@ impl Upstream for MistralRealtime {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -114,10 +110,7 @@ impl Format<ProviderIo, Output, Input> for MistralRealtime {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        // The model routing chose, else the one the client's handshake asks for.
-        let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let asked = || requested_model(io.extensions().get::<Original>()?);
-        let model = chosen.or_else(asked).ok_or_else(|| {
+        let model = dialled_model(&io).ok_or_else(|| {
             Fault::bad_request(
                 "Mistral realtime takes its model at connect: name it with ?model= on the session's URL",
             )
