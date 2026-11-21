@@ -63,6 +63,10 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - A stream that ends before its end event fails `truncated`.
   OpenAI image streams stop after the requested number of completed images
   and are truncated if fewer arrive.
+- An embeddings answer must hold one vector for each item of the call (one
+  or more for a list relayed as written), each at its own `index`, in any
+  order; a count that differs, an index twice or one past the inputs is a
+  provider fault.
 - A client body without its required field (`prompt`, an edit's `image`,
   `file`, `input`) is refused, 400, before any call. A provider's error is
   read leniently, as compatible servers write it, and a client's is written
