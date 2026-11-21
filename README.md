@@ -27,7 +27,7 @@
 
 **Respan Gateway** is an open-source AI gateway: a single Rust binary between
 your code and every AI API. Not just LLMs: chat, realtime voice, images,
-video, speech, embeddings and tools, from every major provider. Point the SDK
+video, speech, embeddings, rerank and tools, from every major provider. Point the SDK
 you already use at it, and call any of them, with fallback, tools and a live
 log of every call built in.
 
@@ -55,7 +55,7 @@ OpenAI, Anthropic and Gemini clients can all call any chat model. Streaming, too
 
 ### Multimodal
 
-Realtime voice (OpenAI Realtime ⇄ Gemini Live), images, video, speech, transcription and embeddings, through the same gateway and the SDKs you already use.
+Realtime voice (OpenAI Realtime ⇄ Gemini Live), images, video, speech, transcription, embeddings and rerank, through the same gateway and the SDKs you already use.
 
 [Docs →](docs/vendors.md)
 

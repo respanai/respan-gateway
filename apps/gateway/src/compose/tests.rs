@@ -1216,6 +1216,72 @@ async fn gemini_decisions_use_the_goog_key_and_answer_each_contract_in_its_own()
 }
 
 #[tokio::test]
+async fn a_rerank_provider_is_served_to_rerank_clients_by_default() {
+    use axum::{Json, Router, extract::State, routing::post as route_post};
+    use serde_json::{Value, json};
+    use std::sync::{Arc, Mutex};
+    type Captured = Arc<Mutex<Vec<(http::HeaderMap, Value)>>>;
+    async fn fake(
+        State(seen): State<Captured>,
+        headers: http::HeaderMap,
+        Json(body): Json<Value>,
+    ) -> Json<Value> {
+        seen.lock().expect("capture").push((headers, body));
+        Json(json!({
+            "id": "rerank-1", "model": "BAAI/bge-reranker-v2-m3",
+            "usage": { "total_tokens": 9 },
+            "results": [
+                { "index": 1, "relevance_score": 0.98, "document": { "text": "Paris" } },
+                { "index": 0, "relevance_score": 0.02, "document": { "text": "Berlin" } },
+            ],
+        }))
+    }
+    let seen: Captured = Arc::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let addr = listener.local_addr().expect("address");
+    let server = tokio::spawn(
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/rerank", route_post(fake))
+                .with_state(seen.clone()),
+        )
+        .into_future(),
+    );
+    let text = format!(
+        "providers = {{ local = {{ formats = \"cohere-rerank\", base_url = \"http://{addr}/v1\", auth = {{ type = \"bearer\", key = \"sk-test\" }} }} }}\n"
+    );
+    let gateway = resolve(&text).expect("gateway");
+    let body = json!({ "model": "local/BAAI/bge-reranker-v2-m3", "query": "capital of France?",
+        "documents": ["Berlin", "Paris"], "top_n": 2, "return_documents": true });
+    let (resp, _) = serve(&gateway, post("/v2/rerank", body.to_string())).await;
+    let (status, _, body) = read_whole(resp).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let answer: Value = serde_json::from_slice(&body.expect("response body")).expect("json");
+    assert_eq!(answer["results"][0]["index"], 1);
+    assert_eq!(answer["results"][0]["document"]["text"], "Paris");
+    assert_eq!(answer["usage"]["total_tokens"], 9);
+    assert_eq!(answer["id"], "rerank-1");
+    gateway.idle().await;
+    {
+        let captured = seen.lock().expect("capture");
+        let [(headers, body)] = captured.as_slice() else {
+            panic!("one call: {captured:?}");
+        };
+        assert_eq!(
+            headers.get("authorization").and_then(|v| v.to_str().ok()),
+            Some("Bearer sk-test")
+        );
+        let sent = json!({ "model": "BAAI/bge-reranker-v2-m3", "query": "capital of France?",
+            "documents": ["Berlin", "Paris"], "top_n": 2, "return_documents": true });
+        assert_eq!(body, &sent);
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn openai_decisions_go_to_openai_with_a_bearer_key() {
     use axum::{Json, Router, extract::State, routing::post as route_post};
     use serde_json::{Value, json};

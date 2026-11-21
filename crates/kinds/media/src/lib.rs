@@ -3,6 +3,7 @@
 //! an `Output` out, in a module of its name.
 //!
 //! - [`embedding`]: vectors for texts and media.
+//! - [`rerank`]: documents ordered by how relevant each is to a query.
 //! - [`image`]: images generated from a prompt, or edits of source images.
 //! - [`transcription`]: speech to text, or a translation of it to English.
 //! - [`speech`]: text to speech.
@@ -22,6 +23,7 @@
 
 pub mod embedding;
 pub mod image;
+pub mod rerank;
 pub mod speech;
 pub mod transcription;
 pub mod video;

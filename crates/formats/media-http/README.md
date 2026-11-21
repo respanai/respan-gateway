@@ -343,6 +343,28 @@ models on `POST /models/{model}:batchEmbedContents`, its key in
   Gemini provider only: another provider is not sent them. The answer is
   `embedding`, or `embeddings`, and the usage as `usageMetadata`.
 
+`cohere::CohereRerank`, named `cohere-rerank`: rerank as Cohere's API has
+it, which Jina, vLLM, Infinity, TEI and other servers serve too, on
+`POST /rerank`, a bearer key; a provider's base URL includes the version,
+such as `https://api.cohere.com/v2`, `https://api.jina.ai/v1` or a vLLM
+server's `http://localhost:8000/v1`.
+
+- A request is a `query`, its `documents` and `top_n`. A document is a
+  text, or an object of only a `text`, read as one; any other, such as
+  Jina's `{"image": ..}` or an object for Cohere's `rank_fields`, is the
+  format's own, sent as written and refused, 400, by a provider of another
+  format. Other fields, such as `return_documents` and
+  `max_tokens_per_doc`, are sent on as written.
+- An answer's `results` are each document's `index` and `relevance_score`,
+  in the provider's order, with the document's text if it repeats it.
+  Usage is `usage.total_tokens`, as Jina and vLLM count it, as input tokens;
+  Cohere bills search units instead, in `meta.billed_units`, which with the
+  answer's `id` is written back to a client as it came, and is priced by no
+  plugin.
+- A client speaks it too, of any provider of the kind: a `POST` to a path
+  ending in `/rerank` (`/v1/rerank` and `/v2/rerank` alike). A refusal is in
+  OpenAI's error schema, as vLLM writes it.
+
 `bedrock::BedrockEmbeddings`, named `bedrock-embeddings`: Amazon Bedrock's
 embedding models on InvokeModel, `POST /model/{model}/invoke`, as a provider
 only, its key a Bedrock API key as a bearer token.
