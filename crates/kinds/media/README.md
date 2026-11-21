@@ -11,6 +11,7 @@ formats over HTTP are
 | `transcription` | Speech to text, or to English (`Task`) | `audio`, `task`, `language`, `prompt`, `temperature` | `Delta`, `Transcript`, `Rendered`, `Usage`, `Seconds` |
 | `speech` | Text to speech | `text`, `voice`, `instructions`, `speed`, `audio_format` | `Audio` chunks, `Usage` |
 | `embedding` | Embeddings of texts, images and videos | `items` (`Text`, `Parts` of texts and media, or a format's own item), `dimensions` | `Start`, `Embedding` vectors, `Usage`, `InputTokens` by modality |
+| `rerank` | Documents ordered by relevance to a query | `query`, `documents` (`Text`, or a format's own), `top_n` | `Start`, `Ranked` (a document's `index`, its `score`, its `text` if the provider repeats it), `Usage` |
 | `video` | Video generation, a job | an operation: `Create` (`model`, `prompt`, `seconds`, `size`, a `reference` image), `Retrieve`, `Content`, or a format's own (`Native`, on a job `id`) | `Job`, `Content` chunks, a format's own answer (`Native`, the jobs' `ids` it names) |
 
 Every `Input` has an optional `model`, read by `model()` and rewritten by

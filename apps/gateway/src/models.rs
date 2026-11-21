@@ -272,6 +272,7 @@ pub(crate) fn kind_of(id: &str) -> &'static str {
     let id = id.to_ascii_lowercase();
     let has = |words: &[&str]| words.iter().any(|w| id.contains(w));
     match () {
+        _ if has(&["rerank"]) => kind::RERANK,
         _ if has(&["embed"]) => kind::EMBEDDING,
         _ if has(&[
             "dall-e",
@@ -436,6 +437,8 @@ mod tests {
         assert_eq!(kind("gemini-2.5-flash"), "chat");
         assert_eq!(kind("text-embedding-3-small"), "embedding");
         assert_eq!(kind("gemini-embedding-001"), "embedding");
+        assert_eq!(kind("rerank-v3.5"), "rerank");
+        assert_eq!(kind("BAAI/bge-reranker-v2-m3"), "rerank");
         assert_eq!(kind("jev-latest"), "decision");
         assert_eq!(kind("span-02"), "decision");
         assert_eq!(kind("gpt-6-luna-decisions"), "decision");
