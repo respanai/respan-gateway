@@ -20,8 +20,8 @@ pub(crate) enum Thinks {
 }
 
 /// A Gemini model's generation, as its id says: its line and its version,
-/// as `gemini-2.5-flash` is Flash 2.5. An id that says no version, such as
-/// `gemini-flash-latest`, is the latest.
+/// as `gemini-2.5-flash` is Flash 2.5. An id that opens with its line and
+/// says no version, such as `gemini-flash-latest`, is the latest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Generation {
     line: Line,
@@ -30,7 +30,8 @@ pub(crate) struct Generation {
 
 impl Generation {
     /// The generation of the Gemini `model` is, or `None` if it is another
-    /// model.
+    /// model or of a line with versions of its own, such as
+    /// `gemini-nano-banana-2.1`.
     pub(crate) fn of(model: &str) -> Option<Generation> {
         let model = model.to_ascii_lowercase();
         let (_, name) = model.split_once("gemini-")?;
@@ -45,6 +46,10 @@ impl Generation {
             let minor = rest.strip_prefix(['.', '-']).and_then(number);
             (major, minor.map_or(0, |(minor, _)| minor))
         });
+        let alias = ["flash", "pro"].iter().any(|line| name.starts_with(line));
+        if version.is_none() && !alias {
+            return None;
+        }
         Some(Generation { line, version })
     }
 
