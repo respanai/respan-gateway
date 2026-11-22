@@ -27,7 +27,7 @@ jobs:
           package_json_file: apps/ui/package.json
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
           cache: pnpm
           cache-dependency-path: apps/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
