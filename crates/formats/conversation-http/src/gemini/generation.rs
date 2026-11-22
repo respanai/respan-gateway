@@ -65,9 +65,9 @@ impl Generation {
     }
 
     /// Whether it has the `minimal` level: the flash lines of Gemini 3 up to
-    /// 3.8.
+    /// 3.7.
     pub(crate) fn has_minimal(&self) -> bool {
-        self.line != Line::Other && self.since((3, 0)) && !self.since((3, 8))
+        self.line != Line::Other && self.since((3, 0)) && !self.since((3, 7))
     }
 
     /// The least thinking budget of a Gemini 2.5 model.

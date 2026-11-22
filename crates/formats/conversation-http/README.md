@@ -225,7 +225,7 @@ Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
 Gemini levels are read in either case and written in lower case. Gemini 3
 and later think to a level and 2.5 to a budget, so a translated effort is
 the one its model takes: `minimal` only where the model has it (the flash
-lines of Gemini 3 up to 3.8), else `low`.
+lines of Gemini 3 up to 3.7), else `low`.
 
 What a model takes is its generation's, read from its id once (each
 format's `generation` module): its line and its version, as
