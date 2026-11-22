@@ -190,8 +190,8 @@ fn providers(
 
 /// The formats of `serve`, in the order to register them: as listed, but
 /// a format that claims some of its endpoints' requests before the rest,
-/// which take the others. A session of Responses or a relay, routed by no
-/// model, needs exactly one provider.
+/// which take the others. A relay, routed by no model, needs exactly one
+/// provider.
 fn served<'a>(
     serve: &[String],
     upstreams: &[Upstream],
@@ -208,9 +208,8 @@ fn served<'a>(
     for name in serve {
         let format = format_named(formats, name, "formats")?;
         served.push(format);
-        // A session or a relay is not routed by its model: one provider
-        // speaks it.
-        if !matches!(format.kind, kind::RESPONSES | kind::PASSTHROUGH) {
+        // A relay is not routed by its model: one provider speaks it.
+        if format.kind != kind::PASSTHROUGH {
             continue;
         }
         let speakers: Vec<&str> = upstreams
@@ -258,11 +257,10 @@ pub(crate) fn valid_provider_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(allowed)
 }
 
-/// The formats served when the config names none: OpenAI Chat, Anthropic
-/// Messages, every other chat format some provider speaks, every client
-/// format of a media or realtime kind some provider speaks, and Responses
-/// over WebSocket if a provider speaks it; not passthrough, which takes
-/// every request.
+/// The formats served when the config names none: every client chat
+/// format, every client format of a media or realtime kind some provider
+/// speaks, and Responses over WebSocket if a provider speaks it; not
+/// passthrough, which takes every request.
 fn default_serve(upstreams: &[Upstream], formats: &[KnownFormat]) -> Vec<String> {
     let mut serve = vec!["openai-chat".to_owned(), "anthropic-messages".to_owned()];
     let entries = || upstreams.iter().flat_map(|u| &u.entries);
@@ -270,16 +268,11 @@ fn default_serve(upstreams: &[Upstream], formats: &[KnownFormat]) -> Vec<String>
     let translated = formats
         .iter()
         .filter(|f| match f.kind {
-            kind::CHAT => entries().any(|e| e.format == f.name),
-            kind::MCP => true,
+            kind::CHAT | kind::MCP => true,
             k => (kind::ONE_SHOT.contains(&k) || k == kind::REALTIME) && spoken(k),
         })
         .filter(|f| f.servable());
-    let sessions = entries().filter(|e| e.kind == kind::RESPONSES);
-    let names = translated
-        .map(|f| &f.name)
-        .chain(sessions.map(|e| &e.format));
-    for name in names {
+    for name in translated.map(|f| &f.name) {
         if !serve.contains(name) {
             serve.push(name.clone());
         }

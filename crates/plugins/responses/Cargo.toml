@@ -1,6 +1,6 @@
 [package]
 name = "respan-gateway-plugin-responses"
-description = "The responses plugin: the conversation state a client or a provider of the conversation kind cannot keep, kept by the gateway: Responses' previous_response_id with any provider, and a Chat client's reasoning between tool calls with OpenAI's Responses."
+description = "The responses plugin: Responses' previous_response_id with any provider, its conversation kept by the gateway."
 version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -19,4 +19,11 @@ respan-gateway-conversation-http.workspace = true
 respan-gateway-core.workspace = true
 respan-gateway-http.workspace = true
 serde_json.workspace = true
+serde = { workspace = true, optional = true }
 
+[features]
+# `Serialize` and `Deserialize` for a kept `Turn`, for a store several gateways share.
+serde = ["dep:serde", "respan-gateway-conversation/serde"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

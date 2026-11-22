@@ -1,15 +1,22 @@
 use super::*;
+use crate::responses::OpenAiResponses;
+use crate::schema::tests::assert_same;
+use crate::schema::{Own, Schema};
+use respan_gateway_core::Native;
 
 use crate::anthropic::AnthropicMessages;
+use crate::fields::rest_of;
 use crate::openai::OpenAiChat;
-use respan_gateway_conversation::{Block, Message, ResponseFormat, Role, Tool, ToolChoice};
-use respan_gateway_core::{NativeFields, NativeValue};
+use respan_gateway_conversation::{
+    Block, MediaSource, Message, ResponseFormat, Role, Tool, ToolChoice,
+};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
+use respan_gateway_http::http;
 use respan_gateway_http::{Decoder, Sse};
 use respan_gateway_sse::event_json;
 
 fn decode_request(v: &Value) -> Input {
-    let mut chat = OpenAiResponses.decode_json(v);
+    let mut chat = OpenAiResponses.decode_json(v).expect("read");
     chat.model = v["model"].as_str().map(Into::into);
     chat
 }
@@ -157,11 +164,19 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     ));
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
-        chat.native.fields(),
-        json!({ "instructions": true }).as_object().expect("fields"),
-        "everything is the kind's, but that it had instructions"
+        OpenAiResponses::fields(&chat.native),
+        json!({ "text": { "format": { "strict": true } }, "instructions": true })
+            .as_object()
+            .expect("fields"),
+        "everything is the kind's, but its schema's strict and that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
+    let sent = OpenAiChat.encode_request(&chat).expect("written");
+    assert!(
+        sent["response_format"]["json_schema"]
+            .get("strict")
+            .is_none()
+    );
 }
 
 #[test]
@@ -216,7 +231,9 @@ fn an_item_the_kind_has_no_form_for_stays_whole() {
         ],
     });
     let chat = decode_request(&v);
-    assert!(matches!(&chat.messages[1].role, Role::Native { name, .. } if name == "item"));
+    assert!(
+        matches!(&chat.messages[1].role, Role::Native(n) if OpenAiResponses::value(n) == Some(&"item".into()))
+    );
     assert_eq!(round_trip(&v), v);
     let sent = AnthropicMessages.encode_request(&chat).expect("written");
     assert_eq!(
@@ -235,6 +252,8 @@ fn media_and_reasoning_round_trip() {
                 { "type": "input_file", "file_data": "data:application/pdf;base64,AAAA", "filename": "a.pdf" },
                 { "type": "input_file", "file_url": "https://x.test/a.pdf" },
             ] },
+            // As Codex sends it, by its encrypted content alone.
+            { "type": "reasoning", "summary": [], "encrypted_content": "gBBB" },
             { "type": "reasoning", "id": "rs_1", "summary": [{ "type": "summary_text", "text": "thought" }], "encrypted_content": "gAAA" },
             { "type": "message", "id": "msg_1", "status": "completed", "role": "assistant",
               "content": [{ "type": "output_text", "text": "hi", "annotations": [] }] },
@@ -248,7 +267,7 @@ fn media_and_reasoning_round_trip() {
         matches!(&chat.messages[0].content[1], Content::Document(m) if m.name.as_deref() == Some("a.pdf"))
     );
     assert!(
-        matches!(&chat.messages[1].content[0], Content::Reasoning { text, .. } if text == "thought")
+        matches!(&chat.messages[1].content[2], Content::Reasoning { text, .. } if text == "thought")
     );
     assert_eq!(round_trip(&v), v);
 }
@@ -271,7 +290,11 @@ fn what_the_kind_has_no_form_for_is_native_and_dropped_in_translation() {
         let mut v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }] });
         v[field] = value.clone();
         let chat = decode_request(&v);
-        assert_eq!(chat.native.fields().get(field), Some(&value), "{field}");
+        assert_eq!(
+            OpenAiResponses::fields(&chat.native).get(field),
+            Some(&value),
+            "{field}"
+        );
         assert_eq!(round_trip(&v), v, "{field}");
         for sent in [
             AnthropicMessages.encode_request(&chat),
@@ -291,13 +314,22 @@ fn another_formats_reasoning_is_dropped() {
         0,
         Content::Reasoning {
             text: "hm".into(),
-            native: None,
+            native: Native::default(),
         },
     );
     let sent = OpenAiResponses.encode_request(&chat).expect("written");
     assert_eq!(
         sent["input"],
         json!([{ "role": "assistant", "content": "ok" }])
+    );
+    // Signed, it is Responses' own, as a kept turn's whose native was dropped.
+    chat.messages[0]
+        .content
+        .insert(1, Content::Signature("gAAA".into()));
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["input"][0],
+        json!({ "type": "reasoning", "summary": [{ "type": "summary_text", "text": "hm" }], "encrypted_content": "gAAA" })
     );
 }
 
@@ -323,7 +355,7 @@ fn the_defaults_an_sdk_sends_say_nothing() {
         "text": { "format": { "type": "text" } },
     });
     let chat = decode_request(&v);
-    assert!(chat.native.is_none(), "{:?}", chat.native);
+    assert!(chat.native.is_empty(), "{:?}", chat.native);
     let other = AnthropicMessages.encode_request(&chat);
     assert!(other.is_ok(), "{other:?}");
 }
@@ -339,20 +371,19 @@ fn text_beyond_the_format_stays_native_and_is_written_with_the_requirement() {
         chat.options.response_format,
         Some(ResponseFormat::JsonObject)
     );
-    assert_eq!(chat.options.verbosity.as_deref(), Some("low"));
     assert_eq!(
-        chat.native.fields().get("text"),
-        Some(&json!({ "extra": 1 }))
+        OpenAiResponses::fields(&chat.native).get("text"),
+        Some(&json!({ "verbosity": "low", "extra": 1 }))
     );
     assert_eq!(round_trip(&v), v);
 }
 
 #[test]
-fn stop_sequences_cannot_be_written() {
+fn stop_sequences_are_dropped() {
     let mut chat = Input::new([Message::new(Role::User, "hi")]);
     chat.options.stop = vec!["x".into()];
-    let refused = OpenAiResponses.encode_request(&chat).expect_err("stop");
-    assert!(refused.message().contains("stop sequences"));
+    let sent = OpenAiResponses.encode_request(&chat).expect("written");
+    assert!(sent.get("stop").is_none(), "{sent:?}");
 }
 
 #[test]
@@ -363,6 +394,13 @@ fn another_formats_conversation_is_written_as_responses() {
             Message::new(Role::User, "weather?"),
         ]);
         let mut calls = Message::new(Role::Assistant, "checking");
+        // Another format's field of the name Responses keeps an item's fields
+        // under splits nothing.
+        let mut more = Content::from(", one moment");
+        if let Content::Text { native, .. } = &mut more {
+            *native = OpenAiChat::native(rest_of(&json!({ "message": {} }), &[]));
+        }
+        calls.content.push(more);
         calls
             .content
             .push(Content::tool_call("c1", "get", "{\"a\":1}"));
@@ -385,7 +423,7 @@ fn another_formats_conversation_is_written_as_responses() {
             "input": [
                 { "role": "system", "content": "be brief" },
                 { "role": "user", "content": "weather?" },
-                { "role": "assistant", "content": "checking" },
+                { "role": "assistant", "content": "checking, one moment" },
                 { "type": "function_call", "call_id": "c1", "name": "get", "arguments": "{\"a\":1}" },
                 { "type": "function_call_output", "call_id": "c1", "output": "rain" },
             ],
@@ -397,11 +435,15 @@ fn another_formats_conversation_is_written_as_responses() {
 }
 
 #[test]
-fn a_failed_tool_result_and_audio_cannot_be_written() {
+fn a_failed_tool_results_output_says_it_failed() {
     let mut results = Message::new(Role::User, "");
     results.content = vec![Content::tool_result("c", vec!["boom".into()], true)];
     let chat = Input::new([results]);
-    assert!(OpenAiResponses.encode_request(&chat).is_err());
+    let sent = OpenAiResponses.encode_request(&chat).map(Value::from);
+    assert_eq!(
+        sent.expect("written")["input"][0],
+        json!({ "type": "function_call_output", "call_id": "c", "output": "Error: boom" })
+    );
 }
 
 #[test]
@@ -439,18 +481,21 @@ fn a_stream_decodes_to_the_kinds_events() {
         (start.id.as_str(), start.model.as_str()),
         ("resp_1", "gpt-x")
     );
-    assert_eq!(start.native.fields().get("created_at"), Some(&json!(5)));
+    assert_eq!(
+        OpenAiResponses::fields(&start.native).get("created_at"),
+        Some(&json!(5))
+    );
     let rest = [
-        Output::native(
-            RESPONSES,
-            json!({ "type": "block_fields", "block": 0, "fields": { "id": "msg_1" } }),
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_1" }), &[])),
         ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hello"),
         Output::text(0, " world"),
         Output::block_end(0),
     ];
-    assert_eq!(out[1..6], rest);
+    assert_same::<OpenAiResponses>(&out[1..6], &rest);
     let mut usage = Usage::new(5, 3);
     usage.cached_input_tokens = 2;
     usage.reasoning_tokens = 1;
@@ -470,7 +515,7 @@ fn a_message_streamed_without_its_parts_events_decodes_alike() {
     let unparted: Vec<_> = text_stream().into_iter().filter(|e| !part(e)).collect();
     let (out, end) = decode_stream(&unparted);
     end.expect("a whole stream");
-    assert_eq!(out, decode_stream(&text_stream()).0);
+    assert_same::<OpenAiResponses>(&out, &decode_stream(&text_stream()).0);
 }
 
 #[test]
@@ -521,10 +566,11 @@ fn function_calls_and_reasoning_are_blocks() {
         ]
     );
     assert_eq!(all.finish, Some(Finish::ToolUse));
-    assert!(out.contains(&Output::native(
-        RESPONSES,
-        json!({ "type": "block_fields", "block": 0, "fields": { "id": "rs_1" } })
-    )));
+    assert!(
+        out.iter()
+            .any(|e| matches!(e, Output::BlockFields { block: 0, native }
+        if OpenAiResponses::value(native) == Some(&json!({ "id": "rs_1" }))))
+    );
 }
 
 #[test]
@@ -547,16 +593,15 @@ fn incomplete_has_its_reason_as_the_finish() {
     for (reason, finish) in [
         ("max_output_tokens", Finish::Length),
         ("content_filter", Finish::Filtered),
-        ("other", Finish::native(RESPONSES, "other")),
+        (
+            "other",
+            Finish::native(OpenAiResponses::native("other"), None),
+        ),
     ] {
         let mut body = response("incomplete", json!([]));
         body["incomplete_details"] = json!({ "reason": reason });
         let out = decode_body(&body);
-        assert_eq!(
-            out.last(),
-            Some(&Output::finished(finish.clone())),
-            "{reason}"
-        );
+        assert_same::<OpenAiResponses>(&out[out.len() - 1..], &[Output::finished(finish)]);
         let written = body_of(&out).expect("a body");
         assert_eq!(written["status"], "incomplete");
         assert_eq!(written["incomplete_details"]["reason"], reason);
@@ -773,9 +818,9 @@ fn blocks_that_interleave_are_written_one_at_a_time() {
 fn a_body_is_written_from_the_events() {
     let replies = [
         Output::start("resp_9", "gpt-x"),
-        Output::native(
-            RESPONSES,
-            json!({ "type": "block_fields", "block": 0, "fields": { "id": "msg_real" } }),
+        Output::block_fields(
+            0,
+            OpenAiResponses::native(rest_of(&json!({ "id": "msg_real" }), &[])),
         ),
         Output::block_start(0, Block::Text),
         Output::text(0, "Hi"),
@@ -813,8 +858,7 @@ fn a_body_is_written_from_the_events() {
 #[test]
 fn a_provider_s_own_fields_come_back_in_this_format() {
     let mut start = Start::new("resp_1", "gpt-x");
-    start.native = native_fields(
-        RESPONSES,
+    start.native = OpenAiResponses::native(
         json!({ "created_at": 77, "temperature": 0.2, "service_tier": "default" })
             .as_object()
             .cloned()
@@ -827,11 +871,11 @@ fn a_provider_s_own_fields_come_back_in_this_format() {
     assert_eq!(body["service_tier"], "default");
     // Another format's fields are not ours.
     let mut foreign = Start::new("r", "m");
-    foreign.native = Some(NativeFields::new("openai-chat", {
+    foreign.native = OpenAiChat::native({
         let mut m = Map::new();
         m.insert("system_fingerprint".into(), "fp".into());
         m
-    }));
+    });
     let body = body_of(&[Output::Start(foreign), Output::finished(Finish::Stop)]).expect("a body");
     assert!(body.get("system_fingerprint").is_none());
 }
@@ -869,8 +913,8 @@ fn a_text_that_no_one_wrote_is_still_an_item() {
 
 #[test]
 fn another_formats_events_are_dropped() {
-    let ping = Output::native("anthropic-messages", json!({ "type": "ping" }));
-    let stray = Output::native("openai-chat", json!({ "choices": [{ "index": 1 }] }));
+    let ping = Output::Native(AnthropicMessages::native(json!({ "type": "ping" })));
+    let stray = Output::Native(OpenAiChat::native(json!({ "choices": [{ "index": 1 }] })));
     let replies = [
         Output::start("r", "m"),
         ping,
@@ -888,7 +932,7 @@ fn another_formats_events_are_dropped() {
 }
 
 #[test]
-fn an_error_after_content_ends_the_stream_with_an_error_event() {
+fn an_error_after_content_ends_the_stream_with_an_error_and_a_failed_event() {
     let mut enc = encode::Events::default();
     let mut out = BytesMut::new();
     for reply in [
@@ -904,8 +948,14 @@ fn an_error_after_content_ends_the_stream_with_an_error_event() {
     )
     .expect("ends");
     let text = String::from_utf8_lossy(&out).into_owned();
-    let last = text.trim_end().rsplit("\n\n").next().unwrap_or_default();
-    let error = event_json(last.as_bytes()).expect("an error event");
+    let mut events = text.trim_end().rsplit("\n\n");
+    let failed = event_json(events.next().unwrap_or_default().as_bytes()).expect("a failed event");
+    assert_eq!(failed["type"], "response.failed");
+    assert_eq!(failed["response"]["id"], "r");
+    assert_eq!(failed["response"]["status"], "failed");
+    assert_eq!(failed["response"]["error"]["code"], "upstream");
+    assert_eq!(failed["response"]["error"]["message"], "lost");
+    let error = event_json(events.next().unwrap_or_default().as_bytes()).expect("an error event");
     assert_eq!(error["type"], "error");
     assert_eq!(error["message"], "lost");
     assert!(text.contains("event: error\n"));
@@ -1006,7 +1056,7 @@ fn instructions_count_as_the_reader_reads_them() {
 
 #[test]
 fn a_foreign_value_is_dropped_beside_what_it_can_write() {
-    let foreign = NativeValue::new("openai-chat", json!({"logprobs": {}, "refusal": "no"}));
+    let foreign = OpenAiChat::native(json!({"logprobs": {}, "refusal": "no"}));
     let replies = [
         Output::start("r1", "m"),
         Output::block_start(0, Block::Text),
@@ -1027,7 +1077,7 @@ fn a_foreign_value_is_dropped_beside_what_it_can_write() {
 
 #[test]
 fn every_named_effort_is_the_kinds_and_written_as_it_came() {
-    for name in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
+    for name in ["none", "minimal", "low", "medium", "high", "xhigh"] {
         let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
             "reasoning": { "effort": name } });
         let chat = decode_request(&v);
@@ -1043,13 +1093,15 @@ fn every_named_effort_is_the_kinds_and_written_as_it_came() {
 
 #[test]
 fn a_chats_system_message_is_an_input_item_and_only_instructions_are_instructions() {
-    let chat = OpenAiChat.decode_json(&json!({
-        "messages": [
-            { "role": "system", "content": "Answer in JSON." },
-            { "role": "user", "content": "hi" },
-        ],
-        "response_format": { "type": "json_object" },
-    }));
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "messages": [
+                { "role": "system", "content": "Answer in JSON." },
+                { "role": "user", "content": "hi" },
+            ],
+            "response_format": { "type": "json_object" },
+        }))
+        .expect("read");
     let v = OpenAiResponses.encode_request(&chat).expect("a request");
     assert!(v.get("instructions").is_none(), "{v:?}");
     assert_eq!(
@@ -1087,14 +1139,16 @@ fn instructions_cross_to_another_format_as_its_system_prompt_and_no_more() {
 }
 
 #[test]
-fn a_chats_service_tier_and_verbosity_are_said_in_responses() {
-    let chat = OpenAiChat.decode_json(&json!({
-        "model": "m", "messages": [{ "role": "user", "content": "hi" }],
-        "service_tier": "flex", "verbosity": "low",
-    }));
+fn a_chats_service_tier_is_said_in_responses_and_its_verbosity_is_its_own() {
+    let chat = OpenAiChat
+        .decode_json(&json!({
+            "model": "m", "messages": [{ "role": "user", "content": "hi" }],
+            "service_tier": "flex", "verbosity": "low",
+        }))
+        .expect("read");
     let sent = OpenAiResponses.encode_request(&chat).expect("written");
     assert_eq!(sent["service_tier"], "flex");
-    assert_eq!(sent["text"]["verbosity"], "low");
+    assert!(sent.get("text").is_none(), "{sent:?}");
     let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
         "service_tier": "flex", "text": { "verbosity": "low" } });
     assert_eq!(round_trip(&v), v);
@@ -1102,21 +1156,264 @@ fn a_chats_service_tier_and_verbosity_are_said_in_responses() {
         .encode_request(&decode_request(&v))
         .expect("written");
     assert_eq!(sent["service_tier"], "flex");
-    assert_eq!(sent["verbosity"], "low");
+    assert!(sent.get("verbosity").is_none(), "{sent:?}");
 }
 
 /// OpenRouter has reported 87 reasoning tokens of 76 output: the answer is
 /// served, its counts within their totals, and the stream can still end.
 #[test]
 fn a_providers_parts_beyond_their_totals_stay_within_them() {
-    let usage = usage_of(&json!({
+    let read = usage_of(&json!({
         "input_tokens": 15, "output_tokens": 76,
         "input_tokens_details": { "cached_tokens": 20, "cache_write_tokens": 3 },
         "output_tokens_details": { "reasoning_tokens": 87 },
     }))
     .expect("read");
+    let usage = respan_gateway_conversation::Totals::default().increment(&read);
     assert_eq!(usage.reasoning_tokens, 76);
     assert_eq!(usage.cached_input_tokens, 15);
     assert_eq!(usage.cache_write_input_tokens, 0);
     assert!(crate::schema::check_usage(&usage, USAGE).is_ok());
+}
+
+#[test]
+fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
+    let read = |item: Value| {
+        let body = json!({"model": "m", "input": [item]});
+        OpenAiResponses.decode_request(Bytes::from(body.to_string()))
+    };
+    let image = |url: &str| json!({"type": "input_image", "image_url": url});
+    let message = |part: Value| json!({"role": "user", "content": [part]});
+    let output =
+        |part: Value| json!({"type": "function_call_output", "call_id": "c", "output": [part]});
+    let hello = Ok(b"hello".to_vec());
+    let cases = [
+        (
+            message(image("data:image/png;base64,aGVs\nbG8")),
+            hello.clone(),
+        ),
+        (output(image("data:image/png;base64,aGVsbG8=")), hello),
+        (
+            message(image("data:image/png;base64,not*base64!")),
+            Err("`image_url` is not valid base64"),
+        ),
+        (
+            output(image("data:image/png;base64,not*base64!")),
+            Err("`image_url` is not valid base64"),
+        ),
+        (
+            message(json!({"type": "input_file", "file_data": "aGVsbG8="})),
+            Err("`file_data` must be a `data:` URL"),
+        ),
+    ];
+    let bytes = |chat: &Input| match chat.messages[0].content.first() {
+        Some(Content::Image(m) | Content::Audio(m) | Content::Document(m)) => match &m.source {
+            MediaSource::Bytes(bytes) => bytes.to_vec(),
+            other => panic!("{other:?}"),
+        },
+        Some(Content::ToolResult { content, .. }) => match content.first() {
+            Some(Content::Image(m)) => match &m.source {
+                MediaSource::Bytes(bytes) => bytes.to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        },
+        other => panic!("{other:?}"),
+    };
+    for (part, read_as) in cases {
+        let said = part.to_string();
+        match (read(part), read_as) {
+            (Ok(chat), Ok(expected)) => assert_eq!(bytes(&chat), expected, "{said}"),
+            (Err(fault), Err(refusal)) => assert_eq!(fault.message(), refusal, "{said}"),
+            (read, _) => panic!("{said}: {read:?}"),
+        }
+    }
+}
+
+/// A request as Codex sends one: a function, a namespace of an MCP server's
+/// functions, and a call of one of them in its history.
+fn codex_request() -> Value {
+    json!({
+        "model": "m",
+        "input": [
+            { "role": "user", "content": "ship it" },
+            { "type": "function_call", "call_id": "c0", "name": "deploy", "namespace": "mcp__railway", "arguments": "{}" },
+            { "type": "function_call_output", "call_id": "c0", "output": "ok" },
+        ],
+        "tools": [
+            { "type": "function", "name": "shell", "strict": false, "parameters": { "type": "object" } },
+            { "type": "namespace", "name": "mcp__railway", "description": "Railway", "tools": [
+                { "type": "function", "name": "deploy", "description": "Deploys", "strict": false,
+                  "parameters": { "type": "object" } },
+            ] },
+            { "type": "web_search" },
+        ],
+    })
+}
+
+/// What a Responses client that sent `request` is answered, from `replies`.
+fn answer(request: &Value, replies: &[Output]) -> Bytes {
+    let request = http::Request::post("/v1/responses").body(Bytes::from(request.to_string()));
+    let request = request.expect("a request");
+    let answer = OpenAiResponses.encode_response(&request, replies);
+    answer.expect("an answer").into_body()
+}
+
+/// A Chat Completions answer that calls each of `names`.
+fn chat_calls(names: &[&str]) -> Vec<Output> {
+    let calls: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            json!({ "id": format!("c{i}"), "type": "function",
+                    "function": { "name": name, "arguments": "{}" } })
+        })
+        .collect();
+    let body = json!({
+        "id": "chatcmpl-1", "object": "chat.completion", "model": "m",
+        "choices": [{ "index": 0, "finish_reason": "tool_calls",
+                      "message": { "role": "assistant", "content": null, "tool_calls": calls } }],
+        "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 },
+    });
+    let mut out = Vec::new();
+    OpenAiChat
+        .decode_body(&body, &mut out)
+        .expect("a Chat answer");
+    out
+}
+
+fn named(item: &Value) -> (&Value, &Value) {
+    (&item["name"], &item["namespace"])
+}
+
+#[test]
+fn a_namespaces_functions_are_offered_and_called_by_their_joined_names() {
+    let chat = decode_request(&codex_request());
+    let sent = OpenAiChat.encode_request(&chat).expect("a Chat request");
+    let names: Vec<&Value> = sent["tools"]
+        .as_array()
+        .expect("tools")
+        .iter()
+        .map(|t| &t["function"]["name"])
+        .collect();
+    assert_eq!(names, [&json!("shell"), &json!("mcp__railway__deploy")]);
+    assert_eq!(sent["tools"][1]["function"]["description"], "Deploys");
+    let call = &sent["messages"][1]["tool_calls"][0]["function"];
+    assert_eq!(call["name"], "mcp__railway__deploy");
+}
+
+#[test]
+fn a_namespaced_request_goes_back_to_responses_as_it_came() {
+    let v = codex_request();
+    let chat = decode_request(&v);
+    let Content::ToolCall { name, .. } = &chat.messages[1].content[0] else {
+        panic!("a call");
+    };
+    assert_eq!(name, "mcp__railway__deploy");
+    assert_eq!(round_trip(&v), v);
+}
+
+#[test]
+fn a_call_of_a_namespaces_function_is_answered_with_its_namespace() {
+    let replies = chat_calls(&["mcp__railway__deploy", "mcp__railway__destroy", "shell"]);
+    let body = answer(&codex_request(), &replies);
+    let body: Value = serde_json::from_slice(&body).expect("a body");
+    let output = body["output"].as_array().expect("output");
+    let names: Vec<_> = output.iter().map(named).collect();
+    let none = &Value::Null;
+    assert_eq!(
+        names,
+        [
+            (&json!("deploy"), &json!("mcp__railway")),
+            (&json!("mcp__railway__destroy"), none),
+            (&json!("shell"), none),
+        ]
+    );
+}
+
+#[test]
+fn a_streamed_call_of_a_namespaces_function_is_answered_with_its_namespace() {
+    let replies = chat_calls(&["mcp__railway__deploy", "shell"]);
+    let mut request = codex_request();
+    request["stream"] = true.into();
+    let body = answer(&request, &replies);
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let events: Vec<Value> = text
+        .split("\n\n")
+        .filter_map(|e| event_json(e.as_bytes()))
+        .collect();
+    let items = |kind: &str| -> Vec<&Value> {
+        let of = |e: &&Value| e["type"] == kind;
+        events.iter().filter(of).map(|e| &e["item"]).collect()
+    };
+    let none = &Value::Null;
+    let expected = [
+        (&json!("deploy"), &json!("mcp__railway")),
+        (&json!("shell"), none),
+    ];
+    for kind in ["response.output_item.added", "response.output_item.done"] {
+        let names: Vec<_> = items(kind).into_iter().map(named).collect();
+        assert_eq!(names, expected, "{kind}");
+    }
+    let completed = events.iter().find(|e| e["type"] == "response.completed");
+    let output = &completed.expect("completed")["response"]["output"];
+    let names: Vec<_> = output
+        .as_array()
+        .expect("output")
+        .iter()
+        .map(named)
+        .collect();
+    assert_eq!(names, expected);
+}
+
+#[test]
+fn a_namespaced_name_another_tool_has_is_not_read() {
+    let v = json!({
+        "model": "m",
+        "input": "hi",
+        "tools": [
+            { "type": "function", "name": "mcp__railway__deploy", "parameters": { "type": "object" } },
+            { "type": "namespace", "name": "mcp__railway", "tools": [
+                { "type": "function", "name": "deploy", "parameters": { "type": "object" } },
+                { "type": "function", "name": "status", "parameters": { "type": "object" } },
+            ] },
+        ],
+    });
+    let chat = decode_request(&v);
+    let names: Vec<&str> = chat.tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["mcp__railway__deploy", "mcp__railway__status"]);
+    assert_eq!(chat.tools[0].parameters, json!({ "type": "object" }));
+    let replies = chat_calls(&["mcp__railway__deploy", "mcp__railway__status"]);
+    let body: Value = serde_json::from_slice(&answer(&v, &replies)).expect("a body");
+    let output = body["output"].as_array().expect("output");
+    let names: Vec<_> = output.iter().map(named).collect();
+    assert_eq!(
+        names,
+        [
+            (&json!("mcp__railway__deploy"), &Value::Null),
+            (&json!("status"), &json!("mcp__railway")),
+        ]
+    );
+}
+
+#[test]
+fn of_two_namespaces_whose_names_join_alike_the_longer_ones_is_read() {
+    let tool = |name: &str| json!({ "type": "function", "name": name, "parameters": {} });
+    let v = json!({
+        "model": "m",
+        "input": "hi",
+        "tools": [
+            { "type": "namespace", "name": "mcp", "tools": [tool("railway__deploy")] },
+            { "type": "namespace", "name": "mcp__railway", "tools": [tool("deploy")] },
+        ],
+    });
+    let chat = decode_request(&v);
+    let names: Vec<&str> = chat.tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(names, ["mcp__railway__deploy"]);
+    let body = answer(&v, &chat_calls(&["mcp__railway__deploy"]));
+    let body: Value = serde_json::from_slice(&body).expect("a body");
+    assert_eq!(
+        named(&body["output"][0]),
+        (&json!("deploy"), &json!("mcp__railway"))
+    );
 }

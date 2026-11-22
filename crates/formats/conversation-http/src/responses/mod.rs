@@ -17,14 +17,14 @@
 //!
 //! A call whose client speaks another format, which can name no response,
 //! asks to store nothing (`store: false`) and for its reasoning encrypted
-//! (`include: ["reasoning.encrypted_content"]`), as that reasoning, kept
-//! native to its block, is the only way it reaches a later call (the
-//! gateway's `plugins.responses` puts it back).
+//! (`include: ["reasoning.encrypted_content"]`), as that reasoning's
+//! signature, which its client sends back, is the only way it reaches a
+//! later call.
 //!
 //! What the kind has no form for stays native to this format and is dropped
 //! in translation: `previous_response_id` and `conversation` (another
 //! provider cannot resolve them; the gateway's `plugins.responses` resolves
-//! the first itself), `include`, `truncation`,
+//! both itself), `include`, `truncation`,
 //! the rest of `reasoning` (`generate_summary`, a summary but `auto`), `metadata`, built-in tools (web search,
 //! file search, computer use, code interpreter, MCP) and the items they
 //! make, and the rest of what the request says beyond the spec's defaults.
@@ -52,8 +52,8 @@
 //!   (`max_output_tokens` the token limit, `content_filter` a filter, else a
 //!   native reason). `response.failed` and `error` are the stream's failure.
 //! - The item's fields the kind has no place for, such as its `id`, are its
-//!   [`Output::block_fields`] before its block opens, and an annotation one
-//!   native `{"type": "annotation", ..}`; the usage object's other fields
+//!   [`Output::BlockFields`] before its block opens, and an annotation one
+//!   [`Output::BlockNative`] of its block; the usage object's other fields
 //!   are `{"type": "usage_fields", ..}`. Another format drops them all.
 //! - An item the kind has no form for (a built-in tool's call, a refusal)
 //!   is a native of each of its events as they came, or, from a whole body,
@@ -67,16 +67,23 @@
 //! order they opened.
 //!
 //! Not carried: log probabilities, which are written empty.
+//!
+//! # Conversations
+//!
+//! OpenAI's Conversations API is this format's too ([`conversations`]): its
+//! requests are clients of it, answered by whoever keeps conversations.
 
+pub mod conversations;
 mod decode;
 mod encode;
 mod request;
 #[cfg(test)]
 mod tests;
 
+use crate::openai::error_type;
 use crate::schema::{
-    Asked, NativeFieldsExt, Schema, UsageFields, count, merge_details, merge_fields, native_fields,
-    parts_within_totals, unsupported_fields, unwritable_content, usage_extra,
+    Asked, Own, Schema, UsageFields, count, edit_native, merge_details, merge_fields, own_fields,
+    unsupported_fields, unwritable_content, usage_extra,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Finish, Input, Output, Start, Usage};
@@ -91,15 +98,13 @@ pub use decode::ResponsesDecoder;
 /// The wire format's name ([`Schema::NAME`]).
 const RESPONSES: &str = "openai-responses";
 
-/// The type of the native that carries an annotation of a text block.
-const ANNOTATION: &str = "annotation";
 /// The type of the native that carries the usage's other fields.
 const USAGE_FIELDS: &str = "usage_fields";
 /// The type of the native that carries the response's fields that changed.
 const RESPONSE_FIELDS: &str = "response_fields";
 
 /// OpenAI Responses, `openai-responses`: a `POST` to any path ending in
-/// `/responses`. The provider's base URL includes the version, such as
+/// `/responses`, and a client of the Conversations API ([`conversations`]). The provider's base URL includes the version, such as
 /// `https://api.openai.com/v1`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct OpenAiResponses;
@@ -124,10 +129,13 @@ impl Format<ClientIo, Input, Output> for OpenAiResponses {
         RESPONSES
     }
     fn matches(&self, io: &ClientIo) -> bool {
-        self.accepts(io.request())
+        self.accepts(io.request()) || conversations::is_route(io.request())
     }
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        self.bind_client(io)
+        match conversations::is_route(io.request()) {
+            true => conversations::bind(io),
+            false => self.bind_client(io),
+        }
     }
 }
 
@@ -177,12 +185,12 @@ impl Schema for OpenAiResponses {
     const CARRIED: &'static [&'static str] =
         &["openai-beta", "openai-organization", "openai-project"];
     /// The structured output requirement is in `text`; whether the request
-    /// had `instructions` is said by [`request::write_input`].
+    /// had `instructions` is said by `request::write_input`.
     const OWN: &'static [&'static str] = &["text", "reasoning", request::INSTRUCTIONS];
     type Decoding = ResponsesDecoder;
 
     /// A client of another format can name no response: none is stored,
-    /// and its reasoning comes encrypted, to be carried to a later call.
+    /// and its reasoning comes signed, for its client to send back.
     fn translated(_: &Input, v: &mut Map<String, Value>) {
         v.entry("store").or_insert(false.into());
         let include = v.entry("include").or_insert_with(|| json!([]));
@@ -202,36 +210,32 @@ impl Schema for OpenAiResponses {
         self.decoder().body(v, out)
     }
 
-    fn decode_json(&self, v: &Value) -> Input {
+    fn decode_json(&self, v: &Value) -> Result<Input, Fault> {
         let mut chat = Input::default();
         chat.options.max_output_tokens = v["max_output_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
         chat.user = v["user"].as_str().map(Into::into);
-        chat.native = native_fields(RESPONSES, unsupported_fields(v, KNOWN, DEFAULTS));
+        chat.native = OpenAiResponses::native(unsupported_fields(v, KNOWN, DEFAULTS));
         if chat.user.is_some() {
-            chat.native.fields_mut(RESPONSES).shift_remove("user");
+            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
         }
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
-            chat.native
-                .fields_mut(RESPONSES)
-                .insert(request::INSTRUCTIONS.into(), true.into());
+            let instructions = request::INSTRUCTIONS.into();
+            edit_native::<Self, _>(&mut chat.native, |f| f.insert(instructions, true.into()));
         }
-        request::read_input(v, &mut chat);
+        request::read_input(v, &mut chat)?;
         request::read_tools(v, &mut chat);
-        chat.native = native_fields(RESPONSES, std::mem::take(chat.native.fields_mut(RESPONSES)));
+        edit_native::<Self, _>(&mut chat.native, |_| {});
         request::read_format(v, &mut chat);
-        chat.options.service_tier = crate::schema::take_text(&mut chat, "service_tier");
-        request::read_verbosity(&mut chat);
+        chat.options.service_tier = crate::schema::take_text::<Self>(&mut chat, "service_tier");
         request::read_reasoning(&mut chat);
-        chat
+        Ok(chat)
     }
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
-        if !chat.options.stop.is_empty() {
-            return Err(crate::schema::untranslatable("stop sequences in Responses"));
-        }
+        // WARN: Responses has no stop sequences; they are dropped.
         let mut v = Map::new();
         request::write_input(chat, &mut v)?;
         request::write_tools(chat, &mut v)?;
@@ -254,13 +258,10 @@ impl Schema for OpenAiResponses {
         crate::schema::set(&mut v, "user", chat.user.clone().map(Into::into));
         request::write_format(chat, &mut v);
         request::write_reasoning(chat, &mut v)?;
-        if chat.options.top_k.is_some() {
-            return Err(crate::schema::untranslatable("top_k in Responses"));
-        }
         Ok(v)
     }
 
-    fn decode_part(p: &Value) -> Option<Content> {
+    fn decode_part(p: &Value) -> Result<Option<Content>, Fault> {
         request::decode_part(p)
     }
 
@@ -280,10 +281,18 @@ impl Schema for OpenAiResponses {
         Box::new(encode::Events::default())
     }
 
+    fn response_encoder(
+        &self,
+        head: &mut respan_gateway_http::http::response::Parts,
+        request: &respan_gateway_http::http::Request<respan_gateway_http::bytes::Bytes>,
+    ) -> Box<dyn Encoder<Output>> {
+        let encoder = crate::schema::response_encoder(*self, head, request);
+        encode::Namespaced::wrap(encoder, request.body())
+    }
+
     fn error_body(fault: &Fault) -> Value {
         let code = fault.code();
-        let error =
-            json!({ "message": fault.message(), "type": code, "param": null, "code": code });
+        let error = json!({ "message": fault.message(), "type": error_type(fault), "param": null, "code": code });
         json!({ "error": merge_details(error, fault) })
     }
 }
@@ -295,7 +304,7 @@ pub(crate) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     usage.cached_input_tokens = n("/input_tokens_details/cached_tokens")?;
     usage.cache_write_input_tokens = n("/input_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/output_tokens_details/reasoning_tokens")?;
-    Ok(parts_within_totals(usage))
+    Ok(usage)
 }
 
 /// What a usage object `u` says that has no unit.
@@ -353,14 +362,20 @@ pub(crate) fn status_of(finish: &Finish) -> Result<(&'static str, Option<String>
         Finish::Stop | Finish::ToolUse => ("completed", None),
         Finish::Length => ("incomplete", Some("max_output_tokens".into())),
         Finish::Filtered => ("incomplete", Some("content_filter".into())),
-        Finish::Native { format, reason, .. } if **format == *RESPONSES => (
-            "incomplete",
-            Some(reason.clone()).filter(|r| r != "incomplete"),
-        ),
         Finish::Native {
-            fallback: Some(fallback),
-            ..
-        } => status_of(fallback)?,
+            native, fallback, ..
+        } => match (OpenAiResponses::value(native), fallback) {
+            (Some(reason), _) => (
+                "incomplete",
+                reason
+                    .as_str()
+                    .filter(|r| *r != "incomplete")
+                    .map(Into::into),
+            ),
+            (None, Some(fallback)) => status_of(fallback)?,
+            // WARN: a native reason without a fallback is written as a stop.
+            (None, None) => ("completed", None),
+        },
         _ => return Err(unwritable_content()),
     })
 }
@@ -393,8 +408,7 @@ pub(crate) fn response_body(
     ];
     let mut body = Map::new();
     body.extend(defaults.map(|(k, v)| (k.to_owned(), v)));
-    let own = start.filter(|s| s.native.format() == Some(RESPONSES));
-    let mut fields = Value::Object(own.map(|s| s.native.fields().clone()).unwrap_or_default());
+    let mut fields = Value::Object(own_fields::<OpenAiResponses>(start));
     merge_fields(&mut fields, changed);
     if let Value::Object(fields) = fields {
         body.extend(fields);

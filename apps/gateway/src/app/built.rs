@@ -12,7 +12,9 @@ use respan_gateway_core::Gateway;
 use respan_gateway_http::http::StatusCode;
 use respan_gateway_http::http::header::CONTENT_TYPE;
 use respan_gateway_media::video::{LocateContent, VideoJobs};
-use respan_gateway_media_http::gemini::GeminiVeo;
+use respan_gateway_media_http::gemini::GeminiOmni;
+use respan_gateway_media_http::job_ids;
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
 use respan_gateway_plugin_relay::Relay;
@@ -226,10 +228,12 @@ fn with_plugins(
         })
         .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
         .collect();
-    // Veo serves a job's content only where the job says.
-    let veo = plan.upstreams.iter().flat_map(|u| &u.entries);
-    let veo = veo.filter(|e| e.format == GeminiVeo::NAME);
-    let locate = veo.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
+    // Gemini serves a job's content only where the job says, and OpenRouter
+    // answers for one not finished as for one it never made.
+    let located = [GeminiOmni::NAME, OpenRouterVideos::NAME];
+    let located = (plan.upstreams.iter().flat_map(|u| &u.entries))
+        .filter(|e| located.contains(&e.format.as_str()));
+    let locate = located.fold(LocateContent::new(), |l, e| l.provider(&e.internal));
     // The tool loop answers the request itself, so it comes after every plugin
     // that routes or edits it; what ends its sessions comes before them all.
     let tool_loop = config.plugins.tool_loop.as_ref().map(|config| {
@@ -256,18 +260,8 @@ fn with_plugins(
         Some(closer) => gateway.plugin(closer.plugin()),
         None => gateway,
     };
-    let gateway = gateway
-        .plugin(Recorder::new(log.clone(), formats, names.clone()))
-        .plugin(routing(plan, formats, tool_loop.is_some()))
-        .plugin(mcp_router);
-    let gateway = gateway.plugin(video_jobs(plan, formats)).plugin(locate);
-    // A provider without a key of its own gets the client's.
-    let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
-    let keyless = keyless.flat_map(|u| u.entries.iter().map(|e| e.internal.clone()));
-    // An MCP server gets a client's credentials only if it says so.
-    let forwarded = plan.mcp.iter().filter(|s| s.forward_auth);
-    let forwarded = forwarded.map(|s| s.name.clone());
-    let gateway = gateway.plugin(ClientCredentials::new(keyless.chain(forwarded)));
+    let gateway = gateway.plugin(Recorder::new(log.clone(), formats, names.clone()));
+    // It answers the Conversations API itself, which names no model to route.
     let responses = &config.plugins.responses;
     let gateway = match responses.enabled {
         true => {
@@ -278,6 +272,17 @@ fn with_plugins(
         }
         false => gateway,
     };
+    let gateway = gateway
+        .plugin(routing(plan, formats, tool_loop.is_some()))
+        .plugin(mcp_router);
+    let gateway = gateway.plugin(video_jobs(plan)).plugin(locate);
+    // A provider without a key of its own gets the client's.
+    let keyless = plan.upstreams.iter().filter(|u| !u.own_key);
+    let keyless = keyless.flat_map(|u| u.entries.iter().map(|e| e.internal.clone()));
+    // An MCP server gets a client's credentials only if it says so.
+    let forwarded = plan.mcp.iter().filter(|s| s.forward_auth);
+    let forwarded = forwarded.map(|s| s.name.clone());
+    let gateway = gateway.plugin(ClientCredentials::new(keyless.chain(forwarded)));
     // A relay gives its vendor's response heads and error bodies back.
     let mut gateway = match config.relay {
         true => gateway.plugin(Relay),
@@ -304,18 +309,15 @@ fn with_plugins(
     (gateway, closer, aggregate_closer)
 }
 
-/// Video jobs' follow-ups, to the provider of each format whose job ids
-/// the format spells.
-fn video_jobs(plan: &Plan, formats: &[KnownFormat]) -> VideoJobs {
-    let spelling = |format: &str| {
-        let known = formats.iter().find(|f| f.name == format);
-        known.and_then(|f| f.job_ids)
-    };
+/// Video jobs' follow-ups, to the provider of each video format, by how
+/// the format spells its jobs' ids.
+fn video_jobs(plan: &Plan) -> VideoJobs {
     let entries = plan.upstreams.iter();
     let entries = entries.flat_map(|u| u.entries.iter().map(move |e| (u, e)));
-    entries.fold(VideoJobs::new(), |jobs, (u, e)| match spelling(&e.format) {
-        Some(spelling) => jobs.provider(&u.name, &e.internal, spelling),
-        None => jobs,
+    entries.fold(VideoJobs::new(), |jobs, (u, e)| {
+        job_ids(&e.format).fold(jobs, |jobs, spelling| {
+            jobs.provider(&u.name, &e.internal, spelling)
+        })
     })
 }
 
@@ -399,6 +401,8 @@ fn routes(
         Some(local) => router.layer(from_fn_with_state(local, auth::local_only)),
         None => router,
     };
+    // Each turn of a Responses socket is a request through all of the above.
+    let router = router.layer(respan_gateway_serve::ResponsesWebSocket);
     // Outermost: a preflight carries no key, and no host check applies.
     let router = match cors {
         Some(cors) => router.layer(from_fn_with_state(cors, auth::cors)),

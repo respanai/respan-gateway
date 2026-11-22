@@ -22,6 +22,7 @@ use respan_gateway_ws::WsTransport;
 use crate::session::{self, Spec};
 
 const NAME: &str = SPEC.name;
+pub(crate) type Key = crate::Own<GeminiLive>;
 
 /// What a session's writer to its provider and reader of it share.
 #[derive(Debug, Default)]
@@ -66,13 +67,13 @@ pub(crate) const SPEC: Spec = Spec {
 /// ends, stays native, so a relay to Gemini keeps what every message says.
 ///
 /// To a client of another format it says what the Live API cannot: a
-/// session opened before its setup, an update that changes nothing, and
+/// session opened before its setup, a later session, and
 /// the end of a response the client cancelled, whose rest it drops.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct GeminiLive;
 
 impl GeminiLive {
-    /// The format's name, `gemini-live`, which tags its native events.
+    /// The format's name, `gemini-live`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
@@ -115,9 +116,7 @@ impl Upstream for GeminiLive {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn at_origin(&self) -> bool {
@@ -145,8 +144,7 @@ impl Format<ProviderIo, Output, Input> for GeminiLive {
         let _ = say.unbounded_send(Output::Opened(opened));
         let mut provider = input::Provider::new(shared.clone(), say);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
-        let mut provider = output::Provider::new(shared);
-        let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
-        Ok(SPEC.provider(io, None, write, Box::new(read), Some(said)))
+        let provider = output::Provider::new(shared);
+        Ok(SPEC.provider(io, None, write, Box::new(provider), Some(said)))
     }
 }

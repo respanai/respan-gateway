@@ -1,16 +1,16 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
+    Gate, Own, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
 };
-use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage, block_fields};
-use respan_gateway_core::{Fault, NativeValue};
+use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
+use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{ANTHROPIC, AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
+use super::{AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
 
 /// Writes events as Anthropic's stream: `message_start` at the first need,
 /// each block's events, and at the end `message_delta` and `message_stop`.
@@ -32,6 +32,8 @@ pub(super) struct EventStream {
     next: u32,
     /// The fields of blocks that have not opened, by block.
     fields: Vec<(u32, Map<String, Value>)>,
+    /// The index of each block only natives carry, by block.
+    natives: Vec<(u32, u32)>,
     gate: Gate,
 }
 
@@ -63,7 +65,7 @@ impl EventStream {
         message.insert("type".into(), "message".into());
         message.insert("role".into(), "assistant".into());
         message.insert("model".into(), model.into());
-        message.extend(own_fields(self.start.as_ref(), ANTHROPIC));
+        message.extend(own_fields::<AnthropicMessages>(self.start.as_ref()));
         message.insert("content".into(), json!([]));
         message.insert("stop_reason".into(), Value::Null);
         message.insert("stop_sequence".into(), Value::Null);
@@ -105,6 +107,20 @@ impl EventStream {
         Ok(())
     }
 
+    /// The index a native of `block` names: its block's on the wire, or the
+    /// next for a block only natives carry (a tool loop's numbers are not
+    /// the wire's).
+    fn native_index(&mut self, block: u32) -> u32 {
+        let slot = self.blocks.iter().find(|b| b.block == block);
+        let typed = slot.and_then(|b| b.index);
+        let named = self.natives.iter().find(|(b, _)| *b == block).map(|n| n.1);
+        typed.or(named).unwrap_or_else(|| {
+            self.natives.push((block, self.next));
+            self.next += 1;
+            self.next - 1
+        })
+    }
+
     /// Opens the waiting blocks, one after another, as far as each has ended.
     fn pump(&mut self, out: &mut BytesMut) -> Result<(), Fault> {
         while self.current.is_none() && !self.waiting.is_empty() {
@@ -121,23 +137,41 @@ impl EventStream {
         Ok(())
     }
 
-    /// Fields of `block`: those of a block not yet on the wire join its
-    /// start; a signature that comes after, a `signature_delta` of it.
-    fn block_fields(&mut self, block: u32, fields: &Map<String, Value>, out: &mut BytesMut) {
-        let index = self
-            .blocks
-            .iter()
-            .find(|b| b.block == block)
-            .and_then(|b| b.index);
-        match (index, fields.get("signature")) {
-            (Some(index), Some(signature)) => {
-                let delta = json!({ "type": "signature_delta", "signature": signature });
+    /// The signature of thinking `block`: a `signature_delta` once it is on
+    /// the wire, else part of its start.
+    fn signature(&mut self, block: u32, data: &str, out: &mut BytesMut) {
+        // WARN: Anthropic signs only thinking; another block's signature is dropped here, silently.
+        let thinking = |b: &&Slot| b.block == block && b.kind == Block::Reasoning;
+        let Some(slot) = self.blocks.iter().find(thinking) else {
+            return;
+        };
+        match slot.index {
+            Some(index) => {
+                let delta = json!({ "type": "signature_delta", "signature": data });
                 let event =
                     json!({ "type": "content_block_delta", "index": index, "delta": delta });
                 emit(out, event);
             }
-            _ => self.fields.push((block, fields.clone())),
+            None => {
+                let signed = Map::from_iter([("signature".to_owned(), data.into())]);
+                self.fields.push((block, signed));
+            }
         }
+    }
+
+    /// Reasoning withheld, as a `redacted_thinking` block of its own: only a
+    /// provider that says its blocks one at a time withholds it, so no other
+    /// block is open on the wire.
+    fn withheld(&mut self, data: &str, out: &mut BytesMut) {
+        self.begin(out);
+        let index = self.next;
+        self.next += 1;
+        let block = json!({ "type": "redacted_thinking", "data": data });
+        emit(
+            out,
+            json!({ "type": "content_block_start", "index": index, "content_block": block }),
+        );
+        emit(out, json!({ "type": "content_block_stop", "index": index }));
     }
 
     fn open(&mut self, block: u32, kind: &Block, out: &mut BytesMut) -> Result<(), Fault> {
@@ -279,32 +313,34 @@ impl EventStream {
                 self.finish = Some(finish.clone());
                 self.begin(out);
             }
-            Output::Native(NativeValue { format, value: raw })
-                if **format == *ANTHROPIC && block_fields(raw).is_some() =>
-            {
-                if let Some((block, fields)) = block_fields(raw) {
-                    self.block_fields(block, fields, out);
-                }
+            Output::Signature {
+                block: Some(block),
+                data,
+            } => self.signature(*block, data, out),
+            Output::Signature { block: None, data } => self.withheld(data, out),
+            Output::BlockFields { block, native } if AnthropicMessages::value(native).is_some() => {
+                self.fields
+                    .push((*block, AnthropicMessages::fields(native).clone()));
             }
-            Output::Native(NativeValue { format, value: raw }) if **format == *ANTHROPIC => {
+            Output::BlockNative { block, native } if AnthropicMessages::value(native).is_some() => {
+                self.begin(out);
+                let mut raw = AnthropicMessages::value(native)
+                    .cloned()
+                    .unwrap_or_default();
+                raw["index"] = self.native_index(*block).into();
+                emit(out, raw);
+            }
+            Output::Native(n) if AnthropicMessages::value(n).is_some() => {
+                let raw = AnthropicMessages::value(n).unwrap_or_default();
                 self.begin(out);
                 match raw["type"].as_str() {
                     // Beside the terminal `message_delta`, which carries them.
                     Some("message_delta") => self.stop.add(raw),
-                    kind => {
-                        // A block this format keeps takes its index.
-                        if kind == Some("content_block_start")
-                            && let Some(i) =
-                                raw["index"].as_u64().and_then(|i| u32::try_from(i).ok())
-                        {
-                            self.next = self.next.max(i.saturating_add(1));
-                        }
-                        emit(out, Value::clone(raw));
-                    }
+                    _ => emit(out, Value::clone(raw)),
                 }
             }
             // Another format's: only a client of that format could read it.
-            Output::Native(_) => {}
+            Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
         }
         Ok(())

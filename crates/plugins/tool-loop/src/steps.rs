@@ -10,14 +10,12 @@ use respan_gateway_conversation::{
 };
 use respan_gateway_core::futures::StreamExt;
 use respan_gateway_core::futures::stream::BoxStream;
-use respan_gateway_core::{Call, ErrorCode, Fault, NativeValue};
+use respan_gateway_core::{Call, ErrorCode, Fault, Native};
 use respan_gateway_http_faults::Status;
 use tokio::time::{Instant, timeout_at};
 
-use super::replay::renumbered;
 use super::tools::{limit, run_tools, spend};
 use super::{Limits, Sink, Step, StepReport, Toolbox};
-use respan_gateway_conversation::{block_fields, native_block as block_of};
 
 pub(super) struct Run {
     /// Whether the provider takes a tool result flagged as a failure.
@@ -63,8 +61,8 @@ pub(super) struct Reading {
     pub(super) numbers: HashMap<u32, u32>,
     /// The number the next block the client sees gets.
     pub(super) next: u32,
-    /// The native events that name a block before it opens, until it does.
-    pub(super) pending: HashMap<u32, Vec<NativeValue>>,
+    /// The fields of a block said before it opens, until it does.
+    pub(super) pending: HashMap<u32, Vec<Native>>,
     pub(super) finish: Option<Finish>,
     pub(super) usage: Usage,
     pub(super) started: Instant,
@@ -142,8 +140,8 @@ impl Reading {
                 }
                 let number = self.number(block);
                 let mut out: Vec<Output> = pending
-                    .iter()
-                    .map(|n| renumbered(n, block, number))
+                    .into_iter()
+                    .map(|native| Output::block_fields(number, native))
                     .collect();
                 out.push(Output::block_start(number, kind));
                 out
@@ -156,7 +154,12 @@ impl Reading {
                 let block = self.numbers.get(&block).copied().unwrap_or(block);
                 vec![Output::block_end(block)]
             }
-            Output::Delta { .. } | Output::BlockEnd { .. } => Vec::new(),
+            // A signature goes with its block: renumbered, or held with it.
+            Output::Signature { block, data } if block.is_none_or(|b| !self.held.contains(&b)) => {
+                let block = block.map(|b| self.numbers.get(&b).copied().unwrap_or(b));
+                vec![Output::signature(block, data)]
+            }
+            Output::Delta { .. } | Output::BlockEnd { .. } | Output::Signature { .. } => Vec::new(),
             Output::Usage(usage) => {
                 self.usage += usage;
                 Vec::new()
@@ -165,21 +168,25 @@ impl Reading {
                 self.finish = Some(finish);
                 Vec::new()
             }
-            Output::Native(native) => match block_of(&native.value) {
-                Some(block) if self.held.contains(&block) => Vec::new(),
-                Some(block) if self.numbers.contains_key(&block) => {
-                    vec![renumbered(&native, block, self.number(block))]
-                }
-                // Fields of a block that is yet to open.
-                Some(block) if block_fields(&native.value).is_some() => {
-                    self.pending.entry(block).or_default().push(native);
-                    Vec::new()
-                }
-                // A block only natives carry.
-                Some(block) => vec![renumbered(&native, block, self.number(block))],
-                None if first => vec![Output::Native(native)],
-                None => Vec::new(),
-            },
+            Output::BlockFields { block, .. } | Output::BlockNative { block, .. }
+                if self.held.contains(&block) =>
+            {
+                Vec::new()
+            }
+            // Fields of a block that is yet to open.
+            Output::BlockFields { block, native } if !self.numbers.contains_key(&block) => {
+                self.pending.entry(block).or_default().push(native);
+                Vec::new()
+            }
+            Output::BlockFields { block, native } => {
+                vec![Output::block_fields(self.number(block), native)]
+            }
+            // Of a block that is open, or one only such events carry.
+            Output::BlockNative { block, native } => {
+                vec![Output::block_native(self.number(block), native)]
+            }
+            Output::Native(native) if first => vec![Output::Native(native)],
+            Output::Native(_) => Vec::new(),
             // An event a later kind adds is the client's to see.
             other => vec![other],
         })

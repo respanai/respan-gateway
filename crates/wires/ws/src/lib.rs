@@ -72,8 +72,8 @@ impl Default for Limits {
 }
 
 /// The WebSocket close code a fault asks for, an extension ([`Fault::with`]) that
-/// the client edge sends as its Close in place of 1011: a plugin's
-/// `Fault::new(msg).with(CloseCode(1008))`. A provider's own code is a
+/// the client edge sends as its Close in place of 1008 for the client's fault
+/// and 1011 for any other: a plugin's `Fault::new(msg).with(CloseCode(4001))`. A provider's own code is a
 /// [`ProviderClose`], which reaches the client only as this: set by a
 /// plugin, or by [`WsTransport`] on a call
 /// [`Relayed`](respan_gateway_http::raw::Relayed), as

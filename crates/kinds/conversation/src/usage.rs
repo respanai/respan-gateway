@@ -12,6 +12,8 @@ pub struct Usage {
     /// Of `input_tokens`, those read from a cache.
     pub cached_input_tokens: u64,
     /// Of `input_tokens`, those written to a cache.
+    // WARN: only Anthropic and Converse count them; OpenAI's formats and
+    // Gemini report none.
     pub cache_write_input_tokens: u64,
     /// Of `output_tokens`, those spent on reasoning.
     pub reasoning_tokens: u64,
@@ -30,11 +32,6 @@ impl Usage {
     /// Whether no usage was reported: every count is 0.
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
-    }
-
-    /// Each count of `self` less that of `other`, at least 0.
-    pub fn saturating_sub(&self, other: &Usage) -> Usage {
-        self.zip(other, u64::saturating_sub)
     }
 
     /// Each count of `self` and `other`, combined by `f`.
@@ -64,6 +61,35 @@ impl std::ops::AddAssign for Usage {
     }
 }
 
+/// Turns a provider's running usage totals into increments.
+#[derive(Debug, Default)]
+pub struct Totals(Usage);
+
+impl Totals {
+    /// What `total` adds to the totals seen so far: usage only grows, and a
+    /// part stays within its whole, though providers report more reasoning
+    /// than output or count a cache write again as a read.
+    pub fn increment(&mut self, total: &Usage) -> Usage {
+        let (seen, mut step) = (self.0, total.zip(&self.0, u64::saturating_sub));
+        let output = seen.output_tokens.saturating_add(step.output_tokens);
+        step.reasoning_tokens = step.reasoning_tokens.min(output - seen.reasoning_tokens);
+        let cached = seen.cached_input_tokens + seen.cache_write_input_tokens;
+        let mut room = seen.input_tokens.saturating_add(step.input_tokens) - cached;
+        step.cached_input_tokens = step.cached_input_tokens.min(room);
+        room -= step.cached_input_tokens;
+        step.cache_write_input_tokens = step.cache_write_input_tokens.min(room);
+        self.0 += &step;
+        step
+    }
+}
+
+/// An increment reported apart from the totals, as seen.
+impl std::ops::AddAssign<&Usage> for Totals {
+    fn add_assign(&mut self, step: &Usage) {
+        self.0 += step;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,8 +102,17 @@ mod tests {
     }
 
     #[test]
-    fn subtraction_stops_at_zero() {
-        let u = Usage::new(5, 1).saturating_sub(&Usage::new(3, 4));
-        assert_eq!(u, Usage::new(2, 0));
+    fn totals_become_increments_whose_parts_fit() {
+        let mut totals = Totals::default();
+        let total = |n| Usage::new(0, n);
+        assert_eq!(totals.increment(&total(1)).output_tokens, 1);
+        assert_eq!(totals.increment(&total(3)).output_tokens, 2);
+        assert!(totals.increment(&total(3)).is_empty());
+        assert!(totals.increment(&total(2)).is_empty(), "never negative");
+        let mut cache = Usage::new(10, 3);
+        cache.cache_write_input_tokens = 5;
+        totals.increment(&cache);
+        (cache.cached_input_tokens, cache.cache_write_input_tokens) = (9, 0);
+        assert_eq!(totals.increment(&cache).cached_input_tokens, 5);
     }
 }

@@ -1,5 +1,6 @@
 //! OpenAI Realtime over WebSocket.
 
+mod beta;
 mod input;
 mod output;
 mod session;
@@ -15,10 +16,12 @@ use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output, Purpose};
 use respan_gateway_ws::WsTransport;
 
-use crate::session::{Spec, model_at, model_query, transcribes_at};
-use crate::{SessionModel, requested_model};
+pub use beta::OpenAiRealtimeBeta;
+
+use crate::session::{Spec, dialled_model, model_at, model_query, transcribes_at};
 
 const NAME: &str = SPEC.name;
+pub(crate) type Key = crate::Own<OpenAiRealtime>;
 
 /// The model OpenAI transcribes a session's input with, unless the session
 /// names one: it transcribes only with a named model, so a session that
@@ -70,7 +73,7 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct OpenAiRealtime;
 
 impl OpenAiRealtime {
-    /// The format's name, `openai-realtime`, which tags its native events.
+    /// The format's name, `openai-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is served at the end of, and sent to.
     pub const PATH: &'static str = SPEC.path;
@@ -107,9 +110,7 @@ impl Upstream for OpenAiRealtime {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -123,29 +124,36 @@ impl Format<ProviderIo, Output, Input> for OpenAiRealtime {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        // The model routing chose, else the one the client's handshake asks for.
-        let wire = io.extensions().get::<Original>();
-        let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let asked = || requested_model(wire?);
-        let model = chosen.or_else(asked).ok_or_else(|| {
-            Fault::bad_request(
-                "OpenAI Realtime takes its model at connect: name it with ?model= on the session's URL",
-            )
-        })?;
-        // OpenAI opens a transcription at its intent, with no model: the
-        // model is the one that transcribes.
-        let uri = wire.and_then(|w| Some(w.get()?.uri().clone()));
-        let transcribing = uri.is_some_and(|uri| {
-            purpose_at(&uri) == Some(Purpose::Transcription) || transcribes_at(&uri)
-        });
-        let query = match transcribing {
-            true => TRANSCRIPTION_QUERY.to_owned(),
-            false => model_query(&model),
-        };
-        let mut provider = input::Provider::new(model, transcribing);
+        let (query, mut provider, mut reader) = call(&io)?;
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
-        let mut provider = output::Provider::default();
-        let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
+        let read = move |raw: Bytes, out: &mut Vec<Output>| reader.read(raw, out);
         Ok(SPEC.provider(io, Some(query), write, Box::new(read), None))
     }
+}
+
+/// A call's query, its writer of the client's events and its reader of the
+/// provider's frames: it dials the model routing chose, else the one the
+/// client's handshake asks for.
+fn call(io: &ProviderIo) -> Result<(String, input::Provider, output::Provider), Fault> {
+    let model = dialled_model(io).ok_or_else(|| {
+        Fault::bad_request(
+            "OpenAI Realtime takes its model at connect: name it with ?model= on the session's URL",
+        )
+    })?;
+    // OpenAI opens a transcription at its intent, with no model: the model
+    // is the one that transcribes.
+    let wire = io.extensions().get::<Original>();
+    let uri = wire.and_then(|w| Some(w.get()?.uri().clone()));
+    let transcribing = uri.is_some_and(|uri| {
+        purpose_at(&uri) == Some(Purpose::Transcription) || transcribes_at(&uri)
+    });
+    let query = match transcribing {
+        true => TRANSCRIPTION_QUERY.to_owned(),
+        false => model_query(&model),
+    };
+    Ok((
+        query,
+        input::Provider::new(model, transcribing),
+        output::Provider::default(),
+    ))
 }

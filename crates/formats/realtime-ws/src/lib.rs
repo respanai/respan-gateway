@@ -5,38 +5,71 @@
 //! - [`OpenAiRealtime`]: OpenAI Realtime, `openai-realtime`.
 //! - [`GeminiLive`]: Gemini Live, `gemini-live`.
 //! - [`MistralRealtime`]: Mistral's realtime transcription, `mistral-realtime`.
-//! - [`ResponsesWs`]: OpenAI's Responses over WebSocket, `responses-ws`,
-//!   which is not realtime: it streams Responses over a socket, and uses the
-//!   kind's types only as native events.
+//! - [`OpenAiLive`]: OpenAI's Live API, `openai-live`, full duplex.
+//! - [`PhonicSts`]: Phonic's speech-to-speech, `phonic-sts`, full duplex.
 //!
-//! [`OpenAiRealtime`] and [`GeminiLive`] decode each frame into the kind's
-//! events, keeping what the kind has no place for as their own (an event's
-//! `native`, or a native event), and write them back: a relay to the same
+//! [`OpenAiRealtime`], [`GeminiLive`], [`OpenAiLive`] and [`PhonicSts`]
+//! decode each frame into the kind's events, keeping what the kind has no
+//! place for as their own (an event's `native`, or a native event), and
+//! write them back: a relay to the same
 //! format keeps what each event says, not its exact bytes. Each writes the
-//! other's events too. Audio is converted where a spec cannot carry it, and
+//! others' events too. Audio is converted where a spec cannot carry it, and
 //! what one spec has and the other has not is emulated, dropped where it
-//! cannot change the answer, or refused: an input `bad_request`, closing
-//! the client 1008; an output `upstream`. [`ResponsesWs`] decodes every
-//! frame to the kind's native event of its name, and writes no other
-//! format's. A frame that is not JSON fails: the client's, `bad_request`;
-//! the provider's, `upstream`. A handshake one refuses is answered
-//! text/plain with the fault's error code, never its message.
+//! cannot change the answer, or refused: an input `bad_request` coded
+//! `unsupported`; an output the gateway's, coded `untranslatable`. A frame
+//! that is not JSON fails: the client's, `bad_request`; the provider's,
+//! `upstream`. A fault that ends a session is told to its client as the
+//! format's error event where it has one (an invalid request's for a 4xx),
+//! the session then closed clean, else as the Close's reason, its message;
+//! a provider's Close after its own error event, or its `goAway`, is that
+//! error, or the session limit it announced. A handshake one refuses is
+//! answered text/plain with the fault's message.
 
 mod audio;
+mod calls;
 mod foreign;
 mod gemini;
 mod json;
+mod live;
 mod mistral;
 mod openai;
-mod responses;
+mod phonic;
 mod session;
 
+pub use calls::Calls;
 pub use gemini::GeminiLive;
+pub use live::OpenAiLive;
 pub use mistral::MistralRealtime;
-pub use openai::OpenAiRealtime;
-pub use responses::ResponsesWs;
+pub use openai::{OpenAiRealtime, OpenAiRealtimeBeta};
+pub use phonic::PhonicSts;
 
-use respan_gateway_http::raw::Original;
+/// What only format `F` of this crate reads of a value: no other crate can name it.
+struct Own<F>(std::marker::PhantomData<fn() -> F>);
+
+/// A format's own natives, which code that names the format reaches.
+pub trait Natives: Sized + 'static {
+    /// Its own fields in `native`: none if it holds another format's.
+    fn fields(native: &Native) -> &Map<String, Value> {
+        native.fields::<Own<Self>>()
+    }
+    /// Its own fields in `native`, edited by `edit`: another format's dropped, and its own
+    /// still if no field is left, as its writer tells events.
+    fn with_fields(native: &Native, edit: impl FnOnce(&mut Map<String, Value>)) -> Native {
+        let edited = native.with_fields::<Own<Self>>(edit);
+        if edited.is_empty() {
+            Native::own::<Own<Self>>()
+        } else {
+            edited
+        }
+    }
+}
+impl Natives for OpenAiRealtime {}
+impl Natives for GeminiLive {}
+impl Natives for OpenAiLive {}
+
+use respan_gateway_core::Native;
+use respan_gateway_http::{native::Json, raw::Original};
+use serde_json::{Map, Value};
 
 /// The model routing chose for a session, in a call's extensions: a format
 /// whose provider takes its model at connect, as OpenAI's does at

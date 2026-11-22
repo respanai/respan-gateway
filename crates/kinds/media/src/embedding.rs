@@ -2,12 +2,12 @@
 //!
 //! A response is a sequence of events: a [`Output::Start`], then an
 //! [`Output::Embedding`] for each item of the request, in order (as many as
-//! the model answers for an [`Item::Parts`]), with
-//! [`Output::Usage`] and [`Output::Native`] among them.
+//! the model answers for an [`Item::Native`]), with
+//! [`Output::Usage`], [`Output::InputTokens`] and [`Output::Native`] among
+//! them.
 
-use respan_gateway_conversation::Usage;
-use respan_gateway_core::{FormatId, NativeFields, NativeValue};
-use serde_json::Value;
+use respan_gateway_conversation::{Media, Usage};
+use respan_gateway_core::Native;
 
 /// The kind's input: items to embed.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -19,11 +19,9 @@ pub struct Input {
     pub items: Vec<Item>,
     /// How many numbers each vector holds, if the model can shorten them.
     pub dimensions: Option<u32>,
-    /// The end user's id, as the client names them to the provider.
-    pub user: Option<String>,
     /// The request's fields the kind has no place for, such as how the
-    /// vectors are encoded.
-    pub native: Option<NativeFields>,
+    /// vectors are encoded or the end user's id.
+    pub native: Native,
 }
 
 impl Input {
@@ -52,12 +50,59 @@ impl Input {
 pub enum Item {
     /// A text.
     Text(String),
-    /// A text as the ids of its tokens, in the model's own vocabulary.
-    Tokens(Vec<u32>),
-    /// Parts (texts, images, videos), each as the client wrote it, such as
-    /// `{"type": "image", "url": ..}`: the model answers one vector for them
-    /// all, or one for each.
-    Parts(Vec<Value>),
+    /// Parts (texts, images, audio, videos, files) embedded together as one
+    /// vector.
+    Parts(Parts),
+    /// An item the kind has no form for, such as token ids; only a call in
+    /// its format can send it.
+    Native(Native),
+}
+
+/// The parts of an [`Item::Parts`].
+#[derive(Debug, Clone, Default, PartialEq)]
+#[non_exhaustive]
+pub struct Parts {
+    /// The parts, in order.
+    pub parts: Vec<Part>,
+    /// What its format says of the item that the kind has no place for, or
+    /// the item as it wrote it, to write back as it was.
+    pub native: Native,
+}
+
+impl Parts {
+    /// Parts with no native form.
+    pub fn new(parts: impl Into<Vec<Part>>) -> Self {
+        Self {
+            parts: parts.into(),
+            native: Native::default(),
+        }
+    }
+}
+
+/// A part of an [`Item::Parts`].
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum Part {
+    /// A text.
+    Text(String),
+    /// Media: its type, and its bytes or its URL.
+    Media(Media),
+}
+
+/// What a count of input tokens is of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Modality {
+    /// Text.
+    Text,
+    /// Images.
+    Image,
+    /// Audio.
+    Audio,
+    /// Video.
+    Video,
+    /// Documents, such as PDFs.
+    Document,
 }
 
 /// The kind's output: one event of a response.
@@ -70,16 +115,11 @@ pub enum Output {
     Embedding(Embedding),
     /// Usage the provider reports, as an increment.
     Usage(Usage),
-    /// An event the kind has no form for, as `format` has it. Sent only in
+    /// Of the usage's input tokens, those of a modality, as an increment.
+    InputTokens(Modality, u64),
+    /// An event the kind has no form for, as its format has it. Sent only in
     /// that format.
-    Native(NativeValue),
-}
-
-impl Output {
-    /// An event of `format` the kind has no form for.
-    pub fn native(format: impl Into<FormatId>, raw: impl Into<Value>) -> Self {
-        Output::Native(NativeValue::new(format, raw))
-    }
+    Native(Native),
 }
 
 /// Which response the events belong to.
@@ -89,7 +129,7 @@ pub struct Start {
     /// The model that made it, as the provider names it.
     pub model: Option<String>,
     /// The response's fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Start {
@@ -97,7 +137,7 @@ impl Start {
     pub fn new(model: Option<String>) -> Self {
         Self {
             model,
-            native: None,
+            native: Native::default(),
         }
     }
 }
@@ -111,7 +151,7 @@ pub struct Embedding {
     /// The vector.
     pub vector: Vec<f32>,
     /// Its fields the kind has no place for.
-    pub native: Option<NativeFields>,
+    pub native: Native,
 }
 
 impl Embedding {
@@ -120,7 +160,7 @@ impl Embedding {
         Self {
             index,
             vector,
-            native: None,
+            native: Native::default(),
         }
     }
 }

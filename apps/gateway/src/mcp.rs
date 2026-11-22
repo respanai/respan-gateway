@@ -70,7 +70,7 @@ pub struct McpConfig {
     #[serde(default)]
     pub args: Vec<String>,
     /// Its environment, values literal or `env:NAME`. It gets nothing else
-    /// of the gateway's but `PATH` and its proxy ([`child_env`](crate::network::child_env)).
+    /// of the gateway's but `PATH` and its proxy (`child_env`).
     #[serde(default)]
     pub env: IndexMap<String, String>,
     /// The directory it runs in.

@@ -26,8 +26,8 @@ use mockllm::{Answer, FakeOpenAi};
 use respan_gateway_conversation::{Block, Content, Delta, Input, Output};
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{
-    ClientContext, ErrorCode, Fault, Filter, Gateway, Plugin, Provider, ProviderContext, Response,
-    async_trait,
+    ClientContext, ErrorCode, Fault, Filter, Gateway, Native, Plugin, Provider, ProviderContext,
+    Response, async_trait,
 };
 use respan_gateway_http::Body;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode};
@@ -148,8 +148,8 @@ fn refusal(message: &str) -> Fault {
 
 /// Every text of `chat` redacted: messages and the system prompt, earlier
 /// tool calls and results, the tools offered, the stop sequences, the end
-/// user's id, and the fields the kind has no place for. `Err` for a part
-/// with no text form, such as an image.
+/// user's id; the fields only their format reads it cannot redact, and
+/// drops. `Err` for a part with no text form, such as an image.
 fn redact(chat: &mut Input, vault: &Vault) -> Result<(), Fault> {
     fn part(content: &mut Content, vault: &Vault) -> Result<(), Fault> {
         match content {
@@ -165,15 +165,13 @@ fn redact(chat: &mut Input, vault: &Vault) -> Result<(), Fault> {
         }
         Ok(())
     }
-    let json = |fields: &mut serde_json::Map<String, Value>| {
-        fields.values_mut().for_each(|v| redact_json(v, vault))
-    };
     for message in &mut chat.messages {
         message
             .content
             .iter_mut()
             .try_for_each(|c| part(c, vault))?;
-        message.native.iter_mut().for_each(|n| json(&mut n.fields));
+        // WARN: what only its format reads may hold PII; dropped.
+        message.native = Native::default();
     }
     for tool in &mut chat.tools {
         tool.description
@@ -184,7 +182,7 @@ fn redact(chat: &mut Input, vault: &Vault) -> Result<(), Fault> {
     for text in chat.options.stop.iter_mut().chain(&mut chat.user) {
         *text = hide_emails(text, vault);
     }
-    chat.native.iter_mut().for_each(|n| json(&mut n.fields));
+    chat.native = Native::default();
     Ok(())
 }
 

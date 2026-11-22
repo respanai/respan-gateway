@@ -1,13 +1,14 @@
 //! A GA session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{
-    AudioFormat, Encoding, Modality, Purpose, Session, Tool, ToolChoice, Turns, Vad,
+    AudioFormat, Encoding, Modality, Purpose, Session, Tool, Turns, Vad,
 };
 use serde_json::{Map, Value, json};
 
-use super::NAME;
-use crate::json::{self, at, merge, number, own, set, string, take, text};
+use super::Key;
+use crate::json::{at, merge, number, string, take, text};
 
 const TYPE: &[&str] = &["session", "type"];
 const MODEL: &[&str] = &["session", "model"];
@@ -19,8 +20,6 @@ const OUTPUT_FORMAT: &[&str] = &["session", "audio", "output", "format"];
 const TURN_DETECTION: &[&str] = &["session", "audio", "input", "turn_detection"];
 const TRANSCRIPTION: &[&str] = &["session", "audio", "input", "transcription"];
 const TOOLS: &[&str] = &["session", "tools"];
-const TOOL_CHOICE: &[&str] = &["session", "tool_choice"];
-const MAX_OUTPUT_TOKENS: &[&str] = &["session", "max_output_tokens"];
 
 /// What `v`, an event less its type, says of its `session`; what is left of
 /// `v` is the session's native. OpenAI always transcribes the model's
@@ -35,7 +34,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     s.voice = take(v, VOICE, string, text);
     s.input_audio = take_format(v, INPUT_FORMAT);
     s.output_audio = take_format(v, OUTPUT_FORMAT);
-    s.turns = take(v, TURN_DETECTION, turns, |t| turns_json(t, refuse).ok());
+    s.turns = take(v, TURN_DETECTION, turns, turns_json);
     // A transcription's settings, such as its model, stay where they are.
     s.input_transcription = take(
         v,
@@ -46,9 +45,7 @@ pub(super) fn decode(mut v: Value) -> Session {
     .or_else(|| at(v, TRANSCRIPTION)?.is_object().then_some(true));
     s.output_transcription = Some(true);
     s.tools = take(v, TOOLS, tools, |t| Some(tools_json(t)));
-    s.tool_choice = take(v, TOOL_CHOICE, tool_choice, tool_choice_json);
-    s.max_output_tokens = take(v, MAX_OUTPUT_TOKENS, Value::as_u64, number);
-    s.native = json::native(NAME, std::mem::take(v));
+    s.native = Native::json::<Key>(std::mem::take(v));
     s
 }
 
@@ -56,11 +53,7 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// refused by `refuse` where it holds another format's fields.
 pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
     let mut v = json!({});
-    let mut put = |path: &[&str], value: Option<Value>| {
-        if let Some(value) = value {
-            set(&mut v, &path[1..], value);
-        }
-    };
+    let mut put = |path: &[&str], value| crate::json::put(&mut v, &path[1..], value);
     put(TYPE, s.purpose.and_then(purpose_json));
     put(MODEL, s.model.as_ref().and_then(text));
     put(INSTRUCTIONS, s.instructions.as_ref().and_then(text));
@@ -74,13 +67,11 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         let format = format.map(|f| audio_format_json(f).ok_or_else(|| refuse("an audio format")));
         put(path, format.transpose()?);
     }
-    put(
-        TURN_DETECTION,
-        s.turns
-            .as_ref()
-            .map(|t| turns_json(t, refuse))
-            .transpose()?,
-    );
+    let turns = s
+        .turns
+        .as_ref()
+        .map(|t| turns_json(t).ok_or_else(|| refuse("this turn detection")));
+    put(TURN_DETECTION, turns.transpose()?);
     put(
         TRANSCRIPTION,
         s.input_transcription.map(|on| match on {
@@ -89,21 +80,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         }),
     );
     put(TOOLS, s.tools.as_ref().map(|t| tools_json(t)));
-    put(
-        TOOL_CHOICE,
-        s.tool_choice.as_ref().and_then(tool_choice_json),
-    );
-    put(
-        MAX_OUTPUT_TOKENS,
-        s.max_output_tokens.as_ref().and_then(number),
-    );
     Ok(v)
-}
-
-/// A refusal at the client's own edge, never made: the kind's fields of an
-/// OpenAI frame are written back as OpenAI's.
-fn refuse(_: &str) -> Fault {
-    Fault::internal("a session field could not be written back")
 }
 
 fn purpose(v: &Value) -> Option<Purpose> {
@@ -136,6 +113,16 @@ fn modality_json(m: Modality) -> Option<Value> {
         Modality::Text => Some(json!(["text"])),
         _ => None,
     }
+}
+
+/// Whether OpenAI takes audio in `format`: 16-bit PCM at 24 kHz, or G.711.
+pub(super) fn takes(format: AudioFormat) -> bool {
+    [
+        AudioFormat::pcm16(24_000),
+        AudioFormat::MULAW,
+        AudioFormat::ALAW,
+    ]
+    .contains(&format)
 }
 
 /// A GA audio format: `audio/pcm` at its rate, or G.711.
@@ -181,24 +168,20 @@ fn turns(v: &Value) -> Option<Turns> {
     let mut rest = v.clone();
     let rest = &mut rest;
     let mut vad = Vad::default();
-    let flag = |v: &Value| v.as_bool();
-    let bool_json = |b: &bool| Some(Value::Bool(*b));
     let millis_json = |n: &u32| Some(Value::from(*n));
     vad.silence_ms = take(rest, &["silence_duration_ms"], millis, millis_json);
     vad.prefix_ms = take(rest, &["prefix_padding_ms"], millis, millis_json);
-    vad.respond = take(rest, &["create_response"], flag, bool_json);
-    vad.interrupt = take(rest, &["interrupt_response"], flag, bool_json);
-    vad.native = json::native(NAME, std::mem::take(rest));
+    vad.native = Native::json::<Key>(std::mem::take(rest));
     Some(Turns::Server(vad))
 }
 
 /// Turn detection as GA has it: none for manual turns, else server VAD, or
-/// what type its native names.
-fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// what type its native names; none for another detection.
+fn turns_json(turns: &Turns) -> Option<Value> {
     let vad = match turns {
-        Turns::Manual => return Ok(Value::Null),
+        Turns::Manual => return Some(Value::Null),
         Turns::Server(vad) => vad,
-        _ => return Err(refuse("this turn detection")),
+        _ => return None,
     };
     let mut v = Map::new();
     let mut put = |key: &str, value: Option<Value>| {
@@ -208,14 +191,12 @@ fn turns_json(turns: &Turns, refuse: fn(&str) -> Fault) -> Result<Value, Fault> 
     };
     put("silence_duration_ms", vad.silence_ms.map(Value::from));
     put("prefix_padding_ms", vad.prefix_ms.map(Value::from));
-    put("create_response", vad.respond.map(Value::from));
-    put("interrupt_response", vad.interrupt.map(Value::from));
     let mut v = Value::Object(v);
-    merge(&mut v, own(&vad.native));
+    merge(&mut v, vad.native.fields::<Key>());
     if v.get("type").is_none() {
         v["type"] = "server_vad".into();
     }
-    Ok(v)
+    Some(v)
 }
 
 fn tools(v: &Value) -> Option<Vec<Tool>> {
@@ -241,7 +222,7 @@ fn tool(v: &Value) -> Option<Tool> {
     );
     let mut tool = Tool::new(name, parameters.unwrap_or(Value::Null));
     tool.description = take(rest, &["description"], string, text);
-    tool.native = json::native(NAME, std::mem::take(rest));
+    tool.native = Native::json::<Key>(std::mem::take(rest));
     Some(tool)
 }
 
@@ -255,7 +236,7 @@ fn tools_json(tools: &[Tool]) -> Value {
             v["parameters"] = t.parameters.clone();
             lowercase_types(&mut v["parameters"]);
         }
-        merge(&mut v, own(&t.native));
+        merge(&mut v, t.native.fields::<Key>());
         v
     };
     tools.iter().map(tool).collect()
@@ -295,26 +276,5 @@ fn lowercase_types(schema: &mut Value) {
             }
             _ => {}
         }
-    }
-}
-
-fn tool_choice(v: &Value) -> Option<ToolChoice> {
-    match v.as_str() {
-        Some("auto") => Some(ToolChoice::Auto),
-        Some("none") => Some(ToolChoice::None),
-        Some("required") => Some(ToolChoice::Required),
-        Some(_) => None,
-        None if v["type"] == "function" => Some(ToolChoice::Tool(string(&v["name"])?)),
-        None => None,
-    }
-}
-
-fn tool_choice_json(c: &ToolChoice) -> Option<Value> {
-    match c {
-        ToolChoice::Auto => Some("auto".into()),
-        ToolChoice::None => Some("none".into()),
-        ToolChoice::Required => Some("required".into()),
-        ToolChoice::Tool(name) => Some(json!({"type": "function", "name": name})),
-        _ => None,
     }
 }

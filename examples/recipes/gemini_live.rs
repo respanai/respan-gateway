@@ -1,26 +1,25 @@
-//! Responses over WebSocket through the gateway: independent named lanes,
-//! continuation IDs and per-turn billing. Clients send ordinary
-//! `response.create` events; the gateway pins the model, caps output, and
-//! holds each lane's turn against an account before it reaches the provider,
-//! settling it at the usage `response.completed` reports. Unknown fields and
-//! `previous_response_id` pass through, so continuation works as it does
-//! upstream. A socket failure never replays a turn. Sessions end after 30
-//! minutes.
+//! Gemini Live through the gateway, with each turn paid for before the model
+//! speaks. Clients send their setup, then `clientContent` turns or manual
+//! activity boundaries (`realtimeInput.activityStart`). The gateway pins the
+//! model, caps output, turns automatic activity detection and proactive audio
+//! off, so every generation starts at a turn the gateway saw and reserved.
+//! Tool calls, audio, interruptions, goAway and session-resumption handles
+//! pass as they came. Sessions end after 30 minutes.
 //!
-//! This is a live-provider server: each turn costs OpenAI usage.
+//! This is a live-provider server: each turn costs Gemini Live usage.
 //!
 //! ```bash
-//! OPENAI_API_KEY=... MODEL=gpt-4.1-mini MODEL_INPUT_LIMIT=1047576 \
-//!   cargo run -p respan-gateway-examples --example responses_ws
+//! GEMINI_API_KEY=... MODEL=gemini-live-2.5-flash MODEL_INPUT_LIMIT=1048576 \
+//!   cargo run -p respan-gateway-examples --example gemini_live
 //! ```
 //!
-//! It listens at 127.0.0.1:8081. MODEL_INPUT_LIMIT is the model's full input
+//! It listens at 127.0.0.1:8082. MODEL_INPUT_LIMIT is the model's full input
 //! bound: each turn holds that plus the output cap from a 5,000,000-token
-//! account. Each finished turn prints its lane, response id, status, usage
-//! and the account's balance. A second `response.create` on a lane still
-//! answering closes the session with 1008; use `stream_id` to run lanes side
-//! by side. Ctrl-C closes active sessions, charging cut turns their hold.
-//! Protocol: https://developers.openai.com/api/docs/guides/websocket-mode
+//! account, and settles at the usage the provider reports. Each finished turn
+//! prints its status, usage and the account's balance. Audio sent before
+//! `activityStart` closes the session with 1008; Ctrl-C closes active
+//! sessions, charging cut turns their hold.
+//! Protocol: https://ai.google.dev/api/live
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,8 +29,8 @@ use respan_gateway_core::futures::{FutureExt, StreamExt, TryStreamExt};
 use respan_gateway_core::{
     ClientContext, ErrorCode, EventStream, Fault, Gateway, Plugin, Provider, Response, async_trait,
 };
-use respan_gateway_realtime::{Input, Output};
-use respan_gateway_realtime_ws::ResponsesWs;
+use respan_gateway_realtime::{Input, Output, Session, Status, Turns};
+use respan_gateway_realtime_ws::{GeminiLive, Natives};
 use respan_gateway_ws::{CloseCode, WsTransport};
 use serde_json::{Value, json};
 
@@ -43,10 +42,9 @@ const SESSION_MAX: Duration = Duration::from_secs(1_800);
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut headers = respan_gateway_http::http::HeaderMap::new();
-    let key = std::env::var("OPENAI_API_KEY")?;
-    headers.insert("authorization", format!("Bearer {key}").parse()?);
-    let transport = ResponsesWs
-        .transport("wss://api.openai.com/v1")?
+    headers.insert("x-goog-api-key", std::env::var("GEMINI_API_KEY")?.parse()?);
+    let transport = GeminiLive
+        .transport("wss://generativelanguage.googleapis.com")?
         .with_headers(headers)?;
     let sessions = Sessions {
         account: Arc::new(Mutex::new(Account {
@@ -56,17 +54,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         model: std::env::var("MODEL")?,
         input_limit: std::env::var("MODEL_INPUT_LIMIT")?.parse()?,
     };
-    serve(gateway(transport, sessions)?, "127.0.0.1:8081").await?;
+    serve(gateway(transport, sessions)?, "127.0.0.1:8082").await?;
     Ok(())
 }
 
-/// Responses WebSocket clients, answered by OpenAI at `transport`.
+/// Gemini Live clients, answered by Gemini Live at `transport`.
 fn gateway(transport: WsTransport, sessions: Sessions) -> Result<Gateway, Fault> {
     Gateway::new()
-        .client::<Input, _, _>(ResponsesWs)?
-        .provider(Provider::new("responses", ResponsesWs, transport.connect()))?
+        .client::<Input, _, _>(GeminiLive)?
+        .provider(Provider::new("gemini", GeminiLive, transport.connect()))?
         .plugin(sessions)
-        .target("responses")
+        .target("gemini")
 }
 
 /// The plugin: one budget per session, over a shared account.
@@ -84,7 +82,7 @@ impl Plugin for Sessions {
             return Err(Fault::config("configure an allowed model"));
         }
         let budget = Arc::new(Budget::new(self.account.clone(), self.input_limit)?);
-        let model = self.model.clone();
+        let model = self.model.trim_start_matches("models/").to_owned();
         let incoming = budget.clone();
         cx.wrap(move |events: EventStream<Input>| {
             events.and_then(move |mut event| {
@@ -93,9 +91,12 @@ impl Plugin for Sessions {
             })
         })?;
         let outgoing = budget.clone();
+        let turn = Arc::new(Mutex::new(Turn::default()));
         cx.wrap(move |events: EventStream<Output>| {
             events.and_then(move |event| {
-                settle(&outgoing, &event);
+                if let Some((used, record)) = said(&turn, &event) {
+                    outgoing.finish("turn", used, record);
+                }
                 std::future::ready(Ok(event))
             })
         })?;
@@ -111,52 +112,102 @@ impl Plugin for Sessions {
     }
 }
 
-/// Pin a `response.create` to `model`, cap its output and reserve its lane's
-/// turn. One with `generate: false` only warms the cache, and costs nothing.
+/// Configure the setup, and reserve a turn where one begins: at its
+/// activity, or at what asks for an answer (a complete turn, a tool's
+/// answer). Realtime input outside a turn is refused.
 fn admit(budget: &Budget, model: &str, event: &mut Input) -> Result<(), Fault> {
-    let Input::Native(native) = event else {
-        return Ok(());
-    };
-    let json = Arc::make_mut(&mut native.value);
-    if json["type"] != "response.create" {
-        return Ok(());
+    let active = budget.active("turn");
+    match event {
+        Input::Session(setup) => configure(setup, model)?,
+        Input::Native(native)
+            if GeminiLive::fields(native)
+                .get("realtimeInput")
+                .is_some_and(|v| v.get("activityStart").is_some()) =>
+        {
+            budget.begin("turn")?
+        }
+        Input::Respond { .. } | Input::ToolResult(_) if !active => budget.begin("turn")?,
+        Input::Audio { .. } | Input::Commit { .. } if !active => {
+            return Err(Fault::new("send activityStart before realtime input")
+                .with(ErrorCode("audio_policy".into()))
+                .with(CloseCode(1008)));
+        }
+        _ => {}
     }
-    if json.get("model").is_some_and(|v| v.as_str() != Some(model)) {
+    Ok(())
+}
+
+/// What the Live API's setup keeps that the kind has no place for: each must
+/// be an object if it is set.
+const CONFIGURATION: &[&str] = &[
+    "/setup/generationConfig",
+    "/setup/realtimeInputConfig",
+    "/setup/realtimeInputConfig/automaticActivityDetection",
+    "/setup/proactivity",
+];
+
+/// The setup the budget allows: the configured `model`, capped output,
+/// manual turns and no proactive audio.
+fn configure(setup: &mut Session, model: &str) -> Result<(), Fault> {
+    if setup.model.as_deref().is_some_and(|m| m != model) {
         return Err(Fault::bad_request(
             "model is outside the configured budget policy",
         ));
     }
-    json["model"] = model.into();
-    if json["generate"] == false {
-        return Ok(());
+    let mut kept = Value::Object(GeminiLive::fields(&setup.native).clone());
+    if CONFIGURATION
+        .iter()
+        .any(|path| kept.pointer(path).is_some_and(|v| !v.is_object()))
+    {
+        return Err(Fault::bad_request("setup configuration must be an object"));
     }
-    let cap = &mut json["max_output_tokens"];
-    if cap.as_i64().is_none_or(|n| !(1..=OUTPUT).contains(&n)) {
-        *cap = OUTPUT.into();
+    kept["setup"]["proactivity"]["proactiveAudio"] = false.into();
+    kept["setup"]["generationConfig"]["maxOutputTokens"] = OUTPUT.into();
+    if let Value::Object(kept) = kept {
+        setup.native = GeminiLive::with_fields(&setup.native, |f| *f = kept);
     }
-    budget.begin(json["stream_id"].as_str().unwrap_or("default"))
+    setup.model = Some(model.to_owned());
+    setup.turns = Some(Turns::Manual);
+    Ok(())
 }
 
-/// At a response's end, settle its lane's turn at the usage it reports.
-fn settle(budget: &Budget, event: &Output) {
-    let Output::Native(native) = event else {
-        return;
-    };
-    let json = &native.value;
-    let kind = json["type"].as_str().unwrap_or_default();
-    if !matches!(
-        kind,
-        "response.completed" | "response.failed" | "response.incomplete"
-    ) {
-        return;
+/// What a turn's events said, until it ends.
+#[derive(Default)]
+struct Turn {
+    used: Option<i64>,
+    called: bool,
+    interrupted: bool,
+}
+
+/// What `event` adds to its turn; at the turn's end, what it used and its
+/// record. A response that calls tools goes on, in the same turn, once they
+/// answer.
+fn said(turn: &Mutex<Turn>, event: &Output) -> Option<(Option<i64>, Value)> {
+    let mut turn = turn.lock();
+    match event {
+        Output::Usage(used) => {
+            let tokens = used.tokens.input_tokens + used.tokens.output_tokens;
+            let tokens = i64::try_from(tokens).unwrap_or(i64::MAX);
+            turn.used = Some(turn.used.unwrap_or(0).saturating_add(tokens));
+        }
+        Output::SpeechStarted { .. } => turn.interrupted = true,
+        Output::ToolCall { .. } => turn.called = true,
+        Output::ResponseDone { .. } if turn.called => turn.called = false,
+        Output::ResponseDone { status, .. } => {
+            let Turn {
+                used, interrupted, ..
+            } = std::mem::take(&mut *turn);
+            let interrupted = interrupted || *status == Status::Interrupted;
+            let status = if interrupted {
+                "interrupted"
+            } else {
+                "complete"
+            };
+            return Some((used, json!({"status": status, "usage": used})));
+        }
+        _ => {}
     }
-    let lane = json["stream_id"].as_str().unwrap_or("default");
-    let response = &json["response"];
-    let used = response["usage"]["total_tokens"].as_i64();
-    let record = json!({
-        "lane": lane, "id": response["id"], "status": kind, "usage": response["usage"]
-    });
-    budget.finish(lane, used, record);
+    None
 }
 
 /// What an account may spend, has spent and holds for turns in flight.
@@ -186,6 +237,10 @@ impl Budget {
             quote,
             lanes: Mutex::default(),
         })
+    }
+
+    fn active(&self, lane: &str) -> bool {
+        self.lanes.lock().contains(lane)
     }
 
     /// Hold a turn's quote on `lane`, or refuse it: one turn per lane, and

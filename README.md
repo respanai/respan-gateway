@@ -5,6 +5,7 @@
       <img src="docs/assets/wordmark.png" alt="Respan Gateway" width="420">
     </picture>
   </a>
+  <h1>Respan Gateway: open-source LLM gateway</h1>
   <p><b>The universal adapter for AI.</b></p>
   <div>
     <a href="#license"><img src="https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-brightgreen.svg?style=flat" alt="License: MIT OR Apache-2.0"></a>
@@ -17,7 +18,7 @@
 </div>
 <br>
 
-**Respan Gateway** is a single Rust binary that sits between your code and
+**Respan Gateway** is an open-source LLM gateway: a single Rust binary that sits between your code and
 every AI API. Point the SDK you already use at it, and it connects you to
 everything: chat models, images, video and voice from every major provider;
 tools for any model, from web search and memory to code sandboxes and any MCP
@@ -30,7 +31,10 @@ requests), with a live log of every call. **[▶ Watch the demo](https://www.you
 </div>
 <br>
 
-## Key features
+> [!TIP]
+> Starring the repo helps more developers find Respan Gateway.
+
+## LLM gateway features
 
 - **Any client, any model**<br>
   OpenAI Chat Completions, OpenAI Responses, Anthropic Messages and Gemini API
@@ -42,7 +46,7 @@ requests), with a live log of every call. **[▶ Watch the demo](https://www.you
   Live, and back), plus images, speech, transcription, embeddings and video
   through OpenAI's or Gemini's APIs, to any vendor that has them.
 
-- **MCP tools for every model**<br>
+- **MCP gateway and tools for every model**<br>
   Put MCP servers or built-in tool vendors behind the gateway, from web search
   to code sandboxes. It runs their tools inside chat requests, so a plain chat
   call can use them, whatever the client or model.
@@ -109,7 +113,7 @@ The web UI is at [localhost:8080/ui/](http://localhost:8080/ui/). Next:
 - [Embed in Rust](docs/plugins.md#in-a-gateway-of-your-own) — Mount the gateway in your own Rust service.
 - [Docker](Dockerfile) — `docker run -p 8080:8080 -e OPENAI_API_KEY -e RESPAN_CLIENT_KEYS=<a key of yours> ghcr.io/respanai/respan-gateway` on any container host; listening beyond localhost, it needs a client key.
 
-## Performance
+## AI gateway performance vs LiteLLM, Bifrost and Portkey
 
 | | Respan Gateway | Bifrost | Portkey | LiteLLM (1 worker) |
 |---|---:|---:|---:|---:|
@@ -164,6 +168,8 @@ and refuses to start on a public address.
 [vendors](docs/vendors.md) · [tool vendors](docs/tool-vendors.md) ·
 [MCP and tools](docs/mcp.md) · [`gateway.example.toml`](gateway.example.toml)
 
+**Reading:** [From the GPU to your bill: a deep dive into prompt caching](examples/research/prompt-caching/README.md)
+
 ## Supported API formats
 
 Call the gateway in any format on the left, and it reaches every provider on
@@ -172,12 +178,12 @@ the right, translating between them.
 | | Your code calls | It can reach |
 |---|---|---|
 | **Chat** | OpenAI Chat Completions<br>OpenAI Responses<br>Anthropic Messages<br>Gemini API | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/anthropic-dark.svg"><img src="docs/assets/vendors/anthropic.svg" alt="Anthropic" title="Anthropic" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/deepseek.svg" alt="DeepSeek" title="DeepSeek" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="20" height="20"></picture> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"><br>any chat model, whichever of the four formats it speaks |
-| **Realtime voice** | OpenAI Realtime<br>Gemini Live | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"><br>OpenAI ⇄ Gemini voice; Mistral for transcription |
-| **Images** | OpenAI Images<br>Gemini Images | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> |
-| **Speech, transcription** | OpenAI Speech<br>OpenAI Transcriptions | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="20" height="20"></picture> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> |
-| **Embeddings** | OpenAI Embeddings | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="20" height="20"> <img src="docs/assets/vendors/cloudflare.svg" alt="Cloudflare" title="Cloudflare" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="20" height="20"></picture> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> |
-| **Video** | OpenAI Videos<br>Gemini Veo | <img src="docs/assets/vendors/veo.svg" alt="Google Veo" title="Google Veo" width="20" height="20"> Google Veo <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> |
-| **Decisions** | Respan Decisions<br>TypeSafe System One | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/respan-dark.svg"><img src="docs/assets/vendors/respan.svg" alt="Respan" title="Respan" width="20" height="20"></picture> <img src="docs/assets/vendors/typesafe.png" alt="TypeSafe" title="TypeSafe" width="20" height="20"> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="20" height="20"> |
+| **Realtime voice** | OpenAI Realtime<br>Gemini Live | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/azure.svg" alt="Azure OpenAI" title="Azure OpenAI" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"><br>OpenAI ⇄ Gemini voice; xAI, Azure OpenAI, StepFun and Qwen voice as OpenAI Realtime; Phonic; Mistral for transcription |
+| **Images** | OpenAI Images<br>Gemini Images | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/xai-dark.svg"><img src="docs/assets/vendors/xai.svg" alt="xAI" title="xAI" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"><br>Amazon Bedrock's Stability AI models<br>Alibaba Cloud Model Studio's Qwen-Image and Wan models |
+| **Speech, transcription** | OpenAI Speech<br>OpenAI Transcriptions | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/groq-dark.svg"><img src="docs/assets/vendors/groq.svg" alt="Groq" title="Groq" width="20" height="20"></picture> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"><br>Alibaba Cloud Model Studio's Qwen speech models, Gemini speech, MiniMax speech |
+| **Embeddings** | OpenAI Embeddings | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openai-dark.svg"><img src="docs/assets/vendors/openai.svg" alt="OpenAI" title="OpenAI" width="20" height="20"></picture> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/mistral.svg" alt="Mistral" title="Mistral" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="20" height="20"> <img src="docs/assets/vendors/cloudflare.svg" alt="Cloudflare" title="Cloudflare" width="20" height="20"> <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/ollama-dark.svg"><img src="docs/assets/vendors/ollama.svg" alt="Ollama" title="Ollama" width="20" height="20"></picture> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> |
+| **Video** | OpenAI Videos<br>Gemini Omni | <img src="docs/assets/vendors/veo.svg" alt="Google Gemini Omni" title="Google Gemini Omni" width="20" height="20"> Google Gemini Omni <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/openrouter-dark.svg"><img src="docs/assets/vendors/openrouter.svg" alt="OpenRouter" title="OpenRouter" width="20" height="20"></picture> <img src="docs/assets/vendors/together.svg" alt="Together" title="Together" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> MiniMax<br>Alibaba Cloud Model Studio's Wan models<br>Z.ai's CogVideoX models |
+| **Decisions** | Respan Decisions<br>TypeSafe System One<br>Gemini Decisions | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/respan-dark.svg"><img src="docs/assets/vendors/respan.svg" alt="Respan" title="Respan" width="20" height="20"></picture> <img src="docs/assets/vendors/typesafe.png" alt="TypeSafe" title="TypeSafe" width="20" height="20"> <img src="docs/assets/vendors/empiriolabs.png" alt="EmpirioLabs AI" title="EmpirioLabs AI" width="20" height="20"> <img src="docs/assets/vendors/fireworks.svg" alt="Fireworks" title="Fireworks" width="20" height="20"> <img src="docs/assets/vendors/gemini.svg" alt="Gemini" title="Gemini" width="20" height="20"> <img src="docs/assets/vendors/deepinfra.svg" alt="DeepInfra" title="DeepInfra" width="20" height="20"> <img src="docs/assets/vendors/perplexity.svg" alt="Perplexity" title="Perplexity" width="20" height="20"> |
 | **Tools** | MCP | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/vendors/mcp-dark.svg"><img src="docs/assets/vendors/mcp.svg" alt="MCP" title="MCP" width="20" height="20"></picture> your MCP servers and tool vendors |
 | **Anything else** | A vendor's own API | Relayed to that vendor untouched |
 
@@ -227,7 +233,7 @@ issues as [SECURITY.md](SECURITY.md) describes.
 [issues](https://github.com/respanai/respan-gateway/issues). Missing a vendor,
 format or feature? [Ask for it](https://github.com/respanai/respan-gateway/issues/new/choose).
 
-**Want it managed?** [Respan](https://respan.ai) runs the gateway for you, with
+**Want it managed?** [Respan](https://respan.ai/ai-gateway) runs the gateway for you, with
 dashboards, evals and span-02.
 
 <a href="https://github.com/respanai/respan-gateway/graphs/contributors">

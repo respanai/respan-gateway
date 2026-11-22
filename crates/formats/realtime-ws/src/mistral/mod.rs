@@ -7,18 +7,17 @@ mod session;
 mod tests;
 
 use respan_gateway_core::Provider;
-use respan_gateway_core::{Connection, Fault, Format};
+use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::raw::Original;
-use respan_gateway_http::{ClientIo, ProviderIo};
+use respan_gateway_http::{ClientIo, ProviderIo, native::Json};
 use respan_gateway_http::{Connect, Reach, Upstream};
 use respan_gateway_realtime::{Input, Output};
 use respan_gateway_ws::WsTransport;
 
-use crate::session::{Spec, model_at, model_query};
-use crate::{SessionModel, requested_model};
+use crate::session::{Spec, dialled_model, model_at, model_query};
 
 const NAME: &str = SPEC.name;
+enum Key {}
 
 pub(crate) const SPEC: Spec = Spec {
     name: "mistral-realtime",
@@ -54,10 +53,17 @@ pub(crate) const SPEC: Spec = Spec {
 pub struct MistralRealtime;
 
 impl MistralRealtime {
-    /// The format's name, `mistral-realtime`, which tags its native events.
+    /// The format's name, `mistral-realtime`.
     pub const NAME: &'static str = SPEC.name;
     /// The path it is sent to.
     pub const PATH: &'static str = SPEC.path;
+
+    /// The seconds of audio a whole transcript's `native` says Mistral
+    /// heard, as its usage reports them: none if it is another format's.
+    pub fn heard_seconds(native: &Native) -> Option<f64> {
+        let usage = native.fields::<Key>().get("usage")?;
+        usage.get("prompt_audio_seconds")?.as_f64()
+    }
 
     /// A transport to its provider at `base_url` ([`WsTransport::new`]).
     pub fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {
@@ -72,9 +78,7 @@ impl Upstream for MistralRealtime {
     }
 
     fn reach(&self) -> Reach {
-        Reach::Session {
-            binary_text: SPEC.binary_text,
-        }
+        SPEC.reach()
     }
 
     fn provider(&self, name: String, connect: Connect) -> Provider {
@@ -106,18 +110,14 @@ impl Format<ProviderIo, Output, Input> for MistralRealtime {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        // The model routing chose, else the one the client's handshake asks for.
-        let chosen = io.extensions().get::<SessionModel>().map(|m| m.0.clone());
-        let asked = || requested_model(io.extensions().get::<Original>()?);
-        let model = chosen.or_else(asked).ok_or_else(|| {
+        let model = dialled_model(&io).ok_or_else(|| {
             Fault::bad_request(
                 "Mistral realtime takes its model at connect: name it with ?model= on the session's URL",
             )
         })?;
         let query = Some(model_query(&model));
         let write = Box::new(input::Provider::new(model));
-        let mut provider = output::Provider;
-        let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
+        let read = output::Provider::default();
         Ok(SPEC.provider(io, query, write, Box::new(read), None))
     }
 }

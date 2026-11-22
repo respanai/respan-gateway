@@ -21,7 +21,8 @@
 //! ([`Dialect::request`], [`Dialect::response`]), their heads, and a whole
 //! body if it rewrites one.
 
-use http::{request::Parts as RequestHead, response::Parts as ResponseHead};
+use bytes::Bytes;
+use http::{Request, request::Parts as RequestHead, response::Parts as ResponseHead};
 use respan_gateway_core::{Connection, Fault, Filter, Format, Provider};
 
 use crate::{Connect, KeyIn, ProviderIo, Reach, Rewrite, Upstream};
@@ -56,10 +57,11 @@ pub trait Dialect: Clone + Send + Sync + 'static {
         Ok(None)
     }
 
-    /// The answer to the call `sent`, as the format wrote it, before the
+    /// The answer to the call `sent`, as the format wrote it, its body the
+    /// whole bytes of one input, or empty for live input, before the
     /// format reads it: its head edited, and its whole body rewritten if
     /// this says how. Every answer, a refusal too.
-    fn response(&self, sent: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+    fn response(&self, sent: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
         let _ = (sent, head);
         None
     }
@@ -235,9 +237,9 @@ mod tests {
             })))
         }
 
-        fn response(&self, sent: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
+        fn response(&self, sent: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
             // The call as the format wrote it.
-            assert_eq!(sent.uri.path(), "/echo");
+            assert_eq!(sent.uri().path(), "/echo");
             head.headers
                 .insert("x-loud", http::HeaderValue::from_static("1"));
             Some(Box::new(|body: Bytes| {

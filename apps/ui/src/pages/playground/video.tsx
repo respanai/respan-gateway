@@ -57,7 +57,7 @@ function useVideoJob(created: Created | undefined) {
 /** A running job: its stage, a determinate bar, and how long it has been going. */
 function Progress({ job, since, prompt }: { job: VideoJob; since: number; prompt: string }) {
   const now = useNow(1000);
-  // An API that reports no progress, as Veo, gets a bar that only moves.
+  // An API that reports no progress, as Gemini Omni, gets a bar that only moves.
   const known = job.progress !== undefined || job.status === "completed";
   const percent = Math.min(100, Math.max(0, job.status === "completed" ? 100 : (job.progress ?? 0)));
   const queued = job.status === "queued";

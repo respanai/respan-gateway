@@ -1,25 +1,31 @@
 //! EmpirioLabs AI: Chat Completions, Responses, Messages, the Gemini API,
-//! images, embeddings, speech and decisions, as OpenAI, Anthropic, Google
-//! and Respan serve them, images and speech in its dialect.
+//! images, embeddings, speech, Realtime, decisions and videos, as OpenAI,
+//! Anthropic, Google and Respan serve them, images and speech in its dialect.
 
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use respan_gateway_conversation_http::anthropic::AnthropicMessages;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::gemini::GeminiGenerate;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
-use respan_gateway_core::{Fault, Filter};
+use respan_gateway_core::{Extensions, Fault, Filter};
 use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content;
-use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
+use respan_gateway_http::http::Request;
+use respan_gateway_http::http::header::{ACCEPT, CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
-use respan_gateway_http::path::set_path;
+use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
-use respan_gateway_media_http::openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech};
-use respan_gateway_sse as sse;
-use serde_json::Value;
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::{
+    Natives,
+    openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
+};
+use respan_gateway_realtime as realtime;
+use respan_gateway_realtime_ws::{OpenAiRealtime, SessionModel, requested_model};
+use serde_json::{Map, Value, json};
 
 use respan_gateway_vendor_kit::{
     Body, BoxFuture, Capability, Dialect, Dialected, Modality, Model, Models, Price, Rewrite,
@@ -31,6 +37,12 @@ const BASE_URL: &str = "https://api.empiriolabs.ai/v1";
 
 /// Where its Messages API is: the format adds the `/v1`.
 const MESSAGES_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its videos are: the format adds the `/v1`.
+const VIDEOS_URL: &str = "https://api.empiriolabs.ai";
+
+/// Where its Realtime is.
+const REALTIME_URL: &str = "wss://api.empiriolabs.ai/v1";
 
 /// Where its Gemini API is.
 const GEMINI_URL: &str = "https://api.empiriolabs.ai/v1beta";
@@ -53,7 +65,12 @@ pub const VENDOR: Vendor = Vendor {
             &Dialected::new(OpenAiSpeech, EmpirioLabsSpeech),
             Some(BASE_URL),
         ),
+        (
+            &Dialected::new(OpenAiRealtime, EmpirioLabsRealtime),
+            Some(REALTIME_URL),
+        ),
         (&Decisions, Some(BASE_URL)),
+        (&EmpirioLabsVideos, Some(VIDEOS_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
@@ -63,9 +80,9 @@ pub const VENDOR: Vendor = Vendor {
 /// unless asked to wait (`sync`), and an image at a signed URL of its own
 /// storage unless asked for its bytes: it is asked for both, unless the
 /// request says otherwise. An edit is a generation of its `image`s, each a
-/// URL or a data URL of its bytes; it takes no mask, which fails
-/// `bad_request` before sending. One it did not finish within its wait,
-/// about four minutes, it answers as a job, which fails. It streams no
+/// URL or a data URL of its bytes; it takes no mask, which is dropped. One
+/// it did not finish within its wait, about four minutes, it answers as a
+/// job, which fails. It streams no
 /// images, so it is not asked to; a client that asked still gets a stream,
 /// framed at the client edge.
 #[derive(Debug, Clone, Copy)]
@@ -87,31 +104,32 @@ impl Dialect for EmpirioLabsImages {
 /// `input` as it takes an image call: waited for, as bytes, its images
 /// named in its `image`, and no mask.
 fn taken_image(input: &mut image::Input) -> Result<(), Fault> {
-    if input.mask.is_some() {
-        return Err(Fault::bad_request(
-            "EmpirioLabs AI edits an image with no mask",
-        ));
-    }
-    let mut fields = kept(OpenAiImages::NAME, &input.native);
-    fields.entry("sync").or_insert(true.into());
-    fields.entry("response_format").or_insert("b64_json".into());
-    if !input.images.is_empty() {
-        let images = input.images.iter().map(|m| Value::from(crate::linked(m)));
-        fields.insert("image".into(), images.collect::<Vec<_>>().into());
-    }
+    input.native = OpenAiImages::with_fields(&input.native, |fields| {
+        // WARN: EmpirioLabs AI edits take no mask; it is dropped.
+        fields.shift_remove("mask");
+        fields.entry("sync").or_insert(true.into());
+        fields.entry("response_format").or_insert("b64_json".into());
+        if !input.images.is_empty() {
+            let images = input.images.iter().map(|m| Value::from(media_url(m)));
+            fields.insert("image".into(), images.collect::<Vec<_>>().into());
+        }
+    });
     input.images.clear();
-    input.native = native_of(OpenAiImages::NAME, fields);
     Ok(())
 }
 
-/// EmpirioLabs AI's speech, as it departs from OpenAI's: its
-/// `/audio/speech` answers the audio at a URL of its storage, so it is
-/// called at `/audio/speech:stream`, which answers events of the audio.
-/// Their `audio.chunk`s are read, whole, as the audio, an `audio.error` as
-/// a fault, and a stream without its `audio.done` fails `truncated`. It is
-/// not asked for OpenAI's events (`stream_format`); a client that asked
-/// still gets a stream, framed at the client edge. It streams at no
-/// `speed`, which fails `bad_request` before sending.
+/// EmpirioLabs AI's speech, as it departs from OpenAI's: asked for its
+/// audio's bytes, it counts no usage, so it is asked for JSON, the audio
+/// inline (`b64_json: true`), in the format asked for, named both as its
+/// `response_format`, which Qwen's and StepFun's models honor, and its
+/// `output_format`, which Gemini's do. Gemini's models answer `wav` or
+/// `mp3` and no `pcm`, so `pcm` is asked of them as `wav`, and the WAV
+/// they answer is cut to the 16-bit samples it holds, which are OpenAI's
+/// `pcm`, at the rate the model speaks. A model that answers raw `pcm`
+/// is relayed as it is. Its answer is read as OpenAI's events: the audio, then its usage, as
+/// `input_tokens` and `output_tokens`. It is not asked for OpenAI's events
+/// (`stream_format`); a client that asked still gets a stream, framed at
+/// the client edge.
 #[derive(Debug, Clone, Copy)]
 pub struct EmpirioLabsSpeech;
 
@@ -119,61 +137,156 @@ impl Dialect for EmpirioLabsSpeech {
     type Input = speech::Input;
     type Output = speech::Output;
 
-    fn inputs(&self) -> Option<Box<dyn Filter<speech::Input>>> {
-        Some(Box::new(taken_speech))
-    }
-
     fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        set_path(head, "/audio/speech:stream")?;
-        Ok(Some(Box::new(|body| crate::without(body, "stream_format"))))
+        let json = HeaderValue::from_static("application/json");
+        head.headers.insert(ACCEPT, json);
+        Ok(Some(Box::new(inline_audio)))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        if !head.status.is_success() || !content::is_stream(head) {
+    fn response(&self, sent: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
+        if !crate::json_answer(head) {
             return None;
         }
-        let audio = HeaderValue::from_static("application/octet-stream");
-        head.headers.insert(CONTENT_TYPE, audio);
-        Some(Box::new(streamed_audio))
+        let events = HeaderValue::from_static("text/event-stream");
+        head.headers.insert(CONTENT_TYPE, events);
+        let call: Value = serde_json::from_slice(sent.body()).unwrap_or_default();
+        let pcm = call["response_format"] == "pcm";
+        Some(Box::new(move |raw| speech_events(raw, pcm)))
     }
 }
 
-/// `input` as it streams speech: at no `speed`.
-fn taken_speech(input: &mut speech::Input) -> Result<(), Fault> {
-    if input.speed.is_some() {
-        return Err(Fault::bad_request(
-            "EmpirioLabs AI streams no speech at a 'speed'",
+/// A speech call asking for its audio inline, in the format it asked for.
+fn inline_audio(body: Bytes) -> Result<Bytes, Fault> {
+    let unwritten = |e| Fault::internal("a call is no JSON object").with_source(e);
+    let mut call: Map<String, Value> = serde_json::from_slice(&body).map_err(unwritten)?;
+    call.shift_remove("stream_format");
+    if let Some(format) = call.get("response_format").cloned() {
+        let format = if format == "pcm" {
+            "wav".into()
+        } else {
+            format
+        };
+        call.entry("output_format").or_insert(format);
+    }
+    call.insert("b64_json".into(), true.into());
+    serde_json::to_vec(&call)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// Its JSON answer as OpenAI's speech events: each clip's audio, as `pcm`
+/// if that was asked, then the usage, its prompt and completion tokens as
+/// input and output tokens.
+fn speech_events(raw: Bytes, pcm: bool) -> Result<Bytes, Fault> {
+    let answer: Value = serde_json::from_slice(&raw)
+        .map_err(|_| Fault::upstream("empiriolabs speech answered no JSON"))?;
+    let clips = answer["data"].as_array().into_iter().flatten();
+    let audio: Vec<&Value> = clips.filter_map(|clip| clip.get("b64_json")).collect();
+    if audio.is_empty() {
+        return Err(Fault::upstream(
+            "empiriolabs speech answered no 'b64_json' audio",
         ));
     }
-    Ok(())
-}
-
-/// The audio of a whole stream of its speech's events.
-fn streamed_audio(raw: Bytes) -> Result<Bytes, Fault> {
-    let unreadable = |what| Fault::upstream(format!("EmpirioLabs AI's speech {what}"));
-    let mut parser = sse::Parser::new(None);
-    let mut events = parser.push(raw)?;
-    events.extend(parser.finish());
-    let mut audio = Vec::new();
-    for v in events.iter().filter_map(|e| sse::event_json(e)) {
-        match v["type"].as_str() {
-            Some("audio.chunk") => {
-                let chunk = v["audio_b64"]
-                    .as_str()
-                    .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok());
-                audio.extend(chunk.ok_or_else(|| unreadable("sent audio not in base64"))?);
-            }
-            Some("audio.done") => return Ok(Bytes::from(audio)),
-            Some("audio.error") => {
-                let error = &v["error"];
-                let message = error["message"].as_str().or_else(|| error.as_str());
-                let message = message.or_else(|| v["message"].as_str());
-                return Err(unreadable(message.unwrap_or("failed")));
-            }
-            _ => {}
+    let mut usage = answer["usage"].as_object().cloned().unwrap_or_default();
+    for (theirs, ours) in [
+        ("prompt_tokens", "input_tokens"),
+        ("completion_tokens", "output_tokens"),
+    ] {
+        if let Some(count) = usage.shift_remove(theirs) {
+            usage.insert(ours.into(), count);
         }
     }
-    Err(Fault::truncated())
+    let mut events = String::new();
+    for clip in audio {
+        let clip = match pcm {
+            true => samples(clip)?,
+            false => clip.clone(),
+        };
+        events += &format!(
+            "data: {}\n\n",
+            json!({ "type": "speech.audio.delta", "audio": clip })
+        );
+    }
+    let done = json!({ "type": "speech.audio.done", "usage": usage });
+    events += &format!("data: {done}\n\n");
+    Ok(Bytes::from(events))
+}
+
+/// A clip's audio, in base64, as raw samples: a WAV's `data`, else as it is,
+/// which is raw already.
+fn samples(clip: &Value) -> Result<Value, Fault> {
+    let unread = || Fault::upstream("empiriolabs speech answered audio not in base64");
+    let audio = STANDARD.decode(clip.as_str().ok_or_else(unread)?);
+    let audio = audio.map_err(|_| unread())?;
+    let raw = match audio
+        .strip_prefix(b"RIFF")
+        .filter(|a| a.get(4..8) == Some(b"WAVE"))
+    {
+        Some(riff) => wav_data(riff.get(8..).unwrap_or_default())?,
+        None => &audio,
+    };
+    Ok(STANDARD.encode(raw).into())
+}
+
+/// The samples of a 16-bit PCM WAV whose chunks, after its `WAVE`, are
+/// `chunks`: its `data`, as far as it goes if its size says more.
+fn wav_data(mut chunks: &[u8]) -> Result<&[u8], Fault> {
+    let refused = |what: &str| Fault::upstream(format!("empiriolabs speech answered a WAV {what}"));
+    let mut pcm16 = false;
+    while let (Some(id), Some(size)) = (chunks.get(..4), chunks.get(4..8)) {
+        let size = u32::from_le_bytes([size[0], size[1], size[2], size[3]]) as usize;
+        let body = chunks.get(8..).unwrap_or_default();
+        match id {
+            b"fmt " => {
+                let format = body
+                    .get(..16)
+                    .ok_or_else(|| refused("with a short 'fmt '"))?;
+                let (tag, bits) = (u16::from_le_bytes([format[0], format[1]]), format[14]);
+                pcm16 = tag == 1 && bits == 16 && format[15] == 0;
+            }
+            b"data" if !pcm16 => return Err(refused("that is not 16-bit PCM")),
+            b"data" => return Ok(&body[..size.min(body.len())]),
+            _ => {}
+        }
+        chunks = body.get(size + size % 2..).unwrap_or_default();
+    }
+    Err(refused("with no 'data'"))
+}
+
+/// Its Realtime: a transcription session names its model at `?model=`
+/// too, which an OpenAI one, opened at its intent, does not, and it
+/// refuses one that does not (`400 missing_required_parameter`).
+#[derive(Debug, Clone, Copy)]
+struct EmpirioLabsRealtime;
+
+impl Dialect for EmpirioLabsRealtime {
+    type Input = realtime::Input;
+    type Output = realtime::Output;
+
+    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        let query = head.uri.query().unwrap_or_default();
+        if form_urlencoded::parse(query.as_bytes()).any(|(name, _)| name == "model") {
+            return Ok(None);
+        }
+        // The model routing chose, else the one the client's handshake asks for.
+        let extensions = head.extensions.get::<Extensions>();
+        let chosen = extensions.and_then(|e| e.get::<SessionModel>().map(|m| m.0.clone()));
+        let asked = || requested_model(extensions?.get::<Original>()?);
+        let Some(model) = chosen.or_else(asked) else {
+            return Ok(None);
+        };
+        let named = form_urlencoded::Serializer::new(String::new())
+            .append_pair("model", &model)
+            .finish();
+        let query = match query {
+            "" => named,
+            query => format!("{query}&{named}"),
+        };
+        head.uri = format!("{}?{query}", head.uri.path())
+            .parse()
+            .map_err(|e| Fault::internal("its Realtime URL could not be written").with_source(e))?;
+        Ok(None)
+    }
 }
 
 /// Its models: `GET /models` as OpenAI lists them, each with its category,
@@ -192,18 +305,22 @@ const KINDS: &[(&str, &str, &str)] = &[
     ("text", "POST /v1/chat/completions", "chat"),
     ("embedding", "POST /v1/embeddings", "embedding"),
     ("image", "POST /v1/images/generations", "image"),
-    ("audio", "POST /v1/audio/speech:stream", "speech"),
+    ("audio", "POST /v1/audio/speech", "speech"),
     ("decision", "POST /v1/decisions", "decision"),
+    ("video", "POST /v1/videos/generations", "video"),
 ];
 
 /// Where it serves chat, which a model of another category may be too.
 const CHAT: &str = "POST /v1/chat/completions";
 
+/// Where it serves Realtime, which a model of any category may be.
+const REALTIME: &str = "WEBSOCKET /v1/realtime";
+
 /// The models of its list, each of the kind its category's endpoint is,
-/// else a chat if it is served at Chat Completions; one served at neither,
-/// such as a video or transcription model, which it answers as jobs, a
-/// reranker, a music model, a realtime one or a speech model that does not
-/// stream, is none the gateway serves, and is left out.
+/// else a chat if it is served at Chat Completions, else a realtime one if
+/// it is served at Realtime; one served at none, such as a transcription
+/// model, which it answers as jobs, a reranker or a music model, is none
+/// the gateway serves, and is left out.
 fn listed(answer: &Value) -> Vec<Model> {
     let entries = answer["data"].as_array().into_iter().flatten();
     entries.filter_map(described).collect()
@@ -219,6 +336,7 @@ fn described(m: &Value) -> Option<Model> {
     let kind = match own {
         Some((_, endpoint, kind)) if serves(endpoint) => *kind,
         _ if serves(CHAT) => "chat",
+        _ if serves(REALTIME) => "realtime",
         _ => return None,
     };
     let mut model = models::listed(&Value::Array(vec![without_price(m)])).pop()?;
@@ -254,9 +372,9 @@ fn without_price(m: &Value) -> Value {
 
 /// A model's price, for a kind billed by the token: its `pricing` in
 /// dollars per token, the first tier's if it has tiers by context length.
-/// An image's, by the item, is none.
+/// An image's, by the item, and a video's, by the job, are none.
 fn price(m: &Value, kind: &str) -> Option<Price> {
-    if kind == "image" {
+    if matches!(kind, "image" | "video") {
         return None;
     }
     let pricing = &m["pricing"];
@@ -272,8 +390,6 @@ fn price(m: &Value, kind: &str) -> Option<Price> {
 mod tests {
     use super::*;
     use respan_gateway_conversation::{Media, MediaSource};
-    use respan_gateway_core::NativeFields;
-    use serde_json::json;
 
     fn entry(id: &str, category: &str, endpoints: &[&str]) -> Value {
         json!({ "id": id, "object": "model", "category": category,
@@ -306,11 +422,13 @@ mod tests {
                 said("glm-5-3", "chat"),
                 said("text-embedding-v4", "embedding"),
                 said("flux-2-klein-4b", "image"),
+                said("wan-2-2", "video"),
                 said("qwen-audio-3-0-tts", "speech"),
                 said("aplomb-1", "decision"),
                 said("perplexity-sonar", "chat"),
+                said("glm-tts", "speech"),
             ],
-            "video, transcription jobs, speech that does not stream and a reranker are none it serves"
+            "transcription jobs and a reranker are none it serves"
         );
     }
 
@@ -372,11 +490,7 @@ mod tests {
             sent.images.is_empty(),
             "an edit is a generation of its images"
         );
-        let fields = sent
-            .native
-            .as_ref()
-            .map(|n| n.fields.clone())
-            .unwrap_or_default();
+        let fields = OpenAiImages::fields(&sent.native);
         assert_eq!(fields["sync"], true);
         assert_eq!(fields["response_format"], "b64_json");
         assert_eq!(
@@ -385,62 +499,20 @@ mod tests {
         );
 
         let mut urls = image::Input::new("a fox");
-        let mut asked = serde_json::Map::new();
-        asked.insert("response_format".into(), "url".into());
-        urls.native = Some(NativeFields::new(OpenAiImages::NAME, asked));
+        let url = |f: &mut serde_json::Map<String, Value>| {
+            _ = f.insert("response_format".into(), "url".into())
+        };
+        urls.native = OpenAiImages::with_fields(&urls.native, url);
         taken_image(&mut urls).expect("taken");
-        let fields = urls
-            .native
-            .as_ref()
-            .map(|n| n.fields.clone())
-            .unwrap_or_default();
+        let fields = OpenAiImages::fields(&urls.native);
         assert_eq!(fields["response_format"], "url", "a request's own is kept");
 
         let mut masked = edit.clone();
-        masked.mask = Some(edit.images[0].clone());
-        assert!(taken_image(&mut masked).is_err());
-    }
-
-    fn answer(status: u16, content_type: &str) -> ResponseHead {
-        let answer = http::Response::builder()
-            .status(status)
-            .header("content-type", content_type);
-        answer.body(()).expect("head").into_parts().0
-    }
-
-    #[test]
-    fn speech_is_asked_for_as_a_stream_and_read_whole() {
-        let mut head = http::Request::new(()).into_parts().0;
-        head.uri = http::Uri::from_static("/audio/speech");
-        let rewrite = EmpirioLabsSpeech.request(&mut head).expect("a call");
-        assert_eq!(head.uri.path(), "/audio/speech:stream");
-        let call = Bytes::from_static(br#"{"input":"Hi.","stream_format":"sse"}"#);
-        let call = rewrite.expect("a rewrite")(call).expect("a call");
-        assert_eq!(call, &br#"{"input":"Hi."}"#[..]);
-
-        let mut events = answer(200, "text/event-stream");
-        let read = EmpirioLabsSpeech.response(&head, &mut events);
-        assert_eq!(events.headers[CONTENT_TYPE], "application/octet-stream");
-        let stream = "data: {\"type\": \"audio.chunk\", \"seq\": 0, \"audio_b64\": \"SUQz\"}\n\n\
-                      data: {\"type\": \"audio.chunk\", \"seq\": 1, \"audio_b64\": \"AAE=\"}\n\n\
-                      data: {\"type\":\"audio.done\",\"audio_url\":\"https://media.test/a.mp3\"}\n\n\
-                      data: [DONE]\n\n";
-        let audio = read.expect("a rewrite")(Bytes::from_static(stream.as_bytes()));
-        assert_eq!(audio.expect("audio"), Bytes::from_static(b"ID3\0\x01"));
-        let refused = EmpirioLabsSpeech.response(&head, &mut answer(400, "text/event-stream"));
-        assert!(refused.is_none(), "a refusal is read as it is");
-    }
-
-    #[test]
-    fn speech_cut_or_failed_fails() {
-        let cut = "data: {\"type\": \"audio.chunk\", \"audio_b64\": \"SUQz\"}\n\n";
-        assert!(streamed_audio(Bytes::from_static(cut.as_bytes())).is_err());
-        let failed =
-            "data: {\"type\": \"audio.error\", \"error\": {\"message\": \"overloaded\"}}\n\n";
-        let fault = streamed_audio(Bytes::from_static(failed.as_bytes())).err();
-        assert!(fault.is_some_and(|f| f.message().contains("overloaded")));
-        let mut fast = speech::Input::new("Hi.");
-        fast.speed = Some(1.5);
-        assert!(taken_speech(&mut fast).is_err());
+        let mask = json!({ "image_url": "https://x.test/m.png" });
+        masked.native =
+            OpenAiImages::with_fields(&masked.native, |f| _ = f.insert("mask".into(), mask));
+        taken_image(&mut masked).expect("taken");
+        let fields = OpenAiImages::fields(&masked.native);
+        assert!(!fields.contains_key("mask"), "a mask is dropped");
     }
 }

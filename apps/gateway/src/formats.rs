@@ -14,19 +14,28 @@ use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_conversation_http::responses::OpenAiResponses;
 use respan_gateway_core::{Fault, Format, Gateway};
 use respan_gateway_decision as decision;
-use respan_gateway_decision_http::{Decisions, OpenAiDecisions};
+use respan_gateway_decision_http::{Decisions, GeminiDecisions, OpenAiDecisions};
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_media::{embedding, image, speech, transcription, video};
-use respan_gateway_media_http::bedrock::BedrockEmbeddings;
-use respan_gateway_media_http::gemini::{GeminiImages, GeminiVeo};
+use respan_gateway_media_http::bedrock::{BedrockEmbeddings, BedrockImages};
+use respan_gateway_media_http::dashscope::{
+    DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
+};
+use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
+use respan_gateway_media_http::openrouter::OpenRouterVideos;
+use respan_gateway_media_http::together::TogetherVideos;
+use respan_gateway_media_http::zai::ZaiVideos;
 use respan_gateway_passthrough_http::Passthrough;
 use respan_gateway_plugin_routing::{Model, Routes};
 use respan_gateway_realtime as realtime;
 use respan_gateway_realtime_ws::{
-    GeminiLive, MistralRealtime, OpenAiRealtime, ResponsesWs, SessionModel, requested_model,
+    GeminiLive, MistralRealtime, OpenAiLive, OpenAiRealtime, OpenAiRealtimeBeta, PhonicSts,
+    SessionModel, requested_model,
 };
 
 /// The kinds of traffic this binary carries, as the admin API and routing
@@ -34,9 +43,6 @@ use respan_gateway_realtime_ws::{
 pub mod kind {
     pub const CHAT: &str = "chat";
     pub const REALTIME: &str = "realtime";
-    /// Responses over WebSocket: a session of many requests and replies,
-    /// which no other format speaks.
-    pub const RESPONSES: &str = "responses";
     pub const PASSTHROUGH: &str = "passthrough";
     pub const IMAGE: &str = "image";
     pub const TRANSCRIPTION: &str = "transcription";
@@ -78,8 +84,6 @@ pub struct KnownFormat {
     /// What its clients send, as `METHOD /path`.
     pub endpoints: Vec<String>,
     pub websocket: bool,
-    /// What its video jobs' ids start with, which routes a follow-up.
-    pub job_ids: Option<&'static str>,
     /// Whether its clients take only some of the requests it matches,
     /// which another format of their endpoint takes otherwise.
     pub claims: bool,
@@ -152,7 +156,6 @@ impl KnownFormat {
             kind,
             endpoints: Vec::new(),
             websocket: false,
-            job_ids: None,
             claims: false,
             serve: None,
             model: Model::none(),
@@ -175,11 +178,6 @@ impl KnownFormat {
 
     pub fn model(mut self, model: Model) -> Self {
         self.model = model;
-        self
-    }
-
-    fn job_ids(mut self, prefix: &'static str) -> Self {
-        self.job_ids = Some(prefix);
         self
     }
 
@@ -215,9 +213,14 @@ mod endpoints {
     ];
     pub const SPEECH: &[&str] = &["POST /v1/audio/speech"];
     pub const EMBEDDINGS: &[&str] = &["POST /v1/embeddings"];
+    pub const EMBED_CONTENT: &[&str] = &[
+        "POST /v1beta/models/{model}:embedContent",
+        "POST /v1beta/models/{model}:batchEmbedContents",
+    ];
     /// OpenAI's decisions, beside the ones `/v1/decisions` has.
     pub const OPENAI_DECISIONS_PATH: &str = "/openai/v1/decisions";
     pub const OPENAI_DECISIONS: &[&str] = &["POST /openai/v1/decisions"];
+    pub const GEMINI_DECISIONS: &[&str] = &["POST /v1beta/decisions"];
     pub const DECISIONS: &[&str] = &["POST /v1/decisions", "POST /v1/systemone"];
     pub const VIDEOS: &[&str] = &[
         "POST /v1/videos",
@@ -227,7 +230,7 @@ mod endpoints {
         "GET /v1/videos/{id}/content",
         "POST /v1/videos/{id}/remix",
     ];
-    pub const VEO: &[&str] = &[
+    pub const OMNI: &[&str] = &[
         "POST /v1beta/models/{model}:predictLongRunning",
         "GET /v1beta/{operation}",
         "GET /v1beta/files/{id}:download",
@@ -241,7 +244,8 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::CHAT_COMPLETIONS, OpenAiChat).model(chat()),
         KnownFormat::of(kind::CHAT, endpoints::RESPONSES, OpenAiResponses).model(chat()),
         session(kind::REALTIME, OpenAiRealtime, OpenAiRealtime::PATH, false).model(realtime()),
-        session(kind::RESPONSES, ResponsesWs, ResponsesWs::PATH, false),
+        KnownFormat::provider_only(kind::REALTIME, &OpenAiRealtimeBeta::DEFAULT).websocket(),
+        session(kind::REALTIME, OpenAiLive, OpenAiLive::PATH, false).model(realtime()),
         KnownFormat::of(kind::IMAGE, endpoints::IMAGES, OpenAiImages)
             .model(Model::of(image::Input::model, image::Input::set_model)),
         KnownFormat::of(
@@ -258,7 +262,6 @@ pub fn formats() -> Vec<KnownFormat> {
         // Only a `Create` names a model; a follow-up goes by its job's id
         // ([`crate::jobs`]).
         KnownFormat::of(kind::VIDEO, endpoints::VIDEOS, OpenAiVideos)
-            .job_ids("video_")
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBEDDINGS, OpenAiEmbeddings).model(Model::of(
             embedding::Input::model,
@@ -268,6 +271,21 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::of(kind::CHAT, endpoints::GENERATE_CONTENT, GeminiGenerate).model(chat()),
         KnownFormat::provider_only(kind::CHAT, &BedrockConverse),
         KnownFormat::provider_only(kind::EMBEDDING, &BedrockEmbeddings),
+        KnownFormat::provider_only(kind::IMAGE, &BedrockImages),
+        KnownFormat::provider_only(kind::IMAGE, &DashScopeImages),
+        KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
+        KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
+        KnownFormat::provider_only(kind::VIDEO, &DashScopeVideos),
+        KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
+            Model::of(embedding::Input::model, embedding::Input::set_model),
+        ),
+        KnownFormat::provider_only(kind::VIDEO, &OpenRouterVideos),
+        KnownFormat::provider_only(kind::VIDEO, &TogetherVideos),
+        KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos),
+        KnownFormat::provider_only(kind::VIDEO, &ZaiVideos),
+        KnownFormat::provider_only(kind::VIDEO, &MiniMaxVideos),
+        KnownFormat::provider_only(kind::SPEECH, &MiniMaxSpeech),
         KnownFormat::claiming(
             kind::IMAGE,
             endpoints::GENERATE_CONTENT,
@@ -283,8 +301,8 @@ pub fn formats() -> Vec<KnownFormat> {
             false,
         )
         .model(realtime()),
-        KnownFormat::of(kind::VIDEO, endpoints::VEO, GeminiVeo)
-            .job_ids("veo_")
+        session(kind::REALTIME, PhonicSts, PhonicSts::PATH, false).model(realtime()),
+        KnownFormat::of(kind::VIDEO, endpoints::OMNI, GeminiOmni)
             .model(Model::of(video::Input::model, video::Input::set_model)),
         KnownFormat::claiming(
             kind::DECISION,
@@ -305,14 +323,19 @@ pub fn formats() -> Vec<KnownFormat> {
             decision::Input::model,
             decision::Input::set_model,
         )),
+        KnownFormat::of(kind::DECISION, endpoints::GEMINI_DECISIONS, GeminiDecisions).model(
+            Model::of(decision::Input::model, decision::Input::set_model),
+        ),
         KnownFormat::of(kind::PASSTHROUGH, endpoints::PASSTHROUGH, Passthrough),
     ]
 }
 
-/// Whether a request is for `decisions`, not OpenAI's at its own path.
+/// Whether a request is for `decisions`, not OpenAI's or Gemini's at their own paths.
 fn legacy_decisions(_: &Routes, io: &ClientIo) -> bool {
     let uri = io.request().uri();
-    !respan_gateway_http::path::path_ends_with(uri, endpoints::OPENAI_DECISIONS_PATH)
+    let own = [endpoints::OPENAI_DECISIONS_PATH, GeminiDecisions::PATH];
+    !own.iter()
+        .any(|p| respan_gateway_http::path::path_ends_with(uri, p))
 }
 
 /// Whether a `generateContent` call is for an image ([`drawn_elsewhere`]).

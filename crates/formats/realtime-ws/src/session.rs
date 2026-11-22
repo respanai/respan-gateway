@@ -4,16 +4,14 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, NativeValue};
+use respan_gateway_core::{Connection, EventStream, Fault, FaultKind, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
-use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
-use respan_gateway_realtime::{Input, Output};
-use respan_gateway_ws::WsTransport;
-
-use serde_json::Value;
+use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo, Reach};
+use respan_gateway_realtime::{Cause, Input, Output};
+use respan_gateway_ws::{CloseCode, ProviderClose, WsTransport};
 
 /// Reads one frame as zero or more events.
 pub(crate) type Read<T> = Box<dyn Decoder<T>>;
@@ -31,13 +29,14 @@ pub(crate) fn say() -> (Say, Said) {
     mpsc::unbounded()
 }
 
-/// Every spec of the crate, which a client's request is matched against
-/// together, and whose natives each other's writers know what to do with.
-pub(crate) const SPECS: [&Spec; 4] = [
+/// Every spec of the crate: what a client's upgrade request is matched
+/// against.
+pub(crate) const SPECS: [&Spec; 5] = [
     &crate::openai::SPEC,
     &crate::gemini::SPEC,
     &crate::mistral::SPEC,
-    &crate::responses::SPEC,
+    &crate::live::SPEC,
+    &crate::phonic::SPEC,
 ];
 
 /// What a spec says of its session.
@@ -73,6 +72,14 @@ impl Spec {
             && !SPECS.iter().any(|other| longer(other) && at(other.path))
     }
 
+    /// How its provider is reached: as a session, in binary frames if the
+    /// spec sends them.
+    pub(crate) fn reach(&self) -> Reach {
+        Reach::Session {
+            binary_text: self.binary_text,
+        }
+    }
+
     /// A transport to its provider at `base_url`, taking binary text if the
     /// spec sends binary frames.
     pub(crate) fn transport(&self, base_url: impl Into<String>) -> Result<WsTransport, Fault> {
@@ -88,6 +95,7 @@ impl Spec {
         read: Read<Input>,
         write: Box<dyn Encoder<Output>>,
     ) -> Connection<Input, Output> {
+        let write = Box::new(Told { write, said: None });
         let protocol = self.protocol.map(HeaderValue::from_static);
         io.with_error(refusal).bind(
             move |_| read,
@@ -125,6 +133,7 @@ impl Spec {
         read: Read<Output>,
         said: Option<Said>,
     ) -> Connection<Output, Input> {
+        let read = Box::new(Explained { read, error: None });
         let path = self.path;
         let protocol = self.protocol;
         let wire = io.extensions().get::<h::raw::Original>().cloned();
@@ -168,6 +177,14 @@ impl Spec {
     }
 }
 
+/// The model a call dials: the one routing chose, else the one its
+/// client's handshake asks for, if either names one.
+pub(crate) fn dialled_model(io: &ProviderIo) -> Option<String> {
+    let chosen = io.extensions().get::<crate::SessionModel>();
+    let asked = || crate::requested_model(io.extensions().get::<h::raw::Original>()?);
+    chosen.map(|m| m.0.clone()).or_else(asked)
+}
+
 /// The model at `?model=` of a client's handshake, unescaped, if it names one.
 pub(crate) fn model_at(uri: &Uri) -> Option<String> {
     let query = uri.query()?.as_bytes();
@@ -190,6 +207,121 @@ pub(crate) fn model_query(model: &str) -> String {
         .finish()
 }
 
+/// A client's writer that tells the client why its session fails: the
+/// fault as an [`Output::Error`], which the format writes as its error
+/// event, before the Close. A format with no error event writes none, and
+/// the Close's reason says it. An error the provider just sent is not told
+/// twice.
+struct Told {
+    write: Box<dyn Encoder<Output>>,
+    said: Option<String>,
+}
+
+impl Encoder<Output> for Told {
+    fn start(&mut self, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.write.start(out)
+    }
+
+    fn encode(&mut self, event: &Output, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.said = match event {
+            Output::Error { message, .. } => Some(message.clone()),
+            _ => None,
+        };
+        self.write.encode(event, out)
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        let Err(fault) = &end else {
+            return self.write.end(end, out);
+        };
+        if fault.is(FaultKind::Abandoned) || self.said.as_deref() == Some(fault.message()) {
+            return end;
+        }
+        // A provider's Close that refused what it was sent is a 400, though upstream.
+        let cause = match respan_gateway_http_faults::status(fault).is_client_error() {
+            true => Cause::Invalid,
+            false => Cause::Provider,
+        };
+        let error = Output::Error {
+            cause,
+            message: fault.message().to_owned(),
+            native: Native::default(),
+        };
+        let mut frames = Vec::new();
+        match self.write.encode(&error, &mut frames) {
+            Ok(()) if !frames.is_empty() => {
+                out.extend(frames);
+                Ok(())
+            }
+            _ => end,
+        }
+    }
+}
+
+/// A provider's reader that explains a close by the error the provider
+/// sent just before it: the last event it read, if an [`Output::Error`], is
+/// what its abnormal Close is for, as one that refused what it was sent
+/// (`bad_request`) or its failure (`upstream`), saying the provider's words.
+struct Explained {
+    read: Read<Output>,
+    error: Option<(Cause, String)>,
+}
+
+impl Decoder<Output> for Explained {
+    fn start(&mut self, out: &mut Vec<Output>) -> Result<(), Fault> {
+        self.read.start(out)
+    }
+
+    fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+        let before = out.len();
+        let read = self.read.decode(raw, out);
+        if out.len() > before {
+            self.error = match out.last() {
+                Some(Output::Error { cause, message, .. }) if *cause != Cause::NothingToCancel => {
+                    Some((*cause, message.clone()))
+                }
+                _ => None,
+            };
+        }
+        read
+    }
+
+    fn end(&mut self, end: Result<(), Fault>, out: &mut Vec<Output>) -> Result<(), Fault> {
+        let end = self.read.end(end, out);
+        match (end, self.error.take()) {
+            (Err(closed), Some((cause, message))) if closed.get::<ProviderClose>().is_some() => {
+                let fault = match cause {
+                    Cause::Invalid => Fault::bad_request(message),
+                    _ => Fault::upstream(message),
+                };
+                Err(carry(fault, &closed))
+            }
+            (end, _) => end,
+        }
+    }
+
+    fn limit(&mut self, bytes: Option<usize>) {
+        self.read.limit(bytes);
+    }
+
+    fn done(&self) -> bool {
+        self.read.done()
+    }
+}
+
+/// `fault`, explaining the provider's Close `closed`: with its code, and
+/// the code the client is closed with if the call relayed it.
+pub(crate) fn carry(fault: Fault, closed: &Fault) -> Fault {
+    let fault = match closed.get::<ProviderClose>() {
+        Some(code) => fault.with(*code),
+        None => fault,
+    };
+    match closed.get::<CloseCode>() {
+        Some(code) => fault.with(*code),
+        None => fault,
+    }
+}
+
 /// The events of `frames`, with what was `said` first whenever there is
 /// some, until the frames end.
 fn among(said: Said, frames: EventStream<Output>) -> EventStream<Output> {
@@ -202,10 +334,9 @@ fn among(said: Said, frames: EventStream<Output>) -> EventStream<Output> {
     EventStream::stream(events)
 }
 
-/// A refused handshake's answer: text/plain, with the fault's error code
-/// ([`Fault::code`](respan_gateway_core::Fault::code)), never its message.
+/// A refused handshake's answer: text/plain, with the fault's message.
 fn refusal(fault: &Fault, _request: &Request<Bytes>, head: &mut ResponseHead) -> Bytes {
-    respan_gateway_http::rules::plain_text(head, fault.code())
+    respan_gateway_http::rules::plain_text(head, fault.message())
 }
 
 /// Offer `protocol` in `headers` beside the subprotocols the client
@@ -228,76 +359,9 @@ fn offer_beside_the_clients(
     Ok(())
 }
 
-/// A client's session of `name`'s native events alone: each frame one
-/// `Input::Native`, and only `Output::Native` of `name` written. A frame that
-/// is not JSON is the client's fault, `bad_request`.
-pub(crate) fn native_client(name: &'static str) -> (Read<Input>, Box<dyn Encoder<Output>>) {
-    let read = move |raw: Bytes, out: &mut Vec<Input>| {
-        let json: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::bad_request("a client's frame is not a JSON event"))?;
-        out.push(Input::native(name, json));
-        Ok(())
-    };
-    let write = move |event: &Output, out: &mut Vec<Bytes>| {
-        out.push(match event {
-            Output::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
-        });
-        Ok(())
-    };
-    (Box::new(read), Box::new(write))
-}
-
-/// A provider's session of `name`'s native events alone: only
-/// `Input::Native` of `name` written, and each frame one `Output::Native`. A
-/// frame that is not JSON is the provider's fault, `upstream`.
-pub(crate) fn native_provider(name: &'static str) -> (Box<dyn Encoder<Input>>, Read<Output>) {
-    let write = move |event: &Input, out: &mut Vec<Bytes>| {
-        out.push(match event {
-            Input::Native(native) => written(name, Some(native))?,
-            _ => written(name, None)?,
-        });
-        Ok(())
-    };
-    let read = move |raw: Bytes, out: &mut Vec<Output>| {
-        let json: Value = serde_json::from_slice(&raw)
-            .map_err(|_| Fault::upstream("a provider's frame is not a JSON event"))?;
-        out.push(Output::native(name, json));
-        Ok(())
-    };
-    (Box::new(write), Box::new(read))
-}
-
-/// A native event's JSON as its frame. An event of another format, or one
-/// the kind has a form for, which this format does not translate, is
-/// the gateway's misconfiguration or a plugin's, not the client's: `config`.
-fn written(format: &str, event: Option<&NativeValue>) -> Result<Bytes, Fault> {
-    let Some(event) = event.filter(|event| event.format.as_ref() == format) else {
-        return Err(Fault::config(
-            "a realtime event requires explicit translation to another format",
-        ));
-    };
-    serde_json::to_vec(&*event.value)
-        .map(Bytes::from)
-        .map_err(|e| Fault::internal("an event could not be written").with_source(e))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_native_events_of_the_format_are_written() {
-        let event = NativeValue::new("one", serde_json::json!({"text":"edited"}));
-        assert_eq!(
-            written("one", Some(&event)).expect("same format"),
-            Bytes::from_static(br#"{"text":"edited"}"#)
-        );
-        for refused in [written("two", Some(&event)), written("one", None)] {
-            let refused = refused.expect_err("foreign event");
-            assert!(refused.code() == "config");
-        }
-    }
 
     /// Regression: a model was put in the query as it was, so `a b` broke
     /// the URL and `x&foo=bar` added a parameter.
@@ -310,5 +374,67 @@ mod tests {
             assert_eq!(model_at(&uri).as_deref(), Some(model));
             assert_eq!(uri.query().map(|q| q.matches('=').count()), Some(1));
         }
+    }
+
+    /// Writes each error event as its cause and message.
+    fn errors() -> Box<dyn Encoder<Output>> {
+        Box::new(|event: &Output, out: &mut Vec<Bytes>| {
+            if let Output::Error { cause, message, .. } = event {
+                out.push(Bytes::from(format!("{cause:?} {message}")));
+            }
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn a_failed_session_is_told_to_its_client_once() {
+        let refused = || {
+            Fault::upstream("refused")
+                .with(respan_gateway_http_faults::Status(StatusCode::BAD_REQUEST))
+        };
+        let mut told = Told {
+            write: errors(),
+            said: None,
+        };
+        let mut out = Vec::new();
+        assert!(told.end(Err(refused()), &mut out).is_ok());
+        assert_eq!(out, [Bytes::from_static(b"Invalid refused")]);
+        // The provider said it already: not again, and the end stays a failure.
+        let said = Output::Error {
+            cause: Cause::Provider,
+            message: "refused".into(),
+            native: Native::default(),
+        };
+        let mut out = Vec::new();
+        assert!(told.encode(&said, &mut out).is_ok());
+        assert!(told.end(Err(refused()), &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn a_providers_close_is_the_error_it_sent_before_it() {
+        let read: Read<Output> = Box::new(|raw: Bytes, out: &mut Vec<Output>| {
+            out.push(Output::Error {
+                cause: Cause::Invalid,
+                message: String::from_utf8_lossy(&raw).into_owned(),
+                native: Native::default(),
+            });
+            Ok(())
+        });
+        let mut explained = Explained { read, error: None };
+        let mut out = Vec::new();
+        assert!(
+            explained
+                .decode(Bytes::from_static(b"no such voice"), &mut out)
+                .is_ok()
+        );
+        let closed = Fault::upstream("the provider closed the session 1008")
+            .with(ProviderClose(1008))
+            .with(CloseCode(1008));
+        let fault = explained.end(Err(closed), &mut out).expect_err("a failure");
+        assert_eq!(
+            (fault.code(), fault.message()),
+            ("bad_request", "no such voice")
+        );
+        assert_eq!(fault.get::<CloseCode>().copied(), Some(CloseCode(1008)));
     }
 }

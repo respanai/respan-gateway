@@ -59,6 +59,7 @@ mod codec;
 mod credential;
 pub mod dialect;
 mod edge;
+pub mod native;
 pub mod path;
 pub mod raw;
 pub mod rules;

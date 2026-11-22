@@ -1,17 +1,16 @@
 //! DeepInfra: Chat Completions, images, embeddings, speech and
-//! transcriptions, as OpenAI serves them, and videos in its dialect.
+//! transcriptions, as OpenAI serves them, videos in its dialect, and
+//! decisions.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-use respan_gateway_conversation::MediaSource;
-use respan_gateway_conversation_http::fields::{kept, native_of};
+use respan_gateway_conversation_http::fields::media_url;
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
+use respan_gateway_decision_http::Decisions;
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_http::content::content_type;
-use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::Request;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_media::video;
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
 };
@@ -26,6 +25,9 @@ use respan_gateway_vendor_kit::{
 /// Where its API is.
 const BASE_URL: &str = "https://api.deepinfra.com/v1/openai";
 
+/// Where its decisions are: not under `/openai`.
+const DECISIONS_BASE_URL: &str = "https://api.deepinfra.com/v1";
+
 /// DeepInfra.
 pub const VENDOR: Vendor = Vendor {
     id: "deepinfra",
@@ -37,6 +39,7 @@ pub const VENDOR: Vendor = Vendor {
         (&OpenAiSpeech, Some(BASE_URL)),
         (&OpenAiTranscriptions, Some(BASE_URL)),
         (&Dialected::new(OpenAiVideos, DeepInfra), Some(BASE_URL)),
+        (&Decisions, Some(DECISIONS_BASE_URL)),
     ],
     models: list_models,
     ..Vendor::DEFAULT
@@ -59,12 +62,8 @@ impl Dialect for DeepInfra {
         Some(Box::new(referenced))
     }
 
-    fn response(&self, _: &RequestHead, head: &mut ResponseHead) -> Option<Rewrite> {
-        let essence = content_type(head)?.split(';').next()?.trim();
-        if !head.status.is_success() || !essence.eq_ignore_ascii_case("application/json") {
-            return None;
-        }
-        Some(Box::new(openai_job))
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
+        crate::json_answer(head).then(|| Box::new(openai_job) as Rewrite)
     }
 }
 
@@ -79,16 +78,10 @@ fn referenced(input: &mut video::Input) -> Result<(), Fault> {
     let Some(reference) = create.reference.take() else {
         return Ok(());
     };
-    let url = match reference.source {
-        MediaSource::Url(url) => url,
-        MediaSource::Bytes(bytes) => {
-            let data = STANDARD.encode(bytes);
-            format!("data:{};base64,{data}", reference.mime_type)
-        }
-    };
-    let mut fields = kept(OpenAiVideos::NAME, &create.native);
-    fields.entry("image_url").or_insert_with(|| url.into());
-    create.native = native_of(OpenAiVideos::NAME, fields);
+    let url = media_url(&reference);
+    create.native = OpenAiVideos::with_fields(&create.native, |fields| {
+        fields.entry("image_url").or_insert_with(|| url.into());
+    });
     Ok(())
 }
 
@@ -169,7 +162,7 @@ fn price(p: &Value) -> Option<Price> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use respan_gateway_conversation::Media;
+    use respan_gateway_conversation::{Media, MediaSource};
     use serde_json::json;
 
     fn head(status: u16, content_type: &str) -> ResponseHead {
@@ -186,7 +179,7 @@ mod tests {
 
     #[test]
     fn only_a_json_success_is_read_as_a_job() {
-        let sent = http::Request::new(()).into_parts().0;
+        let sent = http::Request::new(Bytes::new());
         let rewritten = |status, content_type| {
             let mut head = head(status, content_type);
             DeepInfra.response(&sent, &mut head).is_some()
@@ -225,11 +218,13 @@ mod tests {
             create.reference = Some(Media::new("image/png", reference));
             let mut input = video::Input::Create(create);
             referenced(&mut input).expect("referenced");
-            let native = match input {
-                video::Input::Create(c) if c.reference.is_none() => c.native,
-                _ => None,
+            let video::Input::Create(c) = input else {
+                return None;
             };
-            native.and_then(|n| n.fields.get("image_url").cloned())
+            if c.reference.is_some() {
+                return None;
+            }
+            OpenAiVideos::fields(&c.native).get("image_url").cloned()
         };
         let bytes = MediaSource::Bytes(Bytes::from_static(b"png"));
         assert_eq!(image_url(bytes), Some(json!("data:image/png;base64,cG5n")));

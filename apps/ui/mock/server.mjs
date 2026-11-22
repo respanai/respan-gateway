@@ -30,13 +30,13 @@ const kindOf = {
   "anthropic-messages": "chat",
   "gemini-generate": "chat",
   "openai-realtime": "realtime",
+  "openai-live": "realtime",
   "gemini-live": "realtime",
-  "responses-ws": "responses",
   "openai-images": "image",
   "openai-transcriptions": "transcription",
   "openai-speech": "speech",
   "openai-videos": "video",
-  "gemini-veo": "video",
+  "gemini-omni": "video",
   "openai-embeddings": "embedding",
 };
 
@@ -56,7 +56,7 @@ const providers = [
       "openai-chat",
       "openai-responses",
       "openai-realtime",
-      "responses-ws",
+      "openai-live",
       "openai-images",
       "openai-transcriptions",
       "openai-speech",
@@ -72,7 +72,7 @@ const providers = [
       "gemini-generate",
       "gemini-live",
       "openai-images",
-      "gemini-veo",
+      "gemini-omni",
       "openai-embeddings",
     ],
     "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -175,7 +175,7 @@ const routes = {
       ],
     },
     { format: "openai-realtime", kind: "realtime", endpoints: ["GET /v1/realtime"] },
-    { format: "responses-ws", kind: "responses", endpoints: ["GET /v1/responses"] },
+    { format: "openai-live", kind: "realtime", endpoints: ["GET /v1/live/sessions (WebSocket)"] },
     {
       format: "openai-images",
       kind: "image",
@@ -239,7 +239,6 @@ const routes = {
   defaults: [
     { kind: "chat", provider: "openai" },
     ...(NO_REALTIME ? [] : [{ kind: "realtime", provider: "openai" }]),
-    { kind: "responses", provider: "openai" },
     { kind: "image", provider: "openai" },
     { kind: "transcription", provider: "openai" },
     { kind: "speech", provider: "openai" },
@@ -1030,7 +1029,7 @@ async function videos(req, res, path) {
   if (req.method === "POST" && !id) {
     const body = JSON.parse((await readBody(req)).toString() || "{}");
     const job = {
-      id: `veo_${Math.random().toString(36).slice(2, 10)}`,
+      id: `omni_${Math.random().toString(36).slice(2, 10)}`,
       created: Date.now(),
       model: body.model ?? "gemini-omni-1.1-flash",
       seconds: body.seconds ?? "4",
