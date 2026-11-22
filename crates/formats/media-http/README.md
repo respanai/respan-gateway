@@ -344,7 +344,7 @@ models on `POST /models/{model}:batchEmbedContents`, its key in
   `embedding`, or `embeddings`, and the usage as `usageMetadata`.
 
 `cohere::CohereRerank`, named `cohere-rerank`: rerank as Cohere's API has
-it, which Jina, vLLM, Infinity, TEI and other servers serve too, on
+it, which Jina, vLLM, Infinity and other servers serve too, on
 `POST /rerank`, a bearer key; a provider's base URL includes the version,
 such as `https://api.cohere.com/v2`, `https://api.jina.ai/v1` or a vLLM
 server's `http://localhost:8000/v1`.

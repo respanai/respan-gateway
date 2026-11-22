@@ -25,7 +25,7 @@ type Key = crate::Own<CohereRerank>;
 
 const RERANK: &str = "/rerank";
 
-/// Rerank as Cohere's API has it, which Jina, vLLM, Infinity, TEI and other
+/// Rerank as Cohere's API has it, which Jina, vLLM, Infinity and other
 /// servers serve too: a `POST` to a path ending in `/rerank`, of a `query`
 /// and its `documents`, answered whole in JSON.
 ///
