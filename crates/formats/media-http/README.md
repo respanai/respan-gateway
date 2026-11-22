@@ -357,8 +357,9 @@ server's `http://localhost:8000/v1`.
   `max_tokens_per_doc`, are sent on as written.
 - An answer's `results` are each document's `index` and `relevance_score`,
   in the provider's order, with the document's text if it repeats it.
-  Usage is `usage.total_tokens`, as Jina and vLLM count it, as input tokens;
-  Cohere bills search units instead, in `meta.billed_units`, which with the
+  Usage is `usage.total_tokens`, as Jina and vLLM count it, as input tokens,
+  and its other fields are written back to a client as they came. Cohere
+  bills search units instead, in `meta.billed_units`, which with the
   answer's `id` is written back to a client as it came, and is priced by no
   plugin.
 - A client speaks it too, of any provider of the kind: a `POST` to a path

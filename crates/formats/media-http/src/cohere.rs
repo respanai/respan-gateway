@@ -3,6 +3,7 @@
 //! [`rerank`](respan_gateway_media::rerank) kind.
 
 use crate::edge::{bind_provider, posts};
+use crate::openai::{as_usage_extras, usage_extras};
 use respan_gateway_conversation::Usage;
 use respan_gateway_conversation_http::Schema;
 use respan_gateway_conversation_http::fields::{invalid, merge_missing, rest_of, set};
@@ -43,9 +44,10 @@ const RERANK: &str = "/rerank";
 /// An answer's `results` are its documents' places, in order: each one's
 /// `index`, `relevance_score`, and its `document`'s text if the provider
 /// repeats it. Usage is `usage`'s `total_tokens`, as Jina and vLLM count
-/// it, as input tokens; Cohere's `meta`, its billed search units, and an
-/// answer's `id` are its start's own fields, written back to a client of
-/// the format. A refusal is in OpenAI's error schema, as vLLM writes it.
+/// it, as input tokens, and its other fields are written back to a client
+/// of the format as they came; so are Cohere's `meta`, its billed search
+/// units, and an answer's `id`, its start's own fields. A refusal is in
+/// OpenAI's error schema, as vLLM writes it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CohereRerank;
 
@@ -106,7 +108,7 @@ fn document_json(document: &Document) -> Result<Value, Fault> {
 }
 
 /// The events of a provider's whole answer: its start, each document's
-/// place, then its usage.
+/// place, then its usage and the usage's other fields.
 fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v: Value = serde_json::from_slice(&raw)
         .map_err(|_| Fault::upstream(format!("the provider's {NAME} answer is not JSON")))?;
@@ -126,6 +128,10 @@ fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
         .as_u64()
         .or(usage["prompt_tokens"].as_u64());
     out.extend(counted.map(|n| Output::Usage(Usage::new(n, 0))));
+    if usage.is_object() {
+        let extras = rest_of(usage, &["total_tokens"]);
+        out.extend(usage_extras::<Key>(extras).map(Output::Native));
+    }
     Ok(())
 }
 
@@ -245,6 +251,7 @@ fn response_encoder(head: &mut ResponseHead) -> Box<dyn Encoder<Output>> {
 /// and `meta`, the model, each document's place in order, and the usage.
 fn response_of(events: &[Output]) -> Value {
     let (mut response, mut results, mut usage) = (Map::new(), Vec::new(), None);
+    let mut extras = Map::new();
     for event in events {
         match event {
             Output::Start(start) => {
@@ -262,15 +269,23 @@ fn response_of(events: &[Output]) -> Value {
                 results.push(result);
             }
             Output::Usage(u) => *usage.get_or_insert_with(Usage::default) += u,
+            // A body has no place for another event.
+            Output::Native(n) => {
+                if let Some(more) = n.value::<Key>().and_then(as_usage_extras) {
+                    merge_missing(&mut extras, more);
+                }
+            }
             _ => {}
         }
     }
     response.insert("results".into(), results.into());
-    if let Some(usage) = usage {
-        response.insert(
-            "usage".into(),
-            json!({ "total_tokens": usage.input_tokens }),
-        );
+    if usage.is_some() || !extras.is_empty() {
+        let mut u = Map::new();
+        if let Some(usage) = usage {
+            u.insert("total_tokens".into(), usage.input_tokens.into());
+        }
+        merge_missing(&mut u, &extras);
+        response.insert("usage".into(), u.into());
     }
     response.into()
 }
@@ -335,11 +350,16 @@ mod tests {
 
         let vllm = read(json!({
             "id": "rerank-1", "model": "BAAI/bge-reranker-v2-m3",
-            "usage": { "total_tokens": 12 },
+            "usage": { "prompt_tokens": 12, "total_tokens": 12 },
             "results": [{ "index": 0, "relevance_score": 0.8, "document": { "text": "Paris" } }],
         }))
         .expect("read");
-        assert_eq!(vllm.last(), Some(&Output::Usage(Usage::new(12, 0))));
+        assert!(vllm.contains(&Output::Usage(Usage::new(12, 0))));
+        let Some(Output::Native(more)) = vllm.last() else {
+            panic!("the usage's other fields: {vllm:?}");
+        };
+        let more = more.value::<Key>().and_then(as_usage_extras);
+        assert_eq!(more.and_then(|m| m.get("prompt_tokens")), Some(&json!(12)));
         let Output::Ranked(ranked) = &vllm[1] else {
             panic!("a place: {vllm:?}");
         };
@@ -384,13 +404,16 @@ mod tests {
             Output::Ranked(Ranked::new(2, 0.75)),
             Output::Ranked(repeated),
             Output::Usage(Usage::new(7, 0)),
+            Output::Native(Native::json::<Key>(
+                json!({ "usage": { "prompt_tokens": 7 } }),
+            )),
         ];
         let answer = json!({ "id": "r-1", "model": "m",
             "results": [
                 { "index": 2, "relevance_score": 0.75 },
                 { "index": 0, "relevance_score": 0.25, "document": { "text": "a" } },
             ],
-            "usage": { "total_tokens": 7 } });
+            "usage": { "total_tokens": 7, "prompt_tokens": 7 } });
         assert_eq!(response_of(&events), answer);
     }
 }

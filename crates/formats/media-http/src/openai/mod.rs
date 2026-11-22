@@ -295,12 +295,12 @@ fn write_usage(usage: &Usage) -> Map<String, Value> {
 /// The fields of a usage object the kind has no place for, as an event of
 /// the format `K` names, `{"usage": {..}}`, which its encoders write into
 /// the usage they write; none if there are none.
-fn usage_extras<K: 'static>(extras: Map<String, Value>) -> Option<Native> {
+pub(crate) fn usage_extras<K: 'static>(extras: Map<String, Value>) -> Option<Native> {
     (!extras.is_empty()).then(|| Native::json::<K>(json!({ "usage": extras })))
 }
 
 /// The usage fields of an event [`usage_extras`] made.
-fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
+pub(crate) fn as_usage_extras(v: &Value) -> Option<&Map<String, Value>> {
     let o = v.as_object().filter(|o| o.len() == 1)?;
     o.get("usage")?.as_object()
 }
