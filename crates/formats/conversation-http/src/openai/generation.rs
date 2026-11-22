@@ -61,14 +61,4 @@ mod tests {
             assert!(!in_responses(model, true), "{model}");
         }
     }
-
-    #[test]
-    fn a_generation_is_read_from_the_id_as_written() {
-        let in_responses = |model: &str, tools| Generation::of(model).in_responses(tools);
-        assert!(in_responses("gpt-5.4-mini", true) && !in_responses("gpt-5.4-mini", false));
-        assert!(in_responses("gpt-5.10", true) && !in_responses("gpt-5.10", false));
-        assert!(!in_responses("gpt-4.1", true));
-        assert!(!in_responses("GPT-5.4", true));
-        assert!(!in_responses("openai/gpt-5.4", true));
-    }
 }

@@ -11,101 +11,99 @@ pub(crate) enum Thinks {
     Never,
 }
 
-/// A Claude model's generation, as its lowercase id says: the name of the
-/// model, a dated id, a cloud's id, or an alias.
+/// A line of Claude models.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Line {
+    Opus,
+    Sonnet,
+    Haiku,
+    Fable,
+    Mythos,
+    Other,
+}
+
+/// A Claude model's generation, as its id says: its line and its version,
+/// as `claude-opus-5-5` is Opus 5.5, `claude-3-7-sonnet` Sonnet 3.7 and a
+/// dated id its major's `.0`. The id is the name of the model, a dated id,
+/// a cloud's id, or an alias, in any case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Generation {
-    thinks: Thinks,
-    forces_tools: bool,
-    disables_thinking: bool,
+    line: Line,
+    version: Option<(u32, u32)>,
 }
 
 impl Generation {
     /// The generation of the Claude `model` is, or `None` if it is another
     /// model.
     pub(crate) fn of(model: &str) -> Option<Generation> {
-        model.contains("claude").then(|| Generation {
-            thinks: thinks(model),
-            forces_tools: forces_tools(model),
-            disables_thinking: disables_thinking(model),
-        })
+        let model = model.to_ascii_lowercase();
+        let (_, name) = model.split_once("claude")?;
+        let lines = [
+            ("opus", Line::Opus),
+            ("sonnet", Line::Sonnet),
+            ("haiku", Line::Haiku),
+            ("fable", Line::Fable),
+            ("mythos", Line::Mythos),
+        ];
+        let named = lines.iter().find_map(|&(word, line)| {
+            let (before, after) = name.split_once(word)?;
+            Some((line, before, after))
+        });
+        let (line, before, after) = named.unwrap_or((Line::Other, name, ""));
+        // The version follows the line, as in `claude-opus-4-5`, or comes
+        // before it, as in `claude-3-5-sonnet`.
+        let version = [after, before].into_iter().find_map(|part| {
+            let (major, rest) = number(part.strip_prefix('-')?)?;
+            let minor = rest.strip_prefix(['-', '.']).and_then(number);
+            Some((major, minor.map_or(0, |(minor, _)| minor)))
+        });
+        Some(Generation { line, version })
     }
 
-    /// How it thinks.
+    /// How it thinks; a model whose id says no version, as the latest does.
     pub(crate) fn thinks(&self) -> Thinks {
-        self.thinks
+        match self.version {
+            Some(v) if v < (3, 7) => Thinks::Never,
+            Some(v) if v < (4, 6) => Thinks::ToBudget,
+            _ => Thinks::Adaptively,
+        }
     }
 
     /// Whether it takes a forced tool choice: Opus and Sonnet 5.5, and Fable
     /// and Mythos 5.1, and later refuse one.
     pub(crate) fn forces_tools(&self) -> bool {
-        self.forces_tools
+        !self.since(&[
+            (Line::Opus, (5, 5)),
+            (Line::Sonnet, (5, 5)),
+            (Line::Fable, (5, 1)),
+            (Line::Mythos, (5, 1)),
+        ])
     }
 
     /// Whether it takes `thinking: {type: "disabled"}`: Opus and Sonnet 5.5,
     /// Fable and Mythos, and later refuse it.
     pub(crate) fn disables_thinking(&self) -> bool {
-        self.disables_thinking
+        !self.since(&[
+            (Line::Opus, (5, 5)),
+            (Line::Sonnet, (5, 5)),
+            (Line::Fable, (5, 0)),
+            (Line::Mythos, (5, 0)),
+        ])
+    }
+
+    /// Whether it is of the version `from` has for its line, or later; not
+    /// a model whose id says no version.
+    fn since(&self, from: &[(Line, (u32, u32))]) -> bool {
+        from.iter()
+            .any(|&(line, at)| line == self.line && self.version.is_some_and(|v| v >= at))
     }
 }
 
-fn thinks(model: &str) -> Thinks {
-    let budgeted = [
-        "-4-0", "-4.0", "-4-1", "-4.1", "-4-5", "-4.5", "-4-2025", "-4@",
-    ];
-    let family = |family: &str| {
-        model.ends_with(&format!("{family}-4"))
-            || budgeted
-                .iter()
-                .any(|v| model.contains(&format!("{family}{v}")))
-    };
-    if model.contains("claude-3-7") || model.contains("3-7-sonnet") {
-        Thinks::ToBudget
-    } else if model.contains("claude-3") {
-        Thinks::Never
-    } else if ["opus", "sonnet", "haiku"].iter().any(|f| family(f)) {
-        Thinks::ToBudget
-    } else {
-        Thinks::Adaptively
-    }
-}
-
-/// Whether Claude `model` is of a `family` at `from` or later, as
-/// `claude-opus-5-5` is Opus 5.5; a dated model is of its major's `.0`.
-fn at_least(model: &str, (family, from): &(&str, (u32, u32))) -> bool {
-    fn number(s: &str) -> Option<(u32, &str)> {
-        let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-        let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
-        Some((n, &s[digits..]))
-    }
-    let Some((major, rest)) = model
-        .split_once(&format!("{family}-"))
-        .and_then(|(_, r)| number(r))
-    else {
-        return false;
-    };
-    let minor = rest.strip_prefix(['-', '.']).and_then(number);
-    (major, minor.map_or(0, |(minor, _)| minor)) >= *from
-}
-
-fn forces_tools(model: &str) -> bool {
-    let refusing = [
-        ("opus", (5, 5)),
-        ("sonnet", (5, 5)),
-        ("fable", (5, 1)),
-        ("mythos", (5, 1)),
-    ];
-    !refusing.iter().any(|f| at_least(model, f))
-}
-
-fn disables_thinking(model: &str) -> bool {
-    let refusing = [
-        ("opus", (5, 5)),
-        ("sonnet", (5, 5)),
-        ("fable", (5, 0)),
-        ("mythos", (5, 0)),
-    ];
-    !refusing.iter().any(|f| at_least(model, f))
+/// The version number that opens `s` and what follows it: one or two digits.
+fn number(s: &str) -> Option<(u32, &str)> {
+    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
+    Some((n, &s[digits..]))
 }
 
 #[cfg(test)]
@@ -145,6 +143,9 @@ mod tests {
             ("claude-mythos-5-1", A, false, false),
             ("claude-nova-7", A, true, true),
             ("claude-v2", A, true, true),
+            ("anthropic/claude-3.7-sonnet", B, true, true),
+            ("claude-sonnet-4.5", B, true, true),
+            ("CLAUDE-OPUS-5-5", A, false, false),
         ];
         for (id, thinks, forces, disables) in table {
             let claude = Generation::of(id).expect(id);

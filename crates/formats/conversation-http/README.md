@@ -222,7 +222,17 @@ not open with its thinking. Opus and Sonnet 5.5, Fable and Mythos refuse
 `disabled`: it is the least effort there. Opus and Sonnet 5.5, and Fable and
 Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
 `auto`.
-Gemini levels are read in either case and written in lower case.
+Gemini levels are read in either case and written in lower case. Gemini 3
+and later think to a level and 2.5 to a budget, so a translated effort is
+the one its model takes: `minimal` only where the model has it (the flash
+lines of Gemini 3 up to 3.8), else `low`.
+
+What a model takes is its generation's, read from its id once (each
+format's `generation` module): its line and its version, as
+`claude-opus-5-5` is Opus 5.5 and `gemini-2.5-flash` Flash 2.5, whatever
+prefix, date or case the id has. A Claude or Gemini whose id says no version
+is taken for the latest; a model that is neither is written as the spec has
+it.
 
 ## Finish
 

@@ -498,8 +498,7 @@ fn can_think(v: &Map<String, Value>) -> bool {
 /// model's call stays as written.
 pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
     let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
-    let model = model.to_ascii_lowercase();
-    let Some(claude) = Generation::of(&model) else {
+    let Some(claude) = Generation::of(model) else {
         return;
     };
     if v.contains_key("thinking") {
@@ -549,8 +548,7 @@ pub(crate) fn effort_thinking(v: &mut Map<String, Value>) {
 /// stays as written.
 pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
-    let model = model.to_ascii_lowercase();
-    let Some(claude) = Generation::of(&model) else {
+    let Some(claude) = Generation::of(model) else {
         return;
     };
     let choice = v.get_mut("tool_choice").and_then(Value::as_object_mut);

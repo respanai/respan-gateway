@@ -1,62 +1,73 @@
-//! What one generation of Gemini models takes, as the model's name says.
+//! What one generation of Gemini models takes, as the model's id says.
 
-/// The line of a Gemini model that sets its least thinking budget.
+/// A line of Gemini models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Line {
+enum Line {
     FlashLite,
     Flash,
     Other,
 }
 
-/// A Gemini model named by its id, such as `gemini-2.5-flash`: the major
-/// version and the line, which set what a call to it takes.
+/// How a Gemini model thinks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Thinks {
+    /// To a level: Gemini 3 and later.
+    ToLevel,
+    /// To a token budget: Gemini 2.5.
+    ToBudget,
+    /// Not at all: before Gemini 2.5.
+    Never,
+}
+
+/// A Gemini model's generation, as its id says: its line and its version,
+/// as `gemini-2.5-flash` is Flash 2.5. An id that says no version, such as
+/// `gemini-flash-latest`, is the latest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Generation {
-    pub(crate) line: Line,
-    pub(crate) version: u32,
-    lead: Option<char>,
-    is_2_0: bool,
-    flash_3: bool,
-    pro_3_1_preview: bool,
+    line: Line,
+    version: Option<(u32, u32)>,
 }
 
 impl Generation {
-    /// The model an id names, `None` when it has no `gemini-<version>`; the
-    /// id is as written, so lowercase it first to read any case.
+    /// The generation of the Gemini `model` is, or `None` if it is another
+    /// model.
     pub(crate) fn of(model: &str) -> Option<Generation> {
-        let has = |name: &str| model.contains(name);
-        let (_, after) = model.split_once("gemini-")?;
-        let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-        let version = digits.parse().ok()?;
-        let named = model.strip_prefix("models/").unwrap_or(model);
-        let line = if has("flash-lite") {
+        let model = model.to_ascii_lowercase();
+        let (_, name) = model.split_once("gemini-")?;
+        let line = if name.contains("flash-lite") {
             Line::FlashLite
-        } else if has("flash") && !(has("2.5-pro") || has("2-5-pro")) {
+        } else if name.contains("flash") {
             Line::Flash
         } else {
             Line::Other
         };
-        Some(Generation {
-            line,
-            version,
-            lead: named
-                .strip_prefix("gemini-")
-                .and_then(|rest| rest.chars().next()),
-            is_2_0: has("gemini-2.0") || has("gemini-2-0"),
-            flash_3: has("gemini-3-flash") || has("gemini-3.1-flash"),
-            pro_3_1_preview: has("gemini-3.1-pro-preview"),
-        })
+        let version = number(name).map(|(major, rest)| {
+            let minor = rest.strip_prefix(['.', '-']).and_then(number);
+            (major, minor.map_or(0, |(minor, _)| minor))
+        });
+        Some(Generation { line, version })
     }
 
-    /// Whether a call signs the function calls in its history: any model
-    /// but those before Gemini 3.
-    pub(crate) fn needs_signatures(&self) -> bool {
-        !matches!(self.lead, Some('1' | '2'))
+    /// Whether it is of `version` or later, as the latest is.
+    fn since(&self, version: (u32, u32)) -> bool {
+        self.version.is_none_or(|v| v >= version)
     }
 
-    /// Whether the model is before 2.5, which does not think.
-    pub(crate) fn older(&self) -> bool {
-        self.version < 2 || self.is_2_0
+    /// How it thinks.
+    pub(crate) fn thinks(&self) -> Thinks {
+        if self.since((3, 0)) {
+            Thinks::ToLevel
+        } else if self.since((2, 5)) {
+            Thinks::ToBudget
+        } else {
+            Thinks::Never
+        }
+    }
+
+    /// Whether it has the `minimal` level: the flash lines of Gemini 3 up to
+    /// 3.8.
+    pub(crate) fn has_minimal(&self) -> bool {
+        self.line != Line::Other && self.since((3, 0)) && !self.since((3, 8))
     }
 
     /// The least thinking budget of a Gemini 2.5 model.
@@ -68,16 +79,18 @@ impl Generation {
         }
     }
 
-    /// The least thinking level of a Gemini 3 model: the flash line has
-    /// `minimal`.
-    pub(crate) fn level_floor(&self) -> &'static str {
-        if self.flash_3 { "minimal" } else { "low" }
+    /// Whether a call signs the function calls in its history: Gemini 3 and
+    /// later.
+    pub(crate) fn needs_signatures(&self) -> bool {
+        self.since((3, 0))
     }
+}
 
-    /// Whether a Gemini 3 model has the `medium` level.
-    pub(crate) fn has_medium(&self) -> bool {
-        self.flash_3 || self.pro_3_1_preview
-    }
+/// The version number that opens `s` and what follows it: one or two digits.
+fn number(s: &str) -> Option<(u32, &str)> {
+    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
+    Some((n, &s[digits..]))
 }
 
 #[cfg(test)]
@@ -85,74 +98,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_model_id_decides_what_its_calls_take() {
-        // (id, signs, (version, older, minimal budget, level floor, medium))
-        type Takes = Option<(u32, bool, u64, &'static str, bool)>;
-        let table: &[(&str, bool, Takes)] = &[
-            ("gemini-1.5-pro", false, Some((1, true, 128, "low", false))),
-            ("gemini-2.0-flash", false, Some((2, true, 1, "low", false))),
-            (
-                "gemini-2-0-flash-lite",
-                false,
-                Some((2, true, 512, "low", false)),
-            ),
-            ("gemini-2.5-pro", false, Some((2, false, 128, "low", false))),
-            ("gemini-2-5-pro", false, Some((2, false, 128, "low", false))),
-            ("gemini-2.5-flash", false, Some((2, false, 1, "low", false))),
-            (
-                "gemini-2.5-flash-lite",
-                false,
-                Some((2, false, 512, "low", false)),
-            ),
-            (
-                "gemini-3-pro-preview",
-                true,
-                Some((3, false, 128, "low", false)),
-            ),
-            ("gemini-3-flash", true, Some((3, false, 1, "minimal", true))),
-            (
-                "gemini-3.1-flash-lite",
-                true,
-                Some((3, false, 512, "minimal", true)),
-            ),
-            (
-                "gemini-3.1-pro-preview",
-                true,
-                Some((3, false, 128, "low", true)),
-            ),
-            ("gemini-3.1-pro", true, Some((3, false, 128, "low", false))),
-            (
-                "models/gemini-3-flash",
-                true,
-                Some((3, false, 1, "minimal", true)),
-            ),
-            (
-                "models/gemini-2.5-flash",
-                false,
-                Some((2, false, 1, "low", false)),
-            ),
-            (
-                "google/gemini-2.5-pro",
-                true,
-                Some((2, false, 128, "low", false)),
-            ),
-            ("gemini-10-pro", false, Some((10, false, 128, "low", false))),
-            ("gemini-4-pro", true, Some((4, false, 128, "low", false))),
-            ("gemini-pro", true, None),
-            ("gemma-3-27b", true, None),
-            ("learnlm-x", true, None),
-            ("GEMINI-2.5-PRO", true, None),
-            ("", true, None),
+    fn a_gemini_takes_what_its_id_says() {
+        use Thinks::{Never as N, ToBudget as B, ToLevel as L};
+        // id, how it thinks, whether it has `minimal`, whether it signs calls
+        let table = [
+            ("gemini-1.5-pro", N, false, false),
+            ("gemini-2.0-flash", N, false, false),
+            ("gemini-2-0-flash-lite", N, false, false),
+            ("gemini-2.5-pro", B, false, false),
+            ("gemini-2-5-pro", B, false, false),
+            ("gemini-2.5-flash-preview-09-2025", B, false, false),
+            ("models/gemini-2.5-flash-lite", B, false, false),
+            ("google/gemini-2.5-pro", B, false, false),
+            ("GEMINI-2.5-PRO", B, false, false),
+            ("gemini-3-flash-preview", L, true, true),
+            ("gemini-3.1-flash-lite", L, true, true),
+            ("gemini-3.1-pro-preview", L, false, true),
+            ("gemini-3.5-flash-lite", L, true, true),
+            ("gemini-3.6-flash", L, true, true),
+            ("gemini-3.8-flash", L, false, true),
+            ("gemini-4-carbon", L, false, true),
+            ("gemini-4-neon", L, false, true),
+            ("gemini-10-pro", L, false, true),
+            ("gemini-flash-latest", L, false, true),
         ];
-        for (id, signs, takes) in table {
-            let gemini = Generation::of(id);
-            let got = gemini.map(|g| {
-                let (v, o) = (g.version, g.older());
-                (v, o, g.minimal_budget(), g.level_floor(), g.has_medium())
-            });
-            assert_eq!(got, *takes, "{id}");
-            let signs_got = Generation::of(id).is_none_or(|g| g.needs_signatures());
-            assert_eq!(signs_got, *signs, "{id}");
+        for (id, thinks, minimal, signs) in table {
+            let gemini = Generation::of(id).expect(id);
+            assert_eq!(gemini.thinks(), thinks, "{id} thinks");
+            assert_eq!(gemini.has_minimal(), minimal, "{id} has minimal");
+            assert_eq!(gemini.needs_signatures(), signs, "{id} signs");
         }
+        let budget = |id| Generation::of(id).expect(id).minimal_budget();
+        assert_eq!(budget("gemini-2.5-flash-lite"), 512);
+        assert_eq!(budget("gemini-2.5-flash"), 1);
+        assert_eq!(budget("gemini-2.5-pro"), 128);
+        assert_eq!(Generation::of("gemma-3-27b"), None);
     }
 }
