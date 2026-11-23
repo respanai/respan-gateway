@@ -184,7 +184,7 @@ impl Provider {
         s.turns = None;
         s.output_transcription = None;
         s.input_transcription = s.input_transcription.filter(|on| !on);
-        let session = session::encode(&s, refuse)?;
+        let session = session::encode(&s).map_err(refuse)?;
         let mut v = json!({"type": "session.update", "session": session});
         merge(&mut v, s.native.fields::<Key>());
         if let Some(format) = s.input_audio {

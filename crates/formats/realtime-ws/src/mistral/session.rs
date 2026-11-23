@@ -1,6 +1,6 @@
 //! A session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::{Fault, Native};
+use respan_gateway_core::Native;
 use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{AudioFormat, Encoding, Purpose, Session};
 use serde_json::{Value, json};
@@ -25,9 +25,9 @@ pub(super) fn decode(mut v: Value) -> Session {
     s
 }
 
-/// The `session` object of `s`, but its native, which is its event's;
-/// `refuse`d where it asks for what Mistral does not do.
-pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// The `session` object of `s`, but its native, which is its event's; or
+/// what it asks for that Mistral does not do.
+pub(super) fn encode(s: &Session) -> Result<Value, &'static str> {
     let asks = [
         (
             s.purpose == Some(Purpose::Conversation),
@@ -41,11 +41,11 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (s.input_transcription == Some(false), "no transcription"),
     ];
     if let Some((_, what)) = asks.iter().find(|(asked, _)| *asked) {
-        return Err(refuse(what));
+        return Err(what);
     }
     let mut v = json!({});
     if let Some(format) = s.input_audio {
-        let format = audio_format_json(format).ok_or_else(|| refuse("an audio format"))?;
+        let format = audio_format_json(format).ok_or("an audio format")?;
         set(&mut v, &FORMAT[1..], format);
     }
     Ok(v)
