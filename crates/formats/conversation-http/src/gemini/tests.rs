@@ -880,3 +880,15 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+#[test]
+fn a_request_for_several_candidates_is_refused() {
+    let body = |count: Value| {
+        let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+            "generationConfig": { "candidateCount": count } });
+        GeminiGenerate.decode_request(Bytes::from(v.to_string()))
+    };
+    let refused = body(json!(2)).expect_err("refused");
+    assert_eq!(refused.kind(), respan_gateway_core::FaultKind::Client);
+    assert!(body(json!(1)).is_ok());
+}
