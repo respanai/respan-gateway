@@ -56,7 +56,7 @@ pub(crate) fn post<C: Schema>(
         .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     // The client's request, if of this format: its spec's headers and query
     // parameters go on, and it spells what the format spells two ways.
-    let own = own_request::<C>(original);
+    let own = own_request(&schema, original);
     if let Some(own) = own {
         for name in C::CARRIED {
             for value in own.headers().get_all(*name) {
@@ -98,12 +98,16 @@ pub(crate) fn post<C: Schema>(
     }))
 }
 
-/// The client's request, if of `C`'s format: one to a path ending in
-/// [`Schema::PATH`].
-pub(crate) fn own_request<C: Schema>(original: Option<&Original>) -> Option<&http::Request<Bytes>> {
+/// The client's request, if of `schema`'s format: one it accepts
+/// ([`Schema::accepts`]), as a [`Schema::PATH`] with a `{model}` in it is no
+/// suffix of any path.
+pub(crate) fn own_request<'a, C: Schema>(
+    schema: &C,
+    original: Option<&'a Original>,
+) -> Option<&'a http::Request<Bytes>> {
     original
         .and_then(Original::get)
-        .filter(|r| r.uri().path().ends_with(C::PATH))
+        .filter(|r| schema.accepts(r))
 }
 
 /// Writes a conversation as a request, asking for a stream if `stream`, in

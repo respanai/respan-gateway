@@ -281,3 +281,30 @@ fn a_tool_the_kind_cannot_say_costs_another_format_only_that_tool() {
         "its own format keeps the list"
     );
 }
+
+#[test]
+fn a_gemini_clients_own_call_keeps_its_thinking_as_it_asked() {
+    use respan_gateway_http::raw::Original;
+    let body = json!({
+        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "generationConfig": { "thinkingConfig": { "thinkingLevel": "low" } },
+    });
+    let raw = Bytes::from(body.to_string());
+    let request = http::Request::builder()
+        .method("POST")
+        .uri("/v1beta/models/gemini-3-flash-preview:generateContent")
+        .body(raw.clone())
+        .expect("request");
+    let original = Original::new(request);
+    let mut chat = GeminiGenerate.decode_request(raw).expect("read");
+    chat.model = Some("gemini-3-flash-preview".into());
+    let mut head = http::Request::new(()).into_parts().0;
+    let call = Some(&original);
+    let mut encoder =
+        super::exchange::post(GeminiGenerate, &mut head, Some(&chat), call, None).expect("a call");
+    let mut frames = Vec::new();
+    encoder.encode(&chat, &mut frames).expect("encoded");
+    let sent: Value = serde_json::from_slice(&frames.concat()).expect("json");
+    let thinking = &sent["generationConfig"]["thinkingConfig"];
+    assert_eq!(thinking, &json!({ "thinkingLevel": "low" }), "{sent}");
+}
