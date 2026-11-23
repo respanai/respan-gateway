@@ -75,6 +75,10 @@ With `[plugins.tool_loop]`, the gateway gives the model the MCP servers'
 tools and runs the calls itself, for any chat format and any provider, and
 in realtime sessions too. The client sees one ordinary reply.
 
+An Anthropic Messages client sees each call the gateway ran and its result
+in that reply as `mcp_tool_use` and `mcp_tool_result` blocks of the server
+`respan-gateway`, which it sends back with its history the same way.
+
 Chat Completions and Gemini have no place for a tool's result, so the
 gateway's tool calls are not returned to their clients: to keep them in the
 history it sends back, a client uses Responses or Anthropic Messages.

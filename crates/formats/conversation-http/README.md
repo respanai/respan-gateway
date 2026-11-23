@@ -86,6 +86,13 @@ which Anthropic refuses, is left out of a request. A full context window
 (`model_context_window_exceeded`) is a native finish whose fallback is the
 token limit.
 
+A call the gateway ran ([below](#calls-the-gateway-ran)) is an `mcp_tool_use`
+block of `server_name` `respan-gateway`, its input streamed as
+`input_json_delta`s, then the `mcp_tool_result` that answers it, whole, as
+Anthropic sends a server's. In a request, such a block and the
+`mcp_tool_result` that answers it in the same message are read back as the
+call and its result, the result a user's message after the call.
+
 ## OpenAI Responses
 
 `responses::OpenAiResponses`, named `openai-responses`: a `POST` to a path
