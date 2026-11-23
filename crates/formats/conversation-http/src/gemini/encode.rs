@@ -1,7 +1,7 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Own, Schema, arguments_object, check_usage, merge_fields, merge_into, own_fields,
+    Gate, Own, Schema, check_usage, merge_fields, merge_into, own_fields, said_arguments,
     unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
@@ -80,8 +80,7 @@ pub(super) fn part_of(kind: &Block, text: &str) -> Result<Value, Fault> {
         Block::Text => json!({ "text": text }),
         Block::Reasoning => json!({ "text": text, "thought": true }),
         Block::ToolCall { id, name } => {
-            let args = arguments_object(text).map_err(|_| unwritable_content())?;
-            let mut call = json!({ "name": name, "args": args });
+            let mut call = json!({ "name": name, "args": said_arguments(text) });
             if !is_synthetic(id) {
                 call["id"] = id.as_str().into();
             }

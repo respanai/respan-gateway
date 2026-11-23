@@ -38,9 +38,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Own, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
-    decode_content, decode_message, edit_native, encode_content, encode_message, merge_details,
-    merge_fields, merge_into, merge_missing, own_fields, says, sealed, set, stop_json,
+    Asked, Names, Own, Schema, UsageFields, check_usage, claude_sampling, count, decode_content,
+    decode_message, edit_native, encode_content, encode_message, merge_details, merge_fields,
+    merge_into, merge_missing, own_fields, said_arguments, says, sealed, set, stop_json,
     unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
@@ -406,8 +406,7 @@ impl Schema for AnthropicMessages {
                             b
                         }
                         Block::ToolCall { id, name } => {
-                            let input =
-                                arguments_object(&part.text).map_err(|_| unwritable_content())?;
+                            let input = said_arguments(&part.text);
                             json!({ "type": "tool_use", "id": id, "name": name, "input": input })
                         }
                         _ => return Err(unwritable_content()),
@@ -481,7 +480,7 @@ impl Schema for AnthropicMessages {
             }
         }
         for (place, text) in input {
-            content[place]["input"] = arguments_object(&text).map_err(|_| unwritable_content())?;
+            content[place]["input"] = said_arguments(&text);
         }
         let finish = whole.finish.as_ref().unwrap_or(&Finish::Stop);
         let (id, model) = whole
