@@ -268,10 +268,9 @@ fn format_to_ga(value: Value) -> Value {
 
 /// The types of the model's message parts in `event`'s item, or its
 /// response's output, respelled by `respell`.
+// A `response.content_part.*` event's `part` is `text` or `audio` in GA too,
+// so it is left as it is.
 fn respell_parts(event: &mut Map<String, Value>, respell: impl Fn(&str) -> Option<&'static str>) {
-    if let Some(part) = event.get_mut("part") {
-        respell_part(part, &respell);
-    }
     if let Some(item) = event.get_mut("item") {
         respell_item(item, &respell);
     }
@@ -337,9 +336,11 @@ mod tests {
 
     #[test]
     fn beta_content_parts_and_response_metadata_reach_ga_clients() {
+        // GA names a content part event's part as the beta does; only an
+        // item's content is `output_audio` or `output_text`.
         for kind in ["response.content_part.added", "response.content_part.done"] {
             let frame = heard(json!({"type": kind, "part": {"type": "audio", "transcript": "hi"}}));
-            assert_eq!(frame["part"]["type"], "output_audio");
+            assert_eq!(frame["part"]["type"], "audio", "{kind}");
         }
         let frame = heard(json!({"type": "response.done", "response": {
             "status": "completed", "modalities": ["text", "audio"],
