@@ -18,6 +18,7 @@ export const routes = [
         ...page(() => import("@/pages/requests"), "RequestsPage"),
         children: [{ path: ":id", ...page(() => import("@/pages/request-detail"), "RequestDetailSheet") }],
       },
+      { path: "clients", ...page(() => import("@/pages/clients"), "ClientsPage") },
       { path: "playground", ...page(() => import("@/pages/playground"), "PlaygroundPage") },
       { path: "providers", ...page(() => import("@/pages/providers"), "ProvidersPage") },
       { path: "models", ...page(() => import("@/pages/models"), "ModelsPage") },

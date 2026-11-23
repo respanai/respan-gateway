@@ -46,6 +46,24 @@ impl ProviderStats {
     }
 }
 
+/// A client key's finished requests, with what they spent.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ClientStats {
+    pub requests: u64,
+    pub errors: u64,
+    total_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// The sum of the requests' `cost_usd`; present once one has a cost.
+    pub cost_usd: Option<f64>,
+}
+
+impl ClientStats {
+    pub fn avg_latency_ms(&self) -> Option<u64> {
+        (self.requests > 0).then(|| self.total_ms / self.requests)
+    }
+}
+
 /// A request in the log, shared by the edge and the plugin.
 #[derive(Debug)]
 pub struct Entry {
@@ -89,6 +107,7 @@ struct Kept {
     recent: VecDeque<Arc<Entry>>,
     totals: Totals,
     providers: HashMap<String, ProviderStats>,
+    clients: HashMap<String, ClientStats>,
 }
 
 #[derive(Debug)]
@@ -110,6 +129,7 @@ impl RequestLog {
                 recent: VecDeque::new(),
                 totals: Totals::default(),
                 providers: HashMap::new(),
+                clients: HashMap::new(),
             }),
             events: broadcast::channel(256).0,
         });
@@ -167,6 +187,14 @@ impl RequestLog {
             .get(provider)
             .copied()
             .unwrap_or_default()
+    }
+
+    /// Each client key's finished requests, by name.
+    pub fn clients(&self) -> Vec<(String, ClientStats)> {
+        let kept = self.kept();
+        let mut clients: Vec<_> = kept.clients.iter().map(|(n, s)| (n.clone(), *s)).collect();
+        clients.sort_by(|a, b| a.0.cmp(&b.0));
+        clients
     }
 
     /// Each request as it starts, changes and finishes, as JSON.
@@ -256,6 +284,19 @@ impl RequestLog {
                 stats.requests += 1;
                 stats.errors += u64::from(failed);
                 stats.total_ms += record.duration_ms.unwrap_or_default();
+            }
+            if let Some(client) = &record.client {
+                let stats = kept.clients.entry(client.clone()).or_default();
+                stats.requests += 1;
+                stats.errors += u64::from(failed);
+                stats.total_ms += record.duration_ms.unwrap_or_default();
+                if let Some(usage) = record.usage {
+                    stats.input_tokens += usage.input_tokens;
+                    stats.output_tokens += usage.output_tokens;
+                }
+                if let Some(cost) = record.cost_usd {
+                    *stats.cost_usd.get_or_insert(0.0) += cost;
+                }
             }
             kept.format
         };
@@ -612,5 +653,70 @@ mod tests {
             ]
         );
         assert!(text.iter().all(|l| l.chars().count() <= 60 - PREFIX));
+    }
+
+    #[test]
+    fn what_each_client_spent_is_summed_per_name() {
+        let config = crate::Config::parse("").unwrap_or_else(|e| panic!("{e}"));
+        let log = RequestLog::new(&config);
+        let request = || {
+            axum::extract::Request::builder()
+                .method(axum::http::Method::POST)
+                .uri("/v1/chat/completions")
+                .body(axum::body::Body::empty())
+                .unwrap_or_else(|e| panic!("{e}"))
+        };
+
+        // Two finished by ops (named by the edge, as a client key's are),
+        // one of them failed, and one by app.
+        let entry = log.start(&request());
+        let mut extensions = respan_gateway_core::Extensions::new();
+        extensions.insert(Tracked(entry.clone()));
+        attribute(&extensions, "ops");
+        entry.record().usage = Some(Usage {
+            input_tokens: 10,
+            output_tokens: 40,
+            ..Usage::default()
+        });
+        entry.record().cost_usd = Some(0.0042);
+        log.finish(&entry, None);
+
+        let entry = log.start(&request());
+        entry.record().client = Some("ops".into());
+        entry.record().status = Some(500);
+        entry.record().usage = Some(Usage {
+            input_tokens: 5,
+            ..Usage::default()
+        });
+        log.finish(&entry, Some("the provider returned 500".to_owned()));
+
+        let entry = log.start(&request());
+        entry.record().client = Some("app".into());
+        entry.record().usage = Some(Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            ..Usage::default()
+        });
+        log.finish(&entry, None);
+
+        let clients = log.clients();
+        assert_eq!(
+            clients
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>(),
+            ["app", "ops"]
+        );
+        let (_, ops) = &clients[1];
+        assert_eq!(ops.requests, 2);
+        assert_eq!(ops.errors, 1);
+        assert_eq!(ops.input_tokens, 15);
+        assert_eq!(ops.output_tokens, 40);
+        assert_eq!(ops.cost_usd, Some(0.0042));
+        assert!(ops.avg_latency_ms().is_some());
+        let (_, app) = &clients[0];
+        assert_eq!(app.requests, 1);
+        assert_eq!(app.errors, 0);
+        assert_eq!(app.cost_usd, None);
     }
 }

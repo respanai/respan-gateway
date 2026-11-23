@@ -468,6 +468,33 @@ function providerStats(name) {
   };
 }
 
+function clientStats() {
+  const byName = {};
+  for (const r of records) {
+    if (r.status === null || !r.client) continue;
+    const s = (byName[r.client] ??= {
+      requests: 0, errors: 0, total_ms: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0,
+    });
+    s.requests += 1;
+    if (r.status >= 400) s.errors += 1;
+    s.total_ms += r.duration_ms;
+    s.input_tokens += r.usage?.input_tokens ?? 0;
+    s.output_tokens += r.usage?.output_tokens ?? 0;
+    s.cost_usd += r.cost_usd ?? 0;
+  }
+  return Object.entries(byName)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, s]) => ({
+      name,
+      requests: s.requests,
+      errors: s.errors,
+      avg_latency_ms: Math.round(s.total_ms / s.requests),
+      input_tokens: s.input_tokens,
+      output_tokens: s.output_tokens,
+      ...(s.cost_usd ? { cost_usd: s.cost_usd } : {}),
+    }));
+}
+
 // --- fake media -------------------------------------------------------------
 
 /** A soft gradient PNG, as base64: what gpt-image-1 answers with. */
@@ -1110,6 +1137,7 @@ const routesTable = {
     }),
   "GET /ui/api/providers": (_req, res) =>
     json(res, 200, { providers: providers.map((p) => ({ ...p, ...providerStats(p.name) })) }),
+  "GET /ui/api/clients": (_req, res) => json(res, 200, { clients: clientStats() }),
   "GET /ui/api/mcp": (_req, res) =>
     json(res, 200, {
       servers: mcpServers.map((server) => {
