@@ -1,7 +1,7 @@
 [package]
 name = "respan-gateway-plugin-pricing"
 description = "First-party plugin: what each call to a provider cost, at the provider's price for the model it sent."
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

@@ -1,0 +1,63 @@
+<!doctype html>
+<!-- Hero style c-log. Photos in ../img were generated through gateway.respan.ai (seedream-5.0-flash). -->
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 760px; overflow: hidden; background: #000; }
+  body { position: relative; color: #f9fafc; -webkit-font-smoothing: antialiased;
+    font: 15px/1.35 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  .card { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); width: 1100px; z-index: 5;
+    background: rgba(9, 9, 14, .97); border-radius: 22px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 50px 120px 10px #000, 0 20px 40px -20px rgba(0,0,0,.6); }
+  .bar { position: relative; height: 70px; display: flex; align-items: center; padding: 0 28px; }
+  .bar i { width: 18px; height: 18px; border-radius: 50%; margin-right: 11px; display: block; }
+  .bar .ti { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; gap: 12px;
+    font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: #f4f4f6; }
+  .bar .ti img { height: 26px; }
+  .card pre { padding: 18px 56px 52px; font-size: 52px; line-height: 1.6; letter-spacing: -.5px; color: #e9e9ee; }
+  .card pre .p { color: #8f9cff; }
+  .cur { display: inline-block; width: 28px; height: 56px; background: #e9e9ee; vertical-align: -10px; margin-left: 10px; }
+
+  .log { position: absolute; inset: 14px 28px; font-size: 19.5px; line-height: 31px; white-space: pre; color: #5f616b; }
+  .log .s { color: #31de4b; } .log .m { color: #e6e7ec; } .log .e { color: #8f9cff; } .log .k { color: #ffb340; }
+  .log img { width: 16px; height: 16px; vertical-align: -2px; margin-right: 6px; }
+  .shade { position: absolute; inset: 0; z-index: 2; background: radial-gradient(ellipse 46% 54% at 50% 52%, rgba(0,0,0,.95), rgba(0,0,0,.85) 55%, rgba(0,0,0,.25)); }
+
+</style></head><body>
+<div class="log mono" id="log"></div><div class="shade"></div>
+<div class="card">
+  <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+    <span class="ti"><img src="../../vendors/respan-dark.svg" alt="">Get started with Respan Gateway</span></div>
+<pre class="mono"><span class="p">pip install</span> respan-gateway
+<span class="p">respan-gateway</span><span class="cur"></span></pre>
+</div>
+<script>
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // maker marks: the repo's vendor logos, plus respan.ai's for the rest (dark fill, inverted)
+  const MK = { anthropic: '../../vendors/anthropic-dark.svg', openai: '../../vendors/openai-dark.svg', google: '../../vendors/gemini.svg',
+    xai: '../../vendors/xai-dark.svg', deepseek: '../../vendors/deepseek.svg', mistral: '../../vendors/mistral.svg',
+    qwen: '../logos/qwen.svg', moonshot: '../logos/moonshot.svg', z_ai: '../logos/z_ai.svg', minimax: '../logos/minimax.svg' };
+  const INV = { qwen: 'invert(1)', moonshot: 'invert(1)', z_ai: 'invert(1)', minimax: 'brightness(0) invert(.89)' };
+  const mark = (m, px) => `<img src="${MK[m]}" style="width:${px}px;height:${px}px;flex:none;filter:${INV[m] || 'none'}">`;
+  const MODELS = [['anthropic','claude-opus-5-5'],['openai','gpt-6-luna'],['google','gemini-4-argon'],['deepseek','deepseek-v4.1-flash'],
+    ['mistral','mistral-large-3'],['xai','grok-4.7'],['qwen','qwen3.8-max'],['moonshot','kimi-k3'],['anthropic','claude-sonnet-5-5'],
+    ['z_ai','glm-5.3'],['openai','gpt-6.1-sol'],['minimax','minimax-m3'],['google','gemini-3.8-flash'],['anthropic','claude-haiku-5-5'],
+    ['deepseek','deepseek-v4-pro'],['openai','gpt-6-astra']];
+  const PHOTOS = ['p1','p5','p2','p9','p3','p6','p4','p7','p8','p10'];
+
+  // the gateway's own request log line: time, status, latency, method, path, model -> provider, tokens
+  const EP = [['POST /v1/chat/completions','chat'],['POST /v1/messages','chat'],['POST /v1/responses','chat'],
+    ['POST /v1beta/models/{m}:generateContent','chat'],['POST /v1/images/generations','image'],['GET  /v1/realtime','voice'],
+    ['POST /v1/embeddings','embed'],['POST /v1/videos','video'],['POST /v1/audio/speech','speech']];
+  const MEDIA = { image: [['openai','gpt-image-2'],['google','gemini-3-image']], voice: [['openai','gpt-realtime-2'],['google','gemini-live-3']],
+    embed: [['openai','text-embedding-4'],['google','gemini-embedding-2']], video: [['google','veo-4'],['openai','sora-3']], speech: [['openai','gpt-tts-2'],['mistral','voxtral-tts']] };
+  let lines = '', t = 50081;
+  for (let i = 0; i < 24; i++) { const [ep, kind] = EP[Math.floor(rnd() * (i % 3 ? 4 : EP.length))];
+    const [m, id] = kind === 'chat' ? MODELS[i % MODELS.length] : MEDIA[kind][i % 2];
+    t += Math.floor(rnd() * 900); const hh = Math.floor(t / 3600), mm = Math.floor(t / 60) % 60, ss = t % 60;
+    const ms = (40 + Math.floor(rnd() * (kind === 'video' ? 9000 : 1400))) + 'ms';
+    const tok = kind === 'chat' ? `${Math.floor(200 + rnd() * 4000)} in / ${Math.floor(20 + rnd() * 900)} out` : kind;
+    lines += `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}:${String(ss).padStart(2,'0')}.${String(Math.floor(rnd()*999)).padStart(3,'0')}Z <span class="s">200</span>  ${ms.padStart(6)}  <span class="e">${ep.replace('{m}', id).padEnd(40).slice(0, 40)}</span> ${mark(m, 16)}<span class="m">${id.padEnd(20)}</span> → ${({anthropic:'anthropic',openai:'openai',google:'gemini',deepseek:'deepseek',mistral:'mistral',xai:'xai'})[m] || 'respan'}  ${tok}\n`; }
+  document.getElementById('log').innerHTML = lines;
+
+</script></body></html>
