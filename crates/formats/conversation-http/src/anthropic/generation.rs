@@ -1,5 +1,7 @@
 //! What one generation of Claude models takes, as their id says.
 
+use crate::generation::version;
+
 /// How a Claude model thinks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Thinks {
@@ -52,11 +54,9 @@ impl Generation {
         let (line, before, after) = named.unwrap_or((Line::Other, name, ""));
         // The version follows the line, as in `claude-opus-4-5`, or comes
         // before it, as in `claude-3-5-sonnet`.
-        let version = [after, before].into_iter().find_map(|part| {
-            let (major, rest) = number(part.strip_prefix('-')?)?;
-            let minor = rest.strip_prefix(['-', '.']).and_then(number);
-            Some((major, minor.map_or(0, |(minor, _)| minor)))
-        });
+        let version = [after, before]
+            .into_iter()
+            .find_map(|part| version(part.strip_prefix('-')?));
         Some(Generation { line, version })
     }
 
@@ -97,13 +97,6 @@ impl Generation {
         from.iter()
             .any(|&(line, at)| line == self.line && self.version.is_some_and(|v| v >= at))
     }
-}
-
-/// The version number that opens `s` and what follows it: one or two digits.
-fn number(s: &str) -> Option<(u32, &str)> {
-    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
-    Some((n, &s[digits..]))
 }
 
 #[cfg(test)]

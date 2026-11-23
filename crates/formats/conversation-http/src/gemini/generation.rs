@@ -1,5 +1,7 @@
 //! What one generation of Gemini models takes, as the model's id says.
 
+use crate::generation::version;
+
 /// A line of Gemini models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Line {
@@ -42,10 +44,7 @@ impl Generation {
         } else {
             Line::Other
         };
-        let version = number(name).map(|(major, rest)| {
-            let minor = rest.strip_prefix(['.', '-']).and_then(number);
-            (major, minor.map_or(0, |(minor, _)| minor))
-        });
+        let version = version(name);
         let alias = ["flash", "pro"].iter().any(|line| name.starts_with(line));
         if version.is_none() && !alias {
             return None;
@@ -89,13 +88,6 @@ impl Generation {
     pub(crate) fn needs_signatures(&self) -> bool {
         self.since((3, 0))
     }
-}
-
-/// The version number that opens `s` and what follows it: one or two digits.
-fn number(s: &str) -> Option<(u32, &str)> {
-    let digits = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    let n = s[..digits].parse::<u32>().ok().filter(|_| digits < 3)?;
-    Some((n, &s[digits..]))
 }
 
 #[cfg(test)]

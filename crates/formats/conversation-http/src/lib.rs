@@ -17,6 +17,7 @@
 //! another drops it from a response.
 
 pub mod fields;
+mod generation;
 mod schema;
 pub use schema::{Asked, Framing, Schema, StreamResponse, merge_details, read_provider_error};
 
