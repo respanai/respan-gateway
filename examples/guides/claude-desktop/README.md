@@ -80,17 +80,27 @@ hidden until you turn on Developer Mode.
    Mode…**
 2. Confirm in the dialog. A **Developer** menu now appears in the menu bar.
 
+<p align="center"><img src="img/enable-developer-mode.png" width="720" alt="Claude Desktop's Help menu, with Troubleshooting open and Enable Developer Mode highlighted"></p>
+
 ## 3. Add the gateway as an inference provider
 
 1. Open **Developer → Configure Third-Party Inference…**
-2. Set **Inference provider** to **Gateway**.
-3. Fill in the connection:
+
+   <p align="center"><img src="img/configure-third-party-inference.png" width="520" alt="Claude Desktop's Developer menu, with Configure Third-Party Inference highlighted"></p>
+
+2. Under **Connection**, choose **Gateway**.
+3. Fill in **Gateway credentials**:
 
    | Field | Value |
    |---|---|
+   | Credential kind | Static API key |
    | Gateway base URL | `http://127.0.0.1:8080` |
    | Gateway API key | any text, such as `unused`. On `127.0.0.1` the gateway needs no key. If you set `client_keys`, use one of them |
-   | Gateway auth scheme | leave it as `bearer` |
+   | Gateway auth scheme | `bearer` |
+
+   Click **Test connection** to check that Desktop reaches the gateway.
+
+   <p align="center"><img src="img/gateway-connection.png" width="560" alt="The Connection settings set to Gateway, with credential kind, base URL, API key and auth scheme filled in"></p>
 
 4. Turn **Model discovery** off, so you choose the models yourself.
 5. Under **Model list**, click **Add model** once for each route:
@@ -129,9 +139,14 @@ Every new model is two lines in `gateway.toml` and one row in Desktop:
 to = "openai/gpt-6-luna"
 ```
 
-Then add `claude-haiku-4-5` with the display name "GPT-6 Luna" to
-Desktop's model list. Each Claude name can stand for one model, so use a
-different Claude name for each model you want in the picker.
+Then click **Add model** in Desktop, set **Model ID** to
+`claude-haiku-4-5` and **Display name** to `gpt-6-luna`. You can leave the
+other fields empty.
+
+<p align="center"><img src="img/model-list.png" width="560" alt="A model entry in Claude Desktop: Model ID claude-haiku-4-5, Display name gpt-6-luna"></p>
+
+Each Claude name can stand for one model, so use a different Claude name
+for each model you want in the picker.
 
 A route can also list several models: `to = ["deepseek/deepseek-chat",
 "openai/gpt-6-luna"]` falls back to GPT when DeepSeek fails.
