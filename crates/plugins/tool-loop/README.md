@@ -8,7 +8,14 @@ JSON arguments, answering an `Outcome` whose failure the model reads). The
 tool loop adds the tools to the request, calls the target, and while the reply
 calls only those tools runs them (at most `parallel` at once, 4 by default,
 and their answers within `max_results` bytes in all) and calls again; the client gets
-one reply with the usage summed. It stops at a reply with no such call, at a
+one reply with the usage summed. Each call it ran is in that reply once it
+ran, its result right after it (`Block::GatewayCall`, `Block::ToolResult`),
+before the next step's blocks: a format with a form for them writes them
+(Responses' `mcp_call` items, Anthropic's `mcp_tool_use` and `mcp_tool_result`
+blocks, of the server `respan-gateway`), and reads them back from the history
+a client sends as the tool calls and results they were, so the model reads
+them on its next turn; Chat Completions and Gemini, which have none, drop
+them. It stops at a reply with no such call, at a
 call of a client's own tool (returned to the client; the gateway's calls in it
 are left out), at `max_steps` (the last call forbids tools) and at `timeout`.
 Register it after the plugins that route and edit requests, since it answers
