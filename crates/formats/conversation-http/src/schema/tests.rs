@@ -281,3 +281,25 @@ fn a_tool_the_kind_cannot_say_costs_another_format_only_that_tool() {
         "its own format keeps the list"
     );
 }
+
+#[test]
+fn a_tool_call_cut_at_the_token_limit_is_still_written_whole() {
+    let call = json!({ "id": "call_1", "type": "function",
+        "function": { "name": "f", "arguments": "{\"code\": \"def f(" } });
+    let body = json!({ "id": "c1", "object": "chat.completion", "created": 1, "model": "m",
+        "choices": [{ "index": 0, "finish_reason": "length",
+            "message": { "role": "assistant", "content": null, "tool_calls": [call] } }],
+        "usage": { "prompt_tokens": 5, "completion_tokens": 9, "total_tokens": 14 } });
+    let mut events = Vec::new();
+    OpenAiChat.decode_body(&body, &mut events).expect("read");
+    let mut whole = Assembled::default();
+    for e in &events {
+        whole.push(e).expect("pushed");
+    }
+    let written = AnthropicMessages.encode_whole(&whole).expect("anthropic");
+    assert_eq!(written["content"][0]["input"], json!({}), "{written}");
+    assert_eq!(written["stop_reason"], "max_tokens", "{written}");
+    let written = GeminiGenerate.encode_whole(&whole).expect("gemini");
+    let part = &written["candidates"][0]["content"]["parts"][0];
+    assert_eq!(part["functionCall"]["args"], json!({}), "{written}");
+}

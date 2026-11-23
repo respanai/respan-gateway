@@ -31,6 +31,14 @@ pub(crate) fn arguments_object(arguments: &str) -> Result<Value, Fault> {
     }
 }
 
+/// A response's tool call `arguments` as the object Anthropic and Gemini
+/// write them as.
+// WARN: arguments that are no JSON object, as those of a call cut off at the
+// token limit, are written as `{}`; the response's finish says it was cut.
+pub(crate) fn said_arguments(arguments: &str) -> Value {
+    arguments_object(arguments).unwrap_or_else(|_| Value::Object(Map::new()))
+}
+
 /// The refusal of a request whose `field`, as its format names it, holds
 /// media no provider would read, as `what` says.
 pub(crate) fn unreadable_media(field: &str, what: &str) -> Fault {
