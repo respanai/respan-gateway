@@ -243,9 +243,16 @@ pub(super) fn split_system(chat: &Input) -> Result<(Option<Value>, &[Message]), 
             parts.push(write_part(c, &mut names)?);
         }
     }
-    parts.retain(|p| !p.is_null());
+    parts.retain(|p| !p.is_null() && !empty_text(p));
     let instruction = (!parts.is_empty()).then(|| json!({ "parts": parts }));
     Ok((instruction, rest))
+}
+
+/// Whether `part` is a text part of no text and nothing else, as a Chat
+/// client's `"content": ""` beside its calls is: Gemini refuses one.
+fn empty_text(part: &Value) -> bool {
+    part.as_object()
+        .is_some_and(|p| p.len() == 1 && p.get("text").and_then(Value::as_str) == Some(""))
 }
 
 /// Whether a message's fields are none Gemini writes: none, or another
@@ -278,6 +285,10 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
             }
             if let Some(s) = signature {
                 part[SIGNATURE] = s.into();
+            }
+            // WARN: an empty text part, which Gemini refuses, is dropped.
+            if empty_text(&part) {
+                continue;
             }
             parts.push(part);
         }

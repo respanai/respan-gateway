@@ -880,3 +880,30 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+#[test]
+fn an_empty_text_beside_a_call_is_no_empty_part() {
+    let call = json!({ "id": "c1", "type": "function",
+        "function": { "name": "f", "arguments": "{}" } });
+    let body = json!({ "model": "gemini-2.5-flash", "messages": [
+        { "role": "system", "content": "" },
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": "", "tool_calls": [call] },
+        { "role": "tool", "tool_call_id": "c1", "content": "ok" },
+    ] });
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(body.to_string()))
+        .expect("read");
+    let v = Value::Object(GeminiGenerate.encode_request(&chat).expect("written"));
+    let call = json!({ "functionCall": { "name": "f", "args": {}, "id": "c1" } });
+    assert_eq!(v["contents"][1]["parts"], json!([call]), "{v}");
+    assert!(v.get("systemInstruction").is_none(), "{v}");
+    // An empty text that carries a signature is Gemini's own, and kept.
+    let signed = json!({ "contents": [{ "role": "model", "parts": [
+        { "functionCall": { "name": "f", "args": {} } },
+        { "text": "", "thoughtSignature": "t" },
+    ] }] });
+    let v = written(signed, |_| {}).expect("written");
+    let kept = json!({ "text": "", "thoughtSignature": "t" });
+    assert_eq!(v["contents"][0]["parts"][1], kept, "{v}");
+}
