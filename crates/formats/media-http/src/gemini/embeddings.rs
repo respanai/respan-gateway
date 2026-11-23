@@ -19,6 +19,7 @@ use respan_gateway_media::embedding::{
     Embedding, Input, Item, Modality, Output, Part, Parts, Start,
 };
 use serde_json::{Map, Value, json};
+use std::sync::{Arc, OnceLock};
 
 const NAME: &str = "gemini-embeddings";
 
@@ -97,10 +98,21 @@ impl Format<ProviderIo, Output, Input> for GeminiEmbeddings {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, post, |_, call| {
-            let model = call_of(call.uri()).map(|(model, _)| model);
-            Some(read_response(model))
-        }))
+        // How many vectors the call asks for: a request, so a vector, an item.
+        let asked = Arc::new(OnceLock::new());
+        let seen = Arc::clone(&asked);
+        Ok(bind_provider(
+            io,
+            NAME,
+            move |head, input: &Input| {
+                _ = seen.set(input.items.len());
+                post(head, input)
+            },
+            move |_, call| {
+                let model = call_of(call.uri()).map(|(model, _)| model);
+                Some(read_response(model, asked.get().copied()))
+            },
+        ))
     }
 }
 
@@ -174,15 +186,20 @@ fn part_json(part: &Part) -> Result<Value, Fault> {
     }
 }
 
-/// The decoder of an answer to a call of `model`: its vectors, then the
-/// tokens Gemini counts.
-fn read_response(model: Option<String>) -> Box<dyn Decoder<Output>> {
+/// The decoder of an answer to a call of `model` for `asked` vectors, if
+/// known: its vectors, then the tokens Gemini counts.
+fn read_response(model: Option<String>, asked: Option<usize>) -> Box<dyn Decoder<Output>> {
     Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
         let v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("Gemini's answer is not JSON"))?;
         let Some(embeddings) = v["embeddings"].as_array().filter(|e| !e.is_empty()) else {
             return Err(Fault::upstream("Gemini's answer holds no vector"));
         };
+        if let Some(asked) = asked.filter(|&asked| asked != embeddings.len()) {
+            let held = embeddings.len();
+            let what = format!("Gemini's answer holds {held} vectors for {asked} inputs");
+            return Err(Fault::upstream(what));
+        }
         out.push(Output::Start(Start::new(model.clone())));
         for (at, embedding) in embeddings.iter().enumerate() {
             let numbers = embedding["values"].as_array().into_iter().flatten();
@@ -472,10 +489,21 @@ mod tests {
     }
 
     #[test]
+    fn an_answer_of_another_count_of_vectors_than_inputs_is_refused() {
+        let mut decoder = read_response(Some("m".into()), Some(2));
+        let mut out = Vec::new();
+        let answer = json!({ "embeddings": [{ "values": [0.5] }] });
+        let read = decoder
+            .decode(answer.to_string().into(), &mut out)
+            .and_then(|()| decoder.end(Ok(()), &mut out));
+        assert!(read.is_err_and(|f| f.message().contains("1 vectors for 2 inputs")));
+    }
+
+    #[test]
     fn an_answer_is_its_vectors_and_the_tokens_gemini_counts() {
         let read = |answer: Value| {
             let uri = Uri::from_static("/v1beta/models/m:batchEmbedContents");
-            let mut decoder = read_response(call_of(&uri).map(|(model, _)| model));
+            let mut decoder = read_response(call_of(&uri).map(|(model, _)| model), None);
             let mut out = Vec::new();
             decoder
                 .decode(answer.to_string().into(), &mut out)

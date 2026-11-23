@@ -22,6 +22,7 @@ use respan_gateway_media::embedding::{Embedding, Input, Item, Output, Start};
 use serde_json::{Value, json};
 
 use crate::edge::{bind_provider, sends};
+use std::sync::{Arc, OnceLock};
 
 const NAME: &str = "bedrock-embeddings";
 /// The header Bedrock counts a call's input tokens in.
@@ -100,11 +101,26 @@ impl Format<ProviderIo, Output, Input> for BedrockEmbeddings {
     }
 
     fn bind(&self, io: ProviderIo) -> Result<Connection<Output, Input>, Fault> {
-        Ok(bind_provider(io, NAME, post, |head, call| {
-            let tokens = head.headers.get(INPUT_TOKENS).and_then(|v| v.to_str().ok());
-            let tokens = tokens.and_then(|n| n.parse::<u64>().ok());
-            Some(read_response(model_of(call.uri()), tokens))
-        }))
+        // How many vectors the call asks for: one a text.
+        let asked = Arc::new(OnceLock::new());
+        let seen = Arc::clone(&asked);
+        Ok(bind_provider(
+            io,
+            NAME,
+            move |head, input: &Input| {
+                _ = seen.set(input.items.len());
+                post(head, input)
+            },
+            move |head, call| {
+                let tokens = head.headers.get(INPUT_TOKENS).and_then(|v| v.to_str().ok());
+                let tokens = tokens.and_then(|n| n.parse::<u64>().ok());
+                Some(read_response(
+                    model_of(call.uri()),
+                    tokens,
+                    asked.get().copied(),
+                ))
+            },
+        ))
     }
 }
 
@@ -170,9 +186,13 @@ fn model_of(uri: &http::Uri) -> Option<String> {
     Some(percent_decode_str(model).decode_utf8_lossy().into_owned())
 }
 
-/// The decoder of an answer to a call of `model`, its input tokens as the
-/// header counts them.
-fn read_response(model: Option<String>, tokens: Option<u64>) -> Box<dyn Decoder<Output>> {
+/// The decoder of an answer to a call of `model` for `asked` vectors, if
+/// known, its input tokens as the header counts them.
+fn read_response(
+    model: Option<String>,
+    tokens: Option<u64>,
+    asked: Option<usize>,
+) -> Box<dyn Decoder<Output>> {
     Box::new(Whole::new(move |raw: Bytes, out: &mut Vec<Output>| {
         let v: Value = serde_json::from_slice(&raw)
             .map_err(|_| Fault::upstream("Bedrock's answer is not JSON"))?;
@@ -185,6 +205,11 @@ fn read_response(model: Option<String>, tokens: Option<u64>) -> Box<dyn Decoder<
         };
         if vectors.is_empty() {
             return Err(Fault::upstream("Bedrock's answer holds no vector"));
+        }
+        if let Some(asked) = asked.filter(|&asked| asked != vectors.len()) {
+            let held = vectors.len();
+            let what = format!("Bedrock's answer holds {held} vectors for {asked} texts");
+            return Err(Fault::upstream(what));
         }
         out.push(Output::Start(Start::new(model.clone())));
         for (at, vector) in vectors.into_iter().enumerate() {
@@ -286,13 +311,24 @@ mod tests {
     }
 
     fn read(model: &str, tokens: Option<u64>, answer: Value) -> Vec<Output> {
-        let mut decoder = read_response(Some(model.into()), tokens);
+        let mut decoder = read_response(Some(model.into()), tokens, None);
         let mut out = Vec::new();
         decoder
             .decode(answer.to_string().into(), &mut out)
             .expect("read");
         decoder.end(Ok(()), &mut out).expect("ended");
         out
+    }
+
+    #[test]
+    fn an_answer_of_another_count_of_vectors_than_texts_is_refused() {
+        let mut decoder = read_response(Some("cohere.embed-v4:0".into()), None, Some(2));
+        let mut out = Vec::new();
+        let answer = json!({ "embeddings": { "float": [[0.5]] }, "texts": ["a", "b"] });
+        let read = decoder
+            .decode(answer.to_string().into(), &mut out)
+            .and_then(|()| decoder.end(Ok(()), &mut out));
+        assert!(read.is_err_and(|f| f.message().contains("1 vectors for 2 texts")));
     }
 
     #[test]
