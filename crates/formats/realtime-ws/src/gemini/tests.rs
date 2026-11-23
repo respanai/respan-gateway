@@ -1,11 +1,12 @@
 use respan_gateway_conversation::{Message, Role};
 use respan_gateway_core::FaultKind;
 use respan_gateway_core::{Fault, Native};
+use respan_gateway_http::Decoder;
 use respan_gateway_http::{bytes::Bytes, native::Json};
 use respan_gateway_realtime::{
     AudioFormat, Cause, Input, Modality, Output, Purpose, Session, Status, Turns,
 };
-use respan_gateway_ws::CloseCode;
+use respan_gateway_ws::{CloseCode, ProviderClose};
 use serde_json::{Value, json};
 
 use super::{Answering, Shared, input, output};
@@ -543,4 +544,24 @@ fn a_transcribers_generation_ends_its_users_transcript_whatever_it_carries() {
         json!({"serverContent": {"generationComplete": true}}),
     ]);
     assert_eq!(transcripts, ["Hello there."]);
+}
+
+#[test]
+fn a_close_after_go_away_is_the_session_limit() {
+    let closed =
+        || Fault::upstream("the provider closed the session 1011").with(ProviderClose(1011));
+    let mut provider = output::Provider::new(Shared::default());
+    let fault = provider
+        .end(Err(closed()), &mut Vec::new())
+        .expect_err("a failure");
+    assert_eq!(fault.code(), "upstream");
+    let away = json!({"goAway": {"timeLeft": "50s"}}).to_string();
+    provider
+        .read(Bytes::from(away), &mut Vec::new())
+        .expect("read");
+    let fault = provider
+        .end(Err(closed()), &mut Vec::new())
+        .expect_err("a failure");
+    assert_eq!(fault.code(), "session_limit");
+    assert_eq!(fault.get::<CloseCode>().copied(), Some(CloseCode(1001)));
 }

@@ -144,7 +144,7 @@ fn message(item: &Value) -> Option<Message> {
     let mut message = Message::new(role, "");
     message.content = parts.iter().map(part).collect();
     message.native = Native::json::<Key>(std::mem::take(rest));
-    let written = message_json(&message, |_| Fault::internal("unwritable"));
+    let written = message_json(&message);
     (written.ok().as_ref() == Some(item)).then_some(message)
 }
 
@@ -157,22 +157,23 @@ fn part(p: &Value) -> Content {
     }
 }
 
-/// A message as an item: its text typed as its role's.
-fn message_json(m: &Message, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// A message as an item, its text typed as its role's, or what of it has
+/// no item.
+fn message_json(m: &Message) -> Result<Value, &'static str> {
     let (role, text) = match m.role {
         Role::System => ("system", "input_text"),
         Role::User => ("user", "input_text"),
         Role::Assistant => ("assistant", "output_text"),
-        _ => return Err(refuse("a message of this role")),
+        _ => return Err("a message of this role"),
     };
     let part = |c: &Content| match c {
         Content::Text {
             text: t, native, ..
         } if native.fields::<Key>().is_empty() => Ok(json!({"type": text, "text": t})),
         Content::Native(native) => {
-            (native.value::<Key>().cloned()).ok_or_else(|| refuse("a message part of this kind"))
+            (native.value::<Key>().cloned()).ok_or("a message part of this kind")
         }
-        _ => Err(refuse("a message part of this kind")),
+        _ => Err("a message part of this kind"),
     };
     let content = m.content.iter().map(part).collect::<Result<Vec<_>, _>>()?;
     let mut v = json!({"type": "message", "role": role, "content": content});
@@ -246,7 +247,7 @@ impl Provider {
                 if let Some(format) = s.input_audio {
                     self.input = format;
                 }
-                let session = session::encode(&s, refuse)?;
+                let session = session::encode(&s).map_err(refuse)?;
                 let mut v = json!({"type": "session.update", "session": session});
                 merge(&mut v, s.native.fields::<Key>());
                 if v["session"].get("type").is_none() {
@@ -284,7 +285,7 @@ impl Provider {
             }
             Input::Commit { native } => (json!({"type": "input_audio_buffer.commit"}), native),
             Input::Message { message, native } => {
-                let item = message_json(message, refuse)?;
+                let item = message_json(message).map_err(refuse)?;
                 (
                     json!({"type": "conversation.item.create", "item": item}),
                     native,

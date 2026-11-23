@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- Hero style d-bands. Photos in ../img were generated through gateway.respan.ai (seedream-5.0-flash). -->
+<html><head><meta charset="utf-8"><style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 760px; overflow: hidden; background: #000; }
+  body { position: relative; color: #f9fafc; -webkit-font-smoothing: antialiased;
+    font: 15px/1.35 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+  .card { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); width: 1100px; z-index: 5;
+    background: rgba(9, 9, 14, .97); border-radius: 22px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 50px 120px 10px #000, 0 20px 40px -20px rgba(0,0,0,.6); }
+  .bar { position: relative; height: 70px; display: flex; align-items: center; padding: 0 28px; }
+  .bar i { width: 18px; height: 18px; border-radius: 50%; margin-right: 11px; display: block; }
+  .bar .ti { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; gap: 12px;
+    font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: #f4f4f6; }
+  .bar .ti img { height: 26px; }
+  .card pre { padding: 18px 56px 52px; font-size: 52px; line-height: 1.6; letter-spacing: -.5px; color: #e9e9ee; }
+  .card pre .p { color: #8f9cff; }
+  .cur { display: inline-block; width: 28px; height: 56px; background: #e9e9ee; vertical-align: -10px; margin-left: 10px; }
+
+  .band { position: absolute; left: -60px; right: -60px; display: flex; gap: 16px; }
+  .band.top { top: 26px; } .band.bot { bottom: 26px; }
+  .c { flex: none; width: 250px; height: 150px; border-radius: 18px; background: #131317; box-shadow: inset 0 0 0 1px #26262c; padding: 20px; overflow: hidden; position: relative; }
+  .c .id { display: flex; gap: 10px; align-items: center; font-size: 17px; color: #e6e7ec; }
+  .c .q { margin-top: 18px; font-size: 15px; color: #8b8d96; }
+  .c.ph { padding: 0; } .c.ph img { width: 100%; height: 100%; object-fit: cover; }
+  .c .tag { position: absolute; left: 12px; bottom: 12px; padding: 4px 10px; border-radius: 999px; font-size: 12px; background: rgba(0,0,0,.6); color: #fff; }
+  .wave { display: flex; align-items: center; gap: 3px; height: 70px; margin-top: 12px; } .wave span { flex: 1; background: #e6e7ec; border-radius: 2px; }
+  .shade { position: absolute; inset: 0; z-index: 2; background: linear-gradient(90deg, rgba(0,0,0,.7), transparent 18%, transparent 82%, rgba(0,0,0,.7)), rgba(0,0,0,.35); }
+
+</style></head><body>
+<div class="band top" id="top"></div><div class="band bot" id="bot"></div><div class="shade"></div>
+<div class="card">
+  <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+    <span class="ti"><img src="../../vendors/respan-dark.svg" alt="">Get started with Respan Gateway</span></div>
+<pre class="mono"><span class="p">pip install</span> respan-gateway
+<span class="p">respan-gateway</span><span class="cur"></span></pre>
+</div>
+<script>
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // maker marks: the repo's vendor logos, plus respan.ai's for the rest (dark fill, inverted)
+  const MK = { anthropic: '../../vendors/anthropic-dark.svg', openai: '../../vendors/openai-dark.svg', google: '../../vendors/gemini.svg',
+    xai: '../../vendors/xai-dark.svg', deepseek: '../../vendors/deepseek.svg', mistral: '../../vendors/mistral.svg',
+    qwen: '../logos/qwen.svg', moonshot: '../logos/moonshot.svg', z_ai: '../logos/z_ai.svg', minimax: '../logos/minimax.svg' };
+  const INV = { qwen: 'invert(1)', moonshot: 'invert(1)', z_ai: 'invert(1)', minimax: 'brightness(0) invert(.89)' };
+  const mark = (m, px) => `<img src="${MK[m]}" style="width:${px}px;height:${px}px;flex:none;filter:${INV[m] || 'none'}">`;
+  const MODELS = [['anthropic','claude-opus-5-5'],['openai','gpt-6-luna'],['google','gemini-4-argon'],['deepseek','deepseek-v4.1-flash'],
+    ['mistral','mistral-large-3'],['xai','grok-4.7'],['qwen','qwen3.8-max'],['moonshot','kimi-k3'],['anthropic','claude-sonnet-5-5'],
+    ['z_ai','glm-5.3'],['openai','gpt-6.1-sol'],['minimax','minimax-m3'],['google','gemini-3.8-flash'],['anthropic','claude-haiku-5-5'],
+    ['deepseek','deepseek-v4-pro'],['openai','gpt-6-astra']];
+  const PHOTOS = ['p1','p5','p2','p9','p3','p6','p4','p7','p8','p10'];
+
+  const Q = ['Review my PR','Summarize this PDF','Translate to Japanese','Why is this query slow?','Résume ce contrat','What moved markets?','Write a migration','Explain this trace'];
+  let topH = ''; for (let i = 0; i < 7; i++) { const [m, id] = MODELS[i]; topH += `<div class="c"><div class="id mono">${mark(m, 20)}${id}</div><div class="q">${Q[i]}</div></div>`; }
+  const wave = () => { let s = ''; for (let i = 0; i < 40; i++) s += `<span style="height:${6 + Math.abs(Math.sin(i * .5)) * rnd() * 60}px"></span>`; return s; };
+  const bot = [`<div class="c ph"><img src="../img/p1.jpg"><span class="tag">image</span></div>`,
+    `<div class="c"><div class="id mono">${mark('openai', 20)}gpt-realtime-2</div><div class="wave">${wave()}</div></div>`,
+    `<div class="c ph"><img src="../img/p2.jpg"><span class="tag">video · 00:06</span></div>`,
+    `<div class="c ph"><img src="../img/p5.jpg"><span class="tag">image</span></div>`,
+    `<div class="c"><div class="id mono">${mark('google', 20)}gemini-live-3</div><div class="wave">${wave()}</div></div>`,
+    `<div class="c ph"><img src="../img/p3.jpg"><span class="tag">image</span></div>`,
+    `<div class="c ph"><img src="../img/p6.jpg"><span class="tag">video · 00:12</span></div>`].join('');
+  document.getElementById('top').innerHTML = topH; document.getElementById('bot').innerHTML = bot;
+
+</script></body></html>

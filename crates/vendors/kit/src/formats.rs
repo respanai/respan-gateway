@@ -13,7 +13,10 @@ use respan_gateway_media_http::dashscope::{
     DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::gemini::{
+    GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech, GeminiTranscriptions,
+};
+use respan_gateway_media_http::meta::MetaTranscriptions;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -52,6 +55,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &TogetherVideos,
     &EmpirioLabsVideos,
     &ZaiVideos,
+    &MetaTranscriptions,
     &MiniMaxVideos,
     &MiniMaxSpeech,
     &GeminiImages,
@@ -59,6 +63,7 @@ pub const FORMATS: &[&dyn Upstream] = &[
     &BedrockImages,
     &GeminiEmbeddings,
     &GeminiSpeech,
+    &GeminiTranscriptions,
     &DashScopeImages,
     &DashScopeSpeech,
     &DashScopeTranscriptions,

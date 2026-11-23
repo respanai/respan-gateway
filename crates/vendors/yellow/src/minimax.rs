@@ -1,25 +1,29 @@
-//! MiniMax's OpenAI-compatible chat and H3 image API, and its own videos and
-//! speech.
+//! MiniMax's OpenAI-compatible chat and H3 image API, its speech recognition
+//! in its dialect of OpenAI's transcriptions, and its own videos and speech.
 
 use respan_gateway_conversation_http::openai::OpenAiChat;
 use respan_gateway_core::{Fault, Filter};
 use respan_gateway_http::bytes::Bytes;
+use respan_gateway_http::content::is_stream;
 use respan_gateway_http::http::Request;
 use respan_gateway_http::http::{request::Parts as RequestHead, response::Parts as ResponseHead};
+use respan_gateway_http::path::set_path;
 use respan_gateway_media::image;
+use respan_gateway_media::transcription::{self, Task};
+use respan_gateway_media_http::Natives;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
-use respan_gateway_media_http::{Natives, openai::OpenAiImages};
+use respan_gateway_media_http::openai::{OpenAiImages, OpenAiTranscriptions};
 use respan_gateway_vendor_kit::{Dialect, Dialected, Rewrite, Vendor};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 const BASE_URL: &str = "https://api.minimax.io/v1";
 
 /// Where its videos are: the format adds the `/v2`.
 const VIDEOS_URL: &str = "https://api.minimax.io";
 
-/// MiniMax's OpenAI-compatible chat and image endpoints, and its videos
-/// (`minimax-videos`, at the host alone) and speech (`minimax-speech`, at the
-/// chat base URL).
+/// MiniMax's OpenAI-compatible chat and image endpoints, its speech
+/// recognition ([`MiniMaxTranscriptions`]), and its videos (`minimax-videos`,
+/// at the host alone) and speech (`minimax-speech`, at the chat base URL).
 pub const VENDOR: Vendor = Vendor {
     id: "minimax",
     key_env: &["MINIMAX_API_KEY"],
@@ -28,6 +32,10 @@ pub const VENDOR: Vendor = Vendor {
         (&Dialected::new(OpenAiImages, MiniMaxImages), Some(BASE_URL)),
         (&MiniMaxVideos, Some(VIDEOS_URL)),
         (&MiniMaxSpeech, Some(BASE_URL)),
+        (
+            &Dialected::new(OpenAiTranscriptions, MiniMaxTranscriptions),
+            Some(BASE_URL),
+        ),
     ],
     ..Vendor::DEFAULT
 };
@@ -111,6 +119,104 @@ fn successful_images(body: Bytes) -> Result<Bytes, Fault> {
     serde_json::to_vec(&response)
         .map(Bytes::from)
         .map_err(unreadable)
+}
+
+/// MiniMax's speech recognition, as it departs from OpenAI's transcriptions:
+/// served at `/speech_to_text`, its seconds an answer's `duration` alone, and
+/// its stream `delta`s that end at a `finish`. It translates nothing, and
+/// renders no `text`; its `srt` and `vtt` bill no seconds, so each of the
+/// three is asked as `verbose_json`, whose segments a client's is rendered
+/// from.
+#[derive(Debug, Clone, Copy)]
+pub struct MiniMaxTranscriptions;
+
+impl Dialect for MiniMaxTranscriptions {
+    type Input = transcription::Input;
+    type Output = transcription::Output;
+
+    fn inputs(&self) -> Option<Box<dyn Filter<transcription::Input>>> {
+        Some(Box::new(recognized))
+    }
+
+    fn request(&self, head: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
+        // WARN: MiniMax takes a language as a header; the form's is not read.
+        set_path(head, "/speech_to_text")?;
+        Ok(None)
+    }
+
+    fn response(&self, _: &Request<Bytes>, head: &mut ResponseHead) -> Option<Rewrite> {
+        match is_stream(head) {
+            true => Some(Box::new(streamed)),
+            false => crate::json_answer(head).then(|| Box::new(timed) as Rewrite),
+        }
+    }
+}
+
+fn recognized(input: &mut transcription::Input) -> Result<(), Fault> {
+    if input.task == Task::Translate {
+        return Err(Fault::bad_request("MiniMax does not translate audio"));
+    }
+    let fields = OpenAiTranscriptions::fields(&input.native);
+    let asked = fields.get("response_format").and_then(Value::as_str);
+    if matches!(asked, Some("text" | "srt" | "vtt")) {
+        input.native = OpenAiTranscriptions::with_fields(&input.native, |fields| {
+            fields.insert("response_format".into(), "verbose_json".into());
+        });
+    }
+    Ok(())
+}
+
+/// The usage OpenAI writes for `seconds` of audio.
+fn seconds_used(seconds: &Value) -> Value {
+    json!({"type": "duration", "seconds": seconds})
+}
+
+/// An answer with its `duration` as its usage; any other as it came.
+fn timed(raw: Bytes) -> Result<Bytes, Fault> {
+    let Ok(mut answer) = serde_json::from_slice::<Map<String, Value>>(&raw) else {
+        return Ok(raw);
+    };
+    let usage = match answer.get("duration") {
+        Some(seconds) if seconds.is_number() && !answer.contains_key("usage") => {
+            seconds_used(seconds)
+        }
+        _ => return Ok(raw),
+    };
+    answer.insert("usage".into(), usage);
+    let unwritten = |e| Fault::internal("an answer is no JSON").with_source(e);
+    serde_json::to_vec(&answer)
+        .map(Bytes::from)
+        .map_err(unwritten)
+}
+
+/// A stream in OpenAI's events: each `delta` a `transcript.text.delta`, and
+/// at its `finish` a `transcript.text.done` of all the text and its seconds.
+/// A line that is no such event is left as it came.
+fn streamed(raw: Bytes) -> Result<Bytes, Fault> {
+    let mut events = String::new();
+    let mut text = String::new();
+    for line in String::from_utf8_lossy(&raw).lines() {
+        let data = line.strip_prefix("data:").map(str::trim);
+        let event: Value = data
+            .and_then(|d| serde_json::from_str(d).ok())
+            .unwrap_or_default();
+        let Some(delta) = event["delta"].as_str() else {
+            events.push_str(line);
+            events.push('\n');
+            continue;
+        };
+        text.push_str(delta);
+        let delta = json!({"type": "transcript.text.delta", "delta": delta});
+        events.push_str(&format!("data: {delta}\n"));
+        if event["finish"] == true {
+            let mut done = json!({"type": "transcript.text.done", "text": text});
+            if event["duration"].is_number() {
+                done["usage"] = seconds_used(&event["duration"]);
+            }
+            events.push_str(&format!("\ndata: {done}\n"));
+        }
+    }
+    Ok(Bytes::from(events))
 }
 
 #[cfg(test)]

@@ -2,13 +2,13 @@
 //! /images/edits` (a form, or JSON naming its images by URL), answered
 //! whole in JSON or, if asked, as a stream of events.
 
-use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, b64, bind_client, bind_provider, bytes_of, event_json,
     file_name, invalid, is_true, json_bytes, merge_missing, mime_of, missing, post_to, read_usage,
     rest_of, sends, set, sniff, sse_event, streams, take_count, take_string, unb64, unix_now,
     unreadable, usage_extras, whole_json, write_field, write_usage,
 };
+use crate::multipart::{self, Writer};
 use respan_gateway_conversation::{Media, MediaSource, Usage};
 use respan_gateway_conversation_http::fields::{data_url, media_url};
 use respan_gateway_core::Provider;
@@ -160,7 +160,7 @@ fn linked(v: &Value, param: &str) -> Result<Media, Fault> {
 
 /// The call of `input`: a generation in JSON; an edit as a form, or in
 /// JSON if an image or the mask is not bytes.
-fn post(
+pub(crate) fn post(
     head: &mut RequestHead,
     input: &Input,
     stream: bool,
@@ -262,7 +262,7 @@ impl Decoder<Output> for Streamed {
 }
 
 /// The events of a whole JSON response.
-fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+pub(crate) fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
     let format = v["output_format"].as_str();
     let mut start = Start::default();

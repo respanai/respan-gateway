@@ -1,9 +1,10 @@
 //! What the HTTP formats of this crate share.
 
+use futures::{FutureExt, SinkExt, StreamExt};
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::invalid;
 use respan_gateway_conversation_http::read_provider_error;
-use respan_gateway_core::{Connection, Fault};
+use respan_gateway_core::{Connection, EventStream, Fault};
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_http::http::header::{CONTENT_TYPE, HeaderValue};
 use respan_gateway_http::http::{
@@ -13,6 +14,7 @@ use respan_gateway_http::path::set_path;
 use respan_gateway_http::{Decoder, Encoder, ProviderIo, Sse, Whole};
 use respan_gateway_media::video;
 use serde_json::{Map, Value};
+use std::time::Duration;
 
 /// The provider edge of `format`: a call whose head `encode` sets (a `POST`
 /// to start with) and whose body it returns, its success read by the
@@ -106,6 +108,95 @@ pub(crate) fn bind_jobs(
     bind_provider(io, format, call, move |_, _| {
         Some(Box::new(Whole::new(read)) as Box<dyn Decoder<video::Output>>)
     })
+}
+
+/// How long a job run within a call rests before each poll: the fastest
+/// image models take about five seconds.
+const POLL: Duration = Duration::from_secs(2);
+
+/// What an answer says of a call whose provider may run it as a job.
+#[derive(Clone)]
+pub(crate) enum Step<O> {
+    /// A job not ended, by its id as its video format gives it.
+    Wait(String),
+    /// Its outputs.
+    Done(Vec<O>),
+}
+
+/// The call of a video format's operation.
+pub(crate) type JobCall =
+    fn(&mut RequestHead, &video::Input) -> Result<Box<dyn Encoder<video::Input>>, Fault>;
+
+/// The job of an answer, as a video format's `read` reads it.
+pub(crate) fn job_in(
+    read: fn(Bytes, &mut Vec<video::Output>) -> Result<(), Fault>,
+    raw: Bytes,
+) -> Result<video::Job, Fault> {
+    let mut out = Vec::new();
+    read(raw, &mut out)?;
+    match out.pop() {
+        Some(video::Output::Job(job)) => Ok(job),
+        _ => Err(Fault::upstream("the provider's answer holds no job")),
+    }
+}
+
+/// The provider edge of `format`, whose provider may run a call as a job,
+/// run to its end within the call: `call` is its call and `read` reads
+/// each answer, the call's and a poll's alike. A job not ended is polled
+/// with `poll`, its video format's call, after a rest, until one is; a
+/// client that leaves ends the polling. Nothing times the wait but each
+/// call's own transport.
+pub(crate) fn bind_waited<I, O>(
+    io: ProviderIo,
+    format: &'static str,
+    call: impl FnOnce(&mut RequestHead, &I) -> Result<Box<dyn Encoder<I>>, Fault> + Send + 'static,
+    poll: JobCall,
+    read: fn(Bytes) -> Result<Step<O>, Fault>,
+) -> Connection<O, I>
+where
+    I: Clone + Send + Sync + 'static,
+    O: Clone + Send + Sync + 'static,
+{
+    let more = io.another();
+    let (opening, sink) = bind_provider(io, format, call, move |_, _| steps(read));
+    let opening = async move {
+        let mut answer = opening.await?;
+        loop {
+            if let Some(fault) = answer.refusal() {
+                return Ok(EventStream::refused(fault.clone()));
+            }
+            let step = answer.next().await;
+            let step = step.ok_or_else(|| Fault::upstream("the provider answered nothing"))??;
+            let id = match step {
+                Step::Done(outputs) => {
+                    let outputs = futures::stream::iter(outputs.into_iter().map(Ok));
+                    return Ok(EventStream::stream(outputs));
+                }
+                Step::Wait(id) => id,
+            };
+            tokio::time::sleep(POLL).await;
+            let (polled, mut sink) =
+                bind_provider(more.another(), format, poll, move |_, _| steps(read));
+            let mut retrieve = EventStream::single(video::Input::Retrieve { id });
+            sink.prepare(&mut retrieve)?;
+            let (polled, sent) = futures::join!(polled, sink.close());
+            answer = polled?;
+            sent?;
+        }
+    };
+    (opening.boxed(), sink)
+}
+
+/// The decoder of an answer, whole, as the one step `read` reads of it.
+fn steps<O: 'static>(
+    read: fn(Bytes) -> Result<Step<O>, Fault>,
+) -> Option<Box<dyn Decoder<Step<O>>>> {
+    Some(Box::new(Whole::new(
+        move |raw: Bytes, out: &mut Vec<Step<O>>| {
+            out.push(read(raw)?);
+            Ok(())
+        },
+    )))
 }
 
 /// A video operation `who` has no form for, refused: content, where it

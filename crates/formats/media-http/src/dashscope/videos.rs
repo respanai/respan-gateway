@@ -74,7 +74,10 @@ impl Format<ProviderIo, Output, Input> for DashScopeVideos {
 }
 
 /// The call of `input`: its method and path, and its body's encoder.
-fn call(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
+pub(super) fn call(
+    head: &mut RequestHead,
+    input: &Input,
+) -> Result<Box<dyn Encoder<Input>>, Fault> {
     match input {
         Input::Create(create) => {
             let call = posts(head, SYNTHESIS, &create_body(create)?)?;
@@ -117,7 +120,7 @@ fn create_body(create: &Create) -> Result<Map<String, Value>, Fault> {
 }
 
 /// The job of an answer `raw`: a task made or polled.
-fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+pub(super) fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
     if says_error(&v) {

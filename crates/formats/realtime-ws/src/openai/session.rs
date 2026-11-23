@@ -1,6 +1,6 @@
 //! A GA session object as the kind's [`Session`], both ways.
 
-use respan_gateway_core::{Fault, Native};
+use respan_gateway_core::Native;
 use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{
     AudioFormat, Encoding, Modality, Purpose, Session, Tool, Turns, Vad,
@@ -49,9 +49,9 @@ pub(super) fn decode(mut v: Value) -> Session {
     s
 }
 
-/// The `session` object of `s`, but its native, which is its event's;
-/// refused by `refuse` where it holds another format's fields.
-pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// The `session` object of `s`, but its native, which is its event's; or
+/// what it holds that is another format's.
+pub(super) fn encode(s: &Session) -> Result<Value, &'static str> {
     let mut v = json!({});
     let mut put = |path: &[&str], value| crate::json::put(&mut v, &path[1..], value);
     put(TYPE, s.purpose.and_then(purpose_json));
@@ -64,13 +64,13 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
         (OUTPUT_FORMAT, s.output_audio),
     ];
     for (path, format) in formats {
-        let format = format.map(|f| audio_format_json(f).ok_or_else(|| refuse("an audio format")));
+        let format = format.map(|f| audio_format_json(f).ok_or("an audio format"));
         put(path, format.transpose()?);
     }
     let turns = s
         .turns
         .as_ref()
-        .map(|t| turns_json(t).ok_or_else(|| refuse("this turn detection")));
+        .map(|t| turns_json(t).ok_or("this turn detection"));
     put(TURN_DETECTION, turns.transpose()?);
     put(
         TRANSCRIPTION,

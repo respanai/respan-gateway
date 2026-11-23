@@ -1,7 +1,7 @@
 [package]
 name = "respan-gateway-http-faults"
 description = "Faults in HTTP's terms: a fault's status and error code, whether it is retryable, and a provider's error answer as a fault."
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

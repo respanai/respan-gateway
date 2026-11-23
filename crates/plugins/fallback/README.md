@@ -25,6 +25,11 @@ after commitment.
   `Until::Head` counts a provider's refusal (such as a 429 or 503 answer) as
   a failure. With live (streaming) inputs, `Until::content` and `Until::End`
   cannot read the response and commit as `Head` does.
+- `first_success_keeping(calls, &Backoff, Until, should_retry, replaces)`:
+  `first_success`, but when every call fails, a later failure takes the
+  place of the one kept only if `replaces(later, kept)` says so. A caller
+  can keep a failure that says what is wrong with the request over a vaguer
+  one from the next target.
 - `race(calls, stagger, Until)`: start each call `stagger` after the last;
   the first success wins.
 - `Attempt` (extension on each call): its `index()`, `Role`, and `head()`,

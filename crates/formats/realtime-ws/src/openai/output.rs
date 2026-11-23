@@ -299,7 +299,7 @@ impl Client {
                     Output::Opened(_) => "session.created",
                     _ => "session.updated",
                 };
-                let mut session = session::encode(s, refuse)?;
+                let mut session = session::encode(s).map_err(refuse)?;
                 if s.native.fields::<Key>().is_empty() && session.get("type").is_none() {
                     session["type"] = "realtime".into();
                 }

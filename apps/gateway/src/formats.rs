@@ -22,7 +22,10 @@ use respan_gateway_media_http::dashscope::{
     DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::gemini::{
+    GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech, GeminiTranscriptions,
+};
+use respan_gateway_media_http::meta::MetaTranscriptions;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -276,6 +279,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::SPEECH, &DashScopeSpeech),
         KnownFormat::provider_only(kind::SPEECH, &GeminiSpeech),
         KnownFormat::provider_only(kind::TRANSCRIPTION, &DashScopeTranscriptions),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &GeminiTranscriptions),
         KnownFormat::provider_only(kind::VIDEO, &DashScopeVideos),
         KnownFormat::of(kind::EMBEDDING, endpoints::EMBED_CONTENT, GeminiEmbeddings).model(
             Model::of(embedding::Input::model, embedding::Input::set_model),
@@ -284,6 +288,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::VIDEO, &TogetherVideos),
         KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos),
         KnownFormat::provider_only(kind::VIDEO, &ZaiVideos),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &MetaTranscriptions),
         KnownFormat::provider_only(kind::VIDEO, &MiniMaxVideos),
         KnownFormat::provider_only(kind::SPEECH, &MiniMaxSpeech),
         KnownFormat::claiming(

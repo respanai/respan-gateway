@@ -63,6 +63,10 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - A stream that ends before its end event fails `truncated`.
   OpenAI image streams stop after the requested number of completed images
   and are truncated if fewer arrive.
+- An embeddings answer must hold one vector for each item of the call (one
+  or more for a list relayed as written), each at its own `index`, in any
+  order; a count that differs, an index twice or one past the inputs is a
+  provider fault.
 - A client body without its required field (`prompt`, an edit's `image`,
   `file`, `input`) is refused, 400, before any call. A provider's error is
   read leniently, as compatible servers write it, and a client's is written
@@ -208,6 +212,31 @@ in `x-goog-api-key`.
   usage is its input and output tokens, the rest, such as the tokens of each
   modality, a native `{"usage": {..}}`.
 
+`gemini::GeminiTranscriptions`, named `gemini-transcriptions`: Gemini's
+transcription models (`gemini-3.5-transcribe`) on
+`POST /models/{model}:generateContent`, as a provider only, its key in
+`x-goog-api-key`.
+
+- A call is one user turn: the prompt, if any, as text, then the audio, as
+  `inlineData` (or `fileData`, for audio named by URL). The language is the
+  `languageCodes` of the `generationConfig`'s `audioTranscriptionConfig`, the
+  temperature the config's. A translation is refused, 400, before the call.
+  Its native fields go in the body, such as an `audioTranscriptionConfig` of
+  `wordTimestamp` or `diarization`.
+- The transcript is the text of the answer's `audioTranscription` parts, its
+  words theirs, timed, the last one's end its length, and each part a speaker
+  is named for a segment; usage is `usageMetadata`'s tokens. Audio with no
+  speech is an empty transcript.
+
+`empiriolabs::EmpirioLabsImages`, a provider format of OpenAI's name,
+`openai-images`: OpenAI's images as EmpirioLabs AI serves them, its base URL
+with the version (`https://api.empiriolabs.ai/v1`). An image it did not
+finish within its wait, about four minutes, or was not asked to wait for
+(`sync: false`), it answers as a job, which is polled at `GET /jobs/{id}`
+every two seconds until it ends, within the call. The job's `result` is the
+answer it would have given; a job that failed is a 502 of the error it
+gives. It streams no images, so its answer is read whole.
+
 `empiriolabs::EmpirioLabsVideos`, named `empiriolabs-videos`: EmpirioLabs
 AI's video generation, as a provider only, its key a bearer token, its base
 URL the API's host with no version (`https://api.empiriolabs.ai`). Its job
@@ -247,6 +276,22 @@ are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
 - It serves the video only at that URL, so content is refused, 400
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
+
+`meta::MetaTranscriptions`, named `meta-transcriptions`: Meta's speech
+recognition (`muse-voice-transcribe-1.0`) on `POST /asr/transcribe`, as a
+provider only, its key a bearer token, its base URL the API with its version
+(`https://api.meta.ai/v1`).
+
+- A call is a form of a `request`, JSON of the model, the `audioEncoding`,
+  `WAV`, and the format's native fields (`mode`, `keywords`,
+  `languageBias`), and the `audio`, its bytes. Meta takes only a WAV of mono
+  16-bit PCM at 16 or 24 kHz, and refuses another itself.
+- Audio at a URL, a translation, a prompt and a temperature are refused,
+  400, before the call. A language is not sent: Meta takes languages by
+  name, as a bias.
+- The transcript is the answer's `transcript`, its length and the seconds
+  billed its `audioDurationMs`, and its `turns`, which a `mode` asks for,
+  the segments, each with its speaker, if named.
 
 `minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
 generation (its `/v2` API, the H3 models), as a provider only, its key a
@@ -378,22 +423,39 @@ its key a bearer token.
   temperature are refused, 400, before the call.
 
 `dashscope::DashScopeImages`, named `dashscope-images`: Alibaba Cloud Model
-Studio's image models that answer at once, Qwen-Image (`qwen-image-2.0`) and
-Wan from 2.6 (`wan2.6-t2i`), as a provider only, at the same base URL. Older
-Wan models and Qwen-MT-Image draw only as a task, which DashScope refuses
-there.
+Studio's image models, as a provider only, at the same base URL. Qwen-Image
+(`qwen-image-2.0`) and Wan from 2.6 (`wan2.6-t2i`) answer at once. Wan
+before 2.6 (`wan2.2-t2i-flash`) and Qwen-MT-Image (`qwen-mt-image-2.0`) draw
+only as a task, which is run to its end within the call: its client waits
+as for any other image.
 
-- A `POST` to `/services/aigc/multimodal-generation/generation` of one user
-  message: the images to edit, each a URL or a data URL of its bytes, then
-  the prompt as text. Its `parameters` are the count as `n`, one unless
-  asked (Wan makes four otherwise), the `size` as `1024*768` (`auto` sends
-  none), and a request's `negative_prompt`, `prompt_extend`, `watermark`
-  and `seed`, as OpenAI's clients send them, a form's text read as a number
-  or a boolean. Other fields of another format, such as a `quality`, are
+- A model that answers at once takes a `POST` to
+  `/services/aigc/multimodal-generation/generation` of one user message:
+  the images to edit, each a URL or a data URL of its bytes, then the
+  prompt as text. Its `parameters` are the count as `n`, one unless asked
+  (Wan makes four otherwise), the `size` as `1024*768` (`auto` sends none),
+  and a request's `negative_prompt`, `prompt_extend`, `watermark` and
+  `seed`, as OpenAI's clients send them, a form's text read as a number or
+  a boolean. Other fields of another format, such as a `quality`, are
   dropped.
-- An answer's images are those of its choices' content, at URLs DashScope
-  keeps for 24 hours; its `usage`, the images it made and their size, is a
-  native `{"usage": {..}}`, as it reports no tokens.
+- A Wan model before 2.6 takes a `POST` to
+  `/services/aigc/text2image/image-synthesis`, asked to run as a task
+  (`X-DashScope-Async: enable`): its `input` is the `prompt` and the
+  `negative_prompt`, its `parameters` the rest. It draws a prompt alone,
+  so an image is refused, 400, before the call.
+- Qwen-MT-Image, which translates the text in an image, takes a `POST` to
+  `/services/aigc/image2image/image-synthesis`, as a task too: its `input`
+  is the first image as `image_url`, and a request's `target_lang`, which
+  it needs, its `source_lang`, `auto` unless said, and its `ext`. The
+  prompt, count and size say nothing to it.
+- A task is polled at `GET /tasks/{id}` every two seconds until it ends.
+  Nothing times the wait but each call's own transport, and a client that
+  leaves ends it. A task that failed is a 502, or a 400 for a parameter
+  DashScope refused.
+- An answer's images are those of its choices' content, a task's those of
+  its `results` or its `image_url`, at URLs DashScope keeps for 24 hours;
+  its `usage`, the images it made and their size, is a native
+  `{"usage": {..}}`, as it reports no tokens.
 - A mask and a `response_format` but `url` are refused, 400, before the
   call; a `size` DashScope does not draw is its own 400.
 

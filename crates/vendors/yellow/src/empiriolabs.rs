@@ -18,7 +18,9 @@ use respan_gateway_http::http::request::Parts as RequestHead;
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::raw::Original;
 use respan_gateway_media::{image, speech};
-use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
+use respan_gateway_media_http::empiriolabs::{
+    EmpirioLabsImages as WaitedImages, EmpirioLabsVideos,
+};
 use respan_gateway_media_http::{
     Natives,
     openai::{OpenAiEmbeddings, OpenAiImages, OpenAiSpeech},
@@ -57,7 +59,7 @@ pub const VENDOR: Vendor = Vendor {
         (&AnthropicMessages, Some(MESSAGES_URL)),
         (&GeminiGenerate, Some(GEMINI_URL)),
         (
-            &Dialected::new(OpenAiImages, EmpirioLabsImages),
+            &Dialected::new(WaitedImages, EmpirioLabsImages),
             Some(BASE_URL),
         ),
         (&OpenAiEmbeddings, Some(BASE_URL)),
@@ -82,7 +84,7 @@ pub const VENDOR: Vendor = Vendor {
 /// request says otherwise. An edit is a generation of its `image`s, each a
 /// URL or a data URL of its bytes; it takes no mask, which is dropped. One
 /// it did not finish within its wait, about four minutes, it answers as a
-/// job, which fails. It streams no
+/// job, which its format polls until it ends. It streams no
 /// images, so it is not asked to; a client that asked still gets a stream,
 /// framed at the client edge.
 #[derive(Debug, Clone, Copy)]
@@ -94,10 +96,6 @@ impl Dialect for EmpirioLabsImages {
 
     fn inputs(&self) -> Option<Box<dyn Filter<image::Input>>> {
         Some(Box::new(taken_image))
-    }
-
-    fn request(&self, _: &mut RequestHead) -> Result<Option<Rewrite>, Fault> {
-        Ok(Some(Box::new(|body| crate::without(body, "stream"))))
     }
 }
 

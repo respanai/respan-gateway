@@ -19,8 +19,7 @@
 //! "param", "code"}}`, under its status.
 
 mod embeddings;
-mod images;
-mod multipart;
+pub(crate) mod images;
 mod speech;
 mod transcriptions;
 mod videos;
@@ -52,7 +51,7 @@ use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, ra
 use serde_json::{Map, Value, json};
 use std::sync::LazyLock;
 
-use multipart::Writer;
+use crate::multipart::{self, Writer};
 
 /// A request's fields, from a JSON object or a form: a form's text fields
 /// as strings, those named `name[]` as an array under `name`, and its files
@@ -215,7 +214,7 @@ fn invalid(param: &str, what: &str) -> Fault {
 }
 
 /// A 400 for a request without the field `param`.
-fn missing(param: &str) -> Fault {
+pub(crate) fn missing(param: &str) -> Fault {
     invalid(param, "is required")
 }
 

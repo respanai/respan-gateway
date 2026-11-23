@@ -74,7 +74,7 @@ cargo test --workspace --all-targets --all-features
 cargo test --workspace --doc --all-features
 ```
 
-The web UI (`apps/ui`, Node 22 and pnpm):
+The web UI (`apps/ui`, Node 26 and pnpm):
 
 ```bash
 cd apps/ui
