@@ -33,6 +33,7 @@ pub mod empiriolabs;
 pub mod gemini;
 pub mod meta;
 pub mod minimax;
+mod multipart;
 pub mod openai;
 pub mod openrouter;
 pub mod together;

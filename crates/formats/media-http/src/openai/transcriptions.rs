@@ -3,7 +3,6 @@
 //! in the `response_format` asked (JSON, or text the provider rendered) or,
 //! if asked, as a stream of events.
 
-use super::multipart::{self, Writer};
 use super::{
     Fields, Form, as_usage_extras, bind_client, bind_provider, bytes_of, event_json, file_name,
     invalid, is_true, json_bytes, merge_missing, missing, post_to, read_usage, rest_of,
@@ -11,6 +10,7 @@ use super::{
     usage_extras, whole_json, write_field, write_usage,
 };
 use crate::edge::ended_events;
+use crate::multipart::{self, Writer};
 use respan_gateway_conversation::Usage;
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};

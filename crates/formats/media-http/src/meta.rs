@@ -3,7 +3,7 @@
 //! [`MetaTranscriptions`].
 
 use crate::edge::{bind_provider, sends};
-use crate::openai::multipart::{self, Writer};
+use crate::multipart::{self, Writer};
 use respan_gateway_conversation::MediaSource;
 use respan_gateway_conversation_http::fields::{invalid, merge_missing, set};
 use respan_gateway_core::{Connection, Fault, Format, Provider};
