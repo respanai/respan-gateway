@@ -1359,3 +1359,20 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+#[test]
+fn a_dotted_claude_3_7_keeps_its_thinking_budget() {
+    for model in ["claude-3-7-sonnet-20250219", "anthropic/claude-3.7-sonnet"] {
+        let mut v = serde_json::Map::new();
+        v.insert("model".into(), model.into());
+        v.insert("max_tokens".into(), 8000.into());
+        v.insert(
+            "messages".into(),
+            json!([{ "role": "user", "content": "hi" }]),
+        );
+        let thinking = json!({ "type": "enabled", "budget_tokens": 2048 });
+        v.insert("thinking".into(), thinking.clone());
+        crate::anthropic::fit_thinking(&mut v);
+        assert_eq!(v.get("thinking"), Some(&thinking), "{model}");
+    }
+}

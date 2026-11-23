@@ -464,7 +464,9 @@ fn thinks(model: &str) -> Thinks {
                 .iter()
                 .any(|v| model.contains(&format!("{family}{v}")))
     };
-    if model.contains("claude-3-7") || model.contains("3-7-sonnet") {
+    // Dated ids spell it `claude-3-7`, and others, such as OpenRouter's, `claude-3.7`.
+    let sonnet_3_7 = ["claude-3-7", "claude-3.7", "3-7-sonnet", "3.7-sonnet"];
+    if sonnet_3_7.iter().any(|v| model.contains(v)) {
         Thinks::ToBudget
     } else if model.contains("claude-3") {
         Thinks::Never
