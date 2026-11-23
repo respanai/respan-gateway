@@ -39,7 +39,7 @@ Each vendor is in one of two tiers:
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos`, `decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images`, `openai-realtime` |
-| | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `minimax-videos`, `minimax-speech` |
+| | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `openai-transcriptions` (its speech recognition, at `/speech_to_text`), `minimax-videos`, `minimax-speech` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
@@ -73,6 +73,12 @@ This integration has not been verified against the live API.
 
 MiniMax speech, `minimax-speech`, is called at the same base URL, `/t2a_v2`; the
 key is a bearer token.
+
+MiniMax's speech recognition is OpenAI's transcriptions at `/speech_to_text`
+of the same base URL. Its seconds are an answer's `duration`, and its stream
+is answered in OpenAI's events once it ended. A `text`, `srt` or `vtt` answer
+is asked as `verbose_json` and rendered from its segments; a translation is
+refused before sending, and a `language` is not passed on.
 
 xAI's images take no `size`: it is sent as the nearest `aspect_ratio` xAI
 draws (within 5%, else 400) and a `resolution`, `2k` above 1024 pixels on the
