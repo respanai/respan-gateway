@@ -14,7 +14,8 @@
 //!   recognition, image generation and video generation, on DashScope's own
 //!   API.
 //! - [`together`]: Together's video generation.
-//! - [`empiriolabs`]: EmpirioLabs AI's video generation.
+//! - [`empiriolabs`]: EmpirioLabs AI's video generation, and its images'
+//!   jobs.
 //! - [`zai`]: Z.ai's video generation.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
