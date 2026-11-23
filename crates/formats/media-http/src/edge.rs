@@ -12,6 +12,7 @@ use respan_gateway_http::http::{
 };
 use respan_gateway_http::path::set_path;
 use respan_gateway_http::{Decoder, Encoder, ProviderIo, Sse, Whole};
+use respan_gateway_http_faults::retryable;
 use respan_gateway_media::video;
 use serde_json::{Map, Value};
 use std::time::Duration;
@@ -114,6 +115,9 @@ pub(crate) fn bind_jobs(
 /// image models take about five seconds.
 const POLL: Duration = Duration::from_secs(2);
 
+/// How many polls in a row may fail before their job's call does.
+const MISSED: u32 = 5;
+
 /// What an answer says of a call whose provider may run it as a job.
 #[derive(Clone)]
 pub(crate) enum Step<O> {
@@ -144,8 +148,9 @@ pub(crate) fn job_in(
 /// run to its end within the call: `call` is its call and `read` reads
 /// each answer, the call's and a poll's alike. A job not ended is polled
 /// with `poll`, its video format's call, after a rest, until one is; a
-/// client that leaves ends the polling. Nothing times the wait but each
-/// call's own transport.
+/// client that leaves ends the polling. A poll that fails as another
+/// attempt may not is made again, up to [`MISSED`] in a row: its job is
+/// still running. Nothing times the wait but each call's own transport.
 pub(crate) fn bind_waited<I, O>(
     io: ProviderIo,
     format: &'static str,
@@ -161,27 +166,41 @@ where
     let (opening, sink) = bind_provider(io, format, call, move |_, _| steps(read));
     let opening = async move {
         let mut answer = opening.await?;
+        let mut job = None;
+        let mut missed = 0;
         loop {
-            if let Some(fault) = answer.refusal() {
-                return Ok(EventStream::refused(fault.clone()));
-            }
-            let step = answer.next().await;
-            let step = step.ok_or_else(|| Fault::upstream("the provider answered nothing"))??;
-            let id = match step {
-                Step::Done(outputs) => {
-                    let outputs = futures::stream::iter(outputs.into_iter().map(Ok));
-                    return Ok(EventStream::stream(outputs));
+            let id = match (answer.refusal(), &job) {
+                (Some(fault), Some(id)) if missed < MISSED && retryable(fault, true) => {
+                    missed += 1;
+                    String::clone(id)
                 }
-                Step::Wait(id) => id,
+                (Some(fault), _) => return Ok(EventStream::refused(fault.clone())),
+                (None, _) => {
+                    let step = answer.next().await;
+                    let nothing = || Fault::upstream("the provider answered nothing");
+                    match step.ok_or_else(nothing)?? {
+                        Step::Done(outputs) => {
+                            let outputs = futures::stream::iter(outputs.into_iter().map(Ok));
+                            return Ok(EventStream::stream(outputs));
+                        }
+                        Step::Wait(id) => {
+                            missed = 0;
+                            id
+                        }
+                    }
+                }
             };
             tokio::time::sleep(POLL).await;
             let (polled, mut sink) =
                 bind_provider(more.another(), format, poll, move |_, _| steps(read));
-            let mut retrieve = EventStream::single(video::Input::Retrieve { id });
+            let mut retrieve = EventStream::single(video::Input::Retrieve { id: id.clone() });
             sink.prepare(&mut retrieve)?;
             let (polled, sent) = futures::join!(polled, sink.close());
-            answer = polled?;
-            sent?;
+            answer = match polled.and_then(|answer| sent.map(|()| answer)) {
+                Ok(answer) => answer,
+                Err(fault) => EventStream::refused(fault),
+            };
+            job = Some(id);
         }
     };
     (opening.boxed(), sink)

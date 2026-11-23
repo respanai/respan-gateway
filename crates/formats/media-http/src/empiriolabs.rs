@@ -244,12 +244,15 @@ fn read_image(raw: Bytes) -> Result<Step<image::Output>, Fault> {
             images::decode_whole(Bytes::from(v["result"].to_string()), &mut out)?;
             Ok(Step::Done(out))
         }
-        _ => {
+        Status::Failed => {
             let said = json!({ "error": v["error"] }).to_string();
             let mut answer = http::Response::new(Bytes::from(said));
             *answer.status_mut() = StatusCode::BAD_GATEWAY;
             Err(read_provider_error(answer))
         }
+        _ => Err(Fault::upstream(
+            "EmpirioLabs AI's job is in no state it documents",
+        )),
     }
 }
 
