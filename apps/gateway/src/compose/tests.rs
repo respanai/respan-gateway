@@ -1324,3 +1324,84 @@ async fn fireworks_answers_each_decision_contract_in_its_own() {
     }
     server.abort();
 }
+
+/// Sends one chat request for `gpt-x` to the app of `text`: what the client
+/// got, and the provider the request log names for it.
+async fn logged(text: &str) -> (StatusCode, String, serde_json::Value) {
+    use tower::ServiceExt;
+    let mut config = Config::parse(text).unwrap_or_else(|e| panic!("{e}"));
+    config.plugins.routing.listings.get_or_insert(false);
+    let app = App::new(config).unwrap_or_else(|e| panic!("{e}"));
+    let whole = async |req: http::Request<axum::body::Body>| {
+        let resp = app
+            .router()
+            .oneshot(req)
+            .await
+            .unwrap_or_else(|n| match n {});
+        let status = resp.status();
+        let bytes = BodyExt::collect(resp.into_body())
+            .await
+            .map(|b| b.to_bytes());
+        let body = String::from_utf8_lossy(&bytes.unwrap_or_default()).into_owned();
+        (status, body)
+    };
+    let body = serde_json::json!({
+        "model": "gpt-x",
+        "messages": [{"role": "user", "content": "hi"}]
+    });
+    let req = http::Request::post("/v1/chat/completions")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body.to_string()))
+        .unwrap_or_else(|e| panic!("{e}"));
+    let (status, body) = whole(req).await;
+    app.gateway().idle().await;
+    let req = http::Request::get("/ui/api/requests")
+        .body(axum::body::Body::empty())
+        .unwrap_or_else(|e| panic!("{e}"));
+    let (_, log) = whole(req).await;
+    let log: serde_json::Value = serde_json::from_str(&log).unwrap_or_default();
+    (status, body, log["requests"][0]["provider"].clone())
+}
+
+/// The request log names the provider whose answer the client got, not a
+/// hedged race's loser that started after it.
+#[tokio::test]
+async fn a_hedged_request_is_logged_under_the_provider_that_answered() {
+    let a = FakeOpenAi::start().await;
+    let b = FakeOpenAi::start().await;
+    // `a` answers at 300 ms; `b`, started 50 ms in, would take 5 s.
+    a.answer(Answer::text("a").delay_first(300));
+    b.answer(Answer::text("b").delay_first(5_000));
+    let text = format!(
+        "{}[routes.\"gpt-x\"]\nto = [\"a\", \"b\"]\nhedge = \"50ms\"\n",
+        TWO.replace("https://a.test/v1", &a.base_url())
+            .replace("https://b.test/v1", &b.base_url())
+    );
+    let (status, body, provider) = logged(&text).await;
+    assert_eq!(status, StatusCode::OK);
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    assert_eq!(answer["choices"][0]["message"]["content"], "a", "{body}");
+    assert_eq!(provider, "a");
+}
+
+/// The request log names the provider whose answer the client got, not a
+/// fallback that could not be reached after it.
+#[tokio::test]
+async fn a_fallback_that_never_answered_is_not_logged_as_the_provider() {
+    let a = FakeOpenAi::start().await;
+    a.answer(Answer::error(503).message("a is down"));
+    // Nothing listens on `b`: a port freed as soon as it is found.
+    let gone = std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|l| l.local_addr())
+        .unwrap_or_else(|e| panic!("{e}"));
+    let text = format!(
+        "{}[routes.\"gpt-x\"]\nto = [\"a\", \"b\"]\n",
+        TWO.replace("https://a.test/v1", &a.base_url())
+            .replace("https://b.test/v1", &format!("http://{gone}/v1"))
+    );
+    let (status, body, provider) = logged(&text).await;
+    // The client gets `a`'s own refusal, preferred over `b`'s failure to connect.
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(body.contains("a is down"), "{body}");
+    assert_eq!(provider, "a");
+}

@@ -10,6 +10,7 @@ use std::time::{Instant, SystemTime};
 
 use axum::extract::Request;
 use respan_gateway_core::Extensions;
+use respan_gateway_plugin_fallback::{Attempt, Role};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::sync::broadcast;
@@ -57,11 +58,30 @@ pub struct Entry {
     pub(super) recorded: AtomicBool,
     /// Set when the plugin's end hook ran.
     pub(super) ended: AtomicBool,
+    /// Each call sent as a fallback's or race's attempt, with its
+    /// provider's name, in the order sent.
+    attempts: Mutex<Vec<(Attempt, String)>>,
 }
 
 impl Entry {
     pub(super) fn record(&self) -> MutexGuard<'_, RequestRecord> {
         self.record.lock()
+    }
+
+    /// Notes a call sent as `attempt` to `provider`.
+    pub(super) fn attempt(&self, attempt: Attempt, provider: String) {
+        self.attempts.lock().push((attempt, provider));
+    }
+
+    /// The provider of the last attempt whose response was returned: a
+    /// race's or fallback's winner need not be the last call sent.
+    fn answered_by(&self) -> Option<String> {
+        let attempts = self.attempts.lock();
+        let (_, provider) = attempts
+            .iter()
+            .rev()
+            .find(|(a, _)| a.role() == Role::Winner)?;
+        Some(provider.clone())
     }
 
     pub fn snapshot(&self) -> RequestRecord {
@@ -212,6 +232,7 @@ impl RequestLog {
             finished: AtomicBool::new(false),
             recorded: AtomicBool::new(false),
             ended: AtomicBool::new(false),
+            attempts: Mutex::new(Vec::new()),
         });
         {
             let mut kept = self.kept();
@@ -230,8 +251,12 @@ impl RequestLog {
         if entry.finished.swap(true, Ordering::SeqCst) {
             return;
         }
+        let answered_by = entry.answered_by();
         let record = {
             let mut record = entry.record();
+            if answered_by.is_some() {
+                record.provider = answered_by;
+            }
             record.duration_ms = Some(entry.elapsed_ms());
             if record.error.is_none() {
                 record.error = error;
