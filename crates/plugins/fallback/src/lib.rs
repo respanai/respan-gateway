@@ -1,7 +1,8 @@
 #![warn(missing_docs)]
 //! Fallback: transport-neutral attempt control, which the router's routes
 //! (`respan_gateway_plugin_routing::Dispatch`) and other plugins use:
-//! sequential retries and fallback ([`first_success`], [`Backoff`]), a
+//! sequential retries and fallback ([`first_success`],
+//! [`first_success_keeping`], [`Backoff`]), a
 //! staggered race ([`race`]), and each attempt's [`Role`] ([`Attempt`]).
 //! The caller supplies a retry classifier; HTTP callers can use
 //! `respan_gateway_http_faults::retryable`.
@@ -252,10 +253,18 @@ fn last(answer: Option<Answer>) -> Result<Response, Fault> {
     win(answer.ok_or_else(|| Fault::upstream("no provider to try"))?)
 }
 
-/// Prefer an opened candidate over a fallback that never opened. Replacing
-/// one drops its response as a loser, settling its pending call.
-fn keep(previous: &mut Option<Answer>, answer: Answer) {
-    if answer.opened() || previous.as_ref().is_none_or(|p| !p.opened()) {
+/// Prefer an opened candidate over a fallback that never opened, and keep
+/// the failure `replaces` says a later one does not replace. Replacing one
+/// drops its response as a loser, settling its pending call.
+fn keep(previous: &mut Option<Answer>, answer: Answer, replaces: impl Fn(&Fault, &Fault) -> bool) {
+    let is_kept = previous.as_ref().is_some_and(|kept| {
+        (kept.opened() && !answer.opened())
+            || matches!(
+                (answer.fault(), kept.fault()),
+                (Some(later), Some(earlier)) if !replaces(later, earlier)
+            )
+    });
+    if !is_kept {
         *previous = Some(answer);
     }
 }
@@ -278,6 +287,20 @@ pub async fn first_success(
     until: Until,
     should_retry: impl Fn(&Fault, bool) -> bool,
 ) -> Result<Response, Fault> {
+    first_success_keeping(calls, backoff, until, should_retry, |_, _| true).await
+}
+
+/// [`first_success`], where a later failure takes the place of the one kept
+/// only if `replaces(later, kept)`, so that a failure which says more of the
+/// request is not hidden by a vaguer one after it. A response is still
+/// preferred over a fallback that could not be made.
+pub async fn first_success_keeping(
+    calls: impl IntoIterator<Item = Call>,
+    backoff: &Backoff,
+    until: Until,
+    should_retry: impl Fn(&Fault, bool) -> bool,
+    replaces: impl Fn(&Fault, &Fault) -> bool,
+) -> Result<Response, Fault> {
     let (mut previous, mut index) = (None, 0u32);
     for call in calls {
         // Zero tries dispatches nothing, including no provider hooks or
@@ -298,7 +321,7 @@ pub async fn first_success(
                 _ => None,
             };
             let Some(wait) = wait else {
-                keep(&mut previous, answer);
+                keep(&mut previous, answer, &replaces);
                 break;
             };
             // Do not hold a failed attempt's call through backoff: its end
@@ -333,7 +356,7 @@ pub async fn race(
                 if answer.fault().is_none() {
                     return win(answer);
                 }
-                keep(&mut previous, answer);
+                keep(&mut previous, answer, |_, _| true);
                 if running.is_empty() {
                     next.as_mut().reset(tokio::time::Instant::now());
                 }
