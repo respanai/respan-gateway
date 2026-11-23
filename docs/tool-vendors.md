@@ -46,8 +46,8 @@ are:
 |:-:|---|---|---|---|---|
 | <img src="assets/tool-vendors/e2b.png" width="20" height="20" alt=""> | [E2B](https://e2b.dev) | Code execution | `e2b` | `E2B_API_KEY` | `run_code`, `list_sandboxes`, `kill_sandbox` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tool-vendors/elevenlabs-dark.svg"><img src="assets/tool-vendors/elevenlabs.svg" width="20" height="20" alt=""></picture> | [ElevenLabs](https://elevenlabs.io) | Voice | `elevenlabs` | `ELEVENLABS_API_KEY` | `text_to_speech`, `search_voices`, `speech_to_text`, `sound_effect` |
-| | [Exa](https://exa.ai) | Search | `exa` | `EXA_API_KEY` | `search`, `get_contents` |
-| | [Firecrawl](https://firecrawl.dev) | Web scraping and search | `firecrawl` | `FIRECRAWL_API_KEY` | `scrape`, `crawl`, `get_crawl`, `map_site`, `search` |
+| <img src="assets/tool-vendors/exa.svg" width="20" height="20" alt=""> | [Exa](https://exa.ai) | Search | `exa` | `EXA_API_KEY` | `search`, `get_contents` |
+| <img src="assets/tool-vendors/firecrawl.svg" width="20" height="20" alt=""> | [Firecrawl](https://firecrawl.dev) | Web scraping and search | `firecrawl` | `FIRECRAWL_API_KEY` | `scrape`, `crawl`, `get_crawl`, `map_site`, `search` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/tool-vendors`](../crates/tool-vendors/README.md), or a tool added
