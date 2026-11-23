@@ -42,15 +42,27 @@ impl Parser {
     /// Split complete events from one wire frame. `Err` with `upstream` if
     /// an event not yet ended is over the limit.
     pub fn push(&mut self, bytes: Bytes) -> Result<Vec<Bytes>, Fault> {
-        let events = self.split(&bytes, false);
+        let mut events = Vec::new();
+        self.push_into(bytes, &mut events)?;
+        Ok(events)
+    }
+
+    /// Append complete events from one wire frame to `out`. If an event
+    /// not yet ended is over the limit, return `upstream` after appending
+    /// the complete events before it. A reader may finish on one of those
+    /// events without reading the oversized tail.
+    pub fn push_into(&mut self, bytes: Bytes, out: &mut Vec<Bytes>) -> Result<(), Fault> {
+        self.split(&bytes, false, out);
         match self.limit.filter(|&limit| self.buf.len() > limit) {
             Some(limit) => Err(over_limit(limit)),
-            None => Ok(events),
+            None => Ok(()),
         }
     }
     /// Finish the body, retaining a trailing event of whole lines only.
     pub fn finish(&mut self) -> Vec<Bytes> {
-        self.split(&[], true)
+        let mut events = Vec::new();
+        self.split(&[], true, &mut events);
+        events
     }
 
     /// Split off the first event ended by a blank line; at the end, a last
@@ -76,18 +88,17 @@ impl Parser {
     }
 
     /// The events of `bytes`, then, `at_end`, the last one left.
-    fn split(&mut self, bytes: &[u8], at_end: bool) -> Vec<Bytes> {
+    fn split(&mut self, bytes: &[u8], at_end: bool, events: &mut Vec<Bytes>) {
         self.buf.extend_from_slice(bytes);
         if !self.started {
             if !at_end && self.buf.len() < BOM.len() && BOM.starts_with(&self.buf) {
-                return Vec::new();
+                return;
             }
             if self.buf.starts_with(BOM) {
                 let _ = self.buf.split_to(BOM.len());
             }
             self.started = true;
         }
-        let mut events = Vec::new();
         while let Some(event) = self.next_event(at_end) {
             events.push(event);
         }
@@ -97,7 +108,6 @@ impl Parser {
             }
             self.buf.clear();
         }
-        events
     }
 }
 
@@ -332,5 +342,41 @@ mod tests {
         assert!(d.push(Bytes::from_static(b"data: 1")).is_ok());
         let over = d.push(Bytes::from_static(b"23")).err();
         assert!(over.is_some_and(|f| f.is(respan_gateway_core::FaultKind::Provider)));
+    }
+
+    #[test]
+    fn complete_events_are_appended_before_a_tail_limit_error() {
+        let mut d = Parser::new(Some(8));
+        let mut out = vec![Bytes::from_static(b"earlier")];
+        let result = d.push_into(Bytes::from_static(b"data: a\n\ndata: 123"), &mut out);
+        assert!(result.is_err());
+        assert_eq!(
+            out,
+            [
+                Bytes::from_static(b"earlier"),
+                Bytes::from_static(b"data: a\n\n")
+            ]
+        );
+    }
+
+    #[test]
+    fn appending_events_keeps_the_same_framing_at_every_byte_boundary() {
+        let wire = b"\xEF\xBB\xBFdata: a\n\ndata: b\r\n\r\ndata: c\n";
+        let expected = [
+            Bytes::from_static(b"data: a\n\n"),
+            Bytes::from_static(b"data: b\r\n\r\n"),
+            Bytes::from_static(b"data: c\n"),
+        ];
+        for cut in 0..=wire.len() {
+            let mut appended = Parser::new(None);
+            let mut actual = Vec::new();
+            for frame in [&wire[..cut], &wire[cut..]] {
+                appended
+                    .push_into(Bytes::copy_from_slice(frame), &mut actual)
+                    .expect("append");
+            }
+            actual.extend(appended.finish());
+            assert_eq!(actual, expected, "cut {cut}");
+        }
     }
 }
