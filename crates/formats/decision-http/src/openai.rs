@@ -74,8 +74,8 @@ impl OpenAiDecisions {
                 // WARN: a choice is typed as the first option of its name, so
                 // of `true` and `"true"` both asked, `"true"` is `true`.
                 v.insert("choice".into(), typed(choice, None, choices));
-                let by_value = probabilities.iter().enumerate().map(
-                    |(i, (c, p))| json!({ "value": typed(c, Some(i), choices), "probability": p }),
+                let by_value = in_asked_order(probabilities, choices).into_iter().map(
+                    |(at, (c, p))| json!({ "value": typed(c, at, choices), "probability": p }),
                 );
                 v.insert("probabilities".into(), by_value.collect());
             }
@@ -163,6 +163,32 @@ fn typed(value: &str, at: Option<usize>, choices: &Value) -> Value {
     let at = at.and_then(|i| choices.get(i)).filter(named);
     at.or_else(|| choices.iter().find(named))
         .map_or_else(|| value.into(), |c| c["value"].clone())
+}
+
+/// `probabilities` in the order of `choices`, as this format reads them
+/// back (a provider of another format may answer in its own), each with the
+/// position of its choice: the first of its name not yet taken. One of no
+/// choice asked keeps its place after them.
+fn in_asked_order<'a>(
+    probabilities: &'a [(String, f64)],
+    choices: &Value,
+) -> Vec<(Option<usize>, &'a (String, f64))> {
+    let choices = choices.as_array().map(Vec::as_slice).unwrap_or_default();
+    let mut taken = vec![false; choices.len()];
+    let mut ordered: Vec<_> = probabilities
+        .iter()
+        .map(|entry| {
+            let at = choices.iter().enumerate().position(|(i, c)| {
+                !taken[i] && choice_of(&c["value"]).is_some_and(|v| v == entry.0)
+            });
+            if let Some(i) = at {
+                taken[i] = true;
+            }
+            (at, entry)
+        })
+        .collect();
+    ordered.sort_by_key(|(at, _)| at.unwrap_or(usize::MAX));
+    ordered
 }
 
 /// The type of an answer of `verdict`.
@@ -533,6 +559,35 @@ mod tests {
         let mut events = Vec::new();
         decode_response(raw.to_string().as_bytes(), asked, &mut events)?;
         Ok(events)
+    }
+
+    #[test]
+    fn a_choice_is_answered_in_the_order_the_client_asked() {
+        // An openai-decisions client asks billing, shipping, other; a provider
+        // of another format answers its probabilities in its own order.
+        let asked = json!({"type": "choice", "name": "dept", "instructions": "Which?",
+            "choices": [{"value": "billing"}, {"value": "shipping"}, {"value": "other"}]});
+        let verdict = Verdict::Choice {
+            choice: "shipping".into(),
+            probabilities: vec![
+                ("other".into(), 0.08),
+                ("billing".into(), 0.02),
+                ("shipping".into(), 0.9),
+            ],
+        };
+        let mut answer = Answer::new("dept", verdict);
+        answer.confidence = Some(0.9);
+        let written = OpenAiDecisions::answer_value(&answer, &asked).expect("written");
+        let order: Vec<_> = written["probabilities"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|p| p["value"].clone())
+            .collect();
+        assert_eq!(order, [json!("billing"), json!("shipping"), json!("other")]);
+        // So this format's own reader takes it back.
+        let reread = events_of(&json!({"answers": [written.clone()]}), &[asked]);
+        assert!(reread.is_ok(), "{written}: {reread:?}");
     }
 
     #[test]
