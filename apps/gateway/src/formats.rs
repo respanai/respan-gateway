@@ -23,6 +23,7 @@ use respan_gateway_media_http::dashscope::{
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
 use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::meta::MetaTranscriptions;
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -284,6 +285,7 @@ pub fn formats() -> Vec<KnownFormat> {
         KnownFormat::provider_only(kind::VIDEO, &TogetherVideos),
         KnownFormat::provider_only(kind::VIDEO, &EmpirioLabsVideos),
         KnownFormat::provider_only(kind::VIDEO, &ZaiVideos),
+        KnownFormat::provider_only(kind::TRANSCRIPTION, &MetaTranscriptions),
         KnownFormat::provider_only(kind::VIDEO, &MiniMaxVideos),
         KnownFormat::provider_only(kind::SPEECH, &MiniMaxSpeech),
         KnownFormat::claiming(

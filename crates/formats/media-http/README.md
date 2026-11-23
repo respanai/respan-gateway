@@ -261,6 +261,22 @@ are Z.ai's after `zai_`, which `video::VideoJobs` routes a follow-up by.
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
 
+`meta::MetaTranscriptions`, named `meta-transcriptions`: Meta's speech
+recognition (`muse-voice-transcribe-1.0`) on `POST /asr/transcribe`, as a
+provider only, its key a bearer token, its base URL the API with its version
+(`https://api.meta.ai/v1`).
+
+- A call is a form of a `request`, JSON of the model, the `audioEncoding`,
+  `WAV`, and the format's native fields (`mode`, `keywords`,
+  `languageBias`), and the `audio`, its bytes. Meta takes only a WAV of mono
+  16-bit PCM at 16 or 24 kHz, and refuses another itself.
+- Audio at a URL, a translation, a prompt and a temperature are refused,
+  400, before the call. A language is not sent: Meta takes languages by
+  name, as a bias.
+- The transcript is the answer's `transcript`, its length and the seconds
+  billed its `audioDurationMs`, and its `turns`, which a `mode` asks for,
+  the segments, each with its speaker, if named.
+
 `minimax::MiniMaxVideos`, named `minimax-videos`: MiniMax's video
 generation (its `/v2` API, the H3 models), as a provider only, its key a
 bearer token, its base URL the API's host with no version

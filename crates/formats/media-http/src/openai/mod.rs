@@ -20,7 +20,7 @@
 
 mod embeddings;
 pub(crate) mod images;
-mod multipart;
+pub(crate) mod multipart;
 mod speech;
 mod transcriptions;
 mod videos;
