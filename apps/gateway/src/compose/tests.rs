@@ -375,6 +375,7 @@ fn a_vendor_is_every_format_it_speaks() {
             "gemini-generate",
             "gemini-embeddings",
             "gemini-images",
+            "gemini-imagen",
             "gemini-live",
             "mistral-realtime",
             "phonic-sts",
@@ -738,6 +739,13 @@ fn a_gemini_call_for_an_image_another_provider_draws_is_an_images() {
     assert!(!drawn("g/gemini-3.1-flash-image"));
     assert!(!drawn("gemini-2.5-flash"));
     assert!(!drawn("o/gpt-4o"));
+}
+
+#[test]
+fn an_imagen_client_is_served_by_any_image_provider() {
+    let text = "providers = { o = { vendor = \"openai\", key = \"k\" } }\n";
+    let plan = plan(text).unwrap_or_else(|e| panic!("{e}"));
+    assert!(plan.serves("gemini-imagen"));
 }
 
 #[test]

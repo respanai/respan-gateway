@@ -1,16 +1,18 @@
 //! Google's media models as the Gemini API serves them, over HTTP: Gemini Omni's videos
 //! ([`GeminiOmni`]), its image models through `generateContent`
-//! ([`GeminiImages`]), its speech models through `interactions`
+//! ([`GeminiImages`]), its Imagen models through `predict` ([`GeminiImagen`]), its speech models through `interactions`
 //! ([`GeminiSpeech`]), and its embedding models ([`GeminiEmbeddings`]). A provider's base URL includes the version,
 //! `https://generativelanguage.googleapis.com/v1beta`, and its transport the
 //! key, `x-goog-api-key`.
 
 mod embeddings;
+mod imagen;
 mod images;
 pub(crate) mod omni;
 mod speech;
 
 pub use embeddings::GeminiEmbeddings;
+pub use imagen::GeminiImagen;
 pub use images::GeminiImages;
 pub use omni::GeminiOmni;
 pub use speech::GeminiSpeech;

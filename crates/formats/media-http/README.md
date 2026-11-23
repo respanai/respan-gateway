@@ -108,6 +108,29 @@ at `https://generativelanguage.googleapis.com/v1beta` with the key in
   this format's native fields. The answer is one candidate of the images
   and the usage; a stream is that response once, as SSE with `alt=sse`,
   else in a JSON array.
+
+`gemini::GeminiImagen`, named `gemini-imagen`: Gemini's Imagen models
+through `predict`, to clients and providers, at
+`https://generativelanguage.googleapis.com/v1beta` with the key in
+`x-goog-api-key`.
+
+- A call is `POST /models/{model}:predict`, one instance of the prompt.
+  Its `size` is the `aspectRatio` of the nearest ratio Imagen draws (1:1,
+  3:4, 4:3, 9:16, 16:9; or one of its own sizes, such as `1280x896` for
+  4:3; within 5%, else 400), with an `imageSize` of `2K` above 1K; its
+  count `sampleCount`. Imagen on the Gemini API draws from a prompt alone,
+  so images to edit are refused, 400.
+- An answer's images are its `predictions`' `bytesBase64Encoded` (or
+  `gcsUri`). An answer with no image is refused, 400 `no_image`, with a
+  prediction's `raiFilteredReason` if it has one. Imagen reports no usage.
+- A client of it, served by any provider of the kind: a `POST` to
+  `.../models/{model}:predict`, one instance of a prompt alone.
+  `parameters`' `sampleCount` is the count, its `aspectRatio` (and `1K`
+  or `2K` `imageSize`) a size, about Imagen's own (`896x1280` for 3:4);
+  the rest of them, and the body's other fields, are this format's native
+  fields. The answer is the images as `predictions`, each with its
+  `mimeType` and `bytesBase64Encoded`, or `gcsUri` for an image a provider
+  keeps at a URL.
 - The gateway serves it beside `gemini-generate`, at the same paths: a
   call is an image's if routing sends its model, of the image kind, to a
   provider that cannot take the call as `generateContent`, else a chat's.

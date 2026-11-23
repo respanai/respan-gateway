@@ -97,7 +97,8 @@ formats (`openai-images`, `openai-transcriptions`, `openai-speech`,
 `minimax-videos` take their host alone, `https://api.together.xyz`,
 `https://api.empiriolabs.ai` and `https://api.minimax.io`. Gemini's own formats, `gemini-generate`
 (`generateContent` and `streamGenerateContent`, the model in the path),
-`gemini-images` (its image models' `generateContent`), `gemini-speech` (its
+`gemini-images` (its image models' `generateContent`), `gemini-imagen` (its
+Imagen models' `predict`), `gemini-speech` (its
 speech models' `interactions`), `gemini-omni` and
 `gemini-decisions` (at `/decisions`, the model in the body), take `https://generativelanguage.googleapis.com/v1beta` with
 the key in `x-goog-api-key`; EmpirioLabs AI serves `gemini-generate` at
