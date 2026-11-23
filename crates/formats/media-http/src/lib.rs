@@ -17,6 +17,7 @@
 //! - [`empiriolabs`]: EmpirioLabs AI's video generation, and its images'
 //!   jobs.
 //! - [`zai`]: Z.ai's video generation.
+//! - [`meta`]: Meta's speech recognition.
 //!
 //! A vendor's departures from one of them are its dialect of it, laid over
 //! it ([`respan_gateway_http::dialect`]).
@@ -30,7 +31,9 @@ pub mod dashscope;
 mod edge;
 pub mod empiriolabs;
 pub mod gemini;
+pub mod meta;
 pub mod minimax;
+mod multipart;
 pub mod openai;
 pub mod openrouter;
 pub mod together;
@@ -102,3 +105,4 @@ impl Natives for dashscope::DashScopeVideos {}
 impl Natives for minimax::MiniMaxSpeech {}
 impl Natives for together::TogetherVideos {}
 impl Natives for zai::ZaiVideos {}
+impl Natives for meta::MetaTranscriptions {}
