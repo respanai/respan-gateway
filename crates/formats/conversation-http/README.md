@@ -186,6 +186,21 @@ so a profile's id or an ARN is one segment. A stream is the AWS event stream
 upstream fault of its type. The module says how each part, option and event
 maps; what Converse has no field for is dropped, or written as its nearest.
 
+## Calls the gateway ran
+
+A call the gateway ran itself, as its tool loop does (`Block::GatewayCall`),
+and its result after it (`Block::ToolResult`) are for a client to keep in its
+history, not to run. A format whose section above says so writes them as a
+server that runs tools is in it, of the server `respan-gateway`, and reads
+them back from a request that sends them, as the conversation had them: the
+call a tool call of the assistant's, and its result a user's message after
+it, so a provider of any format is sent them as its own tool calls and
+results. Another server's items and blocks, and a call without its result,
+stay native, as before. Any other format drops both, and its client gets the
+answer alone. Chat Completions and Gemini have no place for a tool's result
+in a response, so they return no steps: a client that uses the gateway's
+tools and keeps them in its history uses Responses or Anthropic Messages.
+
 ## Reasoning and sampling
 
 `Input.options.reasoning` is the kind's; each format reads and

@@ -1,7 +1,8 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Own, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
+    Gate, GatewaySteps, Own, Schema, check_usage, fits, merge_fields, own_fields,
+    unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;
@@ -34,6 +35,10 @@ pub(super) struct EventStream {
     fields: Vec<(u32, Map<String, Value>)>,
     /// The index of each block only natives carry, by block.
     natives: Vec<(u32, u32)>,
+    /// The steps the gateway ran, which this format does not write yet:
+    /// left out.
+    // WARN: a call the gateway ran and its result are dropped.
+    steps: GatewaySteps,
     gate: Gate,
 }
 
@@ -269,6 +274,9 @@ pub(super) fn emit(out: &mut BytesMut, v: Value) {
 
 impl EventStream {
     pub(crate) fn encode_into(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if self.steps.leaves_out(reply) {
+            return Ok(());
+        }
         let mut made = BytesMut::new();
         self.write(reply, &mut made)?;
         self.gate.pass(reply, &made, out);

@@ -19,6 +19,9 @@
 //! [`ToolChoice`]), the calls an assistant made and their results
 //! ([`Content::ToolCall`], [`Content::ToolResult`]), and the calls a
 //! response makes ([`Block::ToolCall`]), whose arguments stream as JSON text.
+//! A call the gateway ran itself is shown with its result after it
+//! ([`Block::GatewayCall`], [`Block::ToolResult`]), for a client to keep in
+//! its history, not to run.
 //!
 //! What the kind has no form for stays as the format that decoded it has it
 //! ([`Native`], as in [`Content::Native`] and [`Output::Native`]): only that
@@ -561,6 +564,24 @@ pub enum Block {
     },
     /// The model's reasoning.
     Reasoning,
+    /// A tool call the gateway ran itself, as its tool loop does, which the
+    /// client is not to run: its [`Delta::Arguments`] are its arguments, as
+    /// JSON text, and the [`Block::ToolResult`] of its id follows it. A
+    /// format with no form for the pair drops both.
+    GatewayCall {
+        /// The call's id, which its result names.
+        id: String,
+        /// The tool's name, as the model called it.
+        name: String,
+    },
+    /// What the tool of the [`Block::GatewayCall`] `id` answered, as the
+    /// model read it: its [`Delta::Result`]s are the answer.
+    ToolResult {
+        /// The id of the call it answers.
+        id: String,
+        /// Whether the call failed; the answer then says why.
+        is_error: bool,
+    },
 }
 
 /// The next part of a block, of the block's own kind.
@@ -569,24 +590,27 @@ pub enum Block {
 pub enum Delta {
     /// Text of a [`Block::Text`].
     Text(String),
-    /// The next part of a [`Block::ToolCall`]'s arguments, as JSON text.
+    /// The next part of a [`Block::ToolCall`]'s or a [`Block::GatewayCall`]'s
+    /// arguments, as JSON text.
     Arguments(String),
     /// Reasoning of a [`Block::Reasoning`].
     Reasoning(String),
+    /// The next part of a [`Block::ToolResult`]'s answer.
+    Result(String),
 }
 
 impl Delta {
     /// The text it holds, whatever its kind.
     pub fn as_str(&self) -> &str {
         match self {
-            Delta::Text(s) | Delta::Arguments(s) | Delta::Reasoning(s) => s,
+            Delta::Text(s) | Delta::Arguments(s) | Delta::Reasoning(s) | Delta::Result(s) => s,
         }
     }
 
     /// The text it holds, to append to.
     pub fn as_mut_string(&mut self) -> &mut String {
         match self {
-            Delta::Text(s) | Delta::Arguments(s) | Delta::Reasoning(s) => s,
+            Delta::Text(s) | Delta::Arguments(s) | Delta::Reasoning(s) | Delta::Result(s) => s,
         }
     }
 }
@@ -634,6 +658,14 @@ impl Output {
         Output::Delta {
             block,
             delta: Delta::Reasoning(text.into()),
+        }
+    }
+
+    /// The next part of the answer of the [`Block::ToolResult`] `block`.
+    pub fn result(block: u32, text: impl Into<String>) -> Self {
+        Output::Delta {
+            block,
+            delta: Delta::Result(text.into()),
         }
     }
 
@@ -814,8 +846,42 @@ impl Assembled {
 
     /// What the model said, as the assistant message holds it: its text,
     /// reasoning and tool calls in order, each with the fields its format kept
-    /// beside it and its signatures after it.
+    /// beside it and its signatures after it. A call the gateway ran is not
+    /// one the assistant's message holds: [`Assembled::messages`] keeps it,
+    /// with its result.
     pub fn replay(&self) -> Vec<Content> {
+        self.parts(false)
+    }
+
+    /// What was said, as the messages of a conversation that holds it: the
+    /// assistant's ([`Assembled::replay`]), in which each call the gateway
+    /// ran ([`Block::GatewayCall`]) is a tool call, and its result
+    /// ([`Block::ToolResult`]) a user's message after it, those of one run
+    /// together, before the assistant's next. Without such a call, one
+    /// assistant message, empty if nothing was said.
+    pub fn messages(&self) -> Vec<Message> {
+        let message = |role, content| Message {
+            role,
+            content,
+            native: Native::default(),
+        };
+        let mut messages = vec![message(Role::Assistant, Vec::new())];
+        for part in self.parts(true) {
+            let role = match part {
+                Content::ToolResult { .. } => Role::User,
+                _ => Role::Assistant,
+            };
+            match messages.last_mut() {
+                Some(last) if last.role == role => last.content.push(part),
+                _ => messages.push(message(role, vec![part])),
+            }
+        }
+        messages
+    }
+
+    /// The parts said, with the calls the gateway ran and their results if
+    /// `ran`.
+    fn parts(&self, ran: bool) -> Vec<Content> {
         // A block's latest fields are what its format last said of it.
         let mut kept: HashMap<u32, &Native> = HashMap::new();
         for item in self.items() {
@@ -824,6 +890,10 @@ impl Assembled {
             }
         }
         let native_of = |block: u32| kept.get(&block).map(|n| (*n).clone()).unwrap_or_default();
+        // A call's arguments, `{}` if it said none.
+        fn arguments(text: &str) -> &str {
+            Some(text).filter(|t| !t.trim().is_empty()).unwrap_or("{}")
+        }
         let mut parts = Vec::new();
         for item in self.items() {
             match item {
@@ -846,12 +916,18 @@ impl Assembled {
                             });
                         }
                         Block::ToolCall { id, name } => {
-                            let arguments = Some(b.text.as_str()).filter(|t| !t.trim().is_empty());
-                            let mut part = Content::tool_call(id, name, arguments.unwrap_or("{}"));
+                            let mut part = Content::tool_call(id, name, arguments(&b.text));
                             if let Content::ToolCall { native: n, .. } = &mut part {
                                 *n = native;
                             }
                             parts.push(part);
+                        }
+                        Block::GatewayCall { id, name } if ran => {
+                            parts.push(Content::tool_call(id, name, arguments(&b.text)));
+                        }
+                        Block::ToolResult { id, is_error } if ran => {
+                            let answer = vec![Content::from(b.text.clone())];
+                            parts.push(Content::tool_result(id, answer, *is_error));
                         }
                         _ => {}
                     }
@@ -893,6 +969,8 @@ impl Assembled {
                     (Block::Text, Delta::Text(_))
                         | (Block::ToolCall { .. }, Delta::Arguments(_))
                         | (Block::Reasoning, Delta::Reasoning(_))
+                        | (Block::GatewayCall { .. }, Delta::Arguments(_))
+                        | (Block::ToolResult { .. }, Delta::Result(_))
                 ) {
                     return Err(malformed("a delta is not of its block's kind"));
                 }
@@ -1128,6 +1206,90 @@ mod tests {
     }
 
     #[test]
+    fn a_call_the_gateway_ran_is_a_tool_turn_of_its_own_with_its_result() {
+        let ran = |block, id: &str, arguments: &str| {
+            let call = Block::GatewayCall {
+                id: id.into(),
+                name: "gh__search".into(),
+            };
+            [
+                Output::block_start(block, call),
+                Output::arguments(block, arguments),
+                Output::block_end(block),
+            ]
+        };
+        let answered = |block, id: &str, text: &str, is_error| {
+            let result = Block::ToolResult {
+                id: id.into(),
+                is_error,
+            };
+            [
+                Output::block_start(block, result),
+                Output::result(block, text),
+                Output::block_end(block),
+            ]
+        };
+        let mut events = vec![
+            Output::start("r1", "m"),
+            Output::block_start(0, Block::Text),
+            Output::text(0, "Looking."),
+            Output::block_end(0),
+        ];
+        events.extend(ran(1, "c1", "{\"q\":\"a\"}"));
+        events.extend(answered(2, "c1", "found a", false));
+        events.extend(ran(3, "c2", ""));
+        events.extend(answered(4, "c2", "no access", true));
+        events.extend([
+            Output::block_start(5, Block::Text),
+            Output::text(5, "Done."),
+            Output::block_end(5),
+            Output::finished(Finish::Stop),
+        ]);
+        let all = fold(&events).expect("a response");
+        // The text alone is the assistant's, and the calls are not its to replay.
+        assert_eq!(all.text(), "Looking.Done.");
+        assert_eq!(
+            all.replay(),
+            [Content::from("Looking."), Content::from("Done.")]
+        );
+        let result = |id: &str, text: &str, is_error| {
+            Content::tool_result(id, vec![Content::from(text)], is_error)
+        };
+        let turn = |role, content: Vec<Content>| Message {
+            role,
+            content,
+            native: Native::default(),
+        };
+        assert_eq!(
+            all.messages(),
+            [
+                turn(
+                    Role::Assistant,
+                    vec![
+                        Content::from("Looking."),
+                        Content::tool_call("c1", "gh__search", "{\"q\":\"a\"}"),
+                    ]
+                ),
+                turn(Role::User, vec![result("c1", "found a", false)]),
+                turn(
+                    Role::Assistant,
+                    vec![Content::tool_call("c2", "gh__search", "{}")]
+                ),
+                turn(Role::User, vec![result("c2", "no access", true)]),
+                turn(Role::Assistant, vec![Content::from("Done.")]),
+            ]
+        );
+        // A reply without such a call is one message, as `replay` says it.
+        let plain = fold(&events[..4]).expect("a response");
+        assert_eq!(
+            plain.messages(),
+            [turn(Role::Assistant, vec![Content::from("Looking.")])]
+        );
+        let empty = Assembled::default().messages();
+        assert_eq!(empty, [turn(Role::Assistant, Vec::new())]);
+    }
+
+    #[test]
     fn a_sequence_that_is_no_response_is_refused() {
         let text = || Output::block_start(0, Block::Text);
         for events in [
@@ -1189,13 +1351,27 @@ mod tests {
             id: "t".into(),
             name: "f".into(),
         };
+        let ran = Block::GatewayCall {
+            id: "t".into(),
+            name: "f".into(),
+        };
+        let result = Block::ToolResult {
+            id: "t".into(),
+            is_error: false,
+        };
         for (kind, wrong) in [
             (Block::Text, Output::arguments(0, "{}")),
             (Block::Text, Output::reasoning(0, "x")),
+            (Block::Text, Output::result(0, "x")),
             (call.clone(), Output::text(0, "x")),
-            (call, Output::reasoning(0, "x")),
+            (call.clone(), Output::reasoning(0, "x")),
+            (call, Output::result(0, "x")),
             (Block::Reasoning, Output::text(0, "x")),
             (Block::Reasoning, Output::arguments(0, "{}")),
+            (ran.clone(), Output::text(0, "x")),
+            (ran, Output::result(0, "x")),
+            (result.clone(), Output::text(0, "x")),
+            (result, Output::arguments(0, "{}")),
         ] {
             let mut all = Assembled::default();
             all.push(&Output::block_start(0, kind.clone()))

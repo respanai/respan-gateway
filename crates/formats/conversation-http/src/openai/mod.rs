@@ -358,6 +358,8 @@ impl Schema for OpenAiChat {
 
     /// One text of every block, then the tool calls, as one choice; other
     /// events as the choices they came in.
+    // WARN: a call the gateway ran and its result are dropped: Chat has no
+    // place for a result in a response.
     fn encode_whole(&self, whole: &Assembled) -> Result<Value, Fault> {
         check_usage(&whole.usage, USAGE)?;
         let join = |kind: Block| -> String {

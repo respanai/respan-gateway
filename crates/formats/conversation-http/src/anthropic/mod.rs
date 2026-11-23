@@ -39,9 +39,9 @@ mod tests;
 
 use crate::schema::{
     Asked, Names, Own, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
-    decode_content, decode_message, edit_native, encode_content, encode_message, merge_details,
-    merge_fields, merge_into, merge_missing, own_fields, says, sealed, set, stop_json,
-    unsupported_fields, unwritable_content, usage_extra,
+    decode_content, decode_message, edit_native, encode_content, encode_message, is_gateway_step,
+    merge_details, merge_fields, merge_into, merge_missing, own_fields, says, sealed, set,
+    stop_json, unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -394,6 +394,8 @@ impl Schema for AnthropicMessages {
         let mut stop = StopFields::default();
         for item in whole.items() {
             match item {
+                // WARN: a call the gateway ran and its result are dropped.
+                AssembledItem::Block(part) if is_gateway_step(&part.kind) => {}
                 AssembledItem::Block(part) => {
                     let block = match &part.kind {
                         Block::Text if part.text.is_empty() => continue,
