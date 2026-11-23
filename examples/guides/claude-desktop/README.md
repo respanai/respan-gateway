@@ -32,7 +32,8 @@ Claude Desktop ──"claude-haiku-4-5"──▶ Respan Gateway ──"gpt-6-lun
                                        route: claude-haiku-4-5 → openai/gpt-6-luna
 ```
 
-In the model picker you still see a name you choose, such as `gpt-6-luna`.
+You pick Claude Haiku 4.5 in Desktop, and the answer comes from
+`gpt-6-luna`.
 
 ## 1. Run the gateway with a route
 
@@ -123,8 +124,10 @@ hidden until you turn on Developer Mode.
 
 6. Save, and restart Claude when it asks.
 
-Desktop now opens in third-party mode. Pick **gpt-6-luna** in the model
-picker, in chat or in the Code tab, and your messages go to OpenAI.
+Desktop now opens in third-party mode. In the model picker, in chat or in
+the Code tab, pick **Claude Haiku 4.5**. Desktop thinks it's talking to
+Haiku, but the gateway sends every message to OpenAI, and the answer you
+get is from `gpt-6-luna`.
 
 ## 4. Check that it works
 
