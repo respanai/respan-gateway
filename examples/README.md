@@ -18,7 +18,7 @@ See [recipes/README.md](recipes/README.md) for the full list.
 
 | Guide | Shows |
 | --- | --- |
-| [Use DeepSeek and any other model in Claude Desktop](guides/claude-desktop/README.md) | Run Claude Desktop's chat and Code tab on DeepSeek, GPT, Gemini or a local model, by giving each one a Claude id in the gateway. |
+| [Use GPT, Gemini and any other model in Claude Desktop](guides/claude-desktop/README.md) | Run Claude Desktop's chat and Code tab on GPT, Gemini or a local model, by giving each one a Claude id in the gateway. |
 
 ## Research
 

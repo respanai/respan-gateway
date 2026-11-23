@@ -164,7 +164,7 @@ and refuses to start on a public address.
 [vendors](docs/vendors.md) · [tool vendors](docs/tool-vendors.md) ·
 [MCP and tools](docs/mcp.md) · [`gateway.example.toml`](gateway.example.toml)
 
-**Guides:** [Use DeepSeek and any other model in Claude Desktop](examples/guides/claude-desktop/README.md)
+**Guides:** [Use GPT, Gemini and any other model in Claude Desktop](examples/guides/claude-desktop/README.md)
 
 **Reading:** [From the GPU to your bill: a deep dive into prompt caching](examples/research/prompt-caching/README.md)
 
