@@ -184,12 +184,20 @@ impl Parser {
     /// over the limit, a prelude or message that fails its CRC, or one
     /// whose lengths or headers cannot be read.
     pub fn push(&mut self, bytes: Bytes) -> Result<Vec<Message>, Fault> {
-        self.buf.extend_from_slice(&bytes);
         let mut out = Vec::new();
+        self.push_into(bytes, &mut out)?;
+        Ok(out)
+    }
+
+    /// Appends the messages `bytes` completes to `out`. A message that
+    /// fails as [`push`](Self::push) says is `Err`, after the whole messages
+    /// before it in `bytes` are appended, so a reader still gets them.
+    pub fn push_into(&mut self, bytes: Bytes, out: &mut Vec<Message>) -> Result<(), Fault> {
+        self.buf.extend_from_slice(&bytes);
         while let Some(message) = self.next()? {
             out.push(message);
         }
-        Ok(out)
+        Ok(())
     }
 
     /// The body ended: `Err` with `truncated` if it ended inside a message.
@@ -414,5 +422,31 @@ mod tests {
         prelude.put_u32(0);
         prelude.put_u32(crc32(&prelude));
         assert!(Parser::new(None).push(prelude.freeze()).is_err());
+    }
+
+    #[test]
+    fn whole_messages_come_before_a_damaged_ones_fault() {
+        let mut damaged = event("metadata", "{}").encode().to_vec();
+        let last = damaged.len() - 1;
+        damaged[last] ^= 1;
+        let mut frame = event("messageStop", "{}").encode().to_vec();
+        frame.extend_from_slice(&damaged);
+        let mut out = Vec::new();
+        let parsed = Parser::new(None).push_into(Bytes::from(frame), &mut out);
+        assert!(parsed.is_err());
+        assert_eq!(out, [event("messageStop", "{}")]);
+    }
+
+    #[test]
+    fn whole_messages_come_before_an_oversized_ones_fault() {
+        let good = event("messageStop", "{}").encode();
+        let mut big = event("metadata", "{}");
+        big.payload = Bytes::from(vec![b' '; 100]);
+        let mut frame = good.to_vec();
+        frame.extend_from_slice(&big.encode());
+        let mut out = Vec::new();
+        let parsed = Parser::new(Some(good.len() + 10)).push_into(Bytes::from(frame), &mut out);
+        assert!(parsed.is_err());
+        assert_eq!(out, [event("messageStop", "{}")]);
     }
 }

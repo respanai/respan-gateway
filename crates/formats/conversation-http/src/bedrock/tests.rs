@@ -425,6 +425,37 @@ fn an_exception_in_the_stream_is_an_upstream_fault() {
 }
 
 #[test]
+fn the_events_before_a_damaged_message_come_before_its_fault() {
+    let stream = text_stream();
+    let mut damaged = stream[5].to_vec();
+    let last = damaged.len() - 1;
+    damaged[last] ^= 1;
+    // One chunk: the end of the message, then a damaged metadata event.
+    let mut chunk = stream[4].to_vec();
+    chunk.extend_from_slice(&damaged);
+    let mut decoder = ConverseDecoder::default();
+    let mut out = Vec::new();
+    for frame in &stream[..4] {
+        decoder
+            .decode(frame.clone(), &mut out)
+            .expect("whole events");
+    }
+    let before = out.len();
+    let fault = decoder
+        .decode(Bytes::from(chunk), &mut out)
+        .expect_err("a damaged message");
+    assert!(
+        fault.is(respan_gateway_core::FaultKind::Provider),
+        "{fault:?}"
+    );
+    assert!(
+        out[before..].iter().any(|o| matches!(o, Output::Finish(_))),
+        "the stop is lost with the damaged message: {:?}",
+        &out[before..]
+    );
+}
+
+#[test]
 fn a_whole_body_is_the_same_events() {
     let body = json!({
         "output": { "message": { "role": "assistant", "content": [
