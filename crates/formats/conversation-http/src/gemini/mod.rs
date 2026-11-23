@@ -290,6 +290,17 @@ impl Schema for GeminiGenerate {
         self.decoder().body(v, out)
     }
 
+    /// Several candidates cannot be represented as conversation events.
+    fn validate_request_json(&self, v: &Value) -> Result<(), Fault> {
+        let count = &v["generationConfig"]["candidateCount"];
+        if count.as_f64().is_some_and(|n| n > 1.0 && n.fract() == 0.0) {
+            return Err(Fault::bad_request(
+                "several candidates (candidateCount > 1) cannot be represented",
+            ));
+        }
+        Ok(())
+    }
+
     fn accepts<B>(&self, request: &http::Request<B>) -> bool {
         request.method() == http::Method::POST && call_of(request.uri()).is_some()
     }
