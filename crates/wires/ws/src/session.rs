@@ -56,9 +56,10 @@ use respan_gateway_http_faults::Status;
 /// ahead, so its connection dropping behind a frame not yet taken is seen
 /// at once; a peer quiet for `limits.ping_after` while read is pinged, and
 /// quiet that long again, is gone. A Close is given `limits.close_send` to
-/// leave, and its reason is a fault's code ([`Fault::code`](respan_gateway_core::Fault::code)), never
-/// its message. A `CloseCode` no Close may carry (RFC 6455 7.4) is sent
-/// as 1011. What the client and the provider are told:
+/// leave, and its reason is a fault's message to the client, and its code
+/// ([`Fault::code`](respan_gateway_core::Fault::code)) to a provider. A
+/// `CloseCode` no Close may carry (RFC 6455 7.4) is sent as 1011. What the
+/// client and the provider are told:
 ///
 /// | The end | Provider (input) | Client (output) |
 /// |---|---|---|
