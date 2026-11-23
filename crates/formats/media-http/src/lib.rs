@@ -89,6 +89,7 @@ impl Natives for openai::OpenAiTranscriptions {}
 impl Natives for openai::OpenAiVideos {}
 impl Natives for empiriolabs::EmpirioLabsVideos {}
 impl Natives for gemini::GeminiEmbeddings {}
+impl Natives for gemini::GeminiImagen {}
 impl Natives for gemini::GeminiImages {}
 impl Natives for gemini::GeminiSpeech {}
 impl Natives for gemini::GeminiOmni {}

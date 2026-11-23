@@ -22,7 +22,9 @@ use respan_gateway_media_http::dashscope::{
     DashScopeImages, DashScopeSpeech, DashScopeTranscriptions, DashScopeVideos,
 };
 use respan_gateway_media_http::empiriolabs::EmpirioLabsVideos;
-use respan_gateway_media_http::gemini::{GeminiEmbeddings, GeminiImages, GeminiOmni, GeminiSpeech};
+use respan_gateway_media_http::gemini::{
+    GeminiEmbeddings, GeminiImagen, GeminiImages, GeminiOmni, GeminiSpeech,
+};
 use respan_gateway_media_http::minimax::{MiniMaxSpeech, MiniMaxVideos};
 use respan_gateway_media_http::openai::{
     OpenAiEmbeddings, OpenAiImages, OpenAiSpeech, OpenAiTranscriptions, OpenAiVideos,
@@ -213,6 +215,7 @@ mod endpoints {
     ];
     pub const SPEECH: &[&str] = &["POST /v1/audio/speech"];
     pub const EMBEDDINGS: &[&str] = &["POST /v1/embeddings"];
+    pub const PREDICT: &[&str] = &["POST /v1beta/models/{model}:predict"];
     pub const EMBED_CONTENT: &[&str] = &[
         "POST /v1beta/models/{model}:embedContent",
         "POST /v1beta/models/{model}:batchEmbedContents",
@@ -293,6 +296,8 @@ pub fn formats() -> Vec<KnownFormat> {
             draws,
         )
         .model(Model::of(image::Input::model, image::Input::set_model)),
+        KnownFormat::of(kind::IMAGE, endpoints::PREDICT, GeminiImagen)
+            .model(Model::of(image::Input::model, image::Input::set_model)),
         session(kind::REALTIME, GeminiLive, GeminiLive::PATH, true).model(realtime()),
         session(
             kind::REALTIME,
