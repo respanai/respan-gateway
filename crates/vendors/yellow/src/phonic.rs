@@ -13,6 +13,7 @@ const REALTIME_URL: &str = "wss://api.phonic.ai/v1";
 pub const VENDOR: Vendor = Vendor {
     id: "phonic",
     key_env: &["PHONIC_API_KEY"],
+    client_header: None,
     formats: &[(&PhonicSts, Some(REALTIME_URL))],
     models: no_models,
     format_for: None,

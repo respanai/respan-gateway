@@ -16,6 +16,7 @@ pub mod groq;
 pub mod minimax;
 pub mod mistral;
 pub mod morph;
+pub mod nace;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
@@ -46,6 +47,7 @@ pub const ALL: &[&Vendor] = &[
     &minimax::VENDOR,
     &together::VENDOR,
     &fireworks::VENDOR,
+    &nace::VENDOR,
     &azure::VENDOR,
     &vllm::VENDOR,
     &cloudflare::VENDOR,
