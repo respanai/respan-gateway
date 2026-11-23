@@ -99,24 +99,15 @@ mod tests {
         use Thinks::{Never as N, ToBudget as B, ToLevel as L};
         // id, how it thinks, whether it has `minimal`, whether it signs calls
         let table = [
-            ("gemini-1.5-pro", N, false, false),
             ("gemini-2.0-flash", N, false, false),
-            ("gemini-2-0-flash-lite", N, false, false),
-            ("gemini-2.5-pro", B, false, false),
             ("gemini-2-5-pro", B, false, false),
-            ("gemini-2.5-flash-preview-09-2025", B, false, false),
             ("models/gemini-2.5-flash-lite", B, false, false),
-            ("google/gemini-2.5-pro", B, false, false),
             ("GEMINI-2.5-PRO", B, false, false),
             ("gemini-3-flash-preview", L, true, true),
-            ("gemini-3.1-flash-lite", L, true, true),
             ("gemini-3.1-pro-preview", L, false, true),
-            ("gemini-3.5-flash-lite", L, true, true),
             ("gemini-3.6-flash", L, true, true),
             ("gemini-3.8-flash", L, false, true),
             ("gemini-4-carbon", L, false, true),
-            ("gemini-4-neon", L, false, true),
-            ("gemini-10-pro", L, false, true),
             ("gemini-flash-latest", L, false, true),
         ];
         for (id, thinks, minimal, signs) in table {

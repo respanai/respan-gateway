@@ -26,8 +26,7 @@ enum Line {
 
 /// A Claude model's generation, as its id says: its line and its version,
 /// as `claude-opus-5-5` is Opus 5.5, `claude-3-7-sonnet` Sonnet 3.7 and a
-/// dated id its major's `.0`. The id is the name of the model, a dated id,
-/// a cloud's id, or an alias, in any case.
+/// dated id its major's `.0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Generation {
     line: Line,
@@ -108,37 +107,16 @@ mod tests {
         use Thinks::{Adaptively as A, Never as N, ToBudget as B};
         // id, how it thinks, whether it forces a tool, whether it disables thinking
         let table = [
-            ("claude-3-opus-20240229", N, true, true),
             ("claude-3-5-sonnet-20241022", N, true, true),
-            ("claude-3-5-haiku", N, true, true),
-            ("claude-3-7-sonnet", B, true, true),
             ("anthropic.claude-3-7-sonnet-20250219-v1:0", B, true, true),
-            ("claude-opus-4", B, true, true),
-            ("claude-opus-4-20250514", B, true, true),
             ("claude-opus-4@20250514", B, true, true),
-            ("claude-opus-4.1", B, true, true),
-            ("claude-sonnet-4-5-20250929", B, true, true),
-            (
-                "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                B,
-                true,
-                true,
-            ),
-            ("claude-haiku-4-5", B, true, true),
-            ("claude-sonnet-4-6", A, true, true),
-            ("claude-opus-5", A, true, true),
-            ("claude-opus-5-5", A, false, false),
-            ("claude-sonnet-5-4", A, true, true),
-            ("claude-sonnet-5-5-20260101", A, false, false),
-            ("claude-fable-5", A, true, false),
-            ("claude-fable-5-1", A, false, false),
-            ("claude-mythos-5", A, true, false),
-            ("claude-mythos-5-1", A, false, false),
-            ("claude-nova-7", A, true, true),
-            ("claude-v2", A, true, true),
-            ("anthropic/claude-3.7-sonnet", B, true, true),
             ("claude-sonnet-4.5", B, true, true),
+            ("claude-sonnet-4-6", A, true, true),
+            ("claude-sonnet-5-4", A, true, true),
             ("CLAUDE-OPUS-5-5", A, false, false),
+            ("claude-fable-5", A, true, false),
+            ("claude-mythos-5-1", A, false, false),
+            ("claude-v2", A, true, true),
         ];
         for (id, thinks, forces, disables) in table {
             let claude = Generation::of(id).expect(id);

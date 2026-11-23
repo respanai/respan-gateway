@@ -228,12 +228,10 @@ the one its model takes: `minimal` only where the model has it (the flash
 lines of Gemini 3 up to 3.7), else `low`.
 
 What a model takes is its generation's, read from its id once (each
-format's `generation` module): its line and its version, as
-`claude-opus-5-5` is Opus 5.5 and `gemini-2.5-flash` Flash 2.5, whatever
-prefix, date or case the id has. A Claude whose id says no version, and a
-Gemini whose id opens with its line, as `gemini-flash-latest` does, is taken
-for the latest; any other model, one of a line with versions of its own such
-as `gemini-nano-banana-2.1` among them, is written as the spec has it.
+format's `generation` module): its line and its version, whatever prefix,
+date or case the id has. A Claude that says no version, and
+`gemini-flash-latest`, are taken for the latest; any other model is written
+as the spec has it.
 
 ## Finish
 
