@@ -286,6 +286,12 @@ pub(crate) fn fits(delta: &Delta, block: &Block) -> bool {
     )
 }
 
+/// The server a call the gateway ran is said to be of, in a format that
+/// names one (Responses' `server_label`, Anthropic's `server_name`): its
+/// reader takes such a call, with its result, back as the kind's tool call
+/// and result, and leaves a server's of another name as it is.
+pub(crate) const GATEWAY_SERVER: &str = "respan-gateway";
+
 /// Whether a block is a step the gateway ran: a call of its own, or the
 /// result after it.
 pub(crate) fn is_gateway_step(kind: &Block) -> bool {

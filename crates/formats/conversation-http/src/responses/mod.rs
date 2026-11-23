@@ -10,7 +10,9 @@
 //! and `input_file` parts), an assistant's function calls and reasoning, and
 //! function call outputs as the results of a user message. Consecutive items
 //! of an assistant are one assistant message (`request` says how an item's own
-//! fields are kept). Function
+//! fields are kept). An `mcp_call` of the server `respan-gateway`, a call the
+//! gateway ran, is the assistant's tool call, and its output or error a user's
+//! message of its result after it. Function
 //! tools, `tool_choice`, `parallel_tool_calls`, `max_output_tokens`,
 //! `temperature`, `top_p`, `user`, `text.format` and `reasoning` (its `effort`,
 //! and a `summary` of `auto`) are the kind's.
@@ -64,7 +66,14 @@
 //! part, delta, `done` events, and the terminal event with the response
 //! whole), one item at a time, with ids and indexes made when the events
 //! have none. A whole body is the response, its `output` the blocks in the
-//! order they opened.
+//! order they opened. A call the gateway ran ([`Block::GatewayCall`]) and its
+//! result ([`Block::ToolResult`]) are one `mcp_call` item of the server
+//! `respan-gateway`, named by the call's id: its arguments stream as
+//! `response.mcp_call_arguments.delta`, and it ends, `completed` or
+//! `failed`, with its result.
+//!
+//! [`Block::GatewayCall`]: respan_gateway_conversation::Block::GatewayCall
+//! [`Block::ToolResult`]: respan_gateway_conversation::Block::ToolResult
 //!
 //! Not carried: log probabilities, which are written empty.
 //!

@@ -74,6 +74,10 @@ reaches tool servers only through it
 With `[plugins.tool_loop]`, the gateway gives the model the MCP servers'
 tools and runs the calls itself, for any chat format and any provider, and
 in realtime sessions too. The client sees one ordinary reply.
+A Responses client also sees in it each call the gateway ran with its
+result, as an `mcp_call` item of the server `respan-gateway`: kept in the
+history it sends back, they are the model's tool calls and results on its
+next turn.
 
 Chat Completions and Gemini have no place for a tool's result, so the
 gateway's tool calls are not returned to their clients: to keep them in the
