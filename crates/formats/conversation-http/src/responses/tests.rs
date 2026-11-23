@@ -1193,3 +1193,193 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+/// A reply in which the gateway ran two calls, the second failing, between
+/// two texts.
+fn ran_reply() -> Vec<Output> {
+    let ran = |block: u32, id: &str, arguments: &str, answer: &str, is_error| {
+        let call = Block::GatewayCall {
+            id: id.into(),
+            name: "gh__search".into(),
+        };
+        let result = Block::ToolResult {
+            id: id.into(),
+            is_error,
+        };
+        [
+            Output::block_start(block, call),
+            Output::arguments(block, arguments),
+            Output::block_end(block),
+            Output::block_start(block + 1, result),
+            Output::result(block + 1, answer),
+            Output::block_end(block + 1),
+        ]
+    };
+    let text = |block: u32, text: &str| {
+        [
+            Output::block_start(block, Block::Text),
+            Output::text(block, text),
+            Output::block_end(block),
+        ]
+    };
+    let mut events = vec![Output::start("resp_1", "m")];
+    events.extend(text(0, "Looking."));
+    events.extend(ran(1, "call_1", "{\"q\":\"rust\"}", "found rust", false));
+    events.extend(ran(3, "call_2", "{}", "no access", true));
+    events.extend(text(5, "Done."));
+    events.extend([
+        Output::usage(Usage::new(5, 2)),
+        Output::finished(Finish::Stop),
+    ]);
+    events
+}
+
+/// The `mcp_call` item of a call the gateway ran.
+fn ran_item(id: &str, arguments: &str, output: Value, error: Value, status: &str) -> Value {
+    json!({ "id": id, "type": "mcp_call", "status": status, "server_label": "respan-gateway",
+        "name": "gh__search", "arguments": arguments, "output": output, "error": error })
+}
+
+#[test]
+fn a_call_the_gateway_ran_is_an_mcp_call_item_with_its_result() {
+    let replies = ran_reply();
+    let found = ran_item(
+        "call_1",
+        "{\"q\":\"rust\"}",
+        json!("found rust"),
+        Value::Null,
+        "completed",
+    );
+    let failed = ran_item("call_2", "{}", Value::Null, json!("no access"), "failed");
+    let body = body_of(&replies).expect("a body");
+    let output = body["output"].as_array().cloned().unwrap_or_default();
+    assert_eq!(output.len(), 4);
+    assert_eq!((&output[1], &output[2]), (&found, &failed));
+    let events = stream_of(&replies).expect("a stream");
+    let message = [
+        "response.output_item.added",
+        "response.content_part.added",
+        "response.output_text.delta",
+        "response.output_text.done",
+        "response.content_part.done",
+        "response.output_item.done",
+    ];
+    let call = |ended| {
+        [
+            "response.output_item.added",
+            "response.mcp_call_arguments.delta",
+            "response.mcp_call_arguments.done",
+            "response.mcp_call.in_progress",
+            ended,
+            "response.output_item.done",
+        ]
+    };
+    let mut expected = vec!["response.created", "response.in_progress"];
+    expected.extend(message);
+    expected.extend(call("response.mcp_call.completed"));
+    expected.extend(call("response.mcp_call.failed"));
+    expected.extend(message);
+    expected.push("response.completed");
+    assert_eq!(types(&events), expected);
+    // The call opens running, says its arguments, and ends with its result.
+    let running = ran_item("call_1", "", Value::Null, Value::Null, "in_progress");
+    assert_eq!(events[8]["item"], running);
+    assert_eq!(
+        (
+            &events[9]["item_id"],
+            &events[9]["output_index"],
+            &events[9]["delta"]
+        ),
+        (&json!("call_1"), &json!(1), &json!("{\"q\":\"rust\"}"))
+    );
+    assert_eq!(events[10]["arguments"], "{\"q\":\"rust\"}");
+    assert_eq!(events[12]["item_id"], "call_1");
+    assert_eq!(events[13]["item"], found);
+    assert_eq!(events[19]["item"], failed);
+    assert_eq!(events[26]["response"]["output"], json!(output));
+}
+
+#[test]
+fn a_history_with_the_gateways_calls_reads_as_its_tool_turns() {
+    let output = body_of(&ran_reply()).expect("a body")["output"].clone();
+    let mut input = vec![json!({ "role": "user", "content": "find rust" })];
+    input.extend(output.as_array().cloned().unwrap_or_default());
+    input.push(json!({ "role": "user", "content": "thanks" }));
+    let v = json!({ "model": "m", "input": input });
+    let chat = decode_request(&v);
+    let roles: Vec<Role> = chat.messages.iter().map(|m| m.role.clone()).collect();
+    use Role::{Assistant, User};
+    assert_eq!(
+        roles,
+        [User, Assistant, User, Assistant, User, Assistant, User]
+    );
+    let steps: Vec<&Content> = (chat.messages.iter().flat_map(|m| &m.content))
+        .filter(|c| matches!(c, Content::ToolCall { .. } | Content::ToolResult { .. }))
+        .collect();
+    let answer = |id: &str, text: &str, is_error| {
+        Content::tool_result(id, vec![Content::from(text)], is_error)
+    };
+    assert_eq!(
+        steps,
+        [
+            &Content::tool_call("call_1", "gh__search", "{\"q\":\"rust\"}"),
+            &answer("call_1", "found rust", false),
+            &Content::tool_call("call_2", "gh__search", "{}"),
+            &answer("call_2", "no access", true),
+        ]
+    );
+    // The model is sent them as its own tool turns: in Responses, its
+    // function calls and their outputs.
+    let sent = round_trip(&v);
+    let kinds: Vec<&str> = (sent["input"].as_array().into_iter().flatten())
+        .map(|item| item["type"].as_str().unwrap_or("message"))
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "message",
+            "message",
+            "function_call",
+            "function_call_output",
+            "function_call",
+            "function_call_output",
+            "message",
+            "message",
+        ]
+    );
+    assert_eq!(sent["input"][5]["output"], "Error: no access");
+    let anthropic = AnthropicMessages.encode_request(&chat).expect("written");
+    assert_eq!(
+        anthropic["messages"][2]["content"],
+        json!([{ "type": "tool_result", "tool_use_id": "call_1", "content": "found rust" }])
+    );
+}
+
+#[test]
+fn another_servers_mcp_call_stays_an_item() {
+    let item = json!({ "id": "mcp_1", "type": "mcp_call", "status": "completed",
+        "server_label": "deepwiki", "name": "ask", "arguments": "{}", "output": "42", "error": null });
+    let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }, item] });
+    assert_eq!(round_trip(&v), v);
+    let sent = AnthropicMessages
+        .encode_request(&decode_request(&v))
+        .expect("written");
+    assert_eq!(
+        sent["messages"],
+        json!([{ "role": "user", "content": "hi" }])
+    );
+}
+
+#[test]
+fn a_conversation_reads_a_call_the_gateway_ran_back_by_its_id() {
+    let output = body_of(&ran_reply()).expect("a body")["output"].clone();
+    let items = output.as_array().cloned().unwrap_or_default();
+    let messages = conversations::messages(&items).expect("read");
+    let ids: Vec<&str> = (messages.iter().flat_map(|m| &m.content))
+        .filter_map(|c| match c {
+            Content::ToolCall { id, .. } | Content::ToolResult { id, .. } => Some(id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["call_1", "call_1", "call_2", "call_2"]);
+}

@@ -29,6 +29,13 @@
 //! Anthropic does: a block that opens while another is open waits, with its
 //! deltas, until that one ends. A whole body is written from the events
 //! collected, empty text blocks left out, as Anthropic refuses them.
+//!
+//! A call the gateway ran ([`Block::GatewayCall`]) is an `mcp_tool_use` block
+//! of the server `respan-gateway`, and its result ([`Block::ToolResult`]) the
+//! `mcp_tool_result` after it, which a stream writes whole as it ends, as
+//! Anthropic sends a server's. A request's assistant message with such a
+//! pair has it read back as the kind's tool call, and its result a user's
+//! message after it; another server's blocks stay native.
 
 mod decode;
 mod encode;
@@ -38,10 +45,10 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Own, Schema, UsageFields, arguments_object, check_usage, claude_sampling, count,
-    decode_content, decode_message, edit_native, encode_content, encode_message, merge_details,
-    merge_fields, merge_into, merge_missing, own_fields, says, sealed, set, stop_json,
-    unsupported_fields, unwritable_content, usage_extra,
+    Asked, GATEWAY_SERVER, Names, Own, Schema, UsageFields, arguments_object, check_usage,
+    claude_sampling, count, decode_content, decode_message, edit_native, encode_content,
+    encode_message, merge_details, merge_fields, merge_into, merge_missing, own_fields, says,
+    sealed, set, stop_json, unsupported_fields, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Content, Finish, Input, Message, Output, Role, Usage,
@@ -57,7 +64,8 @@ use decode::AnthropicDecoder;
 use encode::EventStream;
 pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
 use request::{
-    read_effort, read_output, read_thinking, read_tools_of, signed, write_output, write_tools,
+    ran_steps, read_effort, read_output, read_thinking, read_tools_of, signed, write_output,
+    write_tools,
 };
 
 /// The `max_tokens` of a translated request without one, as it is required.
@@ -312,7 +320,7 @@ impl Schema for AnthropicMessages {
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES)?;
             signed(&mut message, &m["content"]);
-            chat.messages.push(message);
+            chat.messages.extend(ran_steps(message)?);
         }
         read_tools_of(v, &mut chat);
         read_output(v, &mut chat);
@@ -410,6 +418,14 @@ impl Schema for AnthropicMessages {
                                 arguments_object(&part.text).map_err(|_| unwritable_content())?;
                             json!({ "type": "tool_use", "id": id, "name": name, "input": input })
                         }
+                        Block::GatewayCall { id, name } => {
+                            let input =
+                                arguments_object(&part.text).map_err(|_| unwritable_content())?;
+                            let mut call = ran_call(id, name);
+                            call["input"] = input;
+                            call
+                        }
+                        Block::ToolResult { id, is_error } => ran_result(id, *is_error, &part.text),
                         _ => return Err(unwritable_content()),
                     };
                     let mut block = block;
@@ -508,6 +524,24 @@ impl Schema for AnthropicMessages {
         let error = json!({ "type": fault.code(), "message": fault.message() });
         json!({ "type": "error", "error": merge_details(error, fault) })
     }
+}
+
+/// A call the gateway ran, as an `mcp_tool_use` block of its server
+/// ([`GATEWAY_SERVER`]), its input yet to come.
+fn ran_call(id: &str, name: &str) -> Value {
+    json!({
+        "type": "mcp_tool_use", "id": id, "name": name, "server_name": GATEWAY_SERVER,
+        "input": {},
+    })
+}
+
+/// What the tool of a call the gateway ran answered, as an
+/// `mcp_tool_result` block.
+fn ran_result(id: &str, is_error: bool, text: &str) -> Value {
+    let content = json!([{ "type": "text", "text": text }]);
+    json!({
+        "type": "mcp_tool_result", "tool_use_id": id, "is_error": is_error, "content": content,
+    })
 }
 
 /// What a `message_delta` [`Output::Native`] says beyond the finish and usage:

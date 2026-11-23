@@ -1,8 +1,8 @@
 //! Events as Gemini generateContent, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Own, Schema, arguments_object, check_usage, merge_fields, merge_into, own_fields,
-    unwritable_content,
+    Gate, GatewaySteps, Own, Schema, arguments_object, check_usage, merge_fields, merge_into,
+    own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;
@@ -199,6 +199,9 @@ pub(super) struct EventStream {
     blocks: Vec<Slot>,
     /// The fields of blocks that have not opened, by block.
     pending: Vec<(u32, Map<String, Value>)>,
+    /// The steps the gateway ran, which Gemini has no part for: left out.
+    // WARN: a call the gateway ran and its result are dropped.
+    steps: GatewaySteps,
     gate: Gate,
 }
 
@@ -339,6 +342,9 @@ impl EventStream {
 
 impl EventStream {
     pub(crate) fn encode_into(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if self.steps.leaves_out(reply) {
+            return Ok(());
+        }
         let mut made = BytesMut::new();
         self.write(reply, &mut made)?;
         self.gate.pass(reply, &made, out);

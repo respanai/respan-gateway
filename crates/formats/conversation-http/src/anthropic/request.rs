@@ -4,19 +4,20 @@
 //! `native` of the request, the tool or the part.
 
 use crate::schema::{
-    EFFORT_BUDGETS, arguments_object, base64_field, decode_content, decode_tools, each_tool,
-    edit_native, effort_for, encode_content, merge_missing, only, read_search, remainder,
-    required_str, rest_of, set, take_native, untranslatable, write_search,
+    EFFORT_BUDGETS, GATEWAY_SERVER, arguments_object, base64_field, decode_content, decode_tools,
+    each_tool, edit_native, effort_for, encode_content, merge_missing, only, read_search,
+    remainder, required_str, rest_of, set, take_native, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
     Content, Effort, Input, Media, MediaSource, Message, ProviderTool, Reasoning, ResponseFormat,
-    Tool, ToolChoice,
+    Role, Tool, ToolChoice,
 };
 use respan_gateway_core::Fault;
 use respan_gateway_core::Native;
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
 
 use crate::anthropic::AnthropicMessages;
 use crate::anthropic::output_schema::output_schema;
@@ -276,6 +277,84 @@ fn tool_part(block: &Value) -> Option<Result<Content, Fault>> {
         }
         _ => None,
     }
+}
+
+/// `m` with the steps the gateway ran, an `mcp_tool_use` of its server
+/// ([`GATEWAY_SERVER`]) and the `mcp_tool_result` that answers it in the same
+/// message, read as the kind's tool call and result: the results end the
+/// assistant's message as a user's after it, and what follows them is the
+/// assistant's next. Another server's blocks, and a call without its
+/// result, stay as they are.
+pub(crate) fn ran_steps(m: Message) -> Result<Vec<Message>, Fault> {
+    /// The block a part holds as this format kept it.
+    fn block(c: &Content) -> Option<&Value> {
+        match c {
+            Content::Native(native) => AnthropicMessages::value(native),
+            _ => None,
+        }
+    }
+    let ran: HashSet<String> = (m.content.iter())
+        .filter_map(block)
+        .filter(|b| b["type"] == "mcp_tool_use" && b["server_name"] == GATEWAY_SERVER)
+        .filter_map(|b| b["id"].as_str().map(str::to_owned))
+        .collect();
+    if m.role != Role::Assistant || ran.is_empty() {
+        return Ok(vec![m]);
+    }
+    // Each part that is such a step, as the kind's call or result.
+    let mut read: Vec<Option<Content>> = Vec::with_capacity(m.content.len());
+    for part in &m.content {
+        let step = block(part).and_then(|b| match b["type"].as_str() {
+            Some("mcp_tool_use") if ran.contains(b["id"].as_str()?) => {
+                let mut call = b.clone();
+                call["type"] = "tool_use".into();
+                call.as_object_mut()?.shift_remove("server_name");
+                tool_part(&call)
+            }
+            Some("mcp_tool_result") if ran.contains(b["tool_use_id"].as_str()?) => {
+                let mut result = b.clone();
+                result["type"] = "tool_result".into();
+                tool_part(&result)
+            }
+            _ => None,
+        });
+        read.push(step.transpose()?);
+    }
+    // The calls read whose result was read after them.
+    let mut called: HashSet<&str> = HashSet::new();
+    let mut answered: HashSet<String> = HashSet::new();
+    for step in read.iter().flatten() {
+        match step {
+            Content::ToolCall { id, .. } => _ = called.insert(id),
+            Content::ToolResult { id, .. } if called.contains(id.as_str()) => {
+                answered.insert(id.clone());
+            }
+            _ => {}
+        }
+    }
+    let mut turns = vec![Message::new(Role::Assistant, "")];
+    turns[0].content.clear();
+    turns[0].native = m.native;
+    for (part, step) in m.content.into_iter().zip(read) {
+        let part = match step {
+            Some(Content::ToolCall { id, .. } | Content::ToolResult { id, .. })
+                if !answered.contains(&id) =>
+            {
+                part
+            }
+            Some(step) => step,
+            None => part,
+        };
+        let role = match part {
+            Content::ToolResult { .. } => Role::User,
+            _ => Role::Assistant,
+        };
+        match turns.last_mut() {
+            Some(last) if last.role == role => last.content.push(part),
+            _ => turns.push(Message::new(role, part)),
+        }
+    }
+    Ok(turns)
 }
 
 /// Write the fields of a tool part's `native` into its Anthropic `block`:

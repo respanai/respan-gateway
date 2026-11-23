@@ -120,7 +120,8 @@ What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
 them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
-code interpreter, MCP) and the items they make, refusals, and annotations. A
+code interpreter, MCP) and the items they make (but the gateway's own calls,
+[below](#calls-the-gateway-ran)), refusals, and annotations. A
 relay in this format sends them back. A function tool's `strict` is the kind's:
 a tool that does not say it keeps the Responses default, and a tool another
 format sent is written with `strict: false`. Stop sequences have no form in a
@@ -185,6 +186,34 @@ so a profile's id or an ARN is one segment. A stream is the AWS event stream
 (`respan-gateway-eventstream`), not SSE; an `exception` message in it is an
 upstream fault of its type. The module says how each part, option and event
 maps; what Converse has no field for is dropped, or written as its nearest.
+
+## Calls the gateway ran
+
+A call the gateway ran itself, as its tool loop does (`Block::GatewayCall`),
+and its result after it (`Block::ToolResult`) are written as a server that
+runs tools is in each format, of the server `respan-gateway`, for a client
+to keep in its history, not to run:
+
+- Responses: one `mcp_call` item, its `id` the call's and its `server_label`
+  `respan-gateway`, the result its `output`, or the `error` of a call that
+  failed (`status: "failed"`). Streamed, the item is added `in_progress`, its
+  arguments come as `response.mcp_call_arguments.delta` and `.done`, then
+  `response.mcp_call.in_progress`, and as its result ends
+  `response.mcp_call.completed` (or `.failed`) and the item's `done`.
+- Anthropic Messages: an `mcp_tool_use` block of `server_name`
+  `respan-gateway`, its input streamed as `input_json_delta`s, then the
+  `mcp_tool_result` that answers it, whole, as Anthropic sends a server's.
+- Chat Completions and Gemini have no form for a result in a response: both
+  are dropped, and their client gets the answer alone.
+
+A request that sends them back has them read as the conversation had them:
+a Responses `mcp_call` of that server, or an Anthropic `mcp_tool_use` of it
+and the `mcp_tool_result` that answers it in the same message, is a tool call
+of the assistant's, and its result a user's message after it, so a provider
+of any format is sent them as its own tool calls and results. Another
+server's items and blocks, and a call without its result, stay native, as
+before. A conversation of the Responses API keeps such an item's `id`, which
+its result names.
 
 ## Reasoning and sampling
 

@@ -15,7 +15,7 @@ use respan_gateway_http_faults::Status;
 use tokio::time::{Instant, timeout_at};
 
 use super::tools::{limit, run_tools, spend};
-use super::{Limits, Sink, Step, StepReport, Toolbox};
+use super::{Limits, Outcome, Sink, Step, StepReport, ToolReport, Toolbox};
 
 pub(super) struct Run {
     /// Whether the provider takes a tool result flagged as a failure.
@@ -52,7 +52,8 @@ pub(super) struct Reading {
     pub(super) events: BoxStream<'static, Result<Output, Fault>>,
     /// What the model said, whole, for the conversation.
     pub(super) said: Assembled,
-    /// The blocks of the runner's tool calls, which the client never sees.
+    /// The blocks of the runner's tool calls, which the client sees only once
+    /// they ran, each with its result ([`shown`]).
     pub(super) held: HashSet<u32>,
     /// Whether the model called a tool the client must run.
     pub(super) client_calls: bool,
@@ -87,8 +88,7 @@ pub(super) async fn advance(mut run: Run) -> Option<(Chunk, Run)> {
                     Ok(Some(Ok(event))) => event,
                     Ok(None) => match run.end_step(*reading).await {
                         Err(fault) => return Some((vec![Err(fault)], run)),
-                        Ok(Some(last)) => return Some((last, run)),
-                        Ok(None) => continue,
+                        Ok(out) => return Some((out, run)),
                     },
                 };
                 let first = run.steps == 1;
@@ -238,8 +238,9 @@ impl Run {
     }
 
     /// A step's reply ended: the last events for the client if the loop is
-    /// done, else `None` after the tools ran and the next step is ready.
-    async fn end_step(&mut self, reading: Reading) -> Result<Option<Chunk>, Fault> {
+    /// done, else, once the tools ran and the next step is ready, each call
+    /// the runner ran followed by its result.
+    async fn end_step(&mut self, reading: Reading) -> Result<Chunk, Fault> {
         self.usage += reading.usage;
         let calls: Vec<(String, String, String)> = reading
             .said
@@ -271,7 +272,7 @@ impl Run {
                 last.push(Ok(Output::Usage(self.usage)));
             }
             last.extend(reading.finish.map(|finish| Ok(Output::Finish(finish))));
-            return Ok(Some(last));
+            return Ok(last);
         }
         if self.steps >= self.limits.max_steps {
             let message = format!(
@@ -281,8 +282,10 @@ impl Run {
             return Err(limit("tool_loop_max_steps", message));
         }
         let ran = Instant::now();
+        let asked = calls.clone();
         let mut results = run_tools(&self.toolbox, self.limits, self.deadline, calls).await;
         spend(&mut self.budget, &mut results);
+        let (shown, next_block) = shown(reading.next, &asked, &results);
         let mut said = reading.said.replay();
         let mut assistant = Message::new(Role::Assistant, said.remove(0));
         assistant.content.append(&mut said);
@@ -309,7 +312,7 @@ impl Run {
         ) {
             self.input.options.tool_choice = Some(ToolChoice::Auto);
         }
-        self.next_block = reading.next;
+        self.next_block = next_block;
         self.say(StepReport {
             index: self.steps,
             took,
@@ -319,7 +322,7 @@ impl Run {
             tools_took: ran.elapsed(),
         });
         self.phase = Phase::Open;
-        Ok(None)
+        Ok(shown.into_iter().map(Ok).collect())
     }
 
     fn say(&self, report: StepReport) {
@@ -327,4 +330,38 @@ impl Run {
             sink(report);
         }
     }
+}
+
+/// What the client is shown of the calls `asked` that ran, answering
+/// `results`, numbered from `first`: each call ([`Block::GatewayCall`]),
+/// then its result ([`Block::ToolResult`]) as the model read it, a failure's
+/// without the `Error: ` its flag says; and the number the next block gets.
+fn shown(
+    first: u32,
+    asked: &[(String, String, String)],
+    results: &[(String, Outcome, ToolReport)],
+) -> (Vec<Output>, u32) {
+    let mut out = Vec::new();
+    let mut block = first;
+    for ((id, name, arguments), (_, outcome, _)) in asked.iter().zip(results) {
+        let call = Block::GatewayCall {
+            id: id.clone(),
+            name: name.clone(),
+        };
+        let arguments = Some(arguments.as_str()).filter(|a| !a.trim().is_empty());
+        out.push(Output::block_start(block, call));
+        out.push(Output::arguments(block, arguments.unwrap_or("{}")));
+        out.push(Output::block_end(block));
+        let result = Block::ToolResult {
+            id: id.clone(),
+            is_error: outcome.is_error,
+        };
+        out.push(Output::block_start(block + 1, result));
+        if !outcome.text.is_empty() {
+            out.push(Output::result(block + 1, outcome.text.as_str()));
+        }
+        out.push(Output::block_end(block + 1));
+        block += 2;
+    }
+    (out, block)
 }

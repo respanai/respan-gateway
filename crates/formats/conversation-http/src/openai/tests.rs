@@ -2208,3 +2208,54 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+/// A reply, with or without a call the gateway ran and its result between
+/// its texts.
+fn reply_with_steps(ran: bool) -> Vec<Output> {
+    let mut events = vec![Output::start("c1", "gpt")];
+    events.extend(text_events(0, "Looking."));
+    if ran {
+        let call = Block::GatewayCall {
+            id: "call_1".into(),
+            name: "gh__search".into(),
+        };
+        let result = Block::ToolResult {
+            id: "call_1".into(),
+            is_error: false,
+        };
+        events.extend([
+            Output::block_start(1, call),
+            Output::arguments(1, "{}"),
+            Output::block_end(1),
+            Output::block_start(2, result),
+            Output::result(2, "found"),
+            Output::block_end(2),
+        ]);
+    }
+    events.extend(text_events(3, "Done."));
+    events.push(Output::usage(Usage::new(3, 2)));
+    events.push(Output::finished(Finish::Stop));
+    events
+}
+
+/// Chat has no place for a result in a response: a client of it gets what it
+/// got before the gateway's calls were shown.
+#[test]
+fn a_call_the_gateway_ran_and_its_result_are_left_out() {
+    let timeless = |mut v: Value| {
+        if let Some(fields) = v.as_object_mut() {
+            fields.remove("created");
+        }
+        v
+    };
+    let chunks = |ran| {
+        let stream = stream_of(&reply_with_steps(ran), true).expect("a stream");
+        chunks_of(&stream)
+            .into_iter()
+            .map(timeless)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(chunks(true), chunks(false));
+    let body = |ran| timeless(body_of(&reply_with_steps(ran)).expect("a body"));
+    assert_eq!(body(true), body(false));
+}

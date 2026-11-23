@@ -73,7 +73,13 @@ reaches tool servers only through it
 
 With `[plugins.tool_loop]`, the gateway gives the model the MCP servers'
 tools and runs the calls itself, for any chat format and any provider, and
-in realtime sessions too. The client sees one ordinary reply.
+in realtime sessions too. The client sees one ordinary reply. To a
+Responses or Anthropic Messages client, that reply also shows each call the
+gateway ran with its result, as a server's tool use is shown in its format
+(`mcp_call` items; `mcp_tool_use` and `mcp_tool_result` blocks), of the
+server `respan-gateway`. Kept in the history it sends back, they are the
+model's tool calls and results on its next turn. A Chat Completions client
+gets the answer alone.
 
 ```toml
 [plugins.tool_loop]

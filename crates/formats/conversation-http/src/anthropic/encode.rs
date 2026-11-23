@@ -10,7 +10,7 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
+use super::{AnthropicMessages, FINISH, StopFields, USAGE, ran_call, ran_result, usage_body};
 
 /// Writes events as Anthropic's stream: `message_start` at the first need,
 /// each block's events, and at the end `message_delta` and `message_stop`.
@@ -91,6 +91,13 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
+            Block::GatewayCall { id, name } => ran_call(id, name),
+            // A result comes whole as it ends, as Anthropic sends a server's.
+            Block::ToolResult { .. } if !wb.ended => return Ok(()),
+            Block::ToolResult { id, is_error } => {
+                let text = wb.held.take().map(|said| said.as_str().to_owned());
+                ran_result(id, *is_error, &text.unwrap_or_default())
+            }
             _ => return Err(unwritable_content()),
         };
         let held = wb.held.take();
@@ -199,11 +206,13 @@ impl EventStream {
         if wb.ended || !fits(part, &wb.kind) {
             return Err(unwritable_content());
         }
+        let whole = matches!(wb.kind, Block::ToolResult { .. });
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
-            (Some(index), false) => delta(index, part, out),
-            // The block is not open on the wire yet: keep what it says.
-            (None, false) => match &mut wb.held {
+            (Some(index), false) if !whole => delta(index, part, out),
+            // The block is not open on the wire yet, or is said whole as it
+            // ends: keep what it says.
+            _ => match &mut wb.held {
                 Some(held) => held.as_mut_string().push_str(part.as_str()),
                 None => wb.held = Some(part.clone()),
             },
@@ -217,6 +226,12 @@ impl EventStream {
             return Ok(());
         }
         if let Some(index) = wb.index {
+            if let Block::ToolResult { id, is_error } = &wb.kind {
+                let text = wb.held.take().map(|said| said.as_str().to_owned());
+                let mut start = json!({ "type": "content_block_start", "index": index });
+                start["content_block"] = ran_result(id, *is_error, &text.unwrap_or_default());
+                emit(out, start);
+            }
             emit(out, json!({ "type": "content_block_stop", "index": index }));
             self.current = None;
             self.pump(out)?;

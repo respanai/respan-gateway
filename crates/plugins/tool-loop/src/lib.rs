@@ -7,19 +7,28 @@
 //! [`Tools`] runner beside the client's own, calls the provider, and while the
 //! reply calls only the runner's tools it runs them (in parallel), appends the
 //! calls and their results to the conversation and calls again. The client
-//! sees one reply.
+//! sees one reply, those calls and their results in it.
 //!
 //! It stops at a reply that calls no runner tool, which goes to the client;
 //! at a reply that calls a *client* tool (the client runs its own tools; the
-//! runner's calls in that reply are left out of what it sees); at
+//! runner's calls in that reply are not run, and left out of what it sees); at
 //! [`max_steps`](ToolLoop::max_steps), where the last call forbids tools and a
 //! reply that still calls one is refused; and at the wall-clock
 //! [`timeout`](ToolLoop::timeout).
 //!
 //! The reply is one stream: a step's text and client tool calls flow to the
-//! client as they arrive, while the runner's tool calls are held back and run;
-//! the next step's blocks follow, renumbered, in the same reply. Usage is
-//! summed over the steps and sent once, before the finish.
+//! client as they arrive, while the runner's tool calls are held back and
+//! run. Once they ran, each is sent as a [`Block::GatewayCall`], the
+//! [`Block::ToolResult`] the model read right after it (a failure's flagged,
+//! without its `Error: `), in the order the model asked; the next step's
+//! blocks follow, all renumbered, in the same reply. A format with a form
+//! for the pair writes it, and reads it back from the history a client sends
+//! as the call and result the conversation had, so the model reads them on
+//! the client's next turn; another drops it. Usage is summed over the steps
+//! and sent once, before the finish.
+//!
+//! [`Block::GatewayCall`]: respan_gateway_conversation::Block::GatewayCall
+//! [`Block::ToolResult`]: respan_gateway_conversation::Block::ToolResult
 //!
 //! What the model said is replayed to it as the conversation kind holds it:
 //! the text, the reasoning and the calls of a step, in order, each with the
@@ -46,6 +55,8 @@
 mod filter;
 mod live;
 mod steps;
+#[cfg(test)]
+mod tests;
 mod tools;
 
 use std::collections::HashSet;

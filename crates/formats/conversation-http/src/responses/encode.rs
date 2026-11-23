@@ -5,7 +5,8 @@ use super::{RESPONSE_FIELDS, USAGE, USAGE_FIELDS, response_body, status_of};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Gate, Own, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    GATEWAY_SERVER, Gate, Own, check_usage, fits, is_gateway_step, merge_fields, merge_into,
+    unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
@@ -84,6 +85,29 @@ fn item_of(
     Ok(item)
 }
 
+/// A call the gateway ran, as an `mcp_call` item of its server
+/// ([`GATEWAY_SERVER`]) named by the call's id: its `arguments`, and once it
+/// came, its `answer`, the result's text and whether the call failed.
+/// `answered` says whether the result is to come: a call left without one
+/// is `incomplete`.
+fn ran_item(
+    (id, name): (&str, &str),
+    arguments: &str,
+    answer: Option<(&str, bool)>,
+    answered: bool,
+) -> Value {
+    let (status, output, error) = match (answer, answered) {
+        (Some((text, false)), _) => ("completed", text.into(), Value::Null),
+        (Some((text, true)), _) => ("failed", Value::Null, text.into()),
+        (None, false) => ("in_progress", Value::Null, Value::Null),
+        (None, true) => ("incomplete", Value::Null, Value::Null),
+    };
+    json!({
+        "id": id, "type": "mcp_call", "status": status, "server_label": GATEWAY_SERVER,
+        "name": name, "arguments": arguments, "output": output, "error": error,
+    })
+}
+
 /// The fields of a native of `kind` that carries only `fields`.
 fn fields_only<'a>(raw: &'a Value, kind: &str) -> Option<&'a Map<String, Value>> {
     (raw["type"] == kind).then_some(())?;
@@ -127,6 +151,23 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
     let mut output: Vec<Value> = Vec::new();
     for item in whole.items() {
         match item {
+            // A call the gateway ran is one item with its result.
+            AssembledItem::Block(part) if is_gateway_step(&part.kind) => {
+                if let Block::GatewayCall { id, name } = &part.kind {
+                    let answer = whole.blocks().find_map(|b| match &b.kind {
+                        Block::ToolResult { id: of, is_error } if of == id => {
+                            Some((b.text.as_str(), *is_error))
+                        }
+                        _ => None,
+                    });
+                    let arguments = if part.text.is_empty() {
+                        "{}"
+                    } else {
+                        &part.text
+                    };
+                    output.push(ran_item((id, name), arguments, answer, true));
+                }
+            }
             AssembledItem::Block(part) => {
                 let prefix = match part.kind {
                     Block::Text => "msg",
@@ -196,7 +237,9 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
 /// terminal event with the response whole.
 ///
 /// Items are written one at a time, as Responses does: a block that opens
-/// while another is open waits, with its deltas, until that one ends.
+/// while another is open waits, with its deltas, until that one ends. A call
+/// the gateway ran and its result are one `mcp_call` item, which ends with
+/// its result.
 #[derive(Debug, Default)]
 pub(super) struct Events {
     start: Option<Start>,
@@ -239,6 +282,27 @@ struct Slot {
     annotations: Vec<Value>,
     /// Whether its reasoning summary part has begun.
     summary: bool,
+    ended: bool,
+    /// A call the gateway ran: its result, once it opened.
+    answer: Option<Answer>,
+}
+
+impl Slot {
+    /// Whether its item is whole: it ended, and a call the gateway ran has
+    /// its result.
+    fn is_whole(&self) -> bool {
+        let ran = matches!(self.kind, Block::GatewayCall { .. });
+        self.ended && (!ran || self.answer.as_ref().is_some_and(|a| a.ended))
+    }
+}
+
+/// The result of a call the gateway ran, as it comes.
+#[derive(Debug)]
+struct Answer {
+    /// Its block; `None` for one the stream ended without.
+    block: Option<u32>,
+    is_error: bool,
+    text: String,
     ended: bool,
 }
 
@@ -316,18 +380,16 @@ impl Events {
         let fallback = item_id(prefix, self.response_id(), index as usize);
         let slot = self.find(block)?;
         slot.index = Some(index);
-        slot.item_id = match slot.fields.get("id").and_then(Value::as_str) {
-            Some(id) => id.to_owned(),
-            None => fallback,
+        slot.item_id = match (&slot.kind, slot.fields.get("id").and_then(Value::as_str)) {
+            // A call the gateway ran is named by its id, which its result names.
+            (Block::GatewayCall { id, .. }, _) => id.clone(),
+            (_, Some(id)) => id.to_owned(),
+            (_, None) => fallback,
         };
-        let item = item_of(
-            &slot.kind,
-            &slot.item_id,
-            "in_progress",
-            "",
-            &[],
-            &slot.fields,
-        )?;
+        let item = match &slot.kind {
+            Block::GatewayCall { id, name } => ran_item((id, name), "", None, false),
+            kind => item_of(kind, &slot.item_id, "in_progress", "", &[], &slot.fields)?,
+        };
         let (id, held, is_text) = (
             slot.item_id.clone(),
             slot.held.take(),
@@ -361,6 +423,7 @@ impl Events {
         }
         let slot = self.find(block)?;
         let (id, index) = (slot.item_id.clone(), slot.index);
+        let ran = matches!(slot.kind, Block::GatewayCall { .. });
         slot.text.push_str(text);
         let begin_summary = matches!(part, Delta::Reasoning(_)) && !slot.summary;
         slot.summary |= begin_summary;
@@ -369,6 +432,10 @@ impl Events {
             Delta::Text(_) => events.push(json!({
                 "type": "response.output_text.delta", "item_id": id, "output_index": index,
                 "content_index": 0, "delta": text, "logprobs": [],
+            })),
+            Delta::Arguments(_) if ran => events.push(json!({
+                "type": "response.mcp_call_arguments.delta", "item_id": id,
+                "output_index": index, "delta": text,
             })),
             Delta::Arguments(_) => events.push(json!({
                 "type": "response.function_call_arguments.delta", "item_id": id,
@@ -397,6 +464,26 @@ impl Events {
     fn close_wire(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
         let slot = self.find(block)?;
         let (id, index, text) = (slot.item_id.clone(), slot.index, slot.text.clone());
+        if let Block::GatewayCall { id: call, name } = &slot.kind {
+            let answer = (slot.answer.as_ref())
+                .filter(|a| a.block.is_some())
+                .map(|a| (a.text.as_str(), a.is_error));
+            let arguments = if text.is_empty() { "{}" } else { text.as_str() };
+            let item = ran_item((call, name), arguments, answer, true);
+            let kind = match answer {
+                Some((_, false)) => "response.mcp_call.completed",
+                _ => "response.mcp_call.failed",
+            };
+            let ended = json!({ "type": kind, "item_id": id, "output_index": index });
+            self.emit(out, ended);
+            let done =
+                json!({ "type": "response.output_item.done", "output_index": index, "item": item });
+            self.emit(out, done);
+            if let Some(index) = index {
+                self.done.push((index, item));
+            }
+            return Ok(());
+        }
         let item = item_of(
             &slot.kind,
             &id,
@@ -448,12 +535,16 @@ impl Events {
         Ok(())
     }
 
-    /// Opens the waiting blocks, one after another, as far as each has ended.
+    /// Opens the waiting blocks, one after another, as far as each is whole.
     fn pump(&mut self, out: &mut BytesMut) -> Result<(), Fault> {
         while self.current.is_none() && !self.waiting.is_empty() {
             let block = self.waiting.remove(0);
             self.open_wire(block, out)?;
-            match self.find(block)?.ended {
+            let slot = self.find(block)?;
+            if slot.ended && matches!(slot.kind, Block::GatewayCall { .. }) {
+                self.called(block, out)?;
+            }
+            match self.find(block)?.is_whole() {
                 true => self.close_wire(block, out)?,
                 false => self.current = Some(block),
             }
@@ -461,7 +552,76 @@ impl Events {
         Ok(())
     }
 
+    /// Ends the item of `block` if it is the one open on the wire and whole,
+    /// and opens those waiting.
+    fn settle(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
+        if self.current != Some(block) || !self.find(block)?.is_whole() {
+            return Ok(());
+        }
+        self.close_wire(block, out)?;
+        self.current = None;
+        self.pump(out)
+    }
+
+    /// A call the gateway ran ended on the wire: its arguments are whole,
+    /// and it runs until its result comes.
+    fn called(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
+        let slot = self.find(block)?;
+        let (id, index) = (slot.item_id.clone(), slot.index);
+        let arguments = match slot.text.is_empty() {
+            true => "{}".to_owned(),
+            false => slot.text.clone(),
+        };
+        self.emit(
+            out,
+            json!({
+                "type": "response.mcp_call_arguments.done", "item_id": id,
+                "output_index": index, "arguments": arguments,
+            }),
+        );
+        self.emit(
+            out,
+            json!({
+                "type": "response.mcp_call.in_progress", "item_id": id, "output_index": index,
+            }),
+        );
+        Ok(())
+    }
+
+    /// The call the gateway ran whose result is block `block`.
+    fn call_of(&self, block: u32) -> Option<u32> {
+        let answers = |s: &&Slot| s.answer.as_ref().is_some_and(|a| a.block == Some(block));
+        self.blocks.iter().find(answers).map(|s| s.block)
+    }
+
+    /// The result `block` of the call the gateway ran `id`, which joins that
+    /// call's item.
+    fn answer(&mut self, block: u32, id: &str, is_error: bool) -> Result<(), Fault> {
+        if let Some(call) = self.call_of(block) {
+            // A start repeated for a result that is open opens nothing more.
+            let had = self.find(call)?.answer.as_ref();
+            return match had.is_some_and(|a| a.is_error == is_error && !a.ended) {
+                true => Ok(()),
+                false => Err(unwritable_content()),
+            };
+        }
+        let call = (self.blocks.iter_mut())
+            .find(|s| matches!(&s.kind, Block::GatewayCall { id: of, .. } if of == id))
+            .filter(|s| s.answer.is_none())
+            .ok_or_else(unwritable_content)?;
+        call.answer = Some(Answer {
+            block: Some(block),
+            is_error,
+            text: String::new(),
+            ended: false,
+        });
+        Ok(())
+    }
+
     fn open(&mut self, block: u32, kind: &Block, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Block::ToolResult { id, is_error } = kind {
+            return self.answer(block, id, *is_error);
+        }
         if let Some(had) = self.blocks.iter().find(|b| b.block == block) {
             // A start repeated for a block that is open opens nothing more.
             return match had.kind == *kind && !had.ended {
@@ -485,12 +645,21 @@ impl Events {
             annotations: Vec::new(),
             summary: false,
             ended: false,
+            answer: None,
         });
         self.waiting.push(block);
         self.pump(out)
     }
 
     fn say(&mut self, block: u32, part: &Delta, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some(call) = self.call_of(block) {
+            let answer = self.find(call)?.answer.as_mut().filter(|a| !a.ended);
+            let (Some(answer), Delta::Result(text)) = (answer, part) else {
+                return Err(unwritable_content());
+            };
+            answer.text.push_str(text);
+            return Ok(());
+        }
         let slot = self.find(block)?;
         if slot.ended || !fits(part, &slot.kind) {
             return Err(unwritable_content());
@@ -510,16 +679,18 @@ impl Events {
     }
 
     fn close(&mut self, block: u32, out: &mut BytesMut) -> Result<(), Fault> {
+        if let Some(call) = self.call_of(block) {
+            if let Some(answer) = self.find(call)?.answer.as_mut() {
+                answer.ended = true;
+            }
+            return self.settle(call, out);
+        }
         let slot = self.find(block)?;
-        if std::mem::replace(&mut slot.ended, true) {
-            return Ok(());
+        let ended = std::mem::replace(&mut slot.ended, true);
+        if !ended && slot.index.is_some() && matches!(slot.kind, Block::GatewayCall { .. }) {
+            self.called(block, out)?;
         }
-        if slot.index.is_some() {
-            self.close_wire(block, out)?;
-            self.current = None;
-            self.pump(out)?;
-        }
-        Ok(())
+        self.settle(block, out)
     }
 
     /// An annotation of a text block.
@@ -591,9 +762,20 @@ impl Events {
         self.emit(out, v);
     }
 
-    /// Ends every block, then writes the terminal event.
+    /// Ends every block, then writes the terminal event. A call the gateway
+    /// ran ends with what its result said, if any came.
     fn terminate(&mut self, out: &mut BytesMut) -> Result<(), Fault> {
         self.begin(out);
+        for slot in (self.blocks.iter_mut()).filter(|s| matches!(s.kind, Block::GatewayCall { .. }))
+        {
+            let answer = slot.answer.get_or_insert(Answer {
+                block: None,
+                is_error: false,
+                text: String::new(),
+                ended: true,
+            });
+            answer.ended = true;
+        }
         let open: Vec<u32> = self.blocks.iter().map(|b| b.block).collect();
         for block in open {
             self.close(block, out)?;
