@@ -134,7 +134,12 @@ fn shape_of(size: &str) -> Result<(String, &'static str), Fault> {
 fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let unreadable = |what: &str| Fault::upstream(format!("the provider's {NAME} job {what}"));
     let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
-    if let Some(id) = v["task_id"].as_str() {
+    // MiniMax may answer a refusal with a 200, saying it in `base_resp`.
+    let said = v["base_resp"]["status_code"].as_i64().unwrap_or(0);
+    if said != 0 {
+        return Err(super::speech::said_error(said, &v));
+    }
+    if let Some(id) = v["task_id"].as_str().filter(|id| !id.is_empty()) {
         out.push(Output::Job(Job::new(
             format!("{PREFIX}{id}"),
             Status::Queued,
@@ -245,6 +250,20 @@ mod tests {
         };
         let refused = call(&mut head, &content).err().expect("refused");
         assert_eq!(refused.code(), "unsupported");
+    }
+
+    #[test]
+    fn a_refusal_said_in_a_success_is_no_job() {
+        let said = json!({ "task_id": "", "base_resp": { "status_code": 2013, "status_msg": "invalid params" } });
+        let mut out = Vec::new();
+        let refused = read_job(Bytes::from(said.to_string()), &mut out).expect_err("no job");
+        let status = refused.get::<respan_gateway_http_faults::Status>();
+        assert_eq!(status.map(|s| s.0.as_u16()), Some(400));
+        assert_eq!(refused.message(), "invalid params");
+        // Nor is an empty id a job.
+        let mut out = Vec::new();
+        assert!(read_job(Bytes::from(json!({ "task_id": "" }).to_string()), &mut out).is_err());
+        assert!(out.is_empty());
     }
 
     #[test]
