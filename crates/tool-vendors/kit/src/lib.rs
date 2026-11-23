@@ -39,13 +39,13 @@ pub enum KeyIn {
 
 /// A tool vendor: an HTTP API's tools, its key and its base URL.
 pub struct ToolVendor {
-    /// Its name in configuration: `[mcp.<name>] vendor = "<id>"`.
+    /// Its name in configuration: `[tools.<name>] vendor = "<id>"`.
     pub id: &'static str,
     /// The environment variables its key may be in, the first set winning.
     pub key_env: &'static [&'static str],
     /// How it takes the key.
     pub key_in: KeyIn,
-    /// Its base URL; `[mcp.<name>] base_url` moves it.
+    /// Its base URL; `[tools.<name>] base_url` moves it.
     pub base_url: &'static str,
     /// Its tools.
     pub tools: &'static dyn Tools,
