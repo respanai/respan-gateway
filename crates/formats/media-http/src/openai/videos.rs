@@ -454,7 +454,15 @@ fn job_json(job: &Job) -> Result<Map<String, Value>, Fault> {
         "error": error,
     });
     let mut v = v.as_object().cloned().unwrap_or_default();
-    merge_missing(&mut v, job.native.fields::<Key>());
+    let native = job.native.fields::<Key>();
+    // A field the kind could not read, such as a fractional length, was kept
+    // native: it is written as it came, not as the `null` the job says.
+    for (key, value) in v.iter_mut() {
+        if let (true, Some(kept)) = (value.is_null(), native.get(key)) {
+            *value = kept.clone();
+        }
+    }
+    merge_missing(&mut v, native);
     for key in [
         "created_at",
         "progress",
@@ -571,6 +579,21 @@ mod tests {
         let written: Value =
             serde_json::from_slice(&encode_whole(&out).expect("written")).expect("JSON");
         assert_eq!(written, page);
+    }
+
+    #[test]
+    fn a_field_the_kind_could_not_read_is_written_back() {
+        // A compatible vendor's job: a fractional length and an error as text.
+        let job = json!({"id": "video_1", "object": "video", "status": "failed",
+            "model": "sora-2", "seconds": "4.5", "size": "1280x720", "expires_at": null,
+            "error": "content policy violation", "created_at": 1, "progress": 100,
+            "completed_at": null, "remixed_from_video_id": null});
+        let mut out = Vec::new();
+        decode_whole(Bytes::from(job.to_string()), &mut out).expect("read");
+        let written = encode_whole(&out).expect("written");
+        let written: Value = serde_json::from_slice(&written).expect("JSON");
+        assert_eq!(written["seconds"], job["seconds"], "{written}");
+        assert_eq!(written["error"], job["error"], "{written}");
     }
 
     #[test]
