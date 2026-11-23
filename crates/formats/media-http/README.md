@@ -212,6 +212,22 @@ in `x-goog-api-key`.
   usage is its input and output tokens, the rest, such as the tokens of each
   modality, a native `{"usage": {..}}`.
 
+`gemini::GeminiTranscriptions`, named `gemini-transcriptions`: Gemini's
+transcription models (`gemini-3.5-transcribe`) on
+`POST /models/{model}:generateContent`, as a provider only, its key in
+`x-goog-api-key`.
+
+- A call is one user turn: the prompt, if any, as text, then the audio, as
+  `inlineData` (or `fileData`, for audio named by URL). The language is the
+  `languageCodes` of the `generationConfig`'s `audioTranscriptionConfig`, the
+  temperature the config's. A translation is refused, 400, before the call.
+  Its native fields go in the body, such as an `audioTranscriptionConfig` of
+  `wordTimestamp` or `diarization`.
+- The transcript is the text of the answer's `audioTranscription` parts, its
+  words theirs, timed, the last one's end its length, and each part a speaker
+  is named for a segment; usage is `usageMetadata`'s tokens. Audio with no
+  speech is an empty transcript.
+
 `empiriolabs::EmpirioLabsImages`, a provider format of OpenAI's name,
 `openai-images`: OpenAI's images as EmpirioLabs AI serves them, its base URL
 with the version (`https://api.empiriolabs.ai/v1`). An image it did not
