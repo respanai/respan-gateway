@@ -60,7 +60,10 @@ impl Client {
             }
             Some("tool_call_output") => {
                 let id = take(&mut rest, &["tool_call_id"], string, text);
-                let output = take(&mut rest, &["output"], answered, |s| Some(answer(s)));
+                // Text that is JSON, such as "42", is that text; it stays
+                // native too, for Phonic to be sent it as text again.
+                let output = take(&mut rest, &["output"], answered, |s| Some(answer(s)))
+                    .or_else(|| rest["output"].as_str().map(str::to_owned));
                 id.zip(output).map(|(id, output)| {
                     let mut result = ToolResult::new(id, output);
                     result.native = Native::json::<Key>(rest);
@@ -160,9 +163,15 @@ impl Provider {
             Input::Commit { .. } => refuse("a commit under the provider's voice detection"),
             Input::ToolResult(result) => {
                 self.answered = true;
+                let native = result.native.fields::<Key>();
+                // What a Phonic client sent as text stays text.
+                let output = match native.get("output") {
+                    Some(Value::String(said)) if *said == result.output => said.as_str().into(),
+                    _ => answer(&result.output),
+                };
                 let mut v = json!({"type": "tool_call_output", "tool_call_id": result.id,
-                    "output": answer(&result.output)});
-                merge(&mut v, result.native.fields::<Key>());
+                    "output": output});
+                merge(&mut v, native);
                 Ok(vec![v])
             }
             Input::Respond { .. } if std::mem::take(&mut self.answered) => Ok(Vec::new()),
