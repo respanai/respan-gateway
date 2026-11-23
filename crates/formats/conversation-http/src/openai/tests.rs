@@ -219,6 +219,48 @@ fn calls_without_an_index_are_told_apart_by_their_id() {
 }
 
 #[test]
+fn calls_of_one_index_are_told_apart_by_their_id() {
+    let (out, _) = decode_all(&[
+        "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"a\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"x\\\":1}\"}}]}}]}\n\n",
+        "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"b\",\"function\":{\"name\":\"g\",\"arguments\":\"{\\\"y\\\":\"}}]}}]}\n\n",
+        "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"2}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: [DONE]\n\n",
+    ]);
+    assert_eq!(
+        out[1..],
+        [
+            Output::block_start(0, call("a", "f")),
+            Output::arguments(0, "{\"x\":1}"),
+            Output::block_end(0),
+            Output::block_start(1, call("b", "g")),
+            Output::arguments(1, "{\"y\":"),
+            Output::arguments(1, "2}"),
+            Output::block_end(1),
+            Output::finished(Finish::ToolUse),
+        ]
+    );
+}
+
+#[test]
+fn a_call_that_names_its_id_again_stays_one_call() {
+    let (out, _) = decode_all(&[
+        "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"a\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"x\\\":\"}}]}}]}\n\n",
+        "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"a\",\"function\":{\"name\":\"f\",\"arguments\":\"1}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: [DONE]\n\n",
+    ]);
+    assert_eq!(
+        out[1..],
+        [
+            Output::block_start(0, call("a", "f")),
+            Output::arguments(0, "{\"x\":"),
+            Output::arguments(0, "1}"),
+            Output::block_end(0),
+            Output::finished(Finish::ToolUse),
+        ]
+    );
+}
+
+#[test]
 fn blocks_are_numbered_in_the_order_they_open() {
     let (out, _) = decode_all(&[
         "data: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\n",
