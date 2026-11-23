@@ -116,8 +116,8 @@ such as `gpt-live-1` speak, and which OpenAI sends a session with one in),
 `wss://generativelanguage.googleapis.com` for `gemini-live`,
 `wss://api.mistral.ai/v1` for `mistral-realtime`: Mistral's realtime
 transcription, the key a bearer token and the model at `?model=`, which
-transcribes for an OpenAI Realtime or Gemini Live transcription as its own
-clients transcribe with theirs; `wss://api.phonic.ai/v1` for `phonic-sts`:
+transcribes for an OpenAI Realtime transcription as its own clients
+transcribe with OpenAI's and Gemini's models; `wss://api.phonic.ai/v1` for `phonic-sts`:
 Phonic's speech-to-speech, which its models such as `phonic-1` speak, the
 key a bearer token and the model in its `config`.
 A provider that still speaks OpenAI Realtime's beta protocol takes
