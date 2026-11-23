@@ -20,7 +20,6 @@
 
 mod embeddings;
 pub(crate) mod images;
-mod multipart;
 mod speech;
 mod transcriptions;
 mod videos;
@@ -52,7 +51,7 @@ use respan_gateway_http::{ClientIo, Encoder, ProviderIo, Reply, native::Json, ra
 use serde_json::{Map, Value, json};
 use std::sync::LazyLock;
 
-use multipart::Writer;
+use crate::multipart::{self, Writer};
 
 /// A request's fields, from a JSON object or a form: a form's text fields
 /// as strings, those named `name[]` as an array under `name`, and its files

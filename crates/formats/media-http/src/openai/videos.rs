@@ -3,12 +3,12 @@
 //! `GET /videos/{id}/content`, remade by `POST /videos/{id}/remix`, deleted
 //! by `DELETE /videos/{id}` and listed by `GET /videos`.
 
-use super::multipart::{self, Writer};
 use super::{
     Fields, Form, bind_client, bytes_of, file_name, invalid, json_bytes, merge_missing, missing,
     rest_of, sends, set, take_count, take_string, unreadable, whole_json, write_field,
 };
 use crate::edge::{bind_provider, content};
+use crate::multipart::{self, Writer};
 use respan_gateway_core::Provider;
 use respan_gateway_core::{Connection, Fault, Format, Native};
 use respan_gateway_http::bytes::Bytes;
