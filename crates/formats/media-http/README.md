@@ -283,6 +283,8 @@ which `video::VideoJobs` routes a follow-up by.
 - It serves the video only at that URL, so content is refused, 400
   `unsupported`, before any call, as is another format's operation, such as
   OpenAI's remix, delete, list or thumbnail.
+- An answer whose `base_resp.status_code` is not 0 is the fault it says,
+  as for `minimax-speech`, and one with an empty `task_id` is no job.
 
 `gemini::GeminiEmbeddings`, named `gemini-embeddings`: Gemini's embedding
 models on `POST /models/{model}:batchEmbedContents`, its key in
