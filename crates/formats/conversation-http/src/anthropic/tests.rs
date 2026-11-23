@@ -1359,3 +1359,17 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+#[test]
+fn a_jpg_image_is_sent_as_the_jpeg_anthropic_takes() {
+    let image =
+        json!({ "type": "image_url", "image_url": { "url": "data:image/jpg;base64,/9j/4AAQ" } });
+    let body = json!({ "model": "claude-sonnet-4-5",
+        "messages": [{ "role": "user", "content": [image] }] });
+    let chat = OpenAiChat
+        .decode_request(Bytes::from(body.to_string()))
+        .expect("read");
+    let v = Value::Object(AnthropicMessages.encode_request(&chat).expect("written"));
+    let source = &v["messages"][0]["content"][0]["source"];
+    assert_eq!(source["media_type"], "image/jpeg", "{v}");
+}
