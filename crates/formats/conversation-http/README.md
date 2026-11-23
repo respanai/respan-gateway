@@ -55,10 +55,13 @@ can read it (the module docs give each shape): the response's own fields in the 
 `native`, or, when a later chunk changes them, as a native
 `{"response": {..}}`; a choice's and its message's or delta's as a native
 `{"choices": [..]}`; usage's own as a native `{"usage": {..}}`. A vendor's
-departures from the spec, such as reasoning in `reasoning_content`, are its
-plugins' in the [vendors crate](../../vendors/README.md), which read
-these. Reasoning has no field in this format, and is dropped; media in a tool
-result leads the message after the results. An answer's `content` that is
+other departures from the spec are its plugins' in the
+[vendors crate](../../vendors/README.md), which read these. A response's
+reasoning is read from `reasoning_content`, else `reasoning`, where
+OpenAI-compatible vendors that reason say it, and written as
+`reasoning_content`; a request has no field for a past turn's reasoning,
+which is dropped. Media in a tool result leads the message after the
+results. An answer's `content` that is
 an array of `text` and `thinking` parts, as some servers send for a model
 that reasons, is read as its text and reasoning, so a client gets strings;
 content with any other part stays native. A part Chat has no form for
@@ -170,8 +173,8 @@ A response's first candidate is the events: consecutive text parts one text
 block, a function call a tool block (its arguments whole), `STOP` a tool use
 when calls were made. Reasons that filter (`SAFETY`, `RECITATION`, `BLOCKLIST`,
 ..) are filtered, a blocked prompt too; others (`MALFORMED_FUNCTION_CALL`,
-`OTHER`, ..) stay native, and another format refuses them rather than call
-the answer finished. Usage counts the thoughts in the output, and the cached
+`OTHER`, ..) stay native, and another format writes them as a stop. Usage
+counts the thoughts in the output, and the cached
 tokens in the input. A stream with no `finishReason` was cut. Errors are
 `{"error": {"code", "message", "status"}}`.
 
