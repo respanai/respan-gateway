@@ -151,14 +151,14 @@ fn single(v: &Value) -> Option<(&str, &Value)> {
     }
 }
 
-/// A chunk of the user's audio: PCM at the rate its type declares.
+/// A chunk of the user's audio: PCM at the rate its type declares, else at
+/// the 16 kHz the Live API takes natively.
 fn audio(blob: &Value) -> Option<Input> {
     let mut rest = blob.clone();
-    let rate = rest["mimeType"]
-        .as_str()?
-        .strip_prefix("audio/pcm;rate=")?
-        .parse()
-        .ok()?;
+    let rate = match rest["mimeType"].as_str()? {
+        "audio/pcm" => 16_000,
+        mime => mime.strip_prefix("audio/pcm;rate=")?.parse().ok()?,
+    };
     let data = json::take_audio(&mut rest, &["data"])?;
     rest.as_object_mut()?.shift_remove("mimeType");
     let native = match rest.as_object()?.is_empty() {
