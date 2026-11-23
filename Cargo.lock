@@ -1565,7 +1565,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1626,7 +1626,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-conversation"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "respan-gateway-core",
@@ -1636,7 +1636,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-conversation-http"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "percent-encoding",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-core"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-decision"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "respan-gateway-conversation",
  "respan-gateway-core",
@@ -1673,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-decision-http"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "respan-gateway-conversation-http",
  "respan-gateway-core",
@@ -1732,7 +1732,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-http"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "futures",
@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-http-faults"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "http",
@@ -1762,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-http-transport"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "http",
@@ -1777,7 +1777,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "http",
  "respan-gateway-core",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-mcp-http"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "libc",
  "parking_lot",
@@ -1804,7 +1804,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-media"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "respan-gateway-conversation",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-media-http"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "form_urlencoded",
@@ -1834,7 +1834,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-passthrough-http"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "futures",
  "percent-encoding",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-credentials"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "respan-gateway-core",
  "respan-gateway-http",
@@ -1853,7 +1853,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-fallback"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "futures",
  "respan-gateway-core",
@@ -1863,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-mcp-router"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "moka",
  "respan-gateway-core",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-pricing"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "respan-gateway-conversation",
  "respan-gateway-core",
@@ -1891,7 +1891,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-relay"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "respan-gateway-core",
  "respan-gateway-http",
@@ -1899,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-respan"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "parking_lot",
  "respan-gateway-conversation",
@@ -1913,7 +1913,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-responses"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "moka",
  "parking_lot",
@@ -1929,7 +1929,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-routing"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "getrandom 0.3.4",
  "parking_lot",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-plugin-tool-loop"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "futures",
  "parking_lot",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-python"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-realtime"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "respan-gateway-conversation",
@@ -1987,7 +1987,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-realtime-ws"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "form_urlencoded",
@@ -2003,7 +2003,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "parking_lot",
@@ -2013,7 +2013,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-serve"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "bytes",
@@ -2034,7 +2034,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-sse"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "respan-gateway-core",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-tool-vendor-kit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2061,7 +2061,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-tool-vendors"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "respan-gateway-tool-vendor-kit",
@@ -2073,7 +2073,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-tool-vendors-green"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "respan-gateway-tool-vendor-kit",
@@ -2083,7 +2083,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-tool-vendors-yellow"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "respan-gateway-tool-vendor-kit",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-vendor-kit"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "respan-gateway-conversation",
@@ -2113,7 +2113,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-vendors"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "respan-gateway-vendor-kit",
  "respan-gateway-vendors-green",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-vendors-green"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "respan-gateway-conversation",
  "respan-gateway-conversation-http",
@@ -2137,7 +2137,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-vendors-yellow"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "form_urlencoded",
@@ -2158,7 +2158,7 @@ dependencies = [
 
 [[package]]
 name = "respan-gateway-ws"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bytes",
  "futures",

@@ -1,0 +1,27 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; margin: 0; }
+html { width: 800px; height: 400px; } body { width: 615px; height: 308px; overflow: hidden; background: transparent; }
+body { zoom: 1.3; color: #f4f4f6; -webkit-font-smoothing: antialiased; font: 15px/1.4 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+.panel { position: absolute; inset: 0; border-radius: 22px; background: #0b0b0f; box-shadow: inset 0 0 0 1px #24242a; overflow: hidden; padding: 18px 22px; display: flex; flex-direction: column; justify-content: center; }
+.panel::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(143,156,255,.08), transparent 70%); pointer-events: none; }
+.mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -.2px; }
+.lab { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #6b6d76; }
+.box { background: #131317; border-radius: 14px; box-shadow: inset 0 0 0 1px #26262c; }
+.row { display: flex; align-items: center; gap: 10px; }
+.ok { color: #31de4b; } .bad { color: #f55656; } .dim { color: #6b6d76; } .acc { color: #8f9cff; } .mid { color: #b1b3bc; }
+
+.code { padding: 14px 18px; font-size: 16px; line-height: 1.65; }
+.k { color: #8f9cff; } .s { color: #e8c38a; }
+.flow { margin-top: 12px; display: flex; align-items: center; gap: 12px; }
+.chip { padding: 9px 14px; border-radius: 999px; font-size: 14px; }
+.reply { margin-top: 12px; padding: 12px 16px; font-size: 16px; }
+
+</style></head><body><div class="panel">
+<div class="box code mono"><div class="lab" style="margin-bottom:10px">Anthropic SDK</div>
+<span class="k">client</span>.messages.create(<br>
+&nbsp;&nbsp;model=<span class="s">"gpt-6-luna"</span>, …)</div>
+<div class="flow"><span class="box chip mono row"><img src="../vendors/anthropic-dark.svg" style="width:16px;height:16px;flex:none"> messages</span><span class="dim">→</span>
+<span class="box chip mono row"><img src="../vendors/respan-dark.svg" style="width:16px;height:16px;flex:none"> translate</span><span class="dim">→</span>
+<span class="box chip mono row"><img src="../vendors/openai-dark.svg" style="width:16px;height:16px;flex:none"> chat</span></div>
+<div class="box reply row"><img src="../vendors/openai-dark.svg" style="width:20px;height:20px;flex:none"><span>Hello! How can I help today?</span></div>
+</div></body></html>

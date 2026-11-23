@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- Source of docs/assets/hero.jpg. Render: sh docs/assets/hero-src/render.sh
+     Two commands in front; behind them, the kinds of AI the gateway carries. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1600px; height: 760px; overflow: hidden; background: #000; }
+  body { position: relative; color: #f9fafc; -webkit-font-smoothing: antialiased;
+    font: 15px/1.35 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+  .mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+
+  /* the backdrop: a wall of multimodal tiles, fading out toward the commands */
+  .wall { position: absolute; inset: 14px -30px -40px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .colm { display: flex; flex-direction: column; gap: 14px; }
+  .shade { position: absolute; inset: 0; background: rgba(0,0,0,.66); }
+  .t { border-radius: 14px; background: #121216;
+    box-shadow: inset 0 0 0 1px #24242a; padding: 14px; overflow: hidden; }
+  .t .lab { font-size: 11px; letter-spacing: .1em; color: #6b6d76; text-transform: uppercase; margin-bottom: 10px; display: flex; gap: 6px; align-items: center; }
+  .t .lab b { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .bub { padding: 8px 11px; border-radius: 12px; font-size: 14px; margin-top: 6px; max-width: 92%; }
+  .bub.u { background: #2a2a31; margin-left: auto; width: fit-content; }
+  .bub.a { background: #1b1b21; color: #c9cad2; }
+  .art { height: 150px; border-radius: 10px; overflow: hidden; }
+  .frames { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .frames div { height: 64px; border-radius: 6px; overflow: hidden; }
+  .vbar { display: flex; align-items: center; margin-top: 10px; font-size: 12px; color: #8b8d96; }
+  .vbar i { flex: 1; height: 3px; background: #2a2a31; border-radius: 2px; margin: 0 10px; position: relative; }
+  .vbar i::before { content: ""; position: absolute; inset: 0 62% 0 0; background: #f9fafc; border-radius: 2px; }
+  .wave { display: flex; align-items: center; gap: 3px; height: 54px; }
+  .wave span { width: 4px; border-radius: 2px; background: #f9fafc; }
+  .code { font-size: 13px; color: #b1b3bc; white-space: pre; }
+  .code em { color: #f9fafc; font-style: normal; }
+  .fb { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #c3c5ce; margin-top: 6px; }
+  .fb .bad { color: #f55656; margin-left: auto; } .fb .ok { color: #31de4b; margin-left: auto; }
+  .steps { font-size: 13px; color: #b1b3bc; line-height: 1.8; } .steps b { color: #6b6d76; font-weight: 400; margin-right: 8px; }
+  .t s { color: #6b6d76; text-decoration-color: #f55656; text-decoration-thickness: 2px; }
+  .spans { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
+  .spans div { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b8d96; }
+  .spans i { display: block; height: 7px; border-radius: 4px; background: #8f9cff; }
+  .quote { font-size: 16px; color: #e6e7ec; }
+
+  /* the commands */
+  .card { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); width: 1100px;
+    background: rgba(9, 9, 14, .97); border-radius: 22px; overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.09), 0 50px 120px 10px #000, 0 20px 40px -20px rgba(0,0,0,.6); }
+  .bar { position: relative; height: 70px; display: flex; align-items: center; padding: 0 28px; }
+  .bar i { width: 18px; height: 18px; border-radius: 50%; margin-right: 11px; display: block; }
+  .bar .ti { position: absolute; inset: 0; display: flex; justify-content: center; align-items: center; gap: 12px;
+    font-size: 22px; font-weight: 600; letter-spacing: -.02em; color: #f4f4f6; }
+  .bar .ti img { height: 26px; }
+  .card pre { padding: 18px 56px 52px; font-size: 52px; line-height: 1.6; letter-spacing: -.5px; color: #e9e9ee; }
+  .card pre .p { color: #8f9cff; }
+  .cur { display: inline-block; width: 28px; height: 56px; background: #e9e9ee; vertical-align: -10px; margin-left: 10px; }
+</style>
+</head>
+<body>
+<div class="wall" id="wall"></div>
+<div class="shade"></div>
+
+<div class="card">
+  <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i>
+    <span class="ti"><img src="../../vendors/respan-dark.svg" alt="">Get started with Respan Gateway</span></div>
+<pre class="mono"><span class="p">pip install</span> respan-gateway
+<span class="p">respan-gateway</span><span class="cur"></span></pre>
+</div>
+
+<script>
+  // seeded, so every render is the same picture
+  let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // photos generated through gateway.respan.ai (seedream-5.0-flash)
+  const PHOTOS = ['p1', 'p5', 'p2', 'p9', 'p3', 'p6', 'p4', 'p7', 'p8', 'p10'];
+  let pi = 0; const photo = () => PHOTOS[pi++ % PHOTOS.length];
+  const dot = c => `<b style="background:${c}"></b>`;
+  // a chat is labeled with its model, under its maker's mark where we have one
+  const MARK = { openai: 'openai-dark', anthropic: 'anthropic-dark', google: 'gemini', xai: 'xai-dark', deepseek: 'deepseek', mistral: 'mistral' };
+  // marks from respan.ai's landing (dark fill, inverted here); MiniMax flattened as respan.ai does
+  const OWN = { qwen: 'invert(1)', moonshot: 'invert(1)', z_ai: 'invert(1)', minimax: 'brightness(0) invert(.89)' };
+  const model = (maker, id) => (MARK[maker] ? `<img src="../../vendors/${MARK[maker]}.svg" style="width:13px;height:13px">`
+      : `<img src="../logos/${maker}.svg" style="width:13px;height:13px;filter:${OWN[maker]}">`)
+    + `<span style="text-transform:none;letter-spacing:0;color:#c3c5ce">${id}</span>`;
+  const T = {
+    chat: (m, q, a) => `<div class="t"><div class="lab mono">${model(...m)}</div><div class="bub u">${q}</div><div class="bub a">${a}</div></div>`,
+    image: () => `<div class="t"><div class="lab">${dot('#e879f9')}image</div><div class="art"><img src="../img/${photo()}.jpg" style="width:100%;height:100%;object-fit:cover;display:block"></div></div>`,
+    video: t => { const f = photo(), fr = x => `<div><img src="../img/${f}.jpg" style="width:100%;height:100%;object-fit:cover;object-position:${x}% 50%;display:block"></div>`;
+      return `<div class="t"><div class="lab">${dot('#f59e0b')}video</div><div class="frames">${fr(0)}${fr(50)}${fr(100)}</div><div class="vbar mono">▶<i></i>${t}</div></div>`; },
+    voice: () => { let s = ''; for (let i = 0; i < 38; i++) s += `<span style="height:${8 + Math.abs(Math.sin(i * .55)) * rnd() * 46}px"></span>`;
+      return `<div class="t"><div class="lab">${dot('#31de4b')}realtime voice</div><div class="wave">${s}</div></div>`; },
+    embed: () => { const v = []; for (let i = 0; i < 6; i++) v.push((rnd() * 2 - 1).toFixed(3));
+      return `<div class="t"><div class="lab">${dot('#ffb340')}embedding</div><div class="code mono">[${v.slice(0, 3).join(', ')},\n ${v.slice(3).join(', ')}, …]</div></div>`; },
+    fallback: () => `<div class="t"><div class="lab">${dot('#f55656')}fallback</div>
+      <div class="fb mono">${model('anthropic', 'claude-opus-5-5')}<span class="bad">529</span></div>
+      <div class="fb mono">${model('openai', 'gpt-6-luna')}<span class="ok">200</span></div></div>`,
+    loop: () => `<div class="t"><div class="lab">${dot('#8f9cff')}tool loop</div><div class="steps mono"><b>1</b>web_search("…")<br><b>2</b>fetch(url)<br><b>3</b>answer</div></div>`,
+    pii: () => `<div class="t"><div class="lab">${dot('#ffb340')}PII redaction</div><div class="code mono"><s>jane@acme.com</s> → [EMAIL]\n<s>4242 4242 4242</s> → [CARD]</div></div>`,
+    trace: () => `<div class="t"><div class="lab">${dot('#6483f0')}trace · 4 spans · 1.2s</div><div class="spans">
+      <div><i style="width:100%"></i></div><div><i style="width:52%;margin-left:6%"></i></div><div><i style="width:34%;margin-left:60%"></i></div><div><i style="width:18%;margin-left:80%"></i></div></div></div>`,
+    hedge: () => `<div class="t"><div class="lab">${dot('#31de4b')}hedged request</div><div class="fb mono">${model('anthropic', 'claude-opus-5-5')}<span style="margin-left:auto;color:#8b8d96">800ms…</span></div><div class="fb mono">${model('google', 'gemini-3.8-flash')}<span class="ok">won</span></div></div>`,
+    tool: (f, a) => `<div class="t"><div class="lab">${dot('#f55656')}tool call</div><div class="code mono"><em>${f}</em>(${a})</div></div>`,
+  };
+  const C = T.chat;
+  // seven fixed columns, so what does what stays where it can be seen: the edge columns in full,
+  // the top and bottom of the middle ones; chats fill the space behind the commands
+  const COLS = [
+    [C(['anthropic', 'claude-opus-5-5'], 'Refactor this into a hook', 'Here is useInvoices(), with…'), T.image(), C(['openai', 'gpt-6-luna'], 'Summarize this PDF', 'Three points: revenue grew 18%…'), C(['google', 'gemini-4-argon'], 'Translate to Japanese', '承知しました。こちらが…'), T.voice()],
+    [T.fallback(), C(['deepseek', 'deepseek-v4.1-flash'], 'Why is this query slow?', 'It scans orders. Add an index on…'), C(['xai', 'grok-4.7'], 'What moved markets?', 'Tech led; the Nasdaq…'), C(['qwen', 'qwen3.8-max'], 'Write a migration', 'ALTER TABLE users…'), T.pii()],
+    [T.voice(), C(['anthropic', 'claude-sonnet-5-5'], 'Review my PR', 'Two issues: the retry loop never…'), C(['moonshot', 'kimi-k3'], 'Explain this trace', 'The panic comes from…'), C(['openai', 'gpt-6.1-sol'], 'Draft a reply', 'Hi Sam, thanks…'), T.trace()],
+    [C(['mistral', 'mistral-large-3'], 'Résume ce contrat', 'Durée : 24 mois, résiliation…'), T.embed(), C(['z_ai', 'glm-5.3'], 'Plan a trip', 'Day 1: Fushimi Inari…'), C(['google', 'gemini-3.8-flash'], 'Classify tickets', 'billing: 12, bug: 7'), T.video('00:06')],
+    [T.loop(), C(['anthropic', 'claude-haiku-5-5'], 'Extract the dates', '["2026-11-03", "2026-12-01"]'), C(['minimax', 'minimax-m3'], 'Write a tagline', 'Every model. One endpoint.'), C(['openai', 'gpt-6-astra'], 'Is this pure?', 'No: it reads Date.now().'), C(['deepseek', 'deepseek-v4-pro'], 'Prove it terminates', 'The measure n − i strictly…')],
+    [T.hedge(), T.image(), C(['xai', 'grok-4.6'], 'Roast my page', 'Your hero has…'), C(['google', 'gemini-4-argon'], 'What is in this photo?', 'A rainy street…'), C(['anthropic', 'claude-opus-5-5'], 'Write tests for parse()', 'Six cases, including empty input…')],
+    [T.voice(), C(['openai', 'gpt-6-luna'], 'Fix this regex', 'Escape the dot: ^v\\d+\\.\\d+$'), C(['qwen', 'qwen3.7-plus'], '把这段话改得更简洁', '好的，精简后：…'), T.embed(), C(['moonshot', 'kimi-k2.6'], 'Compare these APIs', 'B paginates; A streams…'), T.image()],
+  ];
+  document.getElementById('wall').innerHTML = COLS.map(c => `<div class="colm">${c.join('')}</div>`).join('');
+</script>
+</body>
+</html>

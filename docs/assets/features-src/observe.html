@@ -1,0 +1,34 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; margin: 0; }
+html { width: 800px; height: 400px; } body { width: 615px; height: 308px; overflow: hidden; background: transparent; }
+body { zoom: 1.3; color: #f4f4f6; -webkit-font-smoothing: antialiased; font: 15px/1.4 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+.panel { position: absolute; inset: 0; border-radius: 22px; background: #0b0b0f; box-shadow: inset 0 0 0 1px #24242a; overflow: hidden; padding: 18px 22px; display: flex; flex-direction: column; justify-content: center; }
+.panel::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(143,156,255,.08), transparent 70%); pointer-events: none; }
+.mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -.2px; }
+.lab { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #6b6d76; }
+.box { background: #131317; border-radius: 14px; box-shadow: inset 0 0 0 1px #26262c; }
+.row { display: flex; align-items: center; gap: 10px; }
+.ok { color: #31de4b; } .bad { color: #f55656; } .dim { color: #6b6d76; } .acc { color: #8f9cff; } .mid { color: #b1b3bc; }
+
+.log { padding: 8px 16px; font-size: 13.5px; }
+.lr { display: grid; grid-template-columns: 0 40px 1fr 62px 62px; gap: 10px; align-items: center; padding: 5px 0; border-bottom: 1px solid #1e1e23; }
+.lr:last-child { border: 0; }
+.lr .m { display: flex; align-items: center; gap: 8px; }
+.lr .r { text-align: right; }
+.tr { margin-top: 10px; padding: 11px 16px; }
+.sp { display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; font-size: 13px; margin-top: 5px; }
+.sp i { display: block; height: 10px; border-radius: 5px; background: #8f9cff; }
+
+</style></head><body><div class="panel">
+<div class="box log mono">
+<div class="lr dim" style="font-size:11.5px;letter-spacing:.06em"><span></span><span>CODE</span><span>MODEL</span><span class="r">LATENCY</span><span class="r">COST</span></div>
+<div class="lr"><span></span><span class="ok">200</span><span class="m"><img src="../vendors/anthropic-dark.svg" style="width:15px;height:15px;flex:none">claude-opus-5-5</span><span class="r">1.2s</span><span class="r">$0.042</span></div>
+<div class="lr"><span></span><span class="ok">200</span><span class="m"><img src="../vendors/openai-dark.svg" style="width:15px;height:15px;flex:none">gpt-6-luna</span><span class="r">476ms</span><span class="r">$0.003</span></div>
+<div class="lr"><span></span><span class="bad">529</span><span class="m"><img src="../vendors/anthropic-dark.svg" style="width:15px;height:15px;flex:none">claude-opus-5-5</span><span class="r">88ms</span><span class="r">$0</span></div>
+</div>
+<div class="box tr"><div class="row lab"><img src="../vendors/respan-dark.svg" style="width:14px;height:14px;flex:none"> trace · 3 spans · 1.2s</div>
+<div class="sp mono"><span class="mid">request</span><i style="width:100%"></i></div>
+<div class="sp mono"><span class="mid">claude-opus-5-5</span><i style="width:52%;margin-left:4%"></i></div>
+<div class="sp mono"><span class="mid">tool: web_search</span><i style="width:24%;margin-left:58%"></i></div>
+</div>
+</div></body></html>

@@ -1,0 +1,28 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; margin: 0; }
+html { width: 800px; height: 400px; } body { width: 615px; height: 308px; overflow: hidden; background: transparent; }
+body { zoom: 1.3; color: #f4f4f6; -webkit-font-smoothing: antialiased; font: 15px/1.4 Inter, -apple-system, "SF Pro Text", "Segoe UI", Helvetica, sans-serif; }
+.panel { position: absolute; inset: 0; border-radius: 22px; background: #0b0b0f; box-shadow: inset 0 0 0 1px #24242a; overflow: hidden; padding: 18px 22px; display: flex; flex-direction: column; justify-content: center; }
+.panel::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(143,156,255,.08), transparent 70%); pointer-events: none; }
+.mono { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: -.2px; }
+.lab { font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: #6b6d76; }
+.box { background: #131317; border-radius: 14px; box-shadow: inset 0 0 0 1px #26262c; }
+.row { display: flex; align-items: center; gap: 10px; }
+.ok { color: #31de4b; } .bad { color: #f55656; } .dim { color: #6b6d76; } .acc { color: #8f9cff; } .mid { color: #b1b3bc; }
+
+.sec { padding: 13px 18px; }
+.ln { display: flex; align-items: center; gap: 12px; font-size: 15px; margin-top: 8px; }
+.ln .code { margin-left: auto; font-size: 14px; }
+.track { position: relative; height: 30px; margin-top: 8px; }
+.bar { position: absolute; height: 30px; border-radius: 9px; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 13.5px; }
+.axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #6b6d76; }
+
+</style></head><body><div class="panel">
+<div class="box sec"><div class="lab">fallback</div>
+<div class="ln mono"><img src="../vendors/anthropic-dark.svg" style="width:18px;height:18px;flex:none"> claude-opus-5-5<span class="code bad">529</span></div>
+<div class="ln mono"><img src="../vendors/openai-dark.svg" style="width:18px;height:18px;flex:none"> gpt-6-luna<span class="code ok">200</span></div></div>
+<div class="box sec" style="margin-top:10px"><div class="lab">hedge = "800ms"</div>
+<div class="track"><div class="bar mono" style="left:0;width:96%;background:#1d1d23;color:#8b8d96"><img src="../vendors/anthropic-dark.svg" style="width:16px;height:16px;flex:none"> claude · waiting</div></div>
+<div class="track"><div class="bar mono" style="left:50%;width:34%;background:rgba(49,222,75,.14);color:#31de4b"><img src="../vendors/gemini.svg" style="width:16px;height:16px;flex:none"> gemini · won</div></div>
+<div class="axis mono"><span>0</span><span>800ms</span><span>1.6s</span></div></div>
+</div></body></html>
