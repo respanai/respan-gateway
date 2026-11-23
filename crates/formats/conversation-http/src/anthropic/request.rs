@@ -222,7 +222,12 @@ fn write_media(kind: &str, media: &Media) -> Result<Value, Fault> {
                 json!({"type":"text","media_type":PLAIN_TEXT,"data":text})
             }
             _ => {
-                json!({"type":"base64","media_type":media.mime_type,"data":STANDARD.encode(bytes)})
+                // Anthropic takes `image/jpeg` only, but clients often say `image/jpg`.
+                let mime = match media.mime_type.as_str() {
+                    "image/jpg" => "image/jpeg",
+                    mime => mime,
+                };
+                json!({"type":"base64","media_type":mime,"data":STANDARD.encode(bytes)})
             }
         },
     };
