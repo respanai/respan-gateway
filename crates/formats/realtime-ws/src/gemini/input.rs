@@ -330,7 +330,7 @@ impl Provider {
         let (mut v, native) = match event {
             Input::Session(s) if !self.opened => {
                 self.opened = true;
-                out.push(setup::encode(s, refuse)?);
+                out.push(setup::encode(s).map_err(refuse)?);
                 self.shared.lock().applied = Some(s.clone());
                 return Ok(());
             }

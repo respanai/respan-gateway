@@ -1,6 +1,6 @@
 //! A Live API `setup` as the kind's [`Session`], both ways.
 
-use respan_gateway_core::{Fault, Native};
+use respan_gateway_core::Native;
 use respan_gateway_http::native::Json;
 use respan_gateway_realtime::{AudioFormat, Modality, Session, Tool, Turns, Vad};
 use serde_json::{Map, Value, json};
@@ -45,9 +45,9 @@ pub(super) fn decode(mut v: Value) -> Session {
     s
 }
 
-/// The `setup` message of `s`, refused by `refuse` where it says what the
-/// Live API cannot. Its audio formats are each chunk's own.
-pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fault> {
+/// The `setup` message of `s`, or what it says that the Live API cannot.
+/// Its audio formats are each chunk's own.
+pub(super) fn encode(s: &Session) -> Result<Value, &'static str> {
     let mut v = json!({});
     let mut put = |path: &[&str], value| crate::json::put(&mut v, path, value);
     put(
@@ -64,7 +64,7 @@ pub(super) fn encode(s: &Session, refuse: fn(&str) -> Fault) -> Result<Value, Fa
     let turns = s
         .turns
         .as_ref()
-        .map(|t| detection_json(t).ok_or_else(|| refuse("this turn detection")));
+        .map(|t| detection_json(t).ok_or("this turn detection"));
     put(DETECTION, turns.transpose()?);
     let transcriptions = [
         (INPUT_TRANSCRIPTION, s.input_transcription),
