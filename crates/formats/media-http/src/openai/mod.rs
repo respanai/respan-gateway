@@ -19,7 +19,7 @@
 //! "param", "code"}}`, under its status.
 
 mod embeddings;
-mod images;
+pub(crate) mod images;
 mod multipart;
 mod speech;
 mod transcriptions;
@@ -215,7 +215,7 @@ fn invalid(param: &str, what: &str) -> Fault {
 }
 
 /// A 400 for a request without the field `param`.
-fn missing(param: &str) -> Fault {
+pub(crate) fn missing(param: &str) -> Fault {
     invalid(param, "is required")
 }
 

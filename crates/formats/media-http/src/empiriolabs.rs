@@ -1,16 +1,22 @@
-//! EmpirioLabs AI's video generation, over HTTP: a provider format of the
-//! [`video`](respan_gateway_media::video) kind, [`EmpirioLabsVideos`].
+//! EmpirioLabs AI's video generation, over HTTP, a provider format of the
+//! [`video`](respan_gateway_media::video) kind, [`EmpirioLabsVideos`]; and
+//! its images, OpenAI's but that it may answer one as a job
+//! ([`EmpirioLabsImages`]).
 
 use crate::edge::{
-    bind_jobs, dimensions, ended_as, gets, job_error, job_of, nearest_ratio, posts, unsupported,
-    video_at,
+    Step, bind_jobs, bind_waited, dimensions, ended_as, gets, job_error, job_in, job_of,
+    nearest_ratio, posts, unsupported, video_at,
 };
+use crate::openai::{OpenAiImages, images};
 use respan_gateway_conversation_http::fields::{invalid, media_url, merge_missing, set};
+use respan_gateway_conversation_http::read_provider_error;
 use respan_gateway_core::{Connection, Fault, Format, Native, Provider};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::request::Parts as RequestHead;
+use respan_gateway_http::http::{self, StatusCode};
 use respan_gateway_http::path::escape;
 use respan_gateway_http::{Connect, Encoder, ProviderIo, Upstream, native::Json};
+use respan_gateway_media::image;
 use respan_gateway_media::video::{Create, Input, Job, Output, Status};
 use serde_json::{Map, Value, json};
 
@@ -170,6 +176,81 @@ fn read_job(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     }
     out.push(Output::Job(job));
     Ok(())
+}
+
+/// OpenAI's images as EmpirioLabs AI serves them, a provider format of
+/// OpenAI's name, `openai-images`: an image it did not finish within its
+/// wait, about four minutes, or was not asked to wait for (`sync: false`),
+/// it answers as a job, polled at `GET /jobs/{id}`, beside the images'
+/// path, until it ends, within the call. The job's `result` is the answer
+/// it would have given, and a job that failed a 502 of the error it gives.
+/// It streams no images, so its answer is read whole.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EmpirioLabsImages;
+
+/// A bearer key, over HTTP, beside its base URL.
+impl Upstream for EmpirioLabsImages {
+    fn name(&self) -> &str {
+        OpenAiImages::NAME
+    }
+
+    fn provider(&self, name: String, connect: Connect) -> Provider {
+        Provider::new(name, *self, move |x| connect(x))
+    }
+}
+
+impl Format<ProviderIo, image::Output, image::Input> for EmpirioLabsImages {
+    fn name(&self) -> &str {
+        OpenAiImages::NAME
+    }
+
+    fn bind(&self, io: ProviderIo) -> Result<Connection<image::Output, image::Input>, Fault> {
+        let call = |head: &mut RequestHead, input: &image::Input| images::post(head, input, false);
+        Ok(bind_waited(
+            io,
+            OpenAiImages::NAME,
+            call,
+            poll_image,
+            read_image,
+        ))
+    }
+}
+
+/// The poll of an image's job: beside the images' path, whose base URL has
+/// the version.
+fn poll_image(head: &mut RequestHead, input: &Input) -> Result<Box<dyn Encoder<Input>>, Fault> {
+    match input {
+        Input::Retrieve { id } => {
+            let id = job_of("EmpirioLabs AI", PREFIX, id)?;
+            gets(head, &format!("/jobs/{}", escape(id)))
+        }
+        _ => Err(unsupported("EmpirioLabs AI", input)),
+    }
+}
+
+/// What an image answer `raw` says: OpenAI's images, or, of a job, its
+/// result's once it completed, its failure, or that it has not ended.
+fn read_image(raw: Bytes) -> Result<Step<image::Output>, Fault> {
+    let v = serde_json::from_slice::<Value>(&raw).unwrap_or_default();
+    let mut out = Vec::new();
+    if v["job_id"].is_null() {
+        images::decode_whole(raw, &mut out)?;
+        return Ok(Step::Done(out));
+    }
+    let job = job_in(read_job, raw)?;
+    match job.status {
+        Status::InProgress => Ok(Step::Wait(job.id)),
+        Status::Completed => {
+            images::decode_whole(Bytes::from(v["result"].to_string()), &mut out)?;
+            Ok(Step::Done(out))
+        }
+        _ => {
+            let said = json!({ "error": v["error"] }).to_string();
+            let mut answer = http::Response::new(Bytes::from(said));
+            *answer.status_mut() = StatusCode::BAD_GATEWAY;
+            Err(read_provider_error(answer))
+        }
+    }
 }
 
 #[cfg(test)]

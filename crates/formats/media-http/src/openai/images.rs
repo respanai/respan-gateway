@@ -160,7 +160,7 @@ fn linked(v: &Value, param: &str) -> Result<Media, Fault> {
 
 /// The call of `input`: a generation in JSON; an edit as a form, or in
 /// JSON if an image or the mask is not bytes.
-fn post(
+pub(crate) fn post(
     head: &mut RequestHead,
     input: &Input,
     stream: bool,
@@ -262,7 +262,7 @@ impl Decoder<Output> for Streamed {
 }
 
 /// The events of a whole JSON response.
-fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
+pub(crate) fn decode_whole(raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
     let v = whole_json(NAME, raw, |v| v["data"].is_array())?;
     let format = v["output_format"].as_str();
     let mut start = Start::default();

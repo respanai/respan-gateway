@@ -84,6 +84,22 @@ impl ProviderIo {
         &self.extensions
     }
 
+    /// The I/O of one more call of the same attempt, such as a poll of the
+    /// job its call made: its sender, extensions and limit, and none of
+    /// what this one was told of its own call and answer.
+    pub fn another(&self) -> ProviderIo {
+        ProviderIo {
+            send: self.send.clone(),
+            extensions: self.extensions.clone(),
+            limit: self.limit,
+            success: Box::new(crate::rules::success),
+            refusal: Box::new(respan_gateway_http_faults::provider_fault),
+            codings: false,
+            request: None,
+            response: None,
+        }
+    }
+
     /// Take an answer for a success if `success` says so, instead of HTTP's
     /// own rule: a 2xx, or a 101 to a call that asked to switch protocols.
     /// A WebSocket format, say, takes only its handshake's 101.

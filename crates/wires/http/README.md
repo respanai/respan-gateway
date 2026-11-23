@@ -11,7 +11,9 @@ A format implements core directly in two orientations:
 - `Format<ClientIo, Input, Output>` accepts a request and writes its response.
 - `Format<ProviderIo, Output, Input>` sends a request and reads its response.
 
-`ClientIo` owns one accepted exchange. `ProviderIo` owns one provider attempt.
+`ClientIo` owns one accepted exchange. `ProviderIo` owns one provider attempt;
+`ProviderIo::another` is the I/O of one more call of the same attempt, such
+as a poll of the job its call made.
 Their `bind`s mirror each other: a format gives each a reader and a writer,
 in the order they happen on its edge, and the binding drives them over the
 body.
