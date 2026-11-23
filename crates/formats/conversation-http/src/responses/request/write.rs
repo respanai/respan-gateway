@@ -249,9 +249,14 @@ fn write_assistant(m: &Message, items: &mut Vec<Value>) -> Result<(), Fault> {
                 let mut v = Map::new();
                 v.insert("type".into(), "function_call".into());
                 v.insert("call_id".into(), id.as_str().into());
-                v.insert("name".into(), name.as_str().into());
+                let fields = OpenAiResponses::fields(native);
+                let own = fields
+                    .get("namespace")
+                    .and_then(Value::as_str)
+                    .and_then(|namespace| name.strip_prefix(namespace)?.strip_prefix("__"));
+                v.insert("name".into(), own.unwrap_or(name).into());
                 v.insert("arguments".into(), arguments.into());
-                v.extend(OpenAiResponses::fields(native).clone());
+                v.extend(fields.clone());
                 items.push(v.into());
             }
             // Reasoning is Responses' by its item's id or its encrypted content.

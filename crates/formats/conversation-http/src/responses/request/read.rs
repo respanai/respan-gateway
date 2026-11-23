@@ -186,6 +186,10 @@ fn push_message(out: &mut Vec<Message>, item: &Value) -> Result<Option<()>, Faul
 
 fn push_call(out: &mut Vec<Message>, item: &Value) -> Option<()> {
     let (id, name) = (item["call_id"].as_str()?, item["name"].as_str()?);
+    let name = match item["namespace"].as_str() {
+        Some(namespace) => format!("{namespace}__{name}"),
+        None => name.to_owned(),
+    };
     let mut call = Content::tool_call(id, name, item["arguments"].as_str()?);
     if let Content::ToolCall { native, .. } = &mut call {
         let taken = ["type", "call_id", "name", "arguments"];

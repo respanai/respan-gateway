@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 /// Function tools, the choice and whether calls may be parallel, as the
 /// kind's.
 pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
-    let tools = each_tool(&v["tools"], function_tool, web_search);
+    let tools = each_tool(&expanded_tools(&v["tools"]), function_tool, web_search);
     let choice = match &v["tool_choice"] {
         Value::Null => Some(None),
         choice => read_choice(choice).map(Some),
@@ -30,6 +30,80 @@ pub(in crate::responses) fn read_tools(v: &Value, chat: &mut Input) {
     };
     let keys = ["tools", "tool_choice", "parallel_tool_calls"];
     decode_tools::<OpenAiResponses>(chat, tools, choice, parallel, keys);
+}
+
+/// Expand Responses namespaces into qualified function names for formats that
+/// have no namespace container. The metadata lets this format rebuild them.
+fn expanded_tools(tools: &Value) -> Value {
+    let Some(tools) = tools.as_array() else {
+        return tools.clone();
+    };
+    let mut expanded: Vec<Value> = Vec::new();
+    for tool in tools {
+        if tool["type"] != "namespace" {
+            expanded.push(tool.clone());
+            continue;
+        }
+        let Some(namespace) = tool["name"].as_str() else {
+            continue;
+        };
+        for function in tool["tools"].as_array().into_iter().flatten() {
+            let Some(name) = function["name"]
+                .as_str()
+                .filter(|_| function["type"] == "function")
+            else {
+                continue;
+            };
+            let joined = format!("{namespace}__{name}");
+            if tools.iter().any(|other| other["name"] == joined) {
+                continue;
+            }
+            let mut function = function.clone();
+            function["name"] = joined.as_str().into();
+            function["namespace"] = namespace.into();
+            if let Some(description) = tool["description"].as_str() {
+                function["namespace_description"] = description.into();
+            }
+            if let Some(existing) = expanded.iter_mut().find(|other| other["name"] == joined) {
+                if existing["namespace"]
+                    .as_str()
+                    .is_some_and(|old| old.len() < namespace.len())
+                {
+                    *existing = function;
+                }
+            } else {
+                expanded.push(function);
+            }
+        }
+    }
+    expanded.into()
+}
+
+/// The original namespace and tool name for a qualified function offered by
+/// this request. A top-level function with the same name takes precedence.
+pub(in crate::responses) fn split<'a>(tools: &'a Value, name: &str) -> Option<(&'a str, &'a str)> {
+    let tools = tools.as_array()?;
+    if tools.iter().any(|tool| tool["name"] == name) {
+        return None;
+    }
+    tools
+        .iter()
+        .filter(|group| group["type"] == "namespace")
+        .filter_map(|group| {
+            let namespace = group["name"].as_str()?;
+            let own = group["tools"]
+                .as_array()?
+                .iter()
+                .filter_map(|tool| {
+                    let tool_name = tool["name"]
+                        .as_str()
+                        .filter(|_| tool["type"] == "function")?;
+                    (format!("{namespace}__{tool_name}") == name).then_some(tool_name)
+                })
+                .next()?;
+            Some((namespace, own))
+        })
+        .max_by_key(|(namespace, _)| namespace.len())
 }
 
 fn function_tool(tool: &Value) -> Option<Tool> {
@@ -79,9 +153,15 @@ pub(in crate::responses) fn write_tools(
     v: &mut Map<String, Value>,
 ) -> Result<(), Fault> {
     let tool = |t: &Tool| {
+        let mut native = OpenAiResponses::fields(&t.native).clone();
+        let name = native
+            .get("namespace")
+            .and_then(Value::as_str)
+            .and_then(|namespace| t.name.strip_prefix(namespace)?.strip_prefix("__"))
+            .unwrap_or(&t.name);
         let mut tool = Map::new();
         tool.insert("type".into(), "function".into());
-        tool.insert("name".into(), t.name.as_str().into());
+        tool.insert("name".into(), name.into());
         if let Some(text) = &t.description {
             tool.insert("description".into(), text.as_str().into());
         }
@@ -89,10 +169,46 @@ pub(in crate::responses) fn write_tools(
         if let Some(strict) = t.strict {
             tool.insert("strict".into(), strict.into());
         }
-        tool.extend(OpenAiResponses::fields(&t.native).clone());
+        native.shift_remove("namespace");
+        native.shift_remove("namespace_description");
+        tool.extend(native);
         Value::Object(tool)
     };
-    let mut tools: Vec<Value> = chat.tools.iter().map(tool).collect();
+    let mut tools = Vec::new();
+    let mut namespaces: Vec<(String, Option<String>, Vec<Value>)> = Vec::new();
+    for (t, value) in chat.tools.iter().zip(chat.tools.iter().map(tool)) {
+        let native = OpenAiResponses::fields(&t.native);
+        let Some(namespace) = native.get("namespace").and_then(Value::as_str) else {
+            tools.push(value);
+            continue;
+        };
+        let description = native
+            .get("namespace_description")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some((_, _, functions)) =
+            namespaces.iter_mut().find(|(name, _, _)| name == namespace)
+        {
+            functions.push(value);
+        } else {
+            namespaces.push((namespace.to_owned(), description, vec![value]));
+        }
+    }
+    tools.extend(
+        namespaces
+            .into_iter()
+            .map(|(name, description, functions)| {
+                let mut namespace = Map::from_iter([
+                    ("type".into(), "namespace".into()),
+                    ("name".into(), name.into()),
+                    ("tools".into(), functions.into()),
+                ]);
+                if let Some(description) = description {
+                    namespace.insert("description".into(), description.into());
+                }
+                namespace.into()
+            }),
+    );
     for provided in &chat.provider_tools {
         let mut search = Map::from_iter([("type".into(), "web_search".into())]);
         search.extend(write_search::<OpenAiResponses>(provided)?);

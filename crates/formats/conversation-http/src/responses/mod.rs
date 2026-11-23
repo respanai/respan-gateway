@@ -281,6 +281,15 @@ impl Schema for OpenAiResponses {
         Box::new(encode::Events::default())
     }
 
+    fn response_encoder(
+        &self,
+        head: &mut respan_gateway_http::http::response::Parts,
+        request: &respan_gateway_http::http::Request<respan_gateway_http::bytes::Bytes>,
+    ) -> Box<dyn Encoder<Output>> {
+        let encoder = crate::schema::response_encoder(*self, head, request);
+        encode::Namespaced::wrap(encoder, request.body())
+    }
+
     fn error_body(fault: &Fault) -> Value {
         let code = fault.code();
         let error = json!({ "message": fault.message(), "type": error_type(fault), "param": null, "code": code });
