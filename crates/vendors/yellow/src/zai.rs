@@ -77,3 +77,40 @@ impl Filter<Output> for Counted {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use respan_gateway_core::Native;
+    use serde_json::{from_value, json};
+
+    fn usage(usage: Value) -> Output {
+        let native = OpenAiTranscriptions::with_fields(&Native::default(), |f| {
+            *f = from_value(json!({ "usage": usage })).expect("an object")
+        });
+        Output::Native(native)
+    }
+
+    #[test]
+    fn its_chat_counts_are_a_usage_and_the_rest_stays_native() {
+        let mut out = Vec::new();
+        let counts = json!({ "prompt_tokens": 199, "completion_tokens": 27,
+            "prompt_tokens_details": { "cached_tokens": 0 } });
+        Counted.edit(usage(counts), &mut out).expect("edited");
+        assert!(
+            matches!(&out[0], Output::Usage(u) if u.input_tokens == 199 && u.output_tokens == 27)
+        );
+        assert!(matches!(&out[1], Output::Native(n)
+            if Value::Object(OpenAiTranscriptions::fields(n).clone())
+                == json!({ "usage": { "prompt_tokens_details": { "cached_tokens": 0 } } })));
+    }
+
+    #[test]
+    fn a_usage_with_no_chat_counts_is_left_as_it_came() {
+        let mut out = Vec::new();
+        Counted
+            .edit(usage(json!({ "cost": 1 })), &mut out)
+            .expect("edited");
+        assert!(matches!(&out[..], [Output::Native(_)]));
+    }
+}

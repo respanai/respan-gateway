@@ -95,3 +95,62 @@ fn openai_job(raw: Bytes) -> Result<Bytes, Fault> {
         .map(Bytes::from)
         .map_err(|e| Fault::internal("a video job is no JSON").with_source(e))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn json_of(bytes: Bytes) -> Value {
+        serde_json::from_slice(&bytes).expect("JSON")
+    }
+
+    #[test]
+    fn a_creations_seconds_go_as_a_number() {
+        let call = json!({ "model": "deeprelay/wan2.7-t2v", "prompt": "waves", "seconds": "5" });
+        let sent = seconds_counted(Bytes::from(call.to_string())).expect("rewritten");
+        assert_eq!(json_of(sent)["seconds"], json!(5));
+    }
+
+    #[test]
+    fn a_call_with_no_whole_seconds_or_no_json_is_left_as_it_came() {
+        for body in [
+            r#"{"seconds":"5.5"}"#,
+            r#"{"prompt":"waves"}"#,
+            "--boundary",
+            "",
+        ] {
+            let sent = seconds_counted(Bytes::from(body)).expect("left");
+            assert_eq!(sent, Bytes::from(body));
+        }
+    }
+
+    #[test]
+    fn a_job_that_ended_cancelled_or_expired_has_failed_with_its_state_as_the_error() {
+        for state in ["cancelled", "expired"] {
+            let job = json!({ "id": "vid_1", "object": "video", "status": state, "error": null });
+            let read = json_of(openai_job(Bytes::from(job.to_string())).expect("read"));
+            assert_eq!(read["status"], "failed");
+            assert_eq!(read["error"], json!({ "code": state, "message": state }));
+        }
+    }
+
+    #[test]
+    fn a_failed_jobs_code_and_message_are_openais_error() {
+        let job = json!({ "id": "vid_1", "status": "failed", "error": "content_policy",
+            "error_message": "The prompt was refused." });
+        let read = json_of(openai_job(Bytes::from(job.to_string())).expect("read"));
+        assert_eq!(
+            read["error"],
+            json!({ "code": "content_policy", "message": "The prompt was refused." })
+        );
+        assert!(read.get("error_message").is_none());
+    }
+
+    #[test]
+    fn a_job_still_running_is_left_as_it_came() {
+        let job = json!({ "id": "vid_1", "status": "in_progress", "progress": 40 });
+        let read = json_of(openai_job(Bytes::from(job.to_string())).expect("read"));
+        assert_eq!(read, job);
+    }
+}
