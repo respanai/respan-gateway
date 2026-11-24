@@ -4,7 +4,9 @@
 provider, as a plugin over the conversation kind, and inside live sessions,
 over the realtime kind. A `Tools` runner opens a
 `Toolbox` per request (`list` the tools to offer, `call` one by name with
-JSON arguments, answering an `Outcome` whose failure the model reads). The
+JSON arguments, answering an `Outcome` whose failure the model reads, and,
+optionally, `runs` a tool it did not offer, as a router runs the tools it
+routes to when a model calls one by the name it read; chat requests only). The
 tool loop adds the tools to the request, calls the target, and while the reply
 calls only those tools runs them (at most `parallel` at once, 4 by default,
 and their answers within `max_results` bytes in all) and calls again; the client gets

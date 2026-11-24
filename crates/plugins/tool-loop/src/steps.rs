@@ -24,6 +24,8 @@ pub(super) struct Run {
     pub(super) toolbox: Arc<dyn Toolbox>,
     /// The names of the tools the runner added.
     pub(super) gateway: HashSet<String>,
+    /// The names of the client's tools, which stay its own.
+    pub(super) client: HashSet<String>,
     /// The conversation so far, with the runner's tools.
     pub(super) input: Input,
     pub(super) limits: Limits,
@@ -92,7 +94,7 @@ pub(super) async fn advance(mut run: Run) -> Option<(Chunk, Run)> {
                     },
                 };
                 let first = run.steps == 1;
-                match reading.take(event, first, &run.gateway) {
+                match reading.take(event, first, &|name| run.is_gateway(name)) {
                     Err(fault) => return Some((vec![Err(fault)], run)),
                     Ok(out) => {
                         run.phase = Phase::Reading(reading);
@@ -123,7 +125,7 @@ impl Reading {
         &mut self,
         event: Output,
         first: bool,
-        gateway: &HashSet<String>,
+        is_gateway: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<Output>, Fault> {
         self.said.push(&event)?;
         Ok(match event {
@@ -132,7 +134,7 @@ impl Reading {
             Output::BlockStart { block, kind } => {
                 let pending = self.pending.remove(&block).unwrap_or_default();
                 if let Block::ToolCall { name, .. } = &kind {
-                    if gateway.contains(name) {
+                    if is_gateway(name) {
                         self.held.insert(block);
                         return Ok(Vec::new());
                     }
@@ -194,6 +196,12 @@ impl Reading {
 }
 
 impl Run {
+    /// Whether a call of `name` is the runner's to run: a tool it offered,
+    /// or one it runs that the client has none of.
+    fn is_gateway(&self, name: &str) -> bool {
+        self.gateway.contains(name) || (!self.client.contains(name) && self.toolbox.runs(name))
+    }
+
     fn timed_out(&self) -> Fault {
         let message = format!(
             "the tool_loop loop ran past its {} s limit",
@@ -246,7 +254,7 @@ impl Run {
             .said
             .blocks()
             .filter_map(|b| match &b.kind {
-                Block::ToolCall { id, name } if self.gateway.contains(name) => {
+                Block::ToolCall { id, name } if self.is_gateway(name) => {
                     Some((id.clone(), name.clone(), b.text.clone()))
                 }
                 _ => None,
