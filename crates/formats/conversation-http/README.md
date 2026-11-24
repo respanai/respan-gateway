@@ -204,6 +204,9 @@ so a profile's id or an ARN is one segment. A stream is the AWS event stream
 (`respan-gateway-eventstream`), not SSE; an `exception` message in it is an
 upstream fault of its type. The module says how each part, option and event
 maps; what Converse has no field for is dropped, or written as its nearest.
+Converse refuses tool calls and results in a request without `toolConfig`, so
+when a request offers no tools (none, or a tool choice of `none`), the calls
+and results in its history are written as text.
 
 ## Calls the gateway ran
 

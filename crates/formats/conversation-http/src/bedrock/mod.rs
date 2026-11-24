@@ -15,7 +15,8 @@
 //! the roles to alternate, and a blank text left out. A part is a `text`,
 //! an `image`, `audio` or `document` (bytes only: one by URL is dropped, as
 //! the format has no fetch), a `toolUse` or `toolResult` (`status: "error"` for a failed
-//! one), or `reasoningContent` that Bedrock signed or redacted, which is the
+//! one; as text in a request with no `toolConfig`, which Converse refuses them
+//! in), or `reasoningContent` that Bedrock signed or redacted, which is the
 //! only reasoning sent back. `inferenceConfig` has `maxTokens`,
 //! `temperature`, `topP` and `stopSequences`; `toolConfig` the tools and the
 //! choice (`auto`, `any`, or one `tool`); `outputConfig` a JSON schema the
@@ -70,7 +71,7 @@ use serde_json::{Map, Value, json};
 use std::marker::PhantomData;
 
 use decode::ConverseDecoder;
-use request::{split_system, write_config, write_messages, write_tools};
+use request::{is_offering_tools, split_system, write_config, write_messages, write_tools};
 
 /// This format's name.
 const BEDROCK: &str = "bedrock-converse";
@@ -246,7 +247,7 @@ impl Schema for BedrockConverse {
 
     fn encode_json(&self, chat: &Input) -> Result<Map<String, Value>, Fault> {
         let (system, rest) = split_system(chat);
-        let messages = write_messages(rest)?;
+        let messages = write_messages(rest, is_offering_tools(chat))?;
         if messages.is_empty() {
             return Err(Fault::bad_request(
                 "Bedrock needs at least one user or assistant message",
