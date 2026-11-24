@@ -1,7 +1,7 @@
 //! Events as OpenAI Chat, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Own, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
+    Gate, GatewaySteps, Own, Schema, check_usage, fits, merge_into, unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;
@@ -160,6 +160,9 @@ pub(super) struct Chunks {
     /// A call's opening delta, held for its signature, which comes next if
     /// at all.
     opening: Option<(u32, Value)>,
+    /// The steps the gateway ran, which Chat has no place for: left out.
+    // WARN: a call the gateway ran and its result are dropped.
+    steps: GatewaySteps,
 }
 
 #[derive(Debug)]
@@ -189,6 +192,7 @@ impl Chunks {
             call_fields: Vec::new(),
             response: Map::new(),
             opening: None,
+            steps: GatewaySteps::default(),
         }
     }
 
@@ -300,6 +304,9 @@ impl Chunks {
 
 impl Chunks {
     pub(crate) fn encode_into(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if self.steps.leaves_out(reply) {
+            return Ok(());
+        }
         let mut made = BytesMut::new();
         self.write(reply, &mut made)?;
         self.gate.pass(reply, &made, out);

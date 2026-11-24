@@ -85,8 +85,8 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Own, Schema, UsageFields, check_usage, count, merge_details, merge_fields, set,
-    unwritable_content, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, is_gateway_step, merge_details,
+    merge_fields, set, unwritable_content, usage_extra,
 };
 use respan_gateway_conversation::{Assembled, AssembledItem, Block, Finish, Input, Output, Usage};
 use respan_gateway_core::Provider;
@@ -407,6 +407,8 @@ impl Schema for GeminiGenerate {
         let mut fields: Vec<(u32, Map<String, Value>)> = Vec::new();
         for item in whole.items() {
             match item {
+                // WARN: a call the gateway ran and its result are dropped.
+                AssembledItem::Block(part) if is_gateway_step(&part.kind) => {}
                 AssembledItem::Block(part) => {
                     let signature = whole.signature(part.block);
                     let mut written = match &part.kind {

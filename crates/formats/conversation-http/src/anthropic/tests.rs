@@ -1359,3 +1359,42 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+/// A reply, with or without a call the gateway ran and its result between
+/// its texts.
+fn reply_with_steps(ran: bool) -> Vec<Output> {
+    let mut events = vec![Output::start("msg_1", "claude")];
+    events.extend(text_events(0, "Looking."));
+    if ran {
+        let call = Block::GatewayCall {
+            id: "toolu_1".into(),
+            name: "gh__search".into(),
+        };
+        let result = Block::ToolResult {
+            id: "toolu_1".into(),
+            is_error: false,
+        };
+        events.extend([
+            Output::block_start(1, call),
+            Output::arguments(1, "{}"),
+            Output::block_end(1),
+            Output::block_start(2, result),
+            Output::result(2, "found"),
+            Output::block_end(2),
+        ]);
+    }
+    events.extend(text_events(3, "Done."));
+    events.push(Output::usage(Usage::new(3, 2)));
+    events.push(Output::finished(Finish::Stop));
+    events
+}
+
+/// This format writes no call the gateway ran yet: a client of it gets what
+/// it got before such calls were shown.
+#[test]
+fn a_call_the_gateway_ran_and_its_result_are_left_out() {
+    let stream = |ran| stream_of(&reply_with_steps(ran)).expect("a stream");
+    assert_eq!(stream(true), stream(false));
+    let body = |ran| body_of(&reply_with_steps(ran)).expect("a body");
+    assert_eq!(body(true), body(false));
+}

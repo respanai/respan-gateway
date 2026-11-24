@@ -46,6 +46,14 @@ events are excluded. Policies may instead select specific variants.
 Tools are typed too: a request's `Tool`s and `ToolChoice`, an assistant's
 `Content::ToolCall` and its `Content::ToolResult`, and a response's
 `Block::ToolCall`, whose arguments stream as `Delta::Arguments` of JSON text.
+A call the gateway ran itself, as its tool loop does, is a
+`Block::GatewayCall`, its arguments `Delta::Arguments` too, and the
+`Block::ToolResult` of its id follows it, its answer streaming as
+`Delta::Result`: the client is not to run it, and a format with no form for
+the pair drops both. `Assembled::replay` leaves them out of the assistant's
+message; `Assembled::messages` reads a reply as the conversation's messages,
+such a call a tool call of the assistant's and its result a user's message
+after it.
 `Message::text` exposes typed text, explicitly skipping tool calls and other
 content; `Message::is_plain` checks for a known role, text parts and no message
 native fields. Text-part native fields are allowed.

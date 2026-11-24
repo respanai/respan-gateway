@@ -5,7 +5,8 @@ use super::{RESPONSE_FIELDS, USAGE, USAGE_FIELDS, response_body, status_of};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Gate, Own, check_usage, fits, merge_fields, merge_into, unix_now, unwritable_content,
+    Gate, GatewaySteps, Own, check_usage, fits, is_gateway_step, merge_fields, merge_into,
+    unix_now, unwritable_content,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledItem, Block, Delta, Finish, Output, Start, Usage,
@@ -127,6 +128,8 @@ pub(super) fn whole(whole: &Assembled) -> Result<Value, Fault> {
     let mut output: Vec<Value> = Vec::new();
     for item in whole.items() {
         match item {
+            // WARN: a call the gateway ran and its result are dropped.
+            AssembledItem::Block(part) if is_gateway_step(&part.kind) => {}
             AssembledItem::Block(part) => {
                 let prefix = match part.kind {
                     Block::Text => "msg",
@@ -220,6 +223,10 @@ pub(super) struct Events {
     done: Vec<(u32, Value)>,
     /// The `output_index` a provider's item took here.
     foreign: Vec<(u64, u32)>,
+    /// The steps the gateway ran, which this format does not write yet:
+    /// left out.
+    // WARN: a call the gateway ran and its result are dropped.
+    steps: GatewaySteps,
     gate: Gate,
 }
 
@@ -720,6 +727,9 @@ impl Events {
 
 impl Events {
     pub(crate) fn encode_into(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
+        if self.steps.leaves_out(reply) {
+            return Ok(());
+        }
         let mut made = BytesMut::new();
         self.write(reply, &mut made)?;
         self.gate.pass(reply, &made, out);

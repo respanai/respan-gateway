@@ -880,3 +880,46 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+/// Gemini has no part for a call the gateway ran: a client of it gets what
+/// it got before such calls were shown.
+#[test]
+fn a_call_the_gateway_ran_and_its_result_are_left_out() {
+    let reply = |ran: bool| {
+        let text = |block: u32, text: &str| {
+            [
+                Output::block_start(block, Block::Text),
+                Output::text(block, text),
+                Output::block_end(block),
+            ]
+        };
+        let mut events = vec![Output::start("r1", "gemini-x")];
+        events.extend(text(0, "Looking."));
+        if ran {
+            let call = Block::GatewayCall {
+                id: "call_1".into(),
+                name: "gh__search".into(),
+            };
+            let result = Block::ToolResult {
+                id: "call_1".into(),
+                is_error: true,
+            };
+            events.extend([
+                Output::block_start(1, call),
+                Output::arguments(1, "{}"),
+                Output::block_end(1),
+                Output::block_start(2, result),
+                Output::result(2, "no access"),
+                Output::block_end(2),
+            ]);
+        }
+        events.extend(text(3, "Done."));
+        events.push(Output::usage(Usage::new(3, 2)));
+        events.push(Output::finished(Finish::Stop));
+        events
+    };
+    let stream = |ran| stream_of(&reply(ran)).expect("a stream");
+    assert_eq!(stream(true), stream(false));
+    let body = |ran| body_of(&reply(ran)).expect("a body");
+    assert_eq!(body(true), body(false));
+}

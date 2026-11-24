@@ -1193,3 +1193,67 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
         }
     }
 }
+
+/// A reply, with or without a call the gateway ran and its result between
+/// its texts.
+fn reply_with_steps(ran: bool) -> Vec<Output> {
+    let text = |block: u32, text: &str| {
+        [
+            Output::block_start(block, Block::Text),
+            Output::text(block, text),
+            Output::block_end(block),
+        ]
+    };
+    let mut events = vec![Output::start("resp_1", "m")];
+    events.extend(text(0, "Looking."));
+    if ran {
+        let call = Block::GatewayCall {
+            id: "call_1".into(),
+            name: "gh__search".into(),
+        };
+        let result = Block::ToolResult {
+            id: "call_1".into(),
+            is_error: true,
+        };
+        events.extend([
+            Output::block_start(1, call),
+            Output::arguments(1, "{}"),
+            Output::block_end(1),
+            Output::block_start(2, result),
+            Output::result(2, "no access"),
+            Output::block_end(2),
+        ]);
+    }
+    events.extend(text(3, "Done."));
+    events.extend([
+        Output::usage(Usage::new(3, 2)),
+        Output::finished(Finish::Stop),
+    ]);
+    events
+}
+
+/// This format writes no call the gateway ran yet: a client of it gets what
+/// it got before such calls were shown.
+#[test]
+fn a_call_the_gateway_ran_and_its_result_are_left_out() {
+    // When a response was made or done is no part of what it says.
+    fn timeless(v: &mut Value) {
+        if let Some(fields) = v.as_object_mut() {
+            fields.remove("created_at");
+            fields.remove("completed_at");
+            fields.values_mut().for_each(timeless);
+        }
+    }
+    let events = |ran| {
+        let mut events = stream_of(&reply_with_steps(ran)).expect("a stream");
+        events.iter_mut().for_each(timeless);
+        events
+    };
+    assert_eq!(events(true), events(false));
+    let body = |ran| {
+        let mut body = body_of(&reply_with_steps(ran)).expect("a body");
+        timeless(&mut body);
+        body
+    };
+    assert_eq!(body(true), body(false));
+}

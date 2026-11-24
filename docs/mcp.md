@@ -75,6 +75,10 @@ With `[plugins.tool_loop]`, the gateway gives the model the MCP servers'
 tools and runs the calls itself, for any chat format and any provider, and
 in realtime sessions too. The client sees one ordinary reply.
 
+Chat Completions and Gemini have no place for a tool's result, so the
+gateway's tool calls are not returned to their clients: to keep them in the
+history it sends back, a client uses Responses or Anthropic Messages.
+
 ```toml
 [plugins.tool_loop]
 servers = ["github"]                    # Default: every server /mcp fronts
