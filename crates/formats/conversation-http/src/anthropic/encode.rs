@@ -1,7 +1,7 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, GatewaySteps, Own, Schema, check_usage, fits, merge_fields, own_fields,
+    Gate, Own, Schema, arguments_object, check_usage, fits, merge_fields, own_fields,
     unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
@@ -11,7 +11,7 @@ use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::event;
 use serde_json::{Map, Value, json};
 
-use super::{AnthropicMessages, FINISH, StopFields, USAGE, usage_body};
+use super::{AnthropicMessages, FINISH, StopFields, USAGE, ran_call, ran_result, usage_body};
 
 /// Writes events as Anthropic's stream: `message_start` at the first need,
 /// each block's events, and at the end `message_delta` and `message_stop`.
@@ -35,10 +35,6 @@ pub(super) struct EventStream {
     fields: Vec<(u32, Map<String, Value>)>,
     /// The index of each block only natives carry, by block.
     natives: Vec<(u32, u32)>,
-    /// The steps the gateway ran, which this format does not write yet:
-    /// left out.
-    // WARN: a call the gateway ran and its result are dropped.
-    steps: GatewaySteps,
     gate: Gate,
 }
 
@@ -96,6 +92,9 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
+            // A step the gateway ran comes whole as it ends.
+            kind if said_whole(kind) && !wb.ended => return Ok(()),
+            kind if said_whole(kind) => whole(kind, wb.held.take())?,
             _ => return Err(unwritable_content()),
         };
         let held = wb.held.take();
@@ -204,11 +203,13 @@ impl EventStream {
         if wb.ended || !fits(part, &wb.kind) {
             return Err(unwritable_content());
         }
+        let is_whole = said_whole(&wb.kind);
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
-            (Some(index), false) => delta(index, part, out),
-            // The block is not open on the wire yet: keep what it says.
-            (None, false) => match &mut wb.held {
+            (Some(index), false) if !is_whole => delta(index, part, out),
+            // The block is not open on the wire yet, or is said whole as it
+            // ends: keep what it says.
+            _ => match &mut wb.held {
                 Some(held) => held.as_mut_string().push_str(part.as_str()),
                 None => wb.held = Some(part.clone()),
             },
@@ -222,6 +223,11 @@ impl EventStream {
             return Ok(());
         }
         if let Some(index) = wb.index {
+            if said_whole(&wb.kind) {
+                let mut start = json!({ "type": "content_block_start", "index": index });
+                start["content_block"] = whole(&wb.kind, wb.held.take())?;
+                emit(out, start);
+            }
             emit(out, json!({ "type": "content_block_stop", "index": index }));
             self.current = None;
             self.pump(out)?;
@@ -251,6 +257,27 @@ impl EventStream {
     }
 }
 
+/// Whether `kind` is a step the gateway ran, which a stream writes whole as
+/// it ends: a server's result is sent so, and an SDK without the beta types
+/// drops the `input_json_delta`s of an `mcp_tool_use`, so its input comes in
+/// its `content_block_start`.
+fn said_whole(kind: &Block) -> bool {
+    matches!(kind, Block::GatewayCall { .. } | Block::ToolResult { .. })
+}
+
+/// The whole block of a step the gateway ran, from what was said for it.
+fn whole(kind: &Block, said: Option<Delta>) -> Result<Value, Fault> {
+    let text = said.as_ref().map(Delta::as_str).unwrap_or_default();
+    match kind {
+        Block::GatewayCall { id, name } => {
+            let input = arguments_object(text).map_err(|_| unwritable_content())?;
+            Ok(ran_call(id, name, input))
+        }
+        Block::ToolResult { id, is_error } => Ok(ran_result(id, *is_error, text)),
+        _ => Err(unwritable_content()),
+    }
+}
+
 pub(super) fn delta(index: u32, part: &Delta, out: &mut BytesMut) {
     let text = part.as_str();
     let delta = match part {
@@ -274,9 +301,6 @@ pub(super) fn emit(out: &mut BytesMut, v: Value) {
 
 impl EventStream {
     pub(crate) fn encode_into(&mut self, reply: &Output, out: &mut BytesMut) -> Result<(), Fault> {
-        if self.steps.leaves_out(reply) {
-            return Ok(());
-        }
         let mut made = BytesMut::new();
         self.write(reply, &mut made)?;
         self.gate.pass(reply, &made, out);

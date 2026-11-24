@@ -1360,41 +1360,145 @@ fn media_that_does_not_decode_is_refused_and_unusual_base64_is_read() {
     }
 }
 
-/// A reply, with or without a call the gateway ran and its result between
-/// its texts.
-fn reply_with_steps(ran: bool) -> Vec<Output> {
+/// A reply in which the gateway ran a call: text, the call (its input in
+/// two parts), its result (in two parts) and the text after it.
+fn ran_reply(is_error: bool) -> Vec<Output> {
+    let call = Block::GatewayCall {
+        id: "toolu_1".into(),
+        name: "gh__search".into(),
+    };
+    let result = Block::ToolResult {
+        id: "toolu_1".into(),
+        is_error,
+    };
     let mut events = vec![Output::start("msg_1", "claude")];
     events.extend(text_events(0, "Looking."));
-    if ran {
-        let call = Block::GatewayCall {
-            id: "toolu_1".into(),
-            name: "gh__search".into(),
-        };
-        let result = Block::ToolResult {
-            id: "toolu_1".into(),
-            is_error: false,
-        };
-        events.extend([
-            Output::block_start(1, call),
-            Output::arguments(1, "{}"),
-            Output::block_end(1),
-            Output::block_start(2, result),
-            Output::result(2, "found"),
-            Output::block_end(2),
-        ]);
-    }
+    events.extend([
+        Output::block_start(1, call),
+        Output::arguments(1, "{\"q\":"),
+        Output::arguments(1, "\"rust\"}"),
+        Output::block_end(1),
+        Output::block_start(2, result),
+        Output::result(2, "found "),
+        Output::result(2, "rust"),
+        Output::block_end(2),
+    ]);
     events.extend(text_events(3, "Done."));
-    events.push(Output::usage(Usage::new(3, 2)));
+    events.push(Output::usage(Usage::new(5, 2)));
     events.push(Output::finished(Finish::Stop));
     events
 }
 
-/// This format writes no call the gateway ran yet: a client of it gets what
-/// it got before such calls were shown.
 #[test]
-fn a_call_the_gateway_ran_and_its_result_are_left_out() {
-    let stream = |ran| stream_of(&reply_with_steps(ran)).expect("a stream");
-    assert_eq!(stream(true), stream(false));
-    let body = |ran| body_of(&reply_with_steps(ran)).expect("a body");
-    assert_eq!(body(true), body(false));
+fn a_call_the_gateway_ran_is_an_mcp_tool_use_then_its_result() {
+    let replies = ran_reply(false);
+    let call = json!({ "type": "mcp_tool_use", "id": "toolu_1", "name": "gh__search",
+        "server_name": "respan-gateway", "input": { "q": "rust" } });
+    let result = json!({ "type": "mcp_tool_result", "tool_use_id": "toolu_1", "is_error": false,
+        "content": [{ "type": "text", "text": "found rust" }] });
+    let body = body_of(&replies).expect("a body");
+    let text = |text: &str| json!({ "type": "text", "text": text });
+    assert_eq!(
+        body["content"],
+        json!([text("Looking."), call, result, text("Done.")])
+    );
+    // Streamed, the call and its result each come whole as they end: the
+    // call's input in its start, as an SDK without the beta types drops the
+    // input_json_deltas of an mcp_tool_use.
+    let events = stream_events(&stream_of(&replies).expect("a stream"));
+    let blocks: Vec<&Value> = (events.iter())
+        .filter(|e| e["index"] == 1 || e["index"] == 2)
+        .collect();
+    assert_eq!(
+        blocks,
+        [
+            &json!({ "type": "content_block_start", "index": 1, "content_block": call }),
+            &json!({ "type": "content_block_stop", "index": 1 }),
+            &json!({ "type": "content_block_start", "index": 2, "content_block": result }),
+            &json!({ "type": "content_block_stop", "index": 2 }),
+        ]
+    );
+    assert_eq!(
+        events.last().map(|e| &e["type"]),
+        Some(&json!("message_stop"))
+    );
+    // A failed call says so.
+    let failed = body_of(&ran_reply(true)).expect("a body");
+    assert_eq!(failed["content"][2]["is_error"], true);
+}
+
+#[test]
+fn a_history_with_the_gateways_calls_reads_as_its_tool_turns() {
+    let said = body_of(&ran_reply(true)).expect("a body");
+    let request = json!({ "model": "claude", "max_tokens": 50, "messages": [
+        { "role": "user", "content": "find rust" },
+        { "role": "assistant", "content": said["content"] },
+        { "role": "user", "content": "thanks" },
+    ]});
+    let chat = AnthropicMessages.decode_json(&request).expect("read");
+    let turns: Vec<(Role, Vec<Content>)> = (chat.messages.iter())
+        .map(|m| (m.role.clone(), m.content.clone()))
+        .collect();
+    let call = Content::tool_call("toolu_1", "gh__search", "{\"q\":\"rust\"}");
+    let result = Content::tool_result("toolu_1", vec!["found rust".into()], true);
+    assert_eq!(
+        turns,
+        [
+            (Role::User, vec!["find rust".into()]),
+            (Role::Assistant, vec!["Looking.".into(), call]),
+            (Role::User, vec![result]),
+            (Role::Assistant, vec!["Done.".into()]),
+            (Role::User, vec!["thanks".into()]),
+        ]
+    );
+    // The model is sent them as its own tool turns, in any format.
+    let sent = AnthropicMessages.encode_request(&chat).expect("written");
+    assert_eq!(
+        sent["messages"],
+        json!([
+            { "role": "user", "content": "find rust" },
+            { "role": "assistant", "content": [
+                { "type": "text", "text": "Looking." },
+                { "type": "tool_use", "id": "toolu_1", "name": "gh__search", "input": { "q": "rust" } },
+            ] },
+            { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "toolu_1", "content": "found rust", "is_error": true },
+            ] },
+            { "role": "assistant", "content": "Done." },
+            { "role": "user", "content": "thanks" },
+        ])
+    );
+    let chat_sent = OpenAiChat.encode_request(&chat).expect("written");
+    let roles: Vec<&Value> = (chat_sent["messages"].as_array().into_iter().flatten())
+        .map(|m| &m["role"])
+        .collect();
+    assert_eq!(roles, ["user", "assistant", "tool", "assistant", "user"]);
+    assert_eq!(
+        chat_sent["messages"][1]["tool_calls"][0]["function"]["name"],
+        "gh__search"
+    );
+}
+
+#[test]
+fn another_servers_blocks_and_a_call_without_its_result_stay_as_they_came() {
+    let request = json!({ "model": "c", "max_tokens": 5, "messages": [
+        { "role": "user", "content": "echo" },
+        { "role": "assistant", "content": [
+            { "type": "mcp_tool_use", "id": "mcptoolu_1", "name": "echo",
+              "server_name": "example-mcp", "input": { "x": 1 } },
+            { "type": "mcp_tool_result", "tool_use_id": "mcptoolu_1", "is_error": false,
+              "content": [{ "type": "text", "text": "1" }] },
+            { "type": "mcp_tool_use", "id": "toolu_9", "name": "gh__search",
+              "server_name": "respan-gateway", "input": {} },
+            { "type": "text", "text": "ok" },
+        ] },
+        { "role": "user", "content": "more" },
+    ]});
+    assert_eq!(written(request.clone(), |_| {}).ok(), Some(request.clone()));
+    let chat = AnthropicMessages.decode_json(&request).expect("read");
+    assert_eq!(chat.messages.len(), 3);
+    let calls = (chat.messages.iter().flat_map(|m| &m.content))
+        .filter(|c| matches!(c, Content::ToolCall { .. } | Content::ToolResult { .. }))
+        .count();
+    assert_eq!(calls, 0);
 }
