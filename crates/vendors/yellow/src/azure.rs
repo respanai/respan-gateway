@@ -18,7 +18,7 @@ use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, KeyIn, Model, Vendor};
 /// ([`in_responses`]).
 pub const VENDOR: Vendor = Vendor {
     id: "azure",
-    key_env: &["AZURE_API_KEY"],
+    key_env: &["AZURE_OPENAI_API_KEY"],
     formats: &[
         (&Dialected::new(OpenAiChat, OpenAi), None),
         (&OpenAiResponses, None),
