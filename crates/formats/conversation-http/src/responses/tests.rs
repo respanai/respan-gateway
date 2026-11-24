@@ -497,6 +497,7 @@ fn a_stream_decodes_to_the_kinds_events() {
     assert_same::<OpenAiResponses>(&out[1..6], &rest);
     let mut usage = Usage::new(5, 3);
     usage.cached_input_tokens = 2;
+    usage.cached_input_tokens_reported = true;
     usage.reasoning_tokens = 1;
     assert_eq!(
         out[6..],

@@ -462,7 +462,9 @@ fn decode_response(raw: &[u8], asked: &[Value], out: &mut Vec<Output>) -> Result
             n => n.as_u64().ok_or_else(|| bad("counts usage unreadably")),
         };
         let mut usage = Usage::new(count(&u["input_tokens"])?, count(&u["output_tokens"])?);
-        usage.cached_input_tokens = count(&u["input_tokens_details"]["cached_tokens"])?;
+        let cached = u["input_tokens_details"]["cached_tokens"].as_u64();
+        usage.cached_input_tokens = cached.unwrap_or(0);
+        usage.cached_input_tokens_reported = cached.is_some();
         let written = &u["input_tokens_details"]["cache_write_tokens"];
         usage.cache_write_input_tokens = count(written)?;
         usage.reasoning_tokens = count(&u["output_tokens_details"]["reasoning_tokens"])?;

@@ -808,6 +808,7 @@ fn whole_usage_keeps_its_details() {
             input_tokens: 4,
             output_tokens: 7,
             cached_input_tokens: 2,
+            cached_input_tokens_reported: true,
             reasoning_tokens: 3,
             ..Usage::default()
         };

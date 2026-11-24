@@ -5,6 +5,7 @@ import { api, getGatewayKey, subscribeGatewayKey, type Kind } from "@/lib/api";
 export const queryKeys = {
   overview: ["overview"] as const,
   providers: ["providers"] as const,
+  providerTps: ["provider-tps"] as const,
   routes: ["routes"] as const,
   requests: ["requests"] as const,
   request: (id: string) => ["request", id] as const,
@@ -31,6 +32,14 @@ export function useProviders() {
   return useQuery({
     queryKey: queryKeys.providers,
     queryFn: ({ signal }) => api.providers(signal),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useProviderTps() {
+  return useQuery({
+    queryKey: queryKeys.providerTps,
+    queryFn: ({ signal }) => api.providerTps(signal),
     refetchInterval: 10_000,
   });
 }

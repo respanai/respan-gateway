@@ -66,6 +66,28 @@ export interface Reloaded {
   restart_required: string[];
 }
 
+export interface ProviderTpsMetric {
+  provider: string;
+  model: string;
+  calls: number;
+  successful_calls: number;
+  failed_calls: number;
+  abandoned_calls: number;
+  usage_calls: number;
+  input_tokens: number;
+  processed_input_tokens: number | null;
+  average_context_tokens: number | null;
+  cached_input_tokens: number | null;
+  output_tokens: number;
+  input_tps: number | null;
+  output_tps: number | null;
+  cache_hit_rate: number | null;
+  cache_known_calls: number;
+  cache_total_calls: number;
+  input_timed_calls: number;
+  output_timed_calls: number;
+}
+
 export interface Provider {
   name: string;
   vendor: string | null;
@@ -441,6 +463,8 @@ export const api = {
   overview: (signal?: AbortSignal) => getJson<Overview>("/ui/api/overview", signal),
   providers: (signal?: AbortSignal) =>
     getJson<{ providers: Provider[] }>("/ui/api/providers", signal).then((r) => r.providers),
+  providerTps: (signal?: AbortSignal) =>
+    getJson<{ metrics: ProviderTpsMetric[] }>("/ui/api/provider-tps", signal).then((r) => r.metrics),
   mcpOverview: (signal?: AbortSignal) => getJson<McpOverview>("/ui/api/mcp", signal),
   mcpTools: (name: string, refresh: boolean, signal?: AbortSignal) =>
     getJson<McpTools>(`/ui/api/mcp/${encodeURIComponent(name)}/tools${refresh ? "?refresh=true" : ""}`, signal),

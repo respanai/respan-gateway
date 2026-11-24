@@ -1600,6 +1600,7 @@ dependencies = [
  "respan-gateway-plugin-fallback",
  "respan-gateway-plugin-mcp-router",
  "respan-gateway-plugin-pricing",
+ "respan-gateway-plugin-provider-tps-metrics",
  "respan-gateway-plugin-relay",
  "respan-gateway-plugin-respan",
  "respan-gateway-plugin-responses",
@@ -1887,6 +1888,15 @@ dependencies = [
  "respan-gateway-media",
  "respan-gateway-realtime",
  "respan-gateway-sdk",
+]
+
+[[package]]
+name = "respan-gateway-plugin-provider-tps-metrics"
+version = "0.1.0"
+dependencies = [
+ "parking_lot",
+ "respan-gateway-conversation",
+ "respan-gateway-core",
 ]
 
 [[package]]

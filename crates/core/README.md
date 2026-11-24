@@ -21,6 +21,10 @@ protocols and adapters all depend on it directly.
   gateway's plugins, as part of the provider.
 - `Filter<T>`: edits a kind's inputs or outputs as they stream; its type
   says which. `ClientContext::wrap` is for work that awaits.
+- `StreamingResponse`: a per-call extension the transport marks when the
+  provider's answer is explicitly framed as a stream. A plugin that needs
+  to tell a stream from a whole body reads it, since a whole body's events
+  arrive at once and time nothing.
 - `Call` / `Response`: a plugin's call to a provider (`cx.call`), and what
   a call or `Response::stream` gives back: streamed, read or held.
 - `Fault`: the one error: a message, a `FaultKind` saying who it is on

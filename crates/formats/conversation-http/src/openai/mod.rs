@@ -493,7 +493,9 @@ impl Schema for OpenAiChat {
 fn usage_of(u: &Value) -> Result<Usage, Fault> {
     let n = |ptr| Ok::<_, Fault>(count(u.pointer(ptr))?.unwrap_or(0));
     let mut usage = Usage::new(n("/prompt_tokens")?, n("/completion_tokens")?);
-    usage.cached_input_tokens = n("/prompt_tokens_details/cached_tokens")?;
+    let cached = count(u.pointer("/prompt_tokens_details/cached_tokens"))?;
+    usage.cached_input_tokens = cached.unwrap_or(0);
+    usage.cached_input_tokens_reported = cached.is_some();
     usage.cache_write_input_tokens = n("/prompt_tokens_details/cache_write_tokens")?;
     usage.reasoning_tokens = n("/completion_tokens_details/reasoning_tokens")?;
     Ok(usage)
