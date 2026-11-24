@@ -35,7 +35,7 @@ Each vendor is in one of two tiers:
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
-| | DeepRelay | `deeprelay` | `DEEPRELAY_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-images`, `openai-videos` (a creation's `seconds` a number) |
+| <img src="assets/vendors/deeprelay.svg" width="20" height="20" alt=""> | DeepRelay | `deeprelay` | `DEEPRELAY_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-images`, `openai-videos` (a creation's `seconds` a number) |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos`, `decisions` |
