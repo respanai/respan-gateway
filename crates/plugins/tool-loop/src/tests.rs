@@ -79,7 +79,8 @@ impl Format<Asking, Input, Output> for Client {
 }
 
 /// The gateway's tools: `gh__search` answers what it is asked, `fs__read`
-/// fails.
+/// fails, and `gh__issue`, not offered, it runs when called, as a router
+/// runs the tools it routes to.
 struct Runner;
 
 #[async_trait]
@@ -92,8 +93,13 @@ impl Toolbox for Runner {
     async fn call(&self, name: &str, arguments: Value) -> Outcome {
         match name {
             "gh__search" => Outcome::ok(format!("found {}", arguments["q"].as_str().unwrap_or(""))),
+            "gh__issue" => Outcome::ok("issue 7"),
             _ => Outcome::error("no access"),
         }
+    }
+
+    fn runs(&self, name: &str) -> bool {
+        name == "gh__issue"
     }
 }
 
@@ -282,6 +288,38 @@ async fn the_gateways_calls_beside_a_clients_are_left_out() {
     expected.push(Output::finished(Finish::ToolUse));
     assert_eq!(events, expected);
     assert_eq!(calls.len(), 1, "the client runs its own tool first");
+}
+
+#[tokio::test]
+async fn a_tool_the_toolbox_runs_but_did_not_offer_is_run() {
+    let asked_for = [call(0, "c1", "gh__issue", "{\"n\":7}")];
+    let replies = vec![
+        reply("r1", &asked_for, Usage::new(1, 1), Finish::ToolUse),
+        reply("r2", &[text(0, "ok")], Usage::new(1, 1), Finish::Stop),
+    ];
+    let (events, calls) = asked(question("issue 7"), replies).await;
+    let mut expected = vec![Output::start("r1", "m")];
+    expected.extend(ran(0, "c1", "gh__issue", "{\"n\":7}", "issue 7", false));
+    expected.extend(text(2, "ok"));
+    expected.push(Output::usage(Usage::new(2, 2)));
+    expected.push(Output::finished(Finish::Stop));
+    assert_eq!(events, expected);
+    // It is run, not offered.
+    let offered: Vec<&str> = calls[0].tools.iter().map(|t| t.name.as_str()).collect();
+    assert_eq!(offered, ["gh__search", "fs__read"]);
+    // A tool of that name the client has stays the client's.
+    let mut input = question("issue 7");
+    input
+        .tools
+        .push(Tool::new("gh__issue", json!({ "type": "object" })));
+    let replies = vec![reply("r1", &asked_for, Usage::new(1, 1), Finish::ToolUse)];
+    let (events, calls) = asked(input, replies).await;
+    let mut expected = vec![Output::start("r1", "m")];
+    expected.extend(call(0, "c1", "gh__issue", "{\"n\":7}"));
+    expected.push(Output::usage(Usage::new(1, 1)));
+    expected.push(Output::finished(Finish::ToolUse));
+    assert_eq!(events, expected);
+    assert_eq!(calls.len(), 1);
 }
 
 #[tokio::test]

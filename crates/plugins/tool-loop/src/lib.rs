@@ -120,6 +120,17 @@ pub trait Toolbox: Send + Sync + 'static {
     /// failure is an [`Outcome::error`]. Bounded by the tool loop's
     /// [`tool_timeout`](ToolLoop::tool_timeout).
     async fn call(&self, name: &str, arguments: Value) -> Outcome;
+
+    /// Whether it also runs `name`, a tool [`list`](Self::list) did not
+    /// offer, when the model calls it: a router that offers a search and a
+    /// call tool can run the tools it routes to, which a model may call by
+    /// the name it read in a search. Asked after `list`; a tool the client
+    /// names stays the client's. None, by default. Not asked in a live
+    /// session.
+    fn runs(&self, name: &str) -> bool {
+        let _ = name;
+        false
+    }
 }
 
 /// Put on every call the tool loop makes to the model, as the extension
@@ -358,6 +369,7 @@ impl Plugin for ToolLoop {
             call: cx.call(target),
             toolbox,
             gateway,
+            client,
             input,
             limits: self.limits,
             deadline: Instant::now() + self.limits.timeout,
