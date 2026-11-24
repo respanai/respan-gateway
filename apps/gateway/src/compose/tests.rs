@@ -7,6 +7,9 @@ use respan_gateway_http::http_body_util::BodyExt;
 use super::*;
 use crate::App;
 
+#[path = "opencode_tests.rs"]
+mod opencode;
+
 /// Hand `req` to `gateway` as an HTTP server does: whole.
 async fn serve(
     gateway: &Gateway,

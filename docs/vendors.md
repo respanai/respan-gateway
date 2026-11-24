@@ -56,6 +56,7 @@ Each vendor is in one of two tiers:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/primeintellect-dark.png"><img src="assets/vendors/primeintellect.png" width="20" height="20" alt=""></picture> | Prime Intellect | `primeintellect` | `PRIME_API_KEY` | `openai-chat`, `decisions` (its evaluations, at `/evaluations`) |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/morph-dark.svg"><img src="assets/vendors/morph.svg" width="20" height="20" alt=""></picture> | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
 | <img src="assets/vendors/deeprelay.svg" width="20" height="20" alt=""> | DeepRelay | `deeprelay` | `DEEPRELAY_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-images`, `openai-videos` (a creation's `seconds` a number) |
+| <img src="assets/vendors/opencode.svg" width="20" height="20" alt=""> | [OpenCode Zen](#opencode-zen) | `opencode` | `OPENCODE_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/phonic-dark.svg"><img src="assets/vendors/phonic.svg" width="20" height="20" alt=""></picture> | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/cerebras-dark.svg"><img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""></picture> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
@@ -171,6 +172,23 @@ count their usage in Chat Completions' `prompt_tokens` and
 DeepRelay's formats take its API with the version, `https://api.deeprelay.ai/v1`,
 the key a bearer token. Its videos take a creation's `seconds` as a number,
 not OpenAI's string, and end `cancelled` or `expired`, read as `failed`.
+
+### OpenCode Zen
+
+`openai-chat` and `openai-responses` use `https://opencode.ai/zen/v1`
+with a bearer key. `anthropic-messages` uses
+`https://opencode.ai/inference/anthropic` with `x-api-key`. Choose a
+format supported by the model you route to, as listed in the
+[Zen model catalog](https://opencode.ai/docs/zen/#endpoints).
+
+The [OpenCode dialect](../crates/vendors/yellow/src/opencode.rs) carries
+Zen's session headers even when the gateway translates the request. If
+the client provides no session identity, the gateway derives one from
+its remaining credentials or generates a fresh one if none remain.
+OpenCode's free-model access rules (`403`) and Go subscription limits
+still apply.
+
+### Other base URLs
 
 Meta's `meta-transcriptions` (speech recognition at `/asr/transcribe`) takes
 its API with the version, `https://api.meta.ai/v1`, the key a bearer token.

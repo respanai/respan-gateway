@@ -24,8 +24,8 @@ pub use respan_gateway_vendor_kit::{
 pub use respan_gateway_vendors_green::{anthropic, gemini, ollama, openai, respan, typesafe};
 pub use respan_gateway_vendors_yellow::{
     azure, baseten, bedrock, cerebras, cloudflare, concentrate, deepinfra, deeprelay, deepseek,
-    empiriolabs, fireworks, groq, minimax, mistral, morph, openrouter, perplexity, phonic,
-    primeintellect, qwen, stepfun, together, vllm, xai, zai,
+    empiriolabs, fireworks, groq, minimax, mistral, morph, opencode, openrouter, perplexity,
+    phonic, primeintellect, qwen, stepfun, together, vllm, xai, zai,
 };
 
 /// The green vendors: maintained, and verified end to end.
@@ -66,6 +66,7 @@ pub const ALL: &[&Vendor] = &[
     &primeintellect::VENDOR,
     &zai::VENDOR,
     &deeprelay::VENDOR,
+    &opencode::VENDOR,
     &respan::VENDOR,
 ];
 

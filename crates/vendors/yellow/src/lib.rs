@@ -17,6 +17,7 @@ pub mod groq;
 pub mod minimax;
 pub mod mistral;
 pub mod morph;
+pub mod opencode;
 pub mod openrouter;
 pub mod perplexity;
 pub mod phonic;
@@ -64,6 +65,7 @@ pub const ALL: &[&Vendor] = &[
     &primeintellect::VENDOR,
     &zai::VENDOR,
     &deeprelay::VENDOR,
+    &opencode::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,
