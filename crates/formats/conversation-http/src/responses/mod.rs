@@ -313,10 +313,12 @@ pub(crate) fn extra_usage(u: &Value) -> Map<String, Value> {
 
 /// Usage as this format reports it.
 fn usage_body(u: &Usage, more: &Map<String, Value>) -> Value {
-    let mut input = json!({ "cached_tokens": u.cached_input_tokens });
-    if u.cache_write_input_tokens > 0 {
-        input["cache_write_tokens"] = u.cache_write_input_tokens.into();
-    }
+    // Both are required, 0 included: a client that validates replies refuses
+    // a usage without either.
+    let input = json!({
+        "cached_tokens": u.cached_input_tokens,
+        "cache_write_tokens": u.cache_write_input_tokens,
+    });
     let mut body = json!({
         "input_tokens": u.input_tokens,
         "input_tokens_details": input,

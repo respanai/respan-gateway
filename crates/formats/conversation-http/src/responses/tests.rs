@@ -767,6 +767,11 @@ fn a_stream_is_written_as_the_documented_sequence() {
     assert_eq!(done["output"][2]["call_id"], "c1");
     assert_eq!(done["usage"]["input_tokens"], 5);
     assert_eq!(done["usage"]["input_tokens_details"]["cached_tokens"], 2);
+    // No cache write is still written, as the field is required.
+    assert_eq!(
+        done["usage"]["input_tokens_details"]["cache_write_tokens"],
+        0
+    );
     assert_eq!(
         done["usage"]["output_tokens_details"]["reasoning_tokens"],
         1
@@ -894,6 +899,13 @@ fn usage_that_cannot_be_written_is_refused() {
     assert_eq!(
         body["usage"]["input_tokens_details"]["cache_write_tokens"],
         3
+    );
+    // None is written as 0, in a body as in a stream, as the field is
+    // required.
+    let body = body_of(&[Output::Usage(Usage::new(5, 1))]).expect("a body");
+    assert_eq!(
+        body["usage"]["input_tokens_details"],
+        json!({ "cached_tokens": 0, "cache_write_tokens": 0 })
     );
 }
 
