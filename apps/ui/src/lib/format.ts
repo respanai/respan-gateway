@@ -21,6 +21,12 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Tokens per second as "84 tok/s", or one decimal below ten. */
+export function formatTps(tps: number | null | undefined): string {
+  if (tps == null) return "—";
+  return `${tps >= 100 ? Math.round(tps) : +tps.toFixed(1)} tok/s`;
+}
+
 /** Milliseconds as "840 ms", "2.4 s" or "1m 05s". */
 export function formatMs(ms: number | null | undefined): string {
   if (ms == null) return "—";

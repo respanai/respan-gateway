@@ -11,16 +11,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useProviders } from "@/hooks/queries";
 import type { Provider } from "@/lib/api";
-import { formatCount, formatMs, formatPercent } from "@/lib/format";
+import { formatCount, formatMs, formatPercent, formatTps } from "@/lib/format";
 import { describeError } from "@/lib/query-client";
 
 const exampleConfig = `[providers.openai]
 vendor = "openai"
 key = "env:OPENAI_API_KEY"`;
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Metric({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="grid gap-0.5">
+    <div className="grid gap-0.5" title={title}>
       <span className="text-[11px] text-muted-foreground">{label}</span>
       <span className="font-mono text-sm font-medium tabular">{value}</span>
     </div>
@@ -89,6 +89,23 @@ function ProviderCard({ provider: p }: { provider: Provider }) {
           <Metric label="Requests" value={formatCount(p.requests)} />
           <Metric label="Errors" value={p.requests ? formatPercent(p.errors / p.requests) : "—"} />
           <Metric label="Avg latency" value={formatMs(p.avg_latency_ms)} />
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <Metric
+            label="Input tps"
+            value={formatTps(p.input_tps)}
+            title="Input tokens per second of each call's wait for its first token, as the gateway saw it: encoding, network, queueing and cache work included. Only streaming answers with usage are sampled."
+          />
+          <Metric
+            label="Output tps"
+            value={formatTps(p.output_tps)}
+            title="Output tokens per second after the first token, as the gateway saw it. Only streaming answers with usage are sampled."
+          />
+          <Metric
+            label="Cache hit"
+            value={p.cache_hit_rate == null ? "—" : formatPercent(p.cache_hit_rate)}
+            title="Of the input tokens successful calls reported, the share read from the provider's cache. A provider that does not report cache counts reads as zero."
+          />
         </div>
       </CardContent>
     </Card>
