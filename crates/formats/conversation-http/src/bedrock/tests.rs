@@ -113,6 +113,53 @@ fn media_is_bytes_and_a_url_is_dropped() {
 }
 
 #[test]
+fn without_tools_a_call_and_its_result_are_text() {
+    let mut call = assistant("looking");
+    call.content
+        .push(Content::tool_call("t1", "lookup", "{\"id\":7}"));
+    call.content.push(Content::tool_call("t2", "now", ""));
+    let mut answer = user("");
+    answer.content = vec![
+        Content::tool_result("t1", vec!["found".into()], false),
+        Content::tool_result("t2", vec![], true),
+    ];
+    let history = [user("find 7"), call, answer, user("thanks")];
+    let as_text = json!([
+        { "role": "user", "content": [{ "text": "find 7" }] },
+        { "role": "assistant", "content": [
+            { "text": "looking" },
+            { "text": "[tool call t1: lookup {\"id\":7}]" },
+            { "text": "[tool call t2: now {}]" },
+        ] },
+        { "role": "user", "content": [
+            { "text": "[tool result t1]\nfound" },
+            { "text": "[tool result t2, failed]" },
+            { "text": "thanks" },
+        ] },
+    ]);
+    // No tools: Converse refuses toolUse and toolResult without a toolConfig.
+    let v = written(&chat(history.clone()));
+    assert!(v.get("toolConfig").is_none());
+    assert_eq!(v["messages"], as_text);
+    // A tool choice of none writes no toolConfig either, as a tool loop's
+    // last step does.
+    let mut c = chat(history.clone());
+    c.tools = vec![Tool::new("lookup", json!({ "type": "object" }))];
+    c.options.tool_choice = Some(ToolChoice::None);
+    let v = written(&c);
+    assert!(v.get("toolConfig").is_none());
+    assert_eq!(v["messages"], as_text);
+    // With tools offered they stay blocks.
+    c.options.tool_choice = None;
+    let v = written(&c);
+    assert!(v["toolConfig"].is_object());
+    assert_eq!(
+        v["messages"][1]["content"][1],
+        json!({ "toolUse": { "toolUseId": "t1", "name": "lookup", "input": { "id": 7 } } })
+    );
+}
+
+#[test]
 fn tools_a_call_and_its_result_are_blocks() {
     let mut call = assistant("");
     call.content = vec![Content::tool_call("t1", "lookup", "{\"id\":7}")];

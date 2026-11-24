@@ -33,8 +33,15 @@ pub(super) fn split_system(chat: &Input) -> (Vec<Value>, &[Message]) {
 
 /// The messages as Converse's: its content blocks, and, as it needs the
 /// roles to alternate, a message of the role before it joined to that one.
-/// A message with nothing to say is left out.
-pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> {
+/// A message with nothing to say is left out. Converse refuses a `toolUse`
+/// or `toolResult` block in a request with no `toolConfig`, so without
+/// `tools_offered` ([`is_offering_tools`]) a call and its result are written
+/// as text: a history that turned tools off, or a last step that forbids
+/// them, still reads what the tools did.
+pub(super) fn write_messages(
+    messages: &[Message],
+    tools_offered: bool,
+) -> Result<Vec<Value>, Fault> {
     let mut out: Vec<Value> = Vec::new();
     for m in messages {
         // WARN: a role Converse lacks, such as a later system message's, is a user's.
@@ -56,7 +63,10 @@ pub(super) fn write_messages(messages: &[Message]) -> Result<Vec<Value>, Fault> 
                 (Content::Reasoning { .. } | Content::Signature(_), _) => continue,
                 _ => {}
             }
-            blocks.extend(block(part)?);
+            match tools_offered {
+                true => blocks.extend(block(part)?),
+                false => blocks.extend(block_without_tools(part)?),
+            }
         }
         if blocks.is_empty() {
             continue;
@@ -125,6 +135,56 @@ fn block(part: &Content) -> Result<Option<Value>, Fault> {
 /// text and needs at least one block.
 const EMPTY_RESULT: &str = "(no output)";
 
+/// A part as [`block`] has it, but a tool call or result as text, for a
+/// request that offers no tools.
+fn block_without_tools(part: &Content) -> Result<Vec<Value>, Fault> {
+    Ok(match part {
+        Content::ToolCall {
+            id,
+            name,
+            arguments,
+            ..
+        } => {
+            let arguments = match arguments.trim() {
+                "" => "{}",
+                said => said,
+            };
+            vec![json!({ "text": format!("[tool call {id}: {name} {arguments}]") })]
+        }
+        Content::ToolResult {
+            id,
+            content,
+            is_error,
+            ..
+        } => {
+            let flag = if *is_error { ", failed" } else { "" };
+            let mut text = format!("[tool result {id}{flag}]");
+            let mut media = Vec::new();
+            for c in content {
+                match c {
+                    Content::Text { text: said, .. } => {
+                        text.push('\n');
+                        text.push_str(said);
+                    }
+                    // WARN: a result's audio and other parts are dropped, as in a `toolResult`.
+                    Content::Image(_) | Content::Document(_) => media.extend(block(c)?),
+                    _ => {}
+                }
+            }
+            let mut blocks = vec![json!({ "text": text })];
+            blocks.extend(media);
+            blocks
+        }
+        _ => block(part)?.into_iter().collect(),
+    })
+}
+
+/// Whether the request is written with a `toolConfig`: it has tools, and its
+/// tool choice is not the kind's `None`, which Converse has no form for.
+pub(super) fn is_offering_tools(chat: &Input) -> bool {
+    !chat.tools.is_empty() && chat.options.tool_choice != Some(ToolChoice::None)
+}
+
 /// An `image`, `audio` or `document` block of `media`.
 // WARN: Converse takes media as bytes of the types it names, and an image
 // has no name; media by URL or of another type is dropped, as is the name.
@@ -186,6 +246,9 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         spec.insert("inputSchema".into(), json!({ "json": schema }));
         json!({ "toolSpec": spec })
     };
+    if !is_offering_tools(chat) {
+        return Ok(());
+    }
     let choice = match &chat.options.tool_choice {
         None | Some(ToolChoice::Auto) => None,
         Some(ToolChoice::None) => return Ok(()),
@@ -194,9 +257,6 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         Some(_) => return Err(untranslatable("a tool choice this format has no form for")),
     };
     let tools: Vec<Value> = chat.tools.iter().map(tool).collect();
-    if tools.is_empty() {
-        return Ok(());
-    }
     let mut config = json!({ "tools": tools });
     if let Some(choice) = choice {
         config["toolChoice"] = choice;
