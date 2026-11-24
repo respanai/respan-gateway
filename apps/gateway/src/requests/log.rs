@@ -32,17 +32,97 @@ pub struct Totals {
     pub cost_usd: Option<f64>,
 }
 
-/// A provider's finished requests.
+/// A provider's finished requests, with the tokens they moved and the
+/// windows they moved them in. A rate keeps only its own samples: tokens
+/// with a window of their own, so a whole-body answer or an untimed call
+/// cannot dilute it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ProviderStats {
     pub requests: u64,
     pub errors: u64,
     total_ms: u64,
+    /// Tokens successful calls reported.
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    /// Of `input_tokens`, what the providers said was read from a cache.
+    pub cached_input_tokens: u64,
+    /// Streaming samples' tokens and first-token windows, in milliseconds.
+    input_timed_tokens: u64,
+    input_timed_ms: u64,
+    input_timed_calls: u64,
+    /// Streaming samples' tokens and output windows, after the first token.
+    output_timed_tokens: u64,
+    output_timed_ms: u64,
+    output_timed_calls: u64,
 }
 
 impl ProviderStats {
     pub fn avg_latency_ms(&self) -> Option<u64> {
         (self.requests > 0).then(|| self.total_ms / self.requests)
+    }
+
+    /// Input tokens per second of each call's wait for its first token, or
+    /// `None` without a streaming sample. A gateway observation: it counts
+    /// encoding, network, queueing and cache work, not the provider's own
+    /// prefill speed.
+    pub fn avg_input_tps(&self) -> Option<f64> {
+        self.rate(self.input_timed_tokens, self.input_timed_ms)
+    }
+
+    /// Output tokens per second after the first token, or `None` without a
+    /// sample past it.
+    pub fn avg_output_tps(&self) -> Option<f64> {
+        self.rate(self.output_timed_tokens, self.output_timed_ms)
+    }
+
+    /// Of successful calls' input tokens, the share read from a cache, or
+    /// `None` without tokens. A provider that does not report cache counts
+    /// reads as a zero here; its calls belong on a provider that does, not
+    /// in a cross-provider comparison.
+    pub fn cache_hit_rate(&self) -> Option<f64> {
+        (self.input_tokens > 0).then(|| self.cached_input_tokens as f64 / self.input_tokens as f64)
+    }
+
+    fn rate(&self, tokens: u64, ms: u64) -> Option<f64> {
+        (ms > 0).then(|| tokens as f64 / (ms as f64 / 1_000.0))
+    }
+
+    /// Adds a finished request. A failed one counts toward `requests` and
+    /// `errors` and nothing else; a successful one's tokens count toward
+    /// the sums, and a streaming one's toward the timed rates.
+    pub(super) fn absorb(&mut self, record: &RequestRecord, failed: bool) {
+        self.requests += 1;
+        self.total_ms += record.duration_ms.unwrap_or_default();
+        if failed {
+            self.errors += 1;
+            return;
+        }
+        let Some(usage) = record.usage else {
+            return;
+        };
+        self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(usage.output_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(usage.cached_input_tokens.min(usage.input_tokens));
+        // A stream's first token came at `ttfb_ms`; a whole-body answer has
+        // no honest window, and a session's `101` opens one, not ends one.
+        let (Some(duration_ms), Some(ttfb_ms)) = (record.duration_ms, record.ttfb_ms) else {
+            return;
+        };
+        if !record.stream || record.status == Some(101) || ttfb_ms == 0 || ttfb_ms >= duration_ms {
+            return;
+        }
+        if usage.input_tokens > 0 {
+            self.input_timed_tokens = self.input_timed_tokens.saturating_add(usage.input_tokens);
+            self.input_timed_ms += ttfb_ms;
+            self.input_timed_calls += 1;
+        }
+        if usage.output_tokens > 0 {
+            self.output_timed_tokens = self.output_timed_tokens.saturating_add(usage.output_tokens);
+            self.output_timed_ms += duration_ms - ttfb_ms;
+            self.output_timed_calls += 1;
+        }
     }
 }
 
@@ -252,10 +332,10 @@ impl RequestLog {
                 *totals.cost_usd.get_or_insert(0.0) += cost;
             }
             if let Some(provider) = &record.provider {
-                let stats = kept.providers.entry(provider.clone()).or_default();
-                stats.requests += 1;
-                stats.errors += u64::from(failed);
-                stats.total_ms += record.duration_ms.unwrap_or_default();
+                kept.providers
+                    .entry(provider.clone())
+                    .or_default()
+                    .absorb(&record, failed);
             }
             kept.format
         };
@@ -517,6 +597,87 @@ mod tests {
             escape_controls("r_1 POST /x 200 1ms a\nr_2 forged\u{1b}[2J"),
             "r_1 POST /x 200 1ms a\\nr_2 forged\\u{1b}[2J"
         );
+    }
+
+    fn timed(
+        stream: bool,
+        status: Option<u16>,
+        ttfb_ms: Option<u64>,
+        duration_ms: u64,
+        input: u64,
+        cached: u64,
+        output: u64,
+    ) -> RequestRecord {
+        RequestRecord {
+            id: String::new(),
+            started_at: String::new(),
+            method: String::new(),
+            path: String::new(),
+            format: None,
+            kind: None,
+            model: None,
+            provider: None,
+            client: None,
+            stream,
+            status,
+            ttfb_ms,
+            duration_ms: Some(duration_ms),
+            usage: Some(Usage {
+                input_tokens: input,
+                output_tokens: output,
+                cached_input_tokens: cached,
+                seconds: None,
+            }),
+            cost_usd: None,
+            steps: Vec::new(),
+            error: None,
+        }
+    }
+
+    #[test]
+    fn rates_average_only_their_own_samples() {
+        let mut stats = ProviderStats::default();
+        stats.absorb(&timed(true, Some(200), Some(230), 812, 12, 0, 40), false);
+        stats.absorb(&timed(true, Some(200), Some(120), 620, 8, 0, 20), false);
+        // A whole-body answer: tokens, but no honest window.
+        stats.absorb(&timed(false, Some(200), None, 900, 1_000, 500, 0), false);
+        // A failed call's tokens never reached the client: no sum, no rate.
+        stats.absorb(&timed(true, Some(500), Some(50), 100, 9, 0, 9), true);
+        // A session's `101` opens a stream; it is not a sample, and its
+        // usage belongs to the session's requests, not to one call's rate.
+        stats.absorb(&timed(true, Some(101), Some(10), 5_000, 5, 0, 5), false);
+        assert_eq!(stats.requests, 5);
+        assert_eq!(stats.errors, 1);
+        assert_eq!(stats.input_tokens, 1_025);
+        assert_eq!(stats.cached_input_tokens, 500);
+        assert_eq!(stats.output_tokens, 65);
+        assert_eq!(stats.cache_hit_rate(), Some(500.0 / 1_025.0));
+        // First-token windows: 230 ms for 12 tokens, 120 ms for 8.
+        assert_eq!(stats.avg_input_tps(), Some(20.0 / 0.350));
+        // Output windows: 812-230 ms for 40, 620-120 ms for 20.
+        assert_eq!(stats.avg_output_tps(), Some(60.0 / 1.082));
+    }
+
+    #[test]
+    fn a_rate_is_absent_without_samples_and_cache_of_zero_reads_zero() {
+        let mut stats = ProviderStats::default();
+        assert_eq!(stats.avg_input_tps(), None);
+        assert_eq!(stats.avg_output_tps(), None);
+        assert_eq!(stats.cache_hit_rate(), None);
+        stats.absorb(&timed(true, Some(200), Some(100), 500, 10, 0, 20), false);
+        assert_eq!(stats.cache_hit_rate(), Some(0.0));
+        // A first token with no window left, or none measured, is no sample.
+        stats.absorb(&timed(true, Some(200), Some(0), 500, 10, 0, 20), false);
+        stats.absorb(&timed(true, Some(200), Some(500), 500, 10, 0, 20), false);
+        assert_eq!(stats.input_timed_calls, 1);
+    }
+
+    #[test]
+    fn a_cache_count_cannot_exceed_the_input_it_belongs_to() {
+        let mut stats = ProviderStats::default();
+        stats.absorb(&timed(true, Some(200), Some(100), 500, 10, 90, 20), false);
+        assert_eq!(stats.cached_input_tokens, 10);
+        assert_eq!(stats.cache_hit_rate(), Some(1.0));
     }
 
     #[test]

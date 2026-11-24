@@ -42,6 +42,11 @@ const provider: Provider = {
   requests: 40,
   errors: 2,
   avg_latency_ms: 1250,
+  input_tokens: 123_456,
+  output_tokens: 7_890,
+  input_tps: 123.4,
+  output_tps: 84.6,
+  cache_hit_rate: 0.65,
 };
 
 const record: RequestRecord = {
@@ -63,7 +68,7 @@ const record: RequestRecord = {
 
 describe("ProvidersPage", () => {
   it("renders each provider with its formats, credentials and stats", async () => {
-    const keyed = { ...provider, name: "keyed", credentials: "gateway" as const, requests: 0, errors: 0, avg_latency_ms: null };
+    const keyed = { ...provider, name: "keyed", credentials: "gateway" as const, requests: 0, errors: 0, avg_latency_ms: null, input_tokens: 0, output_tokens: 0, input_tps: null, output_tps: null, cache_hit_rate: null };
     serve({ "/ui/api/providers": { providers: [provider, keyed] } });
     renderPage(<ProvidersPage />);
     expect(await screen.findAllByText("anthropic-messages")).toHaveLength(2);
@@ -71,6 +76,11 @@ describe("ProvidersPage", () => {
     expect(screen.getAllByText("No key")).toHaveLength(1);
     expect(screen.getByText("5.0%")).toBeInTheDocument();
     expect(screen.getByText("1.25 s")).toBeInTheDocument();
+    expect(screen.getByText("123 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("84.6 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("65%")).toBeInTheDocument();
+    // A provider without samples shows a dash, not a zero.
+    expect(screen.getAllByText("—")).toHaveLength(5);
   });
 
   it("teaches how to add a provider when none are configured", async () => {

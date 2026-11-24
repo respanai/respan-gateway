@@ -310,6 +310,11 @@ async fn providers(State(admin): State<Arc<Admin>>) -> Json<Value> {
             p["requests"] = stats.requests.into();
             p["errors"] = stats.errors.into();
             p["avg_latency_ms"] = stats.avg_latency_ms().into();
+            p["input_tokens"] = stats.input_tokens.into();
+            p["output_tokens"] = stats.output_tokens.into();
+            p["input_tps"] = stats.avg_input_tps().into();
+            p["output_tps"] = stats.avg_output_tps().into();
+            p["cache_hit_rate"] = stats.cache_hit_rate().into();
             p
         })
         .collect();

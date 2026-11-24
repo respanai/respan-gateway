@@ -15,6 +15,11 @@ const provider = (name: string): Provider => ({
   requests: 0,
   errors: 0,
   avg_latency_ms: null,
+  input_tokens: 0,
+  output_tokens: 0,
+  input_tps: null,
+  output_tps: null,
+  cache_hit_rate: null,
 });
 
 const routes: Routes = {

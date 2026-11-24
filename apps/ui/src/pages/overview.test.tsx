@@ -28,6 +28,11 @@ const provider: Provider = {
   requests: 40,
   errors: 2,
   avg_latency_ms: 1250,
+  input_tokens: 0,
+  output_tokens: 0,
+  input_tps: null,
+  output_tps: null,
+  cache_hit_rate: null,
 };
 
 const record: RequestRecord = {

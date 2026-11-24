@@ -76,6 +76,13 @@ export interface Provider {
   requests: number;
   errors: number;
   avg_latency_ms: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  /** Tokens per second the gateway observed, or null without a streaming sample. */
+  input_tps: number | null;
+  output_tps: number | null;
+  /** Token-weighted share of input read from a cache, or null without tokens. */
+  cache_hit_rate: number | null;
 }
 
 /** An MCP server the gateway fronts, served to clients at `endpoint`. */
