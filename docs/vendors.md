@@ -36,7 +36,7 @@ Each vendor is in one of two tiers:
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos`, `decisions` |
-| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-decisions`, `openai-realtime` |
+| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-decisions`, `openai-realtime` |
 | <img src="assets/vendors/bedrock.svg" width="20" height="20" alt=""> | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings`, `bedrock-images` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images`, `openai-realtime` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
@@ -117,7 +117,7 @@ its own URL in `formats`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
 at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
 at `?model=` too; xAI's, which its Grok Voice models speak, at
-`wss://api.x.ai/v1`; Azure OpenAI's at its resource's
+`wss://api.x.ai/v1`; Azure's at its resource's
 `wss://<resource>.openai.azure.com/openai/v1`, the deployment at `?model=`
 and the key in `api-key`) and
 `openai-live` (OpenAI's Live API, which its Live models

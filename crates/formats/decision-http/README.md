@@ -4,7 +4,7 @@
 
 | Format | Endpoint | Served by |
 | --- | --- | --- |
-| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure OpenAI (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`); Concentrate (`vendor = "concentrate"`) |
+| `openai-decisions` (`OpenAiDecisions`) | `POST /openai/v1/decisions` in the standalone gateway | OpenAI (`vendor = "openai"`); Azure (`vendor = "azure"`); Fireworks (`vendor = "fireworks"`); Concentrate (`vendor = "concentrate"`) |
 | `gemini-decisions` (`GeminiDecisions`) | `POST /v1beta/decisions` in the standalone gateway | Gemini (`vendor = "gemini"`) |
 | `decisions` (`Decisions`) | `POST /v1/decisions`, `POST /v1/systemone` | Respan (`vendor = "respan"`); TypeSafe (`vendor = "typesafe"`), Fireworks (`vendor = "fireworks"`), Morph (`vendor = "morph"`), Baseten (`vendor = "baseten"`) and Concentrate (`vendor = "concentrate"`), at `/systemone`; EmpirioLabs AI (`vendor = "empiriolabs"`), DeepInfra (`vendor = "deepinfra"`), Perplexity (`vendor = "perplexity"`) and OpenRouter (`vendor = "openrouter"`); Prime Intellect (`vendor = "primeintellect"`), at `/evaluations` in its dialect; or any compatible base URL |
 
