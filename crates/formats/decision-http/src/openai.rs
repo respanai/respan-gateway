@@ -11,7 +11,7 @@ const MAX_QUESTIONS: usize = 400;
 
 type Key = crate::Own<OpenAiDecisions>;
 
-/// OpenAI's decisions contract, as Azure OpenAI serves it: a client's
+/// OpenAI's decisions contract, as Azure serves it: a client's
 /// `POST` to its path (`/v1/decisions` unless [`OpenAiDecisions::serving`]
 /// says another), and a provider called at `/decisions`.
 ///

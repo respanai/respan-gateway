@@ -24,40 +24,42 @@ Each vendor is in one of two tiers:
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/respan-dark.svg"><img src="assets/vendors/respan.svg" width="20" height="20" alt=""></picture> | Respan | `respan` | `RESPAN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openai-dark.svg"><img src="assets/vendors/openai.svg" width="20" height="20" alt=""></picture> | OpenAI | `openai` | `OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-realtime`, `openai-live`, `openai-images`, `openai-transcriptions`, `openai-speech`, `openai-embeddings`, `openai-decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/anthropic-dark.svg"><img src="assets/vendors/anthropic.svg" width="20" height="20" alt=""></picture> | Anthropic | `anthropic` | `ANTHROPIC_API_KEY` | `anthropic-messages` |
 | <img src="assets/vendors/gemini.svg" width="20" height="20" alt=""> | Gemini | `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | `gemini-generate`, `openai-chat`, `gemini-live`, `gemini-images`, `gemini-omni`, `gemini-decisions`, `gemini-embeddings`, `gemini-speech`, `gemini-transcriptions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/ollama-dark.svg"><img src="assets/vendors/ollama.svg" width="20" height="20" alt=""></picture> | Ollama | `ollama` | none; `OLLAMA_HOST` says where | `openai-chat`, `openai-embeddings` |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/respan-dark.svg"><img src="assets/vendors/respan.svg" width="20" height="20" alt=""></picture> | Respan | `respan` | `RESPAN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `decisions` |
 | <img src="assets/vendors/typesafe.png" width="20" height="20" alt=""> | TypeSafe | `typesafe` | `TYPESAFE_API_KEY` | `decisions` |
 
 ## 🟡 Yellow
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
-| <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos`, `decisions` |
+| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-decisions`, `openai-realtime` |
+| <img src="assets/vendors/bedrock.svg" width="20" height="20" alt=""> | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings`, `bedrock-images` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/xai-dark.svg"><img src="assets/vendors/xai.svg" width="20" height="20" alt=""></picture> | xAI | `xai` | `XAI_API_KEY` | `openai-chat`, `openai-images`, `openai-realtime` |
-| <img src="assets/vendors/minimax.svg" width="20" height="20" alt=""> | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `openai-transcriptions` (its speech recognition, at `/speech_to_text`), `minimax-videos`, `minimax-speech` |
 | <img src="assets/vendors/mistral.svg" width="20" height="20" alt=""> | Mistral | `mistral` | `MISTRAL_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `mistral-realtime` |
+| <img src="assets/vendors/qwen.svg" width="20" height="20" alt=""> | Qwen | `qwen` | `DASHSCOPE_API_KEY` | `openai-chat`, `dashscope-speech`, `dashscope-transcriptions`, `dashscope-images`, `dashscope-videos`, `openai-realtime-beta` |
+| <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/deepinfra-dark.svg"><img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""></picture> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos`, `decisions` |
 | <img src="assets/vendors/together.svg" width="20" height="20" alt=""> | Together | `together` | `TOGETHER_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `together-videos` |
 | <img src="assets/vendors/fireworks.svg" width="20" height="20" alt=""> | Fireworks | `fireworks` | `FIREWORKS_API_KEY` | `openai-chat`, `openai-embeddings`, `decisions` (at `/systemone`), `openai-decisions` |
-| <img src="assets/vendors/azure.svg" width="20" height="20" alt=""> | Azure OpenAI | `azure` | `AZURE_OPENAI_API_KEY` | `openai-chat`, `openai-responses`, `openai-decisions`, `openai-realtime` |
-| <img src="assets/vendors/bedrock.svg" width="20" height="20" alt=""> | Amazon Bedrock | `bedrock` | `AWS_BEARER_TOKEN_BEDROCK`; `AWS_REGION` | `bedrock-converse`, `anthropic-messages` (Claude), `bedrock-embeddings`, `bedrock-images` |
-| <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
-| <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
-| <img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
-| <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses`, `decisions` |
-| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions`, `empiriolabs-videos` |
-| <img src="assets/vendors/deepinfra.svg" width="20" height="20" alt=""> | DeepInfra | `deepinfra` | `DEEPINFRA_API_KEY` | `openai-chat`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-transcriptions`, `openai-videos`, `decisions` |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/phonic-dark.svg"><img src="assets/vendors/phonic.svg" width="20" height="20" alt=""></picture> | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/morph-dark.svg"><img src="assets/vendors/morph.svg" width="20" height="20" alt=""></picture> | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
-| <img src="assets/vendors/stepfun.svg" width="20" height="20" alt=""> | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
-| <img src="assets/vendors/qwen.svg" width="20" height="20" alt=""> | Qwen | `qwen` | `DASHSCOPE_API_KEY` | `openai-chat`, `dashscope-speech`, `dashscope-transcriptions`, `dashscope-images`, `dashscope-videos`, `openai-realtime-beta` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/baseten-dark.svg"><img src="assets/vendors/baseten.svg" width="20" height="20" alt=""></picture> | Baseten | `baseten` | `BASETEN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `decisions` (at `/systemone`) |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/concentrate-dark.svg"><img src="assets/vendors/concentrate.svg" width="20" height="20" alt=""></picture> | Concentrate | `concentrate` | `CONCENTRATE_API_KEY` | `openai-chat`, `openai-responses`, `decisions` (at `/systemone`), `openai-decisions` |
+| <img src="assets/vendors/perplexity.svg" width="20" height="20" alt=""> | Perplexity | `perplexity` | `PERPLEXITY_API_KEY` | `openai-responses`, `decisions` |
+| <img src="assets/vendors/minimax.svg" width="20" height="20" alt=""> | MiniMax | `minimax` | `MINIMAX_API_KEY` | `openai-chat`, `openai-images`, `openai-transcriptions` (its speech recognition, at `/speech_to_text`), `minimax-videos`, `minimax-speech` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/zai-dark.svg"><img src="assets/vendors/zai.svg" width="20" height="20" alt=""></picture> | Z.ai | `zai` | `ZAI_API_KEY` | `openai-chat`, `openai-images`, `openai-transcriptions` (its usage in Chat Completions' counts), `zai-videos` |
+| <img src="assets/vendors/cloudflare.svg" width="20" height="20" alt=""> | Cloudflare | `cloudflare` | `CLOUDFLARE_API_TOKEN` | `openai-chat`, `openai-embeddings` |
+| <img src="assets/vendors/vllm.svg" width="20" height="20" alt=""> | vLLM | `vllm` | none | `openai-chat` |
+| <img src="assets/vendors/empiriolabs.png" width="20" height="20" alt=""> | EmpirioLabs AI | `empiriolabs` | `EMPIRIOLABS_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `gemini-generate`, `openai-images`, `openai-embeddings`, `openai-speech`, `openai-realtime`, `decisions`, `empiriolabs-videos` |
+| <img src="assets/vendors/stepfun.svg" width="20" height="20" alt=""> | StepFun | `stepfun` | `STEPFUN_API_KEY` | `openai-chat`, `openai-speech`, `openai-transcriptions`, `openai-realtime-beta` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/primeintellect-dark.png"><img src="assets/vendors/primeintellect.png" width="20" height="20" alt=""></picture> | Prime Intellect | `primeintellect` | `PRIME_API_KEY` | `openai-chat`, `decisions` (its evaluations, at `/evaluations`) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/morph-dark.svg"><img src="assets/vendors/morph.svg" width="20" height="20" alt=""></picture> | Morph | `morph` | `MORPH_API_KEY` | `openai-chat`, `decisions` (at `/systemone`) |
+| <img src="assets/vendors/deeprelay.svg" width="20" height="20" alt=""> | DeepRelay | `deeprelay` | `DEEPRELAY_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-images`, `openai-videos` (a creation's `seconds` a number) |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/phonic-dark.svg"><img src="assets/vendors/phonic.svg" width="20" height="20" alt=""></picture> | Phonic | `phonic` | `PHONIC_API_KEY` | `phonic-sts` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/cerebras-dark.svg"><img src="assets/vendors/cerebras.svg" width="20" height="20" alt=""></picture> | Cerebras | `cerebras` | `CEREBRAS_API_KEY` | `openai-chat` |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/concentrate-dark.svg"><img src="assets/vendors/concentrate.svg" width="20" height="20" alt=""></picture> | Concentrate | `concentrate` | `CONCENTRATE_API_KEY` | `openai-chat`, `openai-responses`, `decisions` (at `/systemone`), `openai-decisions` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -115,7 +117,7 @@ its own URL in `formats`. Session formats take a `wss://` URL as their
 SDK does: `wss://api.openai.com/v1` for `openai-realtime` (EmpirioLabs AI's
 at `wss://api.empiriolabs.ai/v1`, which takes a transcription session's model
 at `?model=` too; xAI's, which its Grok Voice models speak, at
-`wss://api.x.ai/v1`; Azure OpenAI's at its resource's
+`wss://api.x.ai/v1`; Azure's at its resource's
 `wss://<resource>.openai.azure.com/openai/v1`, the deployment at `?model=`
 and the key in `api-key`) and
 `openai-live` (OpenAI's Live API, which its Live models
@@ -160,9 +162,15 @@ video generation, which its
 OpenAI-compatible endpoint does not serve), take its region's API with the
 version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 
-Z.ai's `zai-videos` (CogVideoX video generation on its international site)
-takes its API with the version, `https://api.z.ai/api/paas/v4`, the key a
-bearer token.
+Z.ai's formats, its OpenAI-compatible ones and `zai-videos` (CogVideoX
+video generation), take its international site's API with the version,
+`https://api.z.ai/api/paas/v4`, the key a bearer token. Its transcriptions
+count their usage in Chat Completions' `prompt_tokens` and
+`completion_tokens`, read as OpenAI's input and output tokens.
+
+DeepRelay's formats take its API with the version, `https://api.deeprelay.ai/v1`,
+the key a bearer token. Its videos take a creation's `seconds` as a number,
+not OpenAI's string, and end `cancelled` or `expired`, read as `failed`.
 
 Meta's `meta-transcriptions` (speech recognition at `/asr/transcribe`) takes
 its API with the version, `https://api.meta.ai/v1`, the key a bearer token.
