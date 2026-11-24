@@ -1,4 +1,4 @@
-//! Azure OpenAI: Chat Completions, Responses, decisions and Realtime, at a
+//! Azure: Chat Completions, Responses, decisions and Realtime, at a
 //! resource's own URL (`https://<resource>.openai.azure.com/openai/v1`). Its
 //! Chat Completions serve OpenAI's models on OpenAI's wire, so it is OpenAI's
 //! dialect, its key a Bearer one, as the v1 surface takes it; its Responses
@@ -13,12 +13,12 @@ use respan_gateway_realtime_ws::OpenAiRealtime;
 use respan_gateway_vendor_kit::chat::{OpenAi, in_responses};
 use respan_gateway_vendor_kit::{Ask, Dialect, Dialected, KeyIn, Model, Vendor};
 
-/// Azure OpenAI. It has no base URL of its own: a resource has one. A chat
+/// Azure. It has no base URL of its own: a resource has one. A chat
 /// to a model Chat Completions does not serve well goes to its Responses
 /// ([`in_responses`]).
 pub const VENDOR: Vendor = Vendor {
     id: "azure",
-    key_env: &["AZURE_API_KEY", "AZURE_OPENAI_API_KEY"],
+    key_env: &["AZURE_API_KEY"],
     formats: &[
         (&Dialected::new(OpenAiChat, OpenAi), None),
         (&OpenAiResponses, None),
