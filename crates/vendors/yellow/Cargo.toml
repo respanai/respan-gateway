@@ -25,6 +25,8 @@ respan-gateway-realtime.workspace = true
 respan-gateway-realtime-ws.workspace = true
 respan-gateway-vendor-kit.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
+uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }

@@ -89,8 +89,27 @@ A provider is a `vendor` with its key, or any compatible endpoint given
 `respan`, `typesafe`, `groq`, `deepseek`, `openrouter`, `xai`, `mistral`,
 `together`, `fireworks`, `ollama`, `azure`, `vllm`, `cloudflare`, `cerebras`,
 `perplexity`, `deepinfra`, `empiriolabs`, `phonic`, `morph`, `stepfun`, `qwen`,
-`baseten`, `concentrate`, `primeintellect`, `zai` and `deeprelay`. Each vendor's tier, key, formats and
-base URL are in [Vendors](vendors.md).
+`baseten`, `concentrate`, `primeintellect`, `zai`, `deeprelay` and `opencode`.
+Each vendor's tier, key, formats and base URL are in [Vendors](vendors.md).
+
+For [OpenCode Zen](vendors.md#opencode-zen), choose a format supported by
+the model you use. For example, to use a Chat Completions model:
+
+```toml
+[providers.opencode]
+vendor = "opencode"
+formats = ["openai-chat"]
+key = "env:OPENCODE_API_KEY"
+```
+
+For [OpenCode Go](https://opencode.ai/docs/go/) Chat Completions models
+such as `beam-free`, set `base_url = "https://opencode.ai/inference/go/openai/v1"`
+in the provider above and use a Go key.
+
+Clients that authenticate with a gateway `client_keys` key should send a
+stable `x-opencode-session` for each conversation. The gateway consumes
+its own keys before the provider sees the request, so the key alone does
+not establish a stable OpenCode session.
 
 ## Network
 

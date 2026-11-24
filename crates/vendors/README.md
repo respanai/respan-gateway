@@ -58,7 +58,9 @@ What a spec says, and what its own vendor does, such as Anthropic's key in
 `x-api-key`, OpenAI Realtime's transcription model or Gemini's thought
 signatures in `generateContent`, is the spec's, in its format
 (`AnthropicMessages`, `OpenAiRealtime`, `GeminiGenerate`), not a quirk. Each quirk
-is described where its file handles it.
+is described where its file handles it. For example, the
+[`opencode` dialect](yellow/src/opencode.rs) forwards Zen's session headers
+on each of the vendor's conversation formats, including translated calls.
 
 A vendor is one file in its tier's crate, a line in that crate's `ALL`, and
 one in this crate's `ALL` and module list. A provider of no vendor speaks
