@@ -9,6 +9,7 @@ pub mod cerebras;
 pub mod cloudflare;
 pub mod concentrate;
 pub mod deepinfra;
+pub mod deeprelay;
 pub mod deepseek;
 pub mod empiriolabs;
 pub mod fireworks;
@@ -25,6 +26,7 @@ pub mod stepfun;
 pub mod together;
 pub mod vllm;
 pub mod xai;
+pub mod zai;
 
 use respan_gateway_conversation::{Media, MediaSource};
 use respan_gateway_conversation_http::fields::media_url;
@@ -60,6 +62,8 @@ pub const ALL: &[&Vendor] = &[
     &baseten::VENDOR,
     &concentrate::VENDOR,
     &primeintellect::VENDOR,
+    &zai::VENDOR,
+    &deeprelay::VENDOR,
 ];
 
 /// No models, for a vendor that lists none: Bedrock's are its account's,

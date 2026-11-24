@@ -35,6 +35,7 @@ Each vendor is in one of two tiers:
 
 | | Vendor | `vendor` | Key | Formats |
 |:-:|---|---|---|---|
+| | DeepRelay | `deeprelay` | `DEEPRELAY_API_KEY` | `openai-chat`, `openai-embeddings`, `openai-images`, `openai-videos` (a creation's `seconds` a number) |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/groq-dark.svg"><img src="assets/vendors/groq.svg" width="20" height="20" alt=""></picture> | Groq | `groq` | `GROQ_API_KEY` | `openai-chat`, `openai-transcriptions`, `openai-speech` |
 | <img src="assets/vendors/deepseek.svg" width="20" height="20" alt=""> | DeepSeek | `deepseek` | `DEEPSEEK_API_KEY` | `openai-chat`, `anthropic-messages` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/openrouter-dark.svg"><img src="assets/vendors/openrouter.svg" width="20" height="20" alt=""></picture> | OpenRouter | `openrouter` | `OPENROUTER_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `openai-images`, `openai-embeddings`, `openai-transcriptions`, `openai-speech`, `openrouter-videos`, `decisions` |
@@ -58,6 +59,7 @@ Each vendor is in one of two tiers:
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/baseten-dark.svg"><img src="assets/vendors/baseten.svg" width="20" height="20" alt=""></picture> | Baseten | `baseten` | `BASETEN_API_KEY` | `openai-chat`, `openai-responses`, `anthropic-messages`, `decisions` (at `/systemone`) |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/concentrate-dark.svg"><img src="assets/vendors/concentrate.svg" width="20" height="20" alt=""></picture> | Concentrate | `concentrate` | `CONCENTRATE_API_KEY` | `openai-chat`, `openai-responses`, `decisions` (at `/systemone`), `openai-decisions` |
 | <picture><source media="(prefers-color-scheme: dark)" srcset="assets/vendors/primeintellect-dark.png"><img src="assets/vendors/primeintellect.png" width="20" height="20" alt=""></picture> | Prime Intellect | `primeintellect` | `PRIME_API_KEY` | `openai-chat`, `decisions` (its evaluations, at `/evaluations`) |
+| <img src="assets/vendors/zai.svg" width="20" height="20" alt=""> | Z.ai | `zai` | `ZAI_API_KEY` | `openai-chat`, `openai-images`, `openai-transcriptions` (its usage in Chat Completions' counts), `zai-videos` |
 
 These tables are kept by hand: a vendor added to `ALL` in
 [`crates/vendors`](../crates/vendors/README.md), or a format added to a
@@ -160,9 +162,15 @@ video generation, which its
 OpenAI-compatible endpoint does not serve), take its region's API with the
 version, `https://dashscope-intl.aliyuncs.com/api/v1`, the key a bearer token.
 
-Z.ai's `zai-videos` (CogVideoX video generation on its international site)
-takes its API with the version, `https://api.z.ai/api/paas/v4`, the key a
-bearer token.
+Z.ai's formats, its OpenAI-compatible ones and `zai-videos` (CogVideoX
+video generation), take its international site's API with the version,
+`https://api.z.ai/api/paas/v4`, the key a bearer token. Its transcriptions
+count their usage in Chat Completions' `prompt_tokens` and
+`completion_tokens`, read as OpenAI's input and output tokens.
+
+DeepRelay's formats take its API with the version, `https://api.deeprelay.ai/v1`,
+the key a bearer token. Its videos take a creation's `seconds` as a number,
+not OpenAI's string, and end `cancelled` or `expired`, read as `failed`.
 
 Meta's `meta-transcriptions` (speech recognition at `/asr/transcribe`) takes
 its API with the version, `https://api.meta.ai/v1`, the key a bearer token.
