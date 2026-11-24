@@ -36,7 +36,7 @@ use serde_json::{Map, Value, json};
 use super::{OpenAiResponses, request};
 use crate::Schema;
 use crate::openai::ErrorType;
-use crate::schema::Own;
+use crate::schema::{GATEWAY_SERVER, Own};
 
 /// The most items a request adds at once.
 pub const MAX_ITEMS: usize = 20;
@@ -765,13 +765,17 @@ pub fn shown(mut items: Vec<Value>, encrypted: bool) -> Vec<Value> {
 
 /// The conversation `items` are, to send as a request's input: without
 /// their `id` and `status`, but for a reasoning item's that carries its
-/// encrypted content, as it is sent back.
+/// encrypted content, as it is sent back, and the `id` of a call the gateway
+/// ran, which its result names.
 pub fn messages(items: &[Value]) -> Result<Vec<Message>, Fault> {
     let sent: Vec<Value> = (items.iter().cloned())
         .map(|mut item| {
             let sealed = item["type"] == "reasoning" && item["encrypted_content"].is_string();
+            let ran = item["type"] == "mcp_call" && item["server_label"] == GATEWAY_SERVER;
             if let Some(fields) = item.as_object_mut().filter(|_| !sealed) {
-                fields.remove("id");
+                if !ran {
+                    fields.remove("id");
+                }
                 fields.remove("status");
             }
             item

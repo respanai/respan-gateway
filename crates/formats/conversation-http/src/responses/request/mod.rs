@@ -7,7 +7,9 @@
 //! assistant produced (messages, function calls, reasoning) are one assistant
 //! message, and consecutive function call outputs are one user message of
 //! results. On an assistant message the item's fields are under `message`, on the first text part, which opens a new
-//! message item when it carries them. An item the kind has no form for is a
+//! message item when it carries them. A call the gateway ran, an `mcp_call`
+//! of its server with its output or error, is the assistant's tool call, and
+//! its result a user's message after it. An item the kind has no form for is a
 //! message of the native role `item`, holding the item as a native part.
 
 mod read;

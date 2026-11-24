@@ -120,13 +120,24 @@ What the kind has no form for stays native and is dropped in translation:
 `previous_response_id` and `conversation` (another provider cannot resolve
 them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
-code interpreter, MCP) and the items they make, refusals, and annotations. A
+code interpreter, MCP) and the items they make (but the gateway's own calls,
+[below](#calls-the-gateway-ran)), refusals, and annotations. A
 relay in this format sends them back. A function tool's `strict` is the kind's:
 a tool that does not say it keeps the Responses default, and a tool another
 format sent is written with `strict: false`. Stop sequences have no form in a
 request, and log probabilities are not carried. A failed tool result, which
 neither Responses nor Chat Completions can flag, is written as its output led
 by `Error: `. The module docs say it all.
+
+A call the gateway ran and its result are one `mcp_call` item, its `id` the
+call's and its `server_label` `respan-gateway`, the result its `output`, or,
+for a call that failed (`status: "failed"`), its `error`, an
+`mcp_tool_execution_error` whose `content` is the result's text. Streamed, the item is
+added `in_progress`, its arguments come as `response.mcp_call_arguments.delta`
+and `.done`, then `response.mcp_call.in_progress`, and as its result ends
+`response.mcp_call.completed` (or `.failed`) and the item's `done`. Such an
+item in a request's input is read back as the call and its result, and a
+conversation keeps its `id`, which its result names.
 
 ## Google Gemini
 

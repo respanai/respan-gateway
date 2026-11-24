@@ -5,7 +5,8 @@
 //!
 //! A response is given an id the gateway mints (`resp_…`, random, so no
 //! provider's ids collide or are guessed) and kept as its turn (the
-//! messages its request added, and the reply) beside the response it
+//! messages its request added, and the reply, with the calls the gateway ran
+//! in it and their results) beside the response it
 //! followed; a follow-up naming it is sent the conversation, read back by
 //! following them. A request that says `store: false` is not kept, and
 //! OpenAI's own Responses keep theirs.
@@ -486,10 +487,9 @@ impl Filter<Output> for Keep {
         else {
             return Ok(());
         };
-        let mut reply = Message::new(Role::Assistant, "");
-        reply.content = self.said.replay();
+        // The calls the gateway ran, with their results, are its turn's too.
         let mut messages = request.added;
-        messages.push(reply);
+        messages.extend(self.said.messages());
         let turn = Turn {
             parent: request.parent,
             messages,
@@ -508,6 +508,7 @@ fn new_id(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_conversation::Block;
     use respan_gateway_conversation_http::openai::OpenAiChat;
     use respan_gateway_core::futures::{FutureExt, StreamExt};
     use respan_gateway_core::{Gateway, Provider};
@@ -894,6 +895,78 @@ mod tests {
         let included = format!("{items}?include[]=reasoning.encrypted_content");
         let (_, included) = send(&gateway, http::Method::GET, &included, None).await;
         assert_eq!(included["data"][0]["encrypted_content"], "sealed");
+    }
+
+    /// Answers as a tool loop does: the call it makes, and before what the
+    /// model then said, a call the gateway ran and its result.
+    struct Ran;
+
+    #[async_trait]
+    impl Plugin for Ran {
+        async fn on_client(
+            &self,
+            cx: &mut ClientContext,
+        ) -> Result<Option<respan_gateway_core::Response>> {
+            let Some(target) = cx.target().map(str::to_owned) else {
+                return Ok(None);
+            };
+            let response = cx.call(target).await?;
+            let mut events: Vec<Result<Output>> = response.outputs::<Output>().collect().await;
+            let call = Block::GatewayCall {
+                id: "call_1".into(),
+                name: "gh__search".into(),
+            };
+            let result = Block::ToolResult {
+                id: "call_1".into(),
+                is_error: false,
+            };
+            let steps = [
+                Output::block_start(100, call),
+                Output::arguments(100, "{\"q\":\"rust\"}"),
+                Output::block_end(100),
+                Output::block_start(101, result),
+                Output::result(101, "found rust"),
+                Output::block_end(101),
+            ];
+            // After the reply's start.
+            events.splice(1..1, steps.into_iter().map(Ok));
+            Ok(Some(respan_gateway_core::Response::stream(stream::iter(
+                events,
+            ))))
+        }
+    }
+
+    /// A reply's calls the gateway ran are kept with it, as the conversation
+    /// its client would send back: a follow-up's model reads them.
+    #[tokio::test]
+    async fn a_replys_calls_the_gateway_ran_are_kept_as_its_tool_turns() {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let gateway = translating(Shared::default(), "Paris", Arc::clone(&sent)).plugin(Ran);
+        let answer = respond(
+            &gateway,
+            serde_json::json!({"model": "m", "input": "find rust"}),
+        )
+        .await;
+        let kinds: Vec<&Value> = (answer["output"].as_array().into_iter().flatten())
+            .map(|item| &item["type"])
+            .collect();
+        assert_eq!(kinds, ["mcp_call", "message"], "{answer}");
+        let id = answer["id"].as_str().expect("an id");
+        let asked =
+            serde_json::json!({"model": "m", "input": "thanks", "previous_response_id": id});
+        respond(&gateway, asked).await;
+        let messages = sent.lock()[1]["messages"].clone();
+        let roles: Vec<&Value> = (messages.as_array().into_iter().flatten())
+            .map(|m| &m["role"])
+            .collect();
+        assert_eq!(
+            roles,
+            ["user", "assistant", "tool", "assistant", "user"],
+            "{messages}"
+        );
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[2]["content"], "found rust");
+        assert_eq!(messages[3]["content"], "Paris");
     }
 
     /// Gives each request the scope its `x-scope` header names.

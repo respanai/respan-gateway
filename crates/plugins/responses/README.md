@@ -4,7 +4,9 @@
 `previous_response_id` work when it is translated to a provider that keeps
 nothing (Anthropic, Gemini, Chat Completions): each response is given an id
 the gateway mints (`resp_…`) and kept as its turn, beside the response it
-followed, and a follow-up naming it is sent the whole conversation. A
+followed, and a follow-up naming it is sent the whole conversation. The
+calls the gateway ran in a response (a tool loop's) are kept in its turn as
+the tool calls and results they were, as its client would send them back. A
 request that says `store: false` is not kept; OpenAI's own Responses keep
 theirs.
 

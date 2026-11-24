@@ -5,7 +5,8 @@ use super::{ITEM_ROLE, MESSAGE, ROLES};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Own, data_media, only, remainder, says, source_url, unless_file_id, unreadable_media,
+    GATEWAY_SERVER, Own, data_media, only, remainder, says, source_url, unless_file_id,
+    unreadable_media,
 };
 use respan_gateway_conversation::{Content, Input, Media, MediaSource, Message, Role};
 use respan_gateway_core::Fault;
@@ -142,6 +143,7 @@ fn push_item(out: &mut Vec<Message>, item: &Value) -> Result<(), Fault> {
         "function_call" => push_call(out, item),
         "function_call_output" => push_result(out, item)?,
         "reasoning" => push_reasoning(out, item),
+        "mcp_call" => push_ran(out, item),
         _ => None,
     };
     if done.is_none() {
@@ -208,6 +210,13 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Result<Option<()>, Fault
         let taken = ["type", "call_id", "output"];
         *native = OpenAiResponses::native(remainder(item, &taken));
     }
+    push_answer(out, result);
+    Ok(Some(()))
+}
+
+/// `result` in the user's message of results it joins: the last message, if
+/// it is one, else a new one.
+fn push_answer(out: &mut Vec<Message>, result: Content) {
     let results = |m: &Message| {
         m.role == Role::User
             && m.native.is_empty()
@@ -223,7 +232,45 @@ fn push_result(out: &mut Vec<Message>, item: &Value) -> Result<Option<()>, Fault
             out.push(message);
         }
     }
-    Ok(Some(()))
+}
+
+/// A call the gateway ran, an `mcp_call` of its server ([`GATEWAY_SERVER`])
+/// that has its output or error: the call in the assistant's message, and its
+/// result, a user's message after it. Another server's stays an item.
+fn push_ran(out: &mut Vec<Message>, item: &Value) -> Option<()> {
+    if item["server_label"] != GATEWAY_SERVER {
+        return None;
+    }
+    let (id, name) = (item["id"].as_str()?, item["name"].as_str()?);
+    let arguments = item["arguments"].as_str()?;
+    let (answer, is_error) = match (&item["output"], &item["error"]) {
+        (Value::String(output), Value::Null) => (output.clone(), false),
+        (_, Value::Null) => return None,
+        (_, error) => (failure(error)?, true),
+    };
+    assistant(out)
+        .content
+        .push(Content::tool_call(id, name, arguments));
+    let answer = vec![Content::from(answer)];
+    push_answer(out, Content::tool_result(id, answer, is_error));
+    Some(())
+}
+
+/// The text of an `mcp_call`'s `error`: a tool execution error's text
+/// content, a protocol or HTTP error's message, or the error if it is text.
+fn failure(error: &Value) -> Option<String> {
+    match error["type"].as_str() {
+        Some("mcp_tool_execution_error") => match &error["content"] {
+            Value::String(text) => Some(text.clone()),
+            Value::Array(parts) => (parts.iter())
+                .map(|part| part["text"].as_str())
+                .collect::<Option<Vec<_>>>()
+                .map(|texts| texts.join("\n")),
+            _ => None,
+        },
+        Some("mcp_protocol_error" | "http_error") => error["message"].as_str().map(str::to_owned),
+        _ => error.as_str().map(str::to_owned),
+    }
 }
 
 fn push_reasoning(out: &mut Vec<Message>, item: &Value) -> Option<()> {
