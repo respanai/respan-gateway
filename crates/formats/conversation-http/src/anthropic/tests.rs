@@ -1402,21 +1402,17 @@ fn a_call_the_gateway_ran_is_an_mcp_tool_use_then_its_result() {
         body["content"],
         json!([text("Looking."), call, result, text("Done.")])
     );
-    // Streamed, the call's input comes as it came, and its result whole as
-    // it ends, as Anthropic sends a server's.
+    // Streamed, the call and its result each come whole as they end: the
+    // call's input in its start, as an SDK without the beta types drops the
+    // input_json_deltas of an mcp_tool_use.
     let events = stream_events(&stream_of(&replies).expect("a stream"));
     let blocks: Vec<&Value> = (events.iter())
         .filter(|e| e["index"] == 1 || e["index"] == 2)
         .collect();
-    let mut opened = call.clone();
-    opened["input"] = json!({});
-    let input = |json: &str| json!({ "type": "input_json_delta", "partial_json": json });
     assert_eq!(
         blocks,
         [
-            &json!({ "type": "content_block_start", "index": 1, "content_block": opened }),
-            &json!({ "type": "content_block_delta", "index": 1, "delta": input("{\"q\":") }),
-            &json!({ "type": "content_block_delta", "index": 1, "delta": input("\"rust\"}") }),
+            &json!({ "type": "content_block_start", "index": 1, "content_block": call }),
             &json!({ "type": "content_block_stop", "index": 1 }),
             &json!({ "type": "content_block_start", "index": 2, "content_block": result }),
             &json!({ "type": "content_block_stop", "index": 2 }),

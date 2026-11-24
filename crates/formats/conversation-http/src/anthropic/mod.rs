@@ -32,8 +32,9 @@
 //!
 //! A call the gateway ran ([`Block::GatewayCall`]) is an `mcp_tool_use` block
 //! of the server `respan-gateway`, and its result ([`Block::ToolResult`]) the
-//! `mcp_tool_result` after it, which a stream writes whole as it ends, as
-//! Anthropic sends a server's. A request's assistant message with such a
+//! `mcp_tool_result` after it. A stream writes each whole as it ends: the
+//! call's input is in its `content_block_start`, with no `input_json_delta`,
+//! as an SDK without the beta types drops those deltas of an `mcp_tool_use`. A request's assistant message with such a
 //! pair has it read back as the kind's tool call, and its result a user's
 //! message after it; another server's blocks stay native.
 
@@ -421,9 +422,7 @@ impl Schema for AnthropicMessages {
                         Block::GatewayCall { id, name } => {
                             let input =
                                 arguments_object(&part.text).map_err(|_| unwritable_content())?;
-                            let mut call = ran_call(id, name);
-                            call["input"] = input;
-                            call
+                            ran_call(id, name, input)
                         }
                         Block::ToolResult { id, is_error } => ran_result(id, *is_error, &part.text),
                         _ => return Err(unwritable_content()),
@@ -527,11 +526,11 @@ impl Schema for AnthropicMessages {
 }
 
 /// A call the gateway ran, as an `mcp_tool_use` block of its server
-/// ([`GATEWAY_SERVER`]), its input yet to come.
-fn ran_call(id: &str, name: &str) -> Value {
+/// ([`GATEWAY_SERVER`]).
+fn ran_call(id: &str, name: &str, input: Value) -> Value {
     json!({
         "type": "mcp_tool_use", "id": id, "name": name, "server_name": GATEWAY_SERVER,
-        "input": {},
+        "input": input,
     })
 }
 

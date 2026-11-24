@@ -1,7 +1,8 @@
 //! Events as Anthropic Messages, whole or streamed: the encoders.
 
 use crate::schema::{
-    Gate, Own, Schema, check_usage, fits, merge_fields, own_fields, unwritable_content,
+    Gate, Own, Schema, arguments_object, check_usage, fits, merge_fields, own_fields,
+    unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
 use respan_gateway_core::Fault;
@@ -91,13 +92,9 @@ impl EventStream {
                 json!({ "type": "tool_use", "id": id, "name": name, "input": {} })
             }
             Block::Reasoning => json!({ "type": "thinking", "thinking": "" }),
-            Block::GatewayCall { id, name } => ran_call(id, name),
-            // A result comes whole as it ends, as Anthropic sends a server's.
-            Block::ToolResult { .. } if !wb.ended => return Ok(()),
-            Block::ToolResult { id, is_error } => {
-                let text = wb.held.take().map(|said| said.as_str().to_owned());
-                ran_result(id, *is_error, &text.unwrap_or_default())
-            }
+            // A step the gateway ran comes whole as it ends.
+            kind if said_whole(kind) && !wb.ended => return Ok(()),
+            kind if said_whole(kind) => whole(kind, wb.held.take())?,
             _ => return Err(unwritable_content()),
         };
         let held = wb.held.take();
@@ -206,10 +203,10 @@ impl EventStream {
         if wb.ended || !fits(part, &wb.kind) {
             return Err(unwritable_content());
         }
-        let whole = matches!(wb.kind, Block::ToolResult { .. });
+        let is_whole = said_whole(&wb.kind);
         match (wb.index, part.as_str().is_empty()) {
             (_, true) => {}
-            (Some(index), false) if !whole => delta(index, part, out),
+            (Some(index), false) if !is_whole => delta(index, part, out),
             // The block is not open on the wire yet, or is said whole as it
             // ends: keep what it says.
             _ => match &mut wb.held {
@@ -226,10 +223,9 @@ impl EventStream {
             return Ok(());
         }
         if let Some(index) = wb.index {
-            if let Block::ToolResult { id, is_error } = &wb.kind {
-                let text = wb.held.take().map(|said| said.as_str().to_owned());
+            if said_whole(&wb.kind) {
                 let mut start = json!({ "type": "content_block_start", "index": index });
-                start["content_block"] = ran_result(id, *is_error, &text.unwrap_or_default());
+                start["content_block"] = whole(&wb.kind, wb.held.take())?;
                 emit(out, start);
             }
             emit(out, json!({ "type": "content_block_stop", "index": index }));
@@ -258,6 +254,27 @@ impl EventStream {
         v.extend(self.stop.top.clone());
         emit(out, v.into());
         Ok(())
+    }
+}
+
+/// Whether `kind` is a step the gateway ran, which a stream writes whole as
+/// it ends: a server's result is sent so, and an SDK without the beta types
+/// drops the `input_json_delta`s of an `mcp_tool_use`, so its input comes in
+/// its `content_block_start`.
+fn said_whole(kind: &Block) -> bool {
+    matches!(kind, Block::GatewayCall { .. } | Block::ToolResult { .. })
+}
+
+/// The whole block of a step the gateway ran, from what was said for it.
+fn whole(kind: &Block, said: Option<Delta>) -> Result<Value, Fault> {
+    let text = said.as_ref().map(Delta::as_str).unwrap_or_default();
+    match kind {
+        Block::GatewayCall { id, name } => {
+            let input = arguments_object(text).map_err(|_| unwritable_content())?;
+            Ok(ran_call(id, name, input))
+        }
+        Block::ToolResult { id, is_error } => Ok(ran_result(id, *is_error, text)),
+        _ => Err(unwritable_content()),
     }
 }
 

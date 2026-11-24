@@ -77,7 +77,9 @@ in realtime sessions too. The client sees one ordinary reply.
 
 An Anthropic Messages client sees each call the gateway ran and its result
 in that reply as `mcp_tool_use` and `mcp_tool_result` blocks of the server
-`respan-gateway`, which it sends back with its history the same way.
+`respan-gateway`, which it sends back with its history the same way. These
+blocks are typed only in the beta types of Anthropic's SDKs: a client that
+validates replies strictly reads them with the beta client.
 
 Chat Completions and Gemini have no place for a tool's result, so the
 gateway's tool calls are not returned to their clients: to keep them in the
