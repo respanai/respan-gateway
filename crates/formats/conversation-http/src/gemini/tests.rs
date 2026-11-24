@@ -445,6 +445,7 @@ fn a_stream_is_a_block_of_text_a_finish_and_usage() {
             input_tokens: 4,
             output_tokens: 5,
             cached_input_tokens: 1,
+            cached_input_tokens_reported: true,
             cache_write_input_tokens: 0,
             reasoning_tokens: 3
         }
@@ -642,6 +643,7 @@ fn a_stream_is_written_a_response_per_delta_and_a_last_with_the_finish() {
             input_tokens: 4,
             output_tokens: 5,
             cached_input_tokens: 1,
+            cached_input_tokens_reported: true,
             cache_write_input_tokens: 0,
             reasoning_tokens: 3,
         }),

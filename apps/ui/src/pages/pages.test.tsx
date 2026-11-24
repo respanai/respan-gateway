@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { Provider, RequestRecord } from "@/lib/api";
+import type { Provider, ProviderTpsMetric, RequestRecord } from "@/lib/api";
 import { ProvidersPage } from "./providers";
 import { RequestsPage } from "./requests";
 import { RoutesPage } from "./routes";
@@ -61,10 +61,32 @@ const record: RequestRecord = {
   error: null,
 };
 
+const providerTps: ProviderTpsMetric = {
+  provider: "anthropic",
+  model: "claude-sonnet-4-5",
+  calls: 4,
+  successful_calls: 3,
+  failed_calls: 1,
+  abandoned_calls: 0,
+  usage_calls: 2,
+  input_tokens: 1000,
+  processed_input_tokens: 800,
+  average_context_tokens: 1000,
+  cached_input_tokens: 200,
+  output_tokens: 600,
+  input_tps: 80,
+  output_tps: 120,
+  cache_hit_rate: 0.2,
+  cache_known_calls: 3,
+  cache_total_calls: 4,
+  input_timed_calls: 2,
+  output_timed_calls: 2,
+};
+
 describe("ProvidersPage", () => {
   it("renders each provider with its formats, credentials and stats", async () => {
     const keyed = { ...provider, name: "keyed", credentials: "gateway" as const, requests: 0, errors: 0, avg_latency_ms: null };
-    serve({ "/ui/api/providers": { providers: [provider, keyed] } });
+    serve({ "/ui/api/providers": { providers: [provider, keyed] }, "/ui/api/provider-tps": { metrics: [] } });
     renderPage(<ProvidersPage />);
     expect(await screen.findAllByText("anthropic-messages")).toHaveLength(2);
     // Only the provider without a key of its own says whose it uses.
@@ -73,8 +95,31 @@ describe("ProvidersPage", () => {
     expect(screen.getByText("1.25 s")).toBeInTheDocument();
   });
 
+  it("shows provider-call rates and preserves unavailable values", async () => {
+    serve({
+      "/ui/api/providers": { providers: [provider] },
+      "/ui/api/provider-tps": { metrics: [{ ...providerTps, input_tps: null }] },
+    });
+    renderPage(<ProvidersPage />);
+    expect(await screen.findByText("Provider call metrics")).toBeInTheDocument();
+    expect(screen.getByText("1,000 tok")).toBeInTheDocument();
+    expect(screen.getByText("120 tok/s")).toBeInTheDocument();
+    expect(screen.getByText("20% (3/4)")).toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+    expect(screen.getByText("3 / 1 / 0")).toBeInTheDocument();
+  });
+
+  it("shows cancelled calls separately from other failures", async () => {
+    serve({
+      "/ui/api/providers": { providers: [provider] },
+      "/ui/api/provider-tps": { metrics: [{ ...providerTps, failed_calls: 3, abandoned_calls: 2 }] },
+    });
+    renderPage(<ProvidersPage />);
+    expect(await screen.findByText("3 / 1 / 2")).toBeInTheDocument();
+  });
+
   it("teaches how to add a provider when none are configured", async () => {
-    serve({ "/ui/api/providers": { providers: [] } });
+    serve({ "/ui/api/providers": { providers: [] }, "/ui/api/provider-tps": { metrics: [] } });
     renderPage(<ProvidersPage />);
     expect(await screen.findByText("No providers configured")).toBeInTheDocument();
   });

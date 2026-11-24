@@ -17,6 +17,7 @@ use respan_gateway_media_http::job_ids;
 use respan_gateway_media_http::openrouter::OpenRouterVideos;
 use respan_gateway_plugin_credentials::ClientCredentials;
 use respan_gateway_plugin_mcp_router::{Closer as McpCloser, McpRouter};
+use respan_gateway_plugin_provider_tps_metrics::ProviderMetrics;
 use respan_gateway_plugin_relay::Relay;
 use respan_gateway_plugin_respan::Respan;
 use respan_gateway_plugin_routing::{Dispatch, Routing};
@@ -78,6 +79,9 @@ impl Built {
             let serving = plan.serves(mcp::FORMAT);
             tool_loop::check(tool_loop, &plan.mcp, serving)?;
         }
+        let provider_tps = ProviderMetrics::new().provider_names(provider_names(&plan));
+        let provider_tps_metrics = provider_tps.metrics();
+        let gateway = gateway.plugin(provider_tps);
         // Respan opens a request's trace first, before any plugin answers
         // it (as the tool loop does), and records its calls last, as sent.
         let mut respan_health = None;
@@ -133,6 +137,7 @@ impl Built {
                 &plan,
                 &formats,
                 gateway.clone(),
+                provider_tps_metrics,
                 fronted,
             )
             .respan(respan_health),
@@ -201,6 +206,18 @@ fn routing(plan: &Plan, formats: &[KnownFormat], tool_loop: bool) -> Routing {
         })
 }
 
+fn provider_names(plan: &Plan) -> HashMap<String, String> {
+    plan.upstreams
+        .iter()
+        .flat_map(|u| {
+            u.entries
+                .iter()
+                .map(|e| (e.internal.clone(), u.name.clone()))
+        })
+        .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
+        .collect()
+}
+
 /// The gateway with the binary's plugins, and what ends the sessions of the
 /// tool loop and of `/mcp`.
 type Plugins = (Gateway, Option<tool_loop::Closer>, Option<McpCloser>);
@@ -218,16 +235,7 @@ fn with_plugins(
     process: &Process,
 ) -> Plugins {
     let (log, switches) = (&process.log, &process.switches);
-    let names: HashMap<String, String> = plan
-        .upstreams
-        .iter()
-        .flat_map(|u| {
-            u.entries
-                .iter()
-                .map(|e| (e.internal.clone(), u.name.clone()))
-        })
-        .chain(plan.mcp.iter().map(|s| (s.name.clone(), s.name.clone())))
-        .collect();
+    let names = provider_names(plan);
     // Gemini serves a job's content only where the job says, and OpenRouter
     // answers for one not finished as for one it never made.
     let located = [GeminiOmni::NAME, OpenRouterVideos::NAME];

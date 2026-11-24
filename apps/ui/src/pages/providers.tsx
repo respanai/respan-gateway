@@ -1,4 +1,4 @@
-import { KeyRound, Server } from "lucide-react";
+import { Activity, KeyRound, Server } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { CodeBlock } from "@/components/code-block";
@@ -9,8 +9,9 @@ import { ProviderIcon } from "@/components/provider-icon";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useProviders } from "@/hooks/queries";
-import type { Provider } from "@/lib/api";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { useProviderTps, useProviders } from "@/hooks/queries";
+import type { Provider, ProviderTpsMetric } from "@/lib/api";
 import { formatCount, formatMs, formatPercent } from "@/lib/format";
 import { describeError } from "@/lib/query-client";
 
@@ -95,8 +96,78 @@ function ProviderCard({ provider: p }: { provider: Provider }) {
   );
 }
 
+function formatRate(rate: number | null): string {
+  return rate == null || !Number.isFinite(rate) ? "—" : `${rate.toFixed(rate >= 100 ? 0 : 1)} tok/s`;
+}
+
+function formatCacheHit(metric: ProviderTpsMetric): string {
+  if (metric.cache_hit_rate == null) return "—";
+  const coverage = `${formatCount(metric.cache_known_calls)}/${formatCount(metric.cache_total_calls)}`;
+  return `${formatPercent(metric.cache_hit_rate)} (${coverage})`;
+}
+
+function ProviderTpsTable({ metrics }: { metrics: ProviderTpsMetric[] }) {
+  return (
+    <section className="grid gap-3 border-t pt-6" aria-labelledby="provider-tps-title">
+      <div className="flex items-start gap-2">
+        <Activity className="mt-0.5 size-4 text-muted-foreground" aria-hidden="true" />
+        <div>
+          <h2 id="provider-tps-title" className="font-medium">Provider call metrics</h2>
+          <p className="text-sm text-muted-foreground">
+            Gateway observations by provider and model. Rates include network and provider queue time.
+          </p>
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-lg border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Provider / model</TableHead>
+              <TableHead>Calls</TableHead>
+              <TableHead>Success / failed / cancelled</TableHead>
+              <TableHead>Usage</TableHead>
+              <TableHead>Timed input / output</TableHead>
+              <TableHead>Avg context</TableHead>
+              <TableHead>Input TPS</TableHead>
+              <TableHead>Output TPS</TableHead>
+              <TableHead>Cache hit</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {metrics.map((metric) => (
+              <TableRow key={`${metric.provider}/${metric.model}`}>
+                <TableCell>
+                  <div className="grid min-w-44 gap-0.5">
+                    <span className="font-medium">{metric.provider}</span>
+                    <span className="truncate font-mono text-xs text-muted-foreground" title={metric.model}>
+                      {metric.model}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="font-mono tabular">{formatCount(metric.calls)}</TableCell>
+                <TableCell className="font-mono tabular">
+                  {formatCount(metric.successful_calls)} / {formatCount(metric.failed_calls - metric.abandoned_calls)} / {formatCount(metric.abandoned_calls)}
+                </TableCell>
+                <TableCell className="font-mono tabular">{formatCount(metric.usage_calls)}</TableCell>
+                <TableCell className="font-mono tabular">
+                  {formatCount(metric.input_timed_calls)} / {formatCount(metric.output_timed_calls)}
+                </TableCell>
+                <TableCell className="font-mono tabular">{metric.average_context_tokens == null ? "—" : `${formatCount(Math.round(metric.average_context_tokens))} tok`}</TableCell>
+                <TableCell className="font-mono tabular">{formatRate(metric.input_tps)}</TableCell>
+                <TableCell className="font-mono tabular">{formatRate(metric.output_tps)}</TableCell>
+                <TableCell className="font-mono tabular">{formatCacheHit(metric)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </section>
+  );
+}
+
 export function ProvidersPage() {
   const { data, isPending, error } = useProviders();
+  const tps = useProviderTps();
   return (
     <div className="grid gap-6">
       <PageHeader
@@ -128,6 +199,21 @@ export function ProvidersPage() {
           <p>Add a provider to gateway.toml and restart the gateway:</p>
           <CodeBlock className="w-full text-left" code={exampleConfig} />
         </EmptyState>
+      )}
+      {tps.isPending ? (
+        <Skeleton className="h-40 rounded-lg" />
+      ) : tps.error && !tps.data ? (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+          <p className="font-medium">Couldn't load provider call metrics</p>
+          <p className="text-muted-foreground">{describeError(tps.error)}</p>
+        </div>
+      ) : tps.data?.length ? (
+        <ProviderTpsTable metrics={tps.data} />
+      ) : (
+        <section className="grid gap-1 border-t pt-6" aria-labelledby="provider-tps-title">
+          <h2 id="provider-tps-title" className="font-medium">Provider call metrics</h2>
+          <p className="text-sm text-muted-foreground">No provider calls observed yet.</p>
+        </section>
       )}
     </div>
   );

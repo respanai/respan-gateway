@@ -29,6 +29,7 @@ use crate::history::{CSV_HEADER, Filter, csv_row};
 use crate::mcp::Transport;
 use crate::requests::{RequestRecord, rfc3339};
 use respan_gateway_core::Gateway;
+use respan_gateway_plugin_provider_tps_metrics::Metrics;
 use respan_gateway_plugin_routing::{Ask, By, Routes};
 use respan_gateway_plugin_tool_loop::ToolFilter;
 
@@ -67,6 +68,8 @@ pub struct Admin {
     /// Each server's tools as last asked, for a minute.
     /// Each MCP server's tools as last listed, for a minute.
     tools: moka::sync::Cache<String, Value>,
+    /// The provider/model metrics collected by this config build.
+    provider_tps: Arc<Metrics>,
     /// How sending traces to Respan goes, if its plugin is on.
     respan: Option<Arc<respan_gateway_plugin_respan::Health>>,
 }
@@ -89,6 +92,7 @@ impl Admin {
         plan: &Plan,
         formats: &[KnownFormat],
         gateway: Gateway,
+        provider_tps: Arc<Metrics>,
         aggregate: Option<Vec<String>>,
     ) -> Self {
         let providers = plan
@@ -153,6 +157,7 @@ impl Admin {
             }),
             aggregate: aggregate.map(|servers| (servers, ToolFilter::default())),
             gateway,
+            provider_tps,
             tools: moka::sync::Cache::builder()
                 .time_to_live(Duration::from_secs(60))
                 .build(),
@@ -175,6 +180,7 @@ pub fn router(admin: Arc<Admin>, keys: Arc<ClientKeys>) -> Router {
     let api = Router::new()
         .route("/ui/api/overview", get(overview))
         .route("/ui/api/providers", get(providers))
+        .route("/ui/api/provider-tps", get(provider_tps))
         .route("/ui/api/mcp", get(mcp))
         .route("/ui/api/mcp/{name}", get(not_found).put(switch_server))
         .route("/ui/api/mcp/{name}/tools", get(mcp_tools))
@@ -314,6 +320,41 @@ async fn providers(State(admin): State<Arc<Admin>>) -> Json<Value> {
         })
         .collect();
     Json(json!({ "providers": providers }))
+}
+
+/// `GET /ui/api/provider-tps`: cumulative provider-call observations for each
+/// provider/model pair in the current config build. Rates and cache values are
+/// `null` when their usage or timing contract is insufficient.
+async fn provider_tps(State(admin): State<Arc<Admin>>) -> Json<Value> {
+    let metrics = admin
+        .provider_tps
+        .snapshot()
+        .into_iter()
+        .map(|metric| {
+            json!({
+                "provider": metric.provider,
+                "model": metric.model,
+                "calls": metric.calls,
+                "successful_calls": metric.successful_calls,
+                "failed_calls": metric.failed_calls,
+                "abandoned_calls": metric.abandoned_calls,
+                "usage_calls": metric.usage_calls,
+                "input_tokens": metric.input_tokens,
+                "processed_input_tokens": metric.processed_input_tokens,
+                "average_context_tokens": metric.average_context_tokens,
+                "cached_input_tokens": metric.cached_input_tokens,
+                "output_tokens": metric.output_tokens,
+                "input_tps": metric.input_tps,
+                "output_tps": metric.output_tps,
+                "cache_hit_rate": metric.cache_hit_rate,
+                "cache_known_calls": metric.cache_known_calls,
+                "cache_total_calls": metric.cache_total_calls,
+                "input_timed_calls": metric.input_timed_calls,
+                "output_timed_calls": metric.output_timed_calls,
+            })
+        })
+        .collect::<Vec<_>>();
+    Json(json!({ "metrics": metrics }))
 }
 
 /// `GET /ui/api/mcp`: each MCP server (`name`, `transport` (`http` or
@@ -835,11 +876,25 @@ mod tests {
     const TOOLS: &str = "[tools]\na = { url = \"http://a.test/mcp\" }\n";
 
     async fn send(app: &App, method: Method, path: &str, body: &str) -> (StatusCode, Value) {
-        let request = Request::builder()
+        send_key(app, method, path, body, None).await
+    }
+
+    async fn send_key(
+        app: &App,
+        method: Method,
+        path: &str,
+        body: &str,
+        key: Option<&str>,
+    ) -> (StatusCode, Value) {
+        let mut request = Request::builder()
             .method(method)
             .uri(path)
             .header("content-type", "application/json")
-            .header("accept", "application/json, text/event-stream")
+            .header("accept", "application/json, text/event-stream");
+        if let Some(key) = key {
+            request = request.header("x-api-key", key);
+        }
+        let request = request
             .body(Body::from(body.to_owned()))
             .unwrap_or_else(|e| panic!("{e}"));
         let response = app.router().oneshot(request).await;
@@ -851,6 +906,130 @@ mod tests {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
+    }
+
+    #[tokio::test]
+    async fn provider_tps_is_admin_only_and_returns_a_stable_empty_shape() {
+        let config = Config::parse(
+            "client_keys = [\
+                { name = \"reader\", key = \"reader-secret\", admin = false },\
+                { name = \"ops\", key = \"ops-secret\", admin = true }\
+            ]\n\n[providers.openai]\nvendor = \"openai\"\nkey = \"provider-secret\"",
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config).unwrap_or_else(|e| panic!("{e}"));
+
+        let (status, _) = send(&app, Method::GET, "/ui/api/provider-tps", "").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = send_key(
+            &app,
+            Method::GET,
+            "/ui/api/provider-tps",
+            "",
+            Some("reader-secret"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, metrics) = send_key(
+            &app,
+            Method::GET,
+            "/ui/api/provider-tps",
+            "",
+            Some("ops-secret"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(metrics, json!({ "metrics": [] }));
+    }
+
+    #[tokio::test]
+    async fn provider_tps_observes_real_http_calls_and_resets_on_reload() {
+        let upstream = mockllm::FakeOpenAi::start().await;
+        upstream.answer(mockllm::Answer::body(json!({
+            "id": "chatcmpl-test", "object": "chat.completion", "created": 1,
+            "model": "gpt-test",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "one two",
+                "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]},
+                "finish_reason": "tool_calls"}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13,
+                "prompt_tokens_details": {"cached_tokens": 2}}
+        })));
+        upstream.answer(mockllm::Answer::text("one two three"));
+        let text = format!(
+            "client_keys = [{{ name = \"ops\", key = \"ops-secret\", admin = true }}]\n\
+             providers = {{ openai = {{ formats = \"openai-chat\", base_url = \"{}\", auth = {{ type = \"bearer\", key = \"sk-test\" }} }} }}\n\
+             formats = [\"openai-chat\"]\n\
+             [plugins.routing]\nlistings = false\n",
+            upstream.base_url()
+        );
+        let config = Config::parse(&text).unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .reload_from(move || Config::parse(&text));
+        let body =
+            json!({"model":"gpt-test", "messages":[{"role":"user", "content":"hi"}]}).to_string();
+        let (status, _) = send_key(
+            &app,
+            Method::POST,
+            "/v1/chat/completions",
+            &body,
+            Some("ops-secret"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        app.gateway().idle().await;
+        let (status, value) = send_key(
+            &app,
+            Method::GET,
+            "/ui/api/provider-tps",
+            "",
+            Some("ops-secret"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let metric = &value["metrics"][0];
+        assert_eq!(metric["provider"], "openai");
+        assert_eq!(metric["model"], "gpt-test");
+        assert_eq!(metric["successful_calls"], 1);
+        assert!(metric["output_tokens"].as_u64().unwrap_or_default() > 0);
+        assert_eq!(metric["average_context_tokens"], 10.0);
+        assert!(metric["output_tps"].is_null());
+        assert!(metric["input_tps"].is_null());
+        assert_eq!(metric["output_timed_calls"], 0);
+        let body = json!({"model":"gpt-test", "messages":[{"role":"user", "content":"hi"}], "stream":true, "stream_options":{"include_usage":true}}).to_string();
+        let (status, _) = send_key(
+            &app,
+            Method::POST,
+            "/v1/chat/completions",
+            &body,
+            Some("ops-secret"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        app.gateway().idle().await;
+        let (_, value) = send_key(
+            &app,
+            Method::GET,
+            "/ui/api/provider-tps",
+            "",
+            Some("ops-secret"),
+        )
+        .await;
+        let metric = &value["metrics"][0];
+        assert_eq!(metric["successful_calls"], 2);
+        assert_eq!(metric["average_context_tokens"], 6.0);
+        assert_eq!(metric["output_timed_calls"], 1);
+        assert!(metric["output_tps"].as_f64().is_some_and(|tps| tps > 0.0));
+        assert!(app.reload().is_ok());
+        let (_, value) = send_key(
+            &app,
+            Method::GET,
+            "/ui/api/provider-tps",
+            "",
+            Some("ops-secret"),
+        )
+        .await;
+        assert_eq!(value, json!({"metrics": []}));
     }
 
     #[tokio::test]

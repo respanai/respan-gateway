@@ -10,7 +10,9 @@ use futures::channel::oneshot;
 use futures::future::BoxFuture;
 use futures::{Future, FutureExt, Stream, StreamExt, TryStreamExt, stream};
 use http::{request::Parts as RequestHead, response::Parts as ResponseHead};
-use respan_gateway_core::{Connection, EventSink, EventStream, Extensions, Fault};
+use respan_gateway_core::{
+    Connection, EventSink, EventStream, Extensions, Fault, StreamingResponse,
+};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -237,6 +239,7 @@ impl ProviderIo {
                 None => (head, body),
             };
             let response_hook = self.response;
+            let response_shape = self.extensions.get::<StreamingResponse>().cloned();
             let mut request = http::Request::from_parts(head, body);
             let relayed = self.extensions.get::<crate::raw::Relayed>().copied();
             let client_head = relayed
@@ -271,7 +274,9 @@ impl ProviderIo {
                     let (response, completion) = (self.send)(request).await?;
                     let (mut head, mut body) = response.into_parts();
                     let call = sent.clone().into_parts().0;
-                    if let Some(rewrite) = response_hook.and_then(|hook| hook(&sent, &mut head)) {
+                    let rewrite = response_hook.and_then(|hook| hook(&sent, &mut head));
+                    let buffered = rewrite.is_some();
+                    if let Some(rewrite) = rewrite {
                         body = Body::full(rewrite(body.read_answer(limit).await?)?);
                         head.headers.remove(http::header::CONTENT_LENGTH);
                     }
@@ -301,6 +306,18 @@ impl ProviderIo {
                             "the provider's answer is in content coding {coding}, which the gateway does not decode"
                         ));
                         return Ok((EventStream::refused(fault), completion));
+                    }
+                    if !buffered
+                        && let Some(shape) = response_shape
+                        && crate::content::content_type(&head)
+                            .and_then(|value| value.split(';').next())
+                            .is_some_and(|value| {
+                                let value = value.trim();
+                                value.eq_ignore_ascii_case("text/event-stream")
+                                    || value.eq_ignore_ascii_case("application/vnd.amazon.eventstream")
+                            })
+                    {
+                        shape.mark_streaming();
                     }
                     let events = match decode(&head, &sent) {
                         Some(decoder) => codec::decode(body, decoder, Some(limit)),

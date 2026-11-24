@@ -545,12 +545,14 @@ pub fn usage_of(u: &Value) -> Result<Usage, Fault> {
     let n = |key: &str| count(u.get(key));
     let thoughts = n("thoughtsTokenCount")?.unwrap_or(0);
     let tool_use = n("toolUsePromptTokenCount")?.unwrap_or(0);
+    let cached = n("cachedContentTokenCount")?;
     Ok(Usage {
         input_tokens: n("promptTokenCount")?.unwrap_or(0).saturating_add(tool_use),
         output_tokens: n("candidatesTokenCount")?
             .unwrap_or(0)
             .saturating_add(thoughts),
-        cached_input_tokens: n("cachedContentTokenCount")?.unwrap_or(0),
+        cached_input_tokens: cached.unwrap_or(0),
+        cached_input_tokens_reported: cached.is_some(),
         reasoning_tokens: thoughts,
         ..Usage::default()
     })

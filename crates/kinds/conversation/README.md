@@ -22,8 +22,10 @@ nothing and read back as none, one kept before as its format's JSON too.
 
 `Usage` is the token counts a provider reports: input, output, and the
 cached, cache-write and reasoning counts that are parts of them. A count
-of 0 is one the provider did not report. A format refuses usage it cannot
-write, such as cache writes in Gemini.
+of 0 is one the provider did not report, but `cached_input_tokens_reported`
+says when a provider did report one, so a reported zero stays a cache miss
+and not an unknown. A format refuses usage it cannot write, such as cache
+writes in Gemini.
 
 A reply is a sequence of events, the same for a stream and a whole body, and
 an `Output` is one such event, not a whole reply: `Output::Start`, then for each content block a `BlockStart`, its `Delta`s and a

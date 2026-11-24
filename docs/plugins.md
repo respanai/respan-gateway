@@ -64,13 +64,19 @@ the types in full.
 
 ## Setup
 
-The crates are not on crates.io yet, so depend on them from git:
+The crates are not on crates.io yet. A plugin developed outside this
+repository can use a pinned gateway revision:
 
 ```toml
 [dependencies]
-respan-gateway-core = { git = "https://github.com/respanai/respan-gateway" }
-respan-gateway-conversation = { git = "https://github.com/respanai/respan-gateway" }
+respan-gateway-core = { git = "https://github.com/respanai/respan-gateway", rev = "<gateway-revision>" }
+respan-gateway-conversation = { git = "https://github.com/respanai/respan-gateway", rev = "<gateway-revision>" }
 ```
+
+The binary in this repository uses workspace path dependencies. This is
+important for plugins compiled into the binary: `ProviderContext`, `Input`,
+and `Output` must come from the same crate instances as the gateway. Do not
+use an absolute local path or an unrelated Git revision for those crates.
 
 A plugin that works on chat needs only these two. To host a gateway you also
 need a format, a transport and a server
@@ -377,6 +383,12 @@ A call has extensions of its own: `cx.call(..).with_extension(mark)` puts a
 value where that call's `on_provider` and `on_provider_end` can read it,
 through `px.extensions()`.
 
+The HTTP transport adds one of its own, `StreamingResponse`, to the request's
+extensions and marks it when the provider's answer is framed as SSE or an
+Amazon event stream. A plugin that measures a response over time reads it
+through `px.extensions()`, because a whole body's events all arrive at once
+and time nothing.
+
 ## Order
 
 Plugins run in the order they are registered, and **order is behavior**:
@@ -503,6 +515,34 @@ Then cover what makes a plugin hard to get right: streamed and whole
 responses, a client of another format (send to `/v1/messages` too), a
 provider's error, the client leaving mid-stream (`on_client_end` gets
 `Abandoned`), and the order relative to the plugins you expect it beside.
+
+## Provider TPS metrics
+
+The built-in `provider-tps-metrics` plugin observes every conversation provider
+call and aggregates snapshots by provider and model. It is wired into the
+admin-only `GET /ui/api/provider-tps` endpoint and the Providers page in the
+UI. A retry, fallback, race branch, or tool-loop step is one provider-call
+sample, so the values are not client-request averages.
+
+Input TPS is `input tokens / (provider call start to first output delta)`. Output TPS uses output tokens over the first-to-last
+output-delta window. Only responses identified as SSE or Amazon EventStream
+contribute timing samples. Non-streaming and unrecognized response formats
+still contribute usage and call counts but no TPS. Usage events are accumulated
+until provider end, including events after Finish. Missing Usage or an invalid
+window cannot produce a rate, and a single Delta cannot produce output TPS.
+Input TPS does not depend on cache metadata. Cancelled calls are included in
+`failed_calls` and also counted in `abandoned_calls`. The UI displays failed and
+cancelled calls separately. Neither contributes successful usage.
+
+The metrics are gateway observations. They include network and provider queue
+time and do not represent provider-internal prefill or decode speed. Cache usage
+keeps whether the provider reported the cache-read field: an explicit zero is a
+cache miss, while an omitted field is excluded from the cache-rate numerator and
+denominator. The snapshot includes known and total input-bearing call counts so
+the UI can show cache coverage. Cache-dependent values are `null` only when no
+input-bearing call has a known cache count. Average context size is total
+reported input tokens divided by successful calls that reported input usage.
+Metrics belong to the current config build and reset on reload or restart.
 
 ## Adding a plugin to the binary
 

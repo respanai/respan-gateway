@@ -49,6 +49,7 @@ respan-gateway-plugin-routing.workspace = true
 respan-gateway-plugin-tool-loop.workspace = true
 respan-gateway-plugin-respan.workspace = true
 respan-gateway-plugin-pricing.workspace = true
+respan-gateway-plugin-provider-tps-metrics.workspace = true
 respan-gateway-sdk.workspace = true
 chrono.workspace = true
 csv.workspace = true

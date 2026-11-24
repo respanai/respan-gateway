@@ -581,10 +581,13 @@ fn usage_of(u: &Value) -> Result<Usage, Fault> {
     let n = |key: &str| count(u.get(key));
     let mut usage = Usage::default();
     if let Some(input) = n("input_tokens")? {
-        let cached = n("cache_read_input_tokens")?.unwrap_or(0);
+        let cached = n("cache_read_input_tokens")?;
         let written = n("cache_creation_input_tokens")?.unwrap_or(0);
-        usage.input_tokens = input.saturating_add(cached).saturating_add(written);
-        usage.cached_input_tokens = cached;
+        usage.input_tokens = input
+            .saturating_add(cached.unwrap_or(0))
+            .saturating_add(written);
+        usage.cached_input_tokens = cached.unwrap_or(0);
+        usage.cached_input_tokens_reported = cached.is_some();
         usage.cache_write_input_tokens = written;
     }
     usage.output_tokens = n("output_tokens")?.unwrap_or(0);

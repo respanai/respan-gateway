@@ -11,6 +11,8 @@ pub struct Usage {
     pub output_tokens: u64,
     /// Of `input_tokens`, those read from a cache.
     pub cached_input_tokens: u64,
+    /// Whether the provider explicitly reported the cache-read count.
+    pub cached_input_tokens_reported: bool,
     /// Of `input_tokens`, those written to a cache.
     // WARN: only Anthropic and Converse count them; OpenAI's formats and
     // Gemini report none.
@@ -40,6 +42,8 @@ impl Usage {
             input_tokens: f(self.input_tokens, other.input_tokens),
             output_tokens: f(self.output_tokens, other.output_tokens),
             cached_input_tokens: f(self.cached_input_tokens, other.cached_input_tokens),
+            cached_input_tokens_reported: self.cached_input_tokens_reported
+                || other.cached_input_tokens_reported,
             cache_write_input_tokens: f(
                 self.cache_write_input_tokens,
                 other.cache_write_input_tokens,

@@ -83,13 +83,15 @@ fn failure(message: &Message) -> Fault {
 /// writes Converse counts apart.
 pub(super) fn usage_of(u: &Value) -> Result<Usage, Fault> {
     let n = |key: &str| count(u.get(key)).map(Option::unwrap_or_default);
-    let (read, written) = (n("cacheReadInputTokens")?, n("cacheWriteInputTokens")?);
+    let cached = count(u.get("cacheReadInputTokens"))?;
+    let (read, written) = (cached.unwrap_or(0), n("cacheWriteInputTokens")?);
     Ok(Usage {
         input_tokens: n("inputTokens")?
             .saturating_add(read)
             .saturating_add(written),
         output_tokens: n("outputTokens")?,
         cached_input_tokens: read,
+        cached_input_tokens_reported: cached.is_some(),
         cache_write_input_tokens: written,
         ..Usage::default()
     })

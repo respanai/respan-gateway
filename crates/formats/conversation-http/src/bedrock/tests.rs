@@ -335,6 +335,7 @@ fn text_stream() -> Vec<Bytes> {
 fn a_stream_is_blocks_a_finish_and_usage() {
     let mut usage = Usage::new(16, 5);
     usage.cached_input_tokens = 4;
+    usage.cached_input_tokens_reported = true;
     usage.cache_write_input_tokens = 2;
     assert_same::<BedrockConverse>(
         &decode_chunks(&text_stream()).expect("events"),
