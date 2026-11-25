@@ -1168,12 +1168,11 @@ fn token_probabilities_are_dropped_by_another_format_and_kept_by_this_one() {
 }
 
 #[test]
-fn several_choices_are_refused_as_a_bad_request() {
+fn several_choices_are_sent_to_openai_chat() {
     let body = json!({ "model": "m", "messages": [], "n": 2 });
     let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(OpenAiChat::fields(&chat.native).get("n"), Some(&json!(2)));
-    let refused = OpenAiChat.encode_request(&chat).err();
-    assert!(refused.is_some_and(|f| f.is(respan_gateway_core::FaultKind::Client)));
+    assert_eq!(written(body, |_| {}).expect("written")["n"], 2);
     // One choice is the default, and says nothing.
     let one = OpenAiChat
         .decode_json(&json!({ "model": "m", "messages": [], "n": 1 }))

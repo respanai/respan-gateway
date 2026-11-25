@@ -1649,6 +1649,7 @@ dependencies = [
  "respan-gateway-sse",
  "serde",
  "serde_json",
+ "tokio",
  "uuid",
 ]
 

@@ -360,8 +360,10 @@ fn choice_index(choice: &Value) -> u64 {
 
 /// The first choice, if it is index 0: the conversation's.
 fn first_choice(v: &Value) -> Option<&Value> {
-    let choice = v["choices"].get(0)?;
-    (choice_index(choice) == 0).then_some(choice)
+    v["choices"]
+        .as_array()?
+        .iter()
+        .find(|choice| choice_index(choice) == 0)
 }
 
 /// The first choice without what the kind has: its text, tool calls

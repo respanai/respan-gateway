@@ -139,10 +139,6 @@ pub trait Schema: Copy + Send + Sync + 'static {
     fn decoder(&self) -> Self::Decoding;
     /// The events of one whole response body `v`.
     fn decode_body(&self, v: &Value, out: &mut Vec<Output>) -> Result<(), Fault>;
-    /// Refuse a client request the conversation kind cannot represent.
-    fn validate_request_json(&self, _v: &Value) -> Result<(), Fault> {
-        Ok(())
-    }
     /// A JSON request as a conversation, noting what it has no place for,
     /// refusing a part it reads the media of but cannot, such as base64 that
     /// does not decode.
@@ -214,7 +210,6 @@ pub trait Schema: Copy + Send + Sync + 'static {
             Ok(v) if v.is_object() => v,
             _ => return Err(values::not_an_object()),
         };
-        self.validate_request_json(&v)?;
         let mut chat = self.decode_json(&v)?;
         chat.model = v["model"].as_str().map(Into::into);
         Ok(chat)
