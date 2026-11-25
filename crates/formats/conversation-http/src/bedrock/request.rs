@@ -288,7 +288,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
         // WARN: JSON without a schema has no field; the prompt asks for it.
         Some(_) => {}
     }
-    // Converse's `thinking` and `output_config` are Claude's: another model refuses them.
+    // Converse's `thinking`, `output_config` and `top_k` are Claude's: another model refuses them.
     // WARN: another model's reasoning, which it names its own way, is dropped,
     // as is an ask to withhold the thinking.
     let mut call = claude_call(chat, v);
@@ -300,7 +300,7 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     if !config.is_empty() {
         v.insert("inferenceConfig".into(), config.into());
     }
-    call.retain(|key, _| key == "thinking" || key == "output_config");
+    call.retain(|key, _| matches!(key.as_str(), "thinking" | "output_config" | "top_k"));
     if !call.is_empty() {
         v.insert("additionalModelRequestFields".into(), call.into());
     }
@@ -328,6 +328,7 @@ fn claude_call(chat: &Input, v: &mut Map<String, Value>) -> Map<String, Value> {
         ),
         ("tool_choice", choice.map(|c| json!({ "type": c }))),
         ("max_tokens", o.max_output_tokens.map(Into::into)),
+        ("top_k", o.top_k.filter(|_| claude).map(Into::into)),
     ];
     for (key, value) in call.clone() {
         set(v, key, value);

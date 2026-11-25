@@ -216,15 +216,13 @@ const KNOWN: &[&str] = &[
     "temperature",
     "top_p",
     "stop",
+    "seed",
+    "presence_penalty",
+    "frequency_penalty",
 ];
 
 /// Keys that change nothing at these values, as SDKs send by default.
-const INERT: &[(&str, f64)] = &[
-    ("n", 1.0),
-    ("presence_penalty", 0.0),
-    ("frequency_penalty", 0.0),
-    ("logprobs", 0.0),
-];
+const INERT: &[(&str, f64)] = &[("n", 1.0), ("logprobs", 0.0)];
 
 const ROLES: Names<Role> = Names(
     &[
@@ -280,6 +278,11 @@ impl Schema for OpenAiChat {
             .max(v["max_tokens"].as_u64());
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
+        chat.options.seed = v["seed"].as_i64();
+        // A penalty of 0, as SDKs send by default, changes nothing.
+        let penalty = |key: &str| v[key].as_f64().filter(|p| *p != 0.0);
+        chat.options.presence_penalty = penalty("presence_penalty");
+        chat.options.frequency_penalty = penalty("frequency_penalty");
         chat.options.stop = match &v["stop"] {
             Value::String(s) => vec![s.clone()],
             Value::Array(a) => a
@@ -334,6 +337,14 @@ impl Schema for OpenAiChat {
             chat.options.temperature.map(Into::into),
         );
         set(&mut v, "top_p", chat.options.top_p.map(Into::into));
+        set(&mut v, "seed", chat.options.seed.map(Into::into));
+        let penalties = [
+            ("presence_penalty", chat.options.presence_penalty),
+            ("frequency_penalty", chat.options.frequency_penalty),
+        ];
+        for (key, penalty) in penalties {
+            set(&mut v, key, penalty.map(Into::into));
+        }
         set(&mut v, "stop", stop_json(&chat.options.stop));
         set(&mut v, "user", chat.user.clone().map(Into::into));
         set(&mut v, "response_format", write_response_format(chat));

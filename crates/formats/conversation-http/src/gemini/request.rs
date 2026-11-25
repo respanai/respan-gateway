@@ -687,6 +687,10 @@ pub(super) fn read_config(v: &Value, chat: &mut Input) {
     chat.options.max_output_tokens = take("maxOutputTokens").and_then(|v| v.as_u64());
     chat.options.temperature = take("temperature").and_then(|v| v.as_f64());
     chat.options.top_p = take("topP").and_then(|v| v.as_f64());
+    chat.options.top_k = take("topK").and_then(|v| v.as_u64());
+    chat.options.seed = take("seed").and_then(|v| v.as_i64());
+    chat.options.presence_penalty = take("presencePenalty").and_then(|v| v.as_f64());
+    chat.options.frequency_penalty = take("frequencyPenalty").and_then(|v| v.as_f64());
     if let Some(Value::Array(stops)) = take("stopSequences") {
         chat.options.stop = stops
             .iter()
@@ -723,6 +727,10 @@ pub(super) fn write_config(chat: &Input, v: &mut Map<String, Value>) -> Result<(
     set_field("maxOutputTokens", o.max_output_tokens.map(Into::into));
     set_field("temperature", o.temperature.map(Into::into));
     set_field("topP", o.top_p.map(Into::into));
+    set_field("topK", o.top_k.map(Into::into));
+    set_field("seed", o.seed.map(Into::into));
+    set_field("presencePenalty", o.presence_penalty.map(Into::into));
+    set_field("frequencyPenalty", o.frequency_penalty.map(Into::into));
     set_field("stopSequences", crate::schema::stop_json(&o.stop));
     match &o.response_format {
         None | Some(ResponseFormat::Text) => {}

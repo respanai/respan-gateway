@@ -174,8 +174,8 @@ object is its text as JSON; an object written stays one, other text goes under
 results of one turn are one content. Tool declarations take `parameters`
 (OpenAPI types in upper case) or `parametersJsonSchema`, and are written as the
 latter; `toolConfig` is the tool choice (`ANY` with one allowed name is a named
-tool); `generationConfig` gives the output limit, `temperature`, `topP`, stop
-sequences and structured output (`responseMimeType` with a schema).
+tool); `generationConfig` gives the output limit, `temperature`, `topP`, `topK`,
+`seed`, the penalties, stop sequences and structured output (`responseMimeType` with a schema).
 
 What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
@@ -229,8 +229,10 @@ tools and keeps them in its history uses Responses or Anthropic Messages.
 ## Reasoning and sampling
 
 `Input.options.reasoning` is the kind's; each format reads and
-writes it as below. `top_k` is Anthropic's and Gemini's own, and dropped
-elsewhere. A value the kind has no form for (an unknown effort, a
+writes it as below. `top_k` is Anthropic's, Gemini's and, for a Claude, Converse's
+(in `additionalModelRequestFields`); `seed` and the presence and frequency
+penalties are Chat's and Gemini's (a penalty of 0, as SDKs send by default,
+is none). A format without one drops it. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
 to its own format unchanged, and is dropped by another.
 

@@ -183,6 +183,42 @@ fn a_google_search_beside_another_google_tool_stays_geminis_own() {
 }
 
 #[test]
+fn sampling_beyond_temperature_reaches_each_format_that_has_it() {
+    let v = json!({
+        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "generationConfig": { "topK": 40, "seed": 7, "presencePenalty": 0.5, "frequencyPenalty": 0.25 },
+    });
+    let input = GeminiGenerate.decode_json(&v).expect("read");
+    assert!(input.native.is_empty());
+    assert_eq!(
+        GeminiGenerate.encode_request(&input).expect("gemini")["generationConfig"],
+        v["generationConfig"]
+    );
+    let chat = OpenAiChat.encode_request(&input).expect("chat");
+    assert_eq!(
+        (
+            &chat["seed"],
+            &chat["presence_penalty"],
+            &chat["frequency_penalty"]
+        ),
+        (&json!(7), &json!(0.5), &json!(0.25))
+    );
+    assert!(chat.get("top_k").is_none());
+    let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
+    assert_eq!(anthropic["top_k"], 40);
+    assert!(anthropic.get("seed").is_none());
+    let input = OpenAiChat
+        .decode_json(&json!({ "messages": [{ "role": "user", "content": "hi" }],
+            "seed": 3, "presence_penalty": 0, "frequency_penalty": 0.1 }))
+        .expect("read");
+    let gemini = GeminiGenerate.encode_request(&input).expect("gemini");
+    assert_eq!(
+        gemini["generationConfig"],
+        json!({ "seed": 3, "frequencyPenalty": 0.1 })
+    );
+}
+
+#[test]
 fn a_safety_identifier_is_the_end_user_and_keeps_its_spelling() {
     let v =
         json!({ "messages": [{ "role": "user", "content": "hi" }], "safety_identifier": "u-1" });

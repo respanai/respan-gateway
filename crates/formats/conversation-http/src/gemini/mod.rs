@@ -24,8 +24,8 @@
 //! `systemInstruction` is a leading system message; `tools` are the function
 //! declarations, their `parameters` (or `parametersJsonSchema`) JSON Schema;
 //! `toolConfig` gives the tool choice;
-//! `generationConfig` the output limit, `temperature`, `topP`, `topK`, stop
-//! sequences, structured output (`responseMimeType` with a schema) and
+//! `generationConfig` the output limit, `temperature`, `topP`, `topK`, `seed`,
+//! the presence and frequency penalties, stop sequences, structured output (`responseMimeType` with a schema) and
 //! `thinkingConfig`: `thinkingLevel` is an effort, `thinkingBudget` a token
 //! budget (`0` is off), `includeThoughts` the summary. A `thinkingBudget`
 //! beside a `thinkingLevel`, or a dynamic one (`-1`), stays native.

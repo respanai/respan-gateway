@@ -69,10 +69,11 @@ again from its value, and a response from its events: a format's promise is
 that a request of its own round-trips.
 
 `Input.options: GenerationOptions` groups the output token limit, sampling
-(`temperature`, `top_p`), stop sequences, tool selection, parallel
-calls, structured-output requirements, the service tier and `reasoning`.
-What few formats have stays in their own native: `top_k` (Anthropic's and
-Gemini's), and `verbosity` and a JSON schema's `strict` (OpenAI's two formats).
+(`temperature`, `top_p`, `top_k`, `seed`, and presence and frequency
+penalties), stop sequences, tool selection, parallel calls,
+structured-output requirements, the service tier and `reasoning`. A format
+without one of them drops it. What few formats have stays in their own
+native: `verbosity` and a JSON schema's `strict` (OpenAI's two formats).
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
 `Minimal`, `Low`, `Medium`, `High`, `XHigh`, `Max`), a `budget_tokens` limit, and `summary`
