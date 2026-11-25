@@ -545,8 +545,8 @@ pub(crate) fn take_text<C: Schema>(input: &mut Input, key: &str) -> Option<Strin
     take_native::<C, _>(&mut input.native, key, |v| v.as_str().map(str::to_owned))
 }
 
-/// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
-/// out of its `native`; one that is no boolean stays there.
+/// Moves `tool`'s boolean `strict`, which OpenAI's formats and Anthropic say
+/// the same way, out of its `native`; one that is no boolean stays there.
 pub(crate) fn take_strict<C: Schema>(tool: &mut Tool) {
     if let Some(strict) = take_native::<C, _>(&mut tool.native, "strict", Value::as_bool) {
         tool.strict = Some(strict);

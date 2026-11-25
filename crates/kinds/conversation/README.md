@@ -73,7 +73,9 @@ that a request of its own round-trips.
 penalties), stop sequences, tool selection, parallel calls,
 structured-output requirements, the service tier and `reasoning`. A format
 without one of them drops it. What few formats have stays in their own
-native: `verbosity` and a JSON schema's `strict` (OpenAI's two formats).
+native, such as `verbosity` (OpenAI's two formats). A JSON schema's
+`strict` is said by OpenAI's two formats and dropped by the others, which
+hold the answer to the schema.
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
 `Minimal`, `Low`, `Medium`, `High`, `XHigh`, `Max`), a `budget_tokens` limit, and `summary`

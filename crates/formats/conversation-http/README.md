@@ -133,9 +133,11 @@ them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
 code interpreter, MCP) and the items they make (but the gateway's own calls,
 [below](#calls-the-gateway-ran)), refusals, and annotations. A
-relay in this format sends them back. A function tool's `strict` is the kind's:
-a tool that does not say it keeps the Responses default, and a tool another
-format sent is written with `strict: false`. Stop sequences have no form in a
+relay in this format sends them back. A function tool's `strict` is the kind's,
+as Chat Completions and Anthropic say it too: a tool that does not say it
+keeps the Responses default, and a tool another format sent is written with
+`strict: false`. So is a JSON schema's `strict`, which Chat Completions says
+too. Stop sequences have no form in a
 request, and log probabilities are not carried. A failed tool result, which
 neither Responses nor Chat Completions can flag, is written as its output led
 by `Error: `. The module docs say it all.

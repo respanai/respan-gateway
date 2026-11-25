@@ -666,6 +666,7 @@ fn read_format(config: &mut Map<String, Value>) -> Option<ResponseFormat> {
                     "responseSchema" => json_schema(schema),
                     _ => schema.clone(),
                 },
+                strict: None,
             }
         }
         _ => return None,

@@ -6,7 +6,7 @@
 use crate::schema::{
     EFFORT_BUDGETS, GATEWAY_SERVER, arguments_object, base64_field, decode_content, decode_tools,
     each_tool, edit_native, effort_for, encode_content, merge_missing, only, read_search,
-    remainder, required_str, rest_of, set, take_native, untranslatable, write_search,
+    remainder, required_str, rest_of, set, take_native, take_strict, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -47,6 +47,7 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
     kind.description = description;
     let rest = rest_of(tool, &["type", "name", "description", "input_schema"]);
     kind.native = AnthropicMessages::native(rest);
+    take_strict::<AnthropicMessages>(&mut kind);
     Some(kind)
 }
 
@@ -90,6 +91,9 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         tool.insert("input_schema".into(), schema);
+        if t.strict == Some(true) {
+            tool.insert("strict".into(), true.into());
+        }
         tool.extend(AnthropicMessages::fields(&t.native).clone());
         Value::Object(tool)
     };
@@ -417,6 +421,7 @@ pub(crate) fn read_output(v: &Value, input: &mut Input) {
         name: "response".into(),
         description: None,
         schema: spec["schema"].clone(),
+        strict: None,
     });
     edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
         if let Some(Value::Object(config)) = native.get_mut("output_config") {

@@ -5,8 +5,8 @@ use super::{read::read_media, write::write_media};
 use crate::Schema;
 use crate::responses::OpenAiResponses;
 use crate::schema::{
-    Own, decode_tools, each_tool, edit_native, effort_for, effort_name, merge_fields, only,
-    parse_effort, read_search, rest_of, set, take_strict, untranslatable, write_search,
+    Own, decode_tools, each_tool, edit_native, effort_for, effort_name, only, parse_effort,
+    read_search, rest_of, set, take_strict, untranslatable, write_search,
 };
 use respan_gateway_conversation::{
     Content, Effort, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
@@ -139,6 +139,7 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
                 name: raw["name"].as_str().unwrap_or("response").into(),
                 description: raw["description"].as_str().map(str::to_owned),
                 schema: raw["schema"].clone(),
+                strict: raw["strict"].as_bool(),
             })
         }
         _ => None,
@@ -151,11 +152,7 @@ pub(in crate::responses) fn read_format(v: &Value, input: &mut Input) {
         let Some(Value::Object(text)) = native.get_mut("text") else {
             return;
         };
-        // Its `strict` is Responses' own, which only Responses writes back.
-        match raw.get("strict") {
-            Some(strict) => _ = text.insert("format".into(), json!({ "strict": strict })),
-            None => _ = text.shift_remove("format"),
-        }
+        text.shift_remove("format");
         if text.is_empty() {
             native.shift_remove("text");
         }
@@ -175,26 +172,20 @@ pub(in crate::responses) fn write_format(input: &Input, out: &mut Map<String, Va
             name,
             description,
             schema,
+            strict,
         }) => {
             let mut spec = json!({ "type": "json_schema", "name": name, "schema": schema });
             if let Some(description) = description {
                 spec["description"] = description.as_str().into();
             }
-            if let Some(Value::Object(own)) = text.get("format") {
-                merge_fields(&mut spec, own);
+            if let Some(strict) = strict {
+                spec["strict"] = (*strict).into();
             }
             Some(spec)
         }
     };
-    if let Some(text) = text.as_object_mut() {
-        match format {
-            Some(format) => _ = text.insert("format".into(), format),
-            // A `strict` alone, of a format no longer asked for.
-            None if text.get("format").is_some_and(|f| f["type"].is_null()) => {
-                _ = text.shift_remove("format")
-            }
-            None => {}
-        }
+    if let (Some(text), Some(format)) = (text.as_object_mut(), format) {
+        text.insert("format".into(), format);
     }
     let empty = text.as_object().is_none_or(Map::is_empty);
     set(out, "text", (!empty).then_some(text));

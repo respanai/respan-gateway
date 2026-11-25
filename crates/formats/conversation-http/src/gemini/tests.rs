@@ -366,6 +366,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
             name: "response".into(),
             description: None,
             schema: schema.clone(),
+            strict: None,
         })
     );
     let back = written(body, |_| {}).expect("a request");

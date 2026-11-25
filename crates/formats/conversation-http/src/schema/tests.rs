@@ -293,6 +293,32 @@ fn a_strict_tool_is_only_strict_where_a_format_can_say_it() {
 }
 
 #[test]
+fn a_strict_tool_and_schema_keep_their_promise_across_formats() {
+    let chat = strict_tool_request(json!(true));
+    let anthropic = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(anthropic["tools"][0]["strict"], true);
+    let back = AnthropicMessages
+        .decode_json(&anthropic.into())
+        .expect("read");
+    assert_eq!(back.tools[0].strict, Some(true));
+    assert!(back.tools[0].native.is_empty());
+    let schema = json!({ "type": "object" });
+    let v = json!({ "messages": [{ "role": "user", "content": "x" }], "response_format": {
+        "type": "json_schema", "json_schema": { "name": "r", "schema": schema, "strict": true } } });
+    let chat = OpenAiChat.decode_json(&v).expect("read");
+    assert!(chat.native.is_empty());
+    let responses = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(
+        responses["text"]["format"],
+        json!({ "type": "json_schema", "name": "r", "schema": schema, "strict": true })
+    );
+    assert_eq!(
+        OpenAiChat.encode_request(&chat).expect("chat")["response_format"],
+        v["response_format"]
+    );
+}
+
+#[test]
 fn not_asking_for_a_strict_tool_says_nothing_to_another_format() {
     let chat = strict_tool_request(json!(false));
     let gemini = GeminiGenerate.encode_request(&chat).expect("a request");

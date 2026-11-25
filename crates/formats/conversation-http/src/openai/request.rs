@@ -8,9 +8,9 @@ use crate::Schema;
 use crate::fields::media_url;
 use crate::schema::{
     FAILED_RESULT_PREFIX, Names, Own, base64_field, data_media, decode_tools, each_tool,
-    edit_native, effort_for, effort_name, encode_content, encode_message, merge_fields,
-    merge_missing, only, read_search, remainder, required_str, rest_of, set, source_url,
-    take_strict, unless_file_id, unreadable_media, untranslatable, write_search,
+    edit_native, effort_for, effort_name, encode_content, encode_message, merge_missing, only,
+    read_search, remainder, required_str, rest_of, set, source_url, take_strict, unless_file_id,
+    unreadable_media, untranslatable, write_search,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
@@ -450,23 +450,15 @@ pub(crate) fn read_response_format(v: &Value, input: &mut Input) {
                 name: spec["name"].as_str().unwrap_or("response").into(),
                 description: spec["description"].as_str().map(str::to_owned),
                 schema: spec["schema"].clone(),
+                strict: spec["strict"].as_bool(),
             })
         }
         _ => None,
     };
     if let Some(parsed) = parsed {
         input.options.response_format = Some(parsed);
-        // Its `strict` is Chat's own, which only Chat writes back.
         edit_native::<OpenAiChat, _>(&mut input.native, |native| {
-            match raw["json_schema"].get("strict") {
-                Some(strict) => {
-                    _ = native.insert(
-                        "response_format".into(),
-                        json!({"json_schema": {"strict": strict}}),
-                    )
-                }
-                None => _ = native.remove("response_format"),
-            }
+            native.remove("response_format");
         });
     }
 }
@@ -478,8 +470,7 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
         .get("response_format")
         .cloned();
     let Some(requirement) = &input.options.response_format else {
-        // Not a `strict` alone, of a format no longer asked for.
-        return own.filter(|own| own["type"].is_string());
+        return own;
     };
     Some(match requirement {
         ResponseFormat::Text => json!({"type":"text"}),
@@ -488,16 +479,16 @@ pub(crate) fn write_response_format(input: &Input) -> Option<Value> {
             name,
             description,
             schema,
+            strict,
         } => {
             let mut spec = json!({"name":name,"schema":schema});
             if let Some(description) = description {
                 spec["description"] = description.clone().into();
             }
-            let mut format = json!({"type":"json_schema","json_schema":spec});
-            if let Some(Value::Object(own)) = own {
-                merge_fields(&mut format, &own);
+            if let Some(strict) = strict {
+                spec["strict"] = (*strict).into();
             }
-            format
+            json!({"type":"json_schema","json_schema":spec})
         }
     })
 }

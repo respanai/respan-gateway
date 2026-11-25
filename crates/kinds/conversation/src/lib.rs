@@ -185,6 +185,10 @@ pub enum ResponseFormat {
         description: Option<String>,
         /// JSON Schema definition.
         schema: Value,
+        /// Whether the answer must hold to the schema exactly.
+        // WARN: only OpenAI's two formats say it; Anthropic, Gemini and
+        // Converse hold the answer to the schema, and drop it.
+        strict: Option<bool>,
     },
 }
 

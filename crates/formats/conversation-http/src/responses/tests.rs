@@ -164,18 +164,12 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
         OpenAiResponses::fields(&chat.native),
-        json!({ "text": { "format": { "strict": true } }, "instructions": true })
-            .as_object()
-            .expect("fields"),
-        "everything is the kind's, but its schema's strict and that it had instructions"
+        json!({ "instructions": true }).as_object().expect("fields"),
+        "everything is the kind's, but that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
     let sent = OpenAiChat.encode_request(&chat).expect("written");
-    assert!(
-        sent["response_format"]["json_schema"]
-            .get("strict")
-            .is_none()
-    );
+    assert_eq!(sent["response_format"]["json_schema"]["strict"], true);
 }
 
 #[test]
