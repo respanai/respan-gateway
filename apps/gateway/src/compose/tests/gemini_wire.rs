@@ -1,7 +1,11 @@
 use super::*;
 use futures::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use std::time::Duration;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
+
+type Socket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 const MODEL: &str = "gemini-3-flash-preview";
 const LIVE_MODEL: &str = "gemini-2.5-flash-native-audio-preview-12-2025";
@@ -18,8 +22,10 @@ providers.gemini = {{ vendor = "gemini", key = "test", formats = {{ gemini-gener
 async fn sse(mock: &FakeGemini, path: &str, request: Value) -> Vec<Value> {
     let gateway = resolve(&config(mock)).expect("gateway");
     let mut req = post(path, request.to_string());
-    req.headers_mut()
-        .insert("content-type", "application/json".parse().unwrap());
+    req.headers_mut().insert(
+        "content-type",
+        http::HeaderValue::from_static("application/json"),
+    );
     let (response, _) = serve(&gateway, req).await;
     let (status, _, body) = read_whole(response).await;
     assert_eq!(status, StatusCode::OK, "{body:?}");
@@ -28,7 +34,7 @@ async fn sse(mock: &FakeGemini, path: &str, request: Value) -> Vec<Value> {
         .lines()
         .filter_map(|line| line.strip_prefix("data: "))
         .filter(|data| *data != "[DONE]")
-        .map(|data| serde_json::from_str(data).unwrap())
+        .map(|data| serde_json::from_str(data).expect("SSE data"))
         .collect()
 }
 
@@ -36,7 +42,7 @@ async fn sse(mock: &FakeGemini, path: &str, request: Value) -> Vec<Value> {
 async fn native_gemini_stream_keeps_every_upstream_chunk_and_its_usage() {
     let mock = FakeGemini::start().await;
     let upstream = vec![
-        json!({"usageMetadata": {"promptTokenCount": 5}}),
+        json!({"modelVersion": "gemini-upstream-version", "usageMetadata": {"promptTokenCount": 5}}),
         json!({"candidates": [{"index": 0, "content": {"role": "model", "parts": [{"text": "Hello"}]}}],
                "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 1}}),
         json!({"candidates": [{"index": 0, "finishReason": "STOP"}],
@@ -75,13 +81,38 @@ async fn gemini_chat_signs_the_finishing_openai_delta() {
     );
 }
 
-async fn gateway_addr(mock: &FakeGemini) -> std::net::SocketAddr {
+async fn socket(mock: &FakeGemini, path: &str) -> Socket {
     let config = Config::parse(&config(mock)).expect("config");
     let app = App::new(config).expect("gateway");
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { app.serve(listener, std::future::pending()).await.unwrap() });
-    addr
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind gateway");
+    let addr = listener.local_addr().expect("gateway address");
+    tokio::spawn(async move {
+        app.serve(listener, std::future::pending())
+            .await
+            .expect("serve gateway");
+    });
+    connect_async(format!("ws://{addr}{path}"))
+        .await
+        .expect("upgrade to WebSocket")
+        .0
+}
+
+async fn send(socket: &mut Socket, event: Value) {
+    socket
+        .send(Message::Text(event.to_string().into()))
+        .await
+        .expect("send client event");
+}
+
+async fn receive(socket: &mut Socket) -> Value {
+    let frame = tokio::time::timeout(Duration::from_secs(5), socket.next())
+        .await
+        .expect("gateway response")
+        .expect("frame")
+        .expect("WebSocket");
+    serde_json::from_slice(&frame.into_data()).expect("gateway event")
 }
 
 #[tokio::test]
@@ -92,67 +123,34 @@ async fn gemini_live_keeps_the_transcript_in_the_model_turn_frame() {
         "outputTranscription": {"text": "Hello", "finished": true}
     }});
     mock.answer(Answer::events(vec![expected.clone()]));
-    let addr = gateway_addr(&mock).await;
-    let path = respan_gateway_realtime_ws::GeminiLive::PATH;
-    let (mut socket, _) = connect_async(format!("ws://{addr}{path}")).await.unwrap();
-    socket
-        .send(Message::Text(
-            json!({"setup": {"model": format!("models/{LIVE_MODEL}"),
-        "generationConfig": {"responseModalities": ["AUDIO"]}, "outputAudioTranscription": {}}})
-            .to_string()
-            .into(),
-        ))
-        .await
-        .unwrap();
-    let setup = socket.next().await.unwrap().unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&setup.into_data()).unwrap(),
-        json!({"setupComplete": {}})
-    );
-    socket
-        .send(Message::Text(
-            json!({"realtimeInput": {"text": "Hi"}}).to_string().into(),
-        ))
-        .await
-        .unwrap();
-    let frame = socket.next().await.unwrap().unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&frame.into_data()).unwrap(),
-        expected
-    );
+    let mut socket = socket(&mock, respan_gateway_realtime_ws::GeminiLive::PATH).await;
+    send(
+        &mut socket,
+        json!({"setup": {"model": format!("models/{LIVE_MODEL}"),
+        "generationConfig": {"responseModalities": ["AUDIO"]}, "outputAudioTranscription": {}}}),
+    )
+    .await;
+    assert_eq!(receive(&mut socket).await, json!({"setupComplete": {}}));
+    send(&mut socket, json!({"realtimeInput": {"text": "Hi"}})).await;
+    assert_eq!(receive(&mut socket).await, expected);
 }
 
 #[tokio::test]
 async fn openai_realtime_reports_unsupported_text_output_for_native_audio() {
     let mock = FakeGemini::start().await;
     mock.answer(Answer::error(503).message("service_unavailable"));
-    let addr = gateway_addr(&mock).await;
-    let (mut socket, _) = connect_async(format!("ws://{addr}/v1/realtime?model={LIVE_MODEL}"))
-        .await
-        .unwrap();
-    let opened = socket.next().await.unwrap().unwrap();
-    assert_eq!(
-        serde_json::from_slice::<Value>(&opened.into_data()).unwrap()["type"],
-        "session.created"
-    );
+    let mut socket = socket(&mock, &format!("/v1/realtime?model={LIVE_MODEL}")).await;
+    assert_eq!(receive(&mut socket).await["type"], "session.created");
     for event in [
         json!({"type": "session.update", "session": {"type": "realtime", "output_modalities": ["text"]}}),
         json!({"type": "conversation.item.create", "item": {"type": "message", "role": "user",
             "content": [{"type": "input_text", "text": "Hi"}]}}),
         json!({"type": "response.create"}),
     ] {
-        socket
-            .send(Message::Text(event.to_string().into()))
-            .await
-            .unwrap();
+        send(&mut socket, event).await;
     }
     let error = loop {
-        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
-            .await
-            .expect("gateway response")
-            .expect("frame")
-            .expect("WebSocket");
-        let value: Value = serde_json::from_slice(&frame.into_data()).expect("realtime event");
+        let value = receive(&mut socket).await;
         if value["type"] == "error" {
             break value;
         }
@@ -162,7 +160,7 @@ async fn openai_realtime_reports_unsupported_text_output_for_native_audio() {
     assert!(
         error["error"]["message"]
             .as_str()
-            .unwrap()
+            .expect("error message")
             .contains("text output modality"),
         "{error:?}"
     );
