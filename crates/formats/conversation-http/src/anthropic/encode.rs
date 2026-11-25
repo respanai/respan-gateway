@@ -384,14 +384,7 @@ impl EventStream {
             if self.finish.is_some() {
                 self.finish(out)?;
             }
-            let body = match f
-                .get::<respan_gateway_http::raw::RawReply>()
-                .map(|r| r.0.body())
-            {
-                Some(raw) => String::from_utf8_lossy(raw).into_owned(),
-                None => AnthropicMessages::error_body(f).to_string(),
-            };
-            out.extend_from_slice(event(Some("error"), &body).as_bytes());
+            crate::schema::write_error::<AnthropicMessages>(Some("error"), f, out);
             return Ok(());
         }
         self.finish(out)?;

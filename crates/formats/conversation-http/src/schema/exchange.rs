@@ -493,3 +493,12 @@ pub(crate) fn error_event(raw: &[u8], v: &Value) -> Fault {
     let data = Bytes::from(event_data(raw).unwrap_or_default());
     said_error(StatusCode::OK, data, v)
 }
+
+/// Write a stream failure in the client schema, honoring an explicit relay.
+pub(crate) fn write_error<C: Schema>(name: Option<&str>, fault: &Fault, out: &mut BytesMut) {
+    let body = match fault.get::<RawReply>() {
+        Some(raw) => String::from_utf8_lossy(raw.0.body()).into_owned(),
+        None => C::error_body(fault).to_string(),
+    };
+    out.extend_from_slice(respan_gateway_sse::event(name, &body).as_bytes());
+}

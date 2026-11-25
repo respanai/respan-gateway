@@ -7,6 +7,7 @@ use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 use super::{BLOCKED, SIGNATURE, SYNTHETIC, extra_usage, finish_of, usage_of};
 
@@ -243,6 +244,15 @@ pub(super) struct Chunk {
     pub(super) events: Vec<Output>,
 }
 
+impl Chunk {
+    pub(super) fn of(reply: &Output) -> Option<&Arc<Self>> {
+        match reply {
+            Output::Native(native) => native.get(),
+            _ => None,
+        }
+    }
+}
+
 impl GeminiDecoder {
     /// The events of one stream event, `raw`.
     pub(crate) fn event(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
@@ -259,7 +269,7 @@ impl GeminiDecoder {
             response: v,
             events: out[from..].to_vec(),
         };
-        out.insert(from, Output::Native(Native::new(chunk)));
+        out.insert(from, Output::Native(Native::new(Arc::new(chunk))));
         Ok(())
     }
 

@@ -31,7 +31,7 @@ pub(crate) use errors::{says, says_error};
 pub use exchange::Asked;
 #[cfg(test)]
 pub(crate) use exchange::Held;
-pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event};
+pub(crate) use exchange::{Gate, error_event, response_encoder, unreadable_event, write_error};
 pub(crate) use values::{
     EFFORT_BUDGETS, claude_sampling, effort_for, effort_name, parse_effort, take_native,
 };
