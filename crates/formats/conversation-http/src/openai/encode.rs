@@ -150,6 +150,8 @@ pub(super) struct Chunks {
     usage: Usage,
     /// The finish, written at the end, after the content released before it.
     finish: Option<Finish>,
+    /// A message signature belongs on the delta that finishes the choice.
+    signature: Option<String>,
     gate: Gate,
     /// The vendor fields of usage, written in the usage chunk.
     usage_extra: Map<String, Value>,
@@ -187,6 +189,7 @@ impl Chunks {
             calls: 0,
             usage: Usage::default(),
             finish: None,
+            signature: None,
             gate: Gate::default(),
             usage_extra: Map::new(),
             call_fields: Vec::new(),
@@ -378,9 +381,7 @@ impl Chunks {
             Output::Signature { block, data } => {
                 let over = block.and_then(|b| self.blocks.iter().find(|s| s.block == b));
                 if over.is_some_and(|s| s.kind == Block::Text) {
-                    let mut delta = json!({});
-                    sign(&mut delta, data);
-                    self.delta(out, delta);
+                    self.signature = Some(data.to_string());
                 }
             }
             // Another format's: only a client of that format could read it.
@@ -412,6 +413,20 @@ impl Chunks {
         }
     }
 
+    fn finish_choice(&mut self, finish: &Finish, out: &mut BytesMut) -> Result<(), Fault> {
+        let reason = FINISH.reason(finish)?;
+        let mut delta = json!({});
+        if let Some(signature) = self.signature.take() {
+            sign(&mut delta, &signature);
+        }
+        self.chunk(
+            out,
+            json!([{ "index": 0, "delta": delta, "finish_reason": reason }]),
+            None,
+        );
+        Ok(())
+    }
+
     fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
         if let Some((_, call)) = self.opening.take() {
             self.delta(out, json!({ "tool_calls": [call] }));
@@ -420,12 +435,7 @@ impl Chunks {
             // What the provider finished before it broke off is kept.
             if let Some(finish) = self.finish.take() {
                 self.begin(out);
-                let reason = FINISH.reason(&finish)?;
-                self.chunk(
-                    out,
-                    json!([{ "index": 0, "delta": {}, "finish_reason": reason }]),
-                    None,
-                );
+                self.finish_choice(&finish, out)?;
             }
             let body = match f
                 .get::<respan_gateway_http::raw::RawReply>()
@@ -448,12 +458,7 @@ impl Chunks {
             self.close(block, out)?;
         }
         let finish = self.finish.take().unwrap_or(Finish::Stop);
-        let reason = FINISH.reason(&finish)?;
-        self.chunk(
-            out,
-            json!([{ "index": 0, "delta": {}, "finish_reason": reason }]),
-            None,
-        );
+        self.finish_choice(&finish, out)?;
         if self.show_usage && !self.usage.is_empty() {
             self.chunk(
                 out,

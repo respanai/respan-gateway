@@ -5,12 +5,13 @@ use crate::schema::{
     own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
 
+use super::decode::Chunk;
 use super::request::is_synthetic;
 use super::{BLOCKED, FINISH, GeminiGenerate, SIGNATURE, USAGE, usage_body};
 
@@ -203,6 +204,22 @@ pub(super) struct EventStream {
     // WARN: a call the gateway ran and its result are dropped.
     steps: GatewaySteps,
     gate: Gate,
+    chunk: Option<PendingChunk>,
+    native_finish: bool,
+}
+
+/// A native frame whose canonical events are still being delivered.
+#[derive(Debug)]
+struct PendingChunk {
+    native: Native,
+    seen: usize,
+    translated: BytesMut,
+}
+
+impl PendingChunk {
+    fn chunk(&self) -> &Chunk {
+        self.native.get::<Chunk>().expect("a Gemini chunk")
+    }
 }
 
 impl EventStream {
@@ -345,9 +362,47 @@ impl EventStream {
         if self.steps.leaves_out(reply) {
             return Ok(());
         }
-        let mut made = BytesMut::new();
-        self.write(reply, &mut made)?;
-        self.gate.pass(reply, &made, out);
+        let native = match reply {
+            Output::Native(native) if native.get::<Chunk>().is_some() => Some(native),
+            _ => None,
+        };
+        if let Some(mut pending) = self.chunk.take() {
+            if pending.chunk().events.get(pending.seen) == Some(reply) {
+                self.write(reply, &mut pending.translated)?;
+                pending.seen += 1;
+                if pending.seen == pending.chunk().events.len() {
+                    self.native_finish |= pending
+                        .chunk()
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, Output::Finish(_)));
+                    let frame = event(None, &pending.chunk().response);
+                    self.gate.pass(reply, frame.as_bytes(), out);
+                } else {
+                    self.gate.pass(reply, &[], out);
+                    self.chunk = Some(pending);
+                }
+                return Ok(());
+            }
+            self.gate.pass(reply, &pending.translated, out);
+        }
+        if let Some(native) = native {
+            let chunk = native.get::<Chunk>().expect("a Gemini chunk");
+            if chunk.events.is_empty() {
+                self.gate
+                    .pass(reply, event(None, &chunk.response).as_bytes(), out);
+            } else {
+                self.chunk = Some(PendingChunk {
+                    native: native.clone(),
+                    seen: 0,
+                    translated: BytesMut::new(),
+                });
+            }
+        } else {
+            let mut made = BytesMut::new();
+            self.write(reply, &mut made)?;
+            self.gate.pass(reply, &made, out);
+        }
         Ok(())
     }
 
@@ -358,6 +413,9 @@ impl EventStream {
     ) -> Result<(), Fault> {
         if end.is_ok() {
             self.gate.release(out);
+            if let Some(pending) = self.chunk.take() {
+                out.extend_from_slice(&pending.translated);
+            }
         }
         self.write_end(end, out)
     }
@@ -385,6 +443,7 @@ impl EventStream {
                 check_usage(&self.usage, USAGE)?;
             }
             Output::Finish(finish) => {
+                self.native_finish = false;
                 reason_of(finish)?;
                 self.finish = Some(finish.clone());
             }
@@ -425,7 +484,7 @@ impl EventStream {
     fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
         if let Err(f) = end {
             // What the provider finished before it broke off is kept.
-            if self.finish.is_some() {
+            if self.finish.is_some() && !self.native_finish {
                 self.finish(out)?;
             }
             let body = match f
@@ -438,6 +497,9 @@ impl EventStream {
             out.extend_from_slice(event(None, &body).as_bytes());
             return Ok(());
         }
-        self.finish(out)
+        if !self.native_finish {
+            self.finish(out)?;
+        }
+        Ok(())
     }
 }

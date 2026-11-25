@@ -3,7 +3,7 @@
 use crate::gemini::GeminiGenerate;
 use crate::schema::{Own, error_event, remainder, says, says_error, unreadable_event};
 use respan_gateway_conversation::{Block, Finish, Output, Start, Totals};
-use respan_gateway_core::Fault;
+use respan_gateway_core::{Fault, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_sse::event_json;
 use serde_json::{Map, Value, json};
@@ -235,6 +235,14 @@ impl GeminiDecoder {
     }
 }
 
+/// A provider chunk and the canonical events that must reach the client
+/// intact before it can reuse the original framing.
+#[derive(Debug)]
+pub(super) struct Chunk {
+    pub(super) response: Value,
+    pub(super) events: Vec<Output>,
+}
+
 impl GeminiDecoder {
     /// The events of one stream event, `raw`.
     pub(crate) fn event(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
@@ -245,7 +253,14 @@ impl GeminiDecoder {
         if says_error(&v) {
             return Err(error_event(&raw, &v));
         }
-        self.response(&v, out)
+        let from = out.len();
+        self.response(&v, out)?;
+        let chunk = Chunk {
+            response: v,
+            events: out[from..].to_vec(),
+        };
+        out.insert(from, Output::Native(Native::new(chunk)));
+        Ok(())
     }
 
     /// The events of a stream that ended well.

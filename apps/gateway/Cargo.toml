@@ -78,6 +78,7 @@ webbrowser = "1"
 
 [dev-dependencies]
 uuid.workspace = true
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect"] }
 futures.workspace = true
 mockllm = { git = "https://github.com/lihe07/mockllm", rev = "26cf441" }
 reqwest.workspace = true

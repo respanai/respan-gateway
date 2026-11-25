@@ -1,4 +1,4 @@
-use mockllm::{Answer, FakeAnthropic, FakeOpenAi};
+use mockllm::{Answer, FakeAnthropic, FakeGemini, FakeOpenAi};
 use respan_gateway_http::Body;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::{self, StatusCode};
@@ -6,6 +6,8 @@ use respan_gateway_http::http_body_util::BodyExt;
 
 use super::*;
 use crate::App;
+
+mod gemini_wire;
 
 /// Hand `req` to `gateway` as an HTTP server does: whole.
 async fn serve(

@@ -48,6 +48,13 @@ pub(super) fn decode(mut v: Value) -> Session {
 /// The `setup` message of `s`, or what it says that the Live API cannot.
 /// Its audio formats are each chunk's own.
 pub(super) fn encode(s: &Session) -> Result<Value, &'static str> {
+    if s.output == Some(Modality::Text)
+        && s.model
+            .as_deref()
+            .is_some_and(|model| model.contains("native-audio"))
+    {
+        return Err("the text output modality for this native audio model");
+    }
     let mut v = json!({});
     let mut put = |path: &[&str], value| crate::json::put(&mut v, path, value);
     put(

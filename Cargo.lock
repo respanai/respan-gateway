@@ -1618,6 +1618,7 @@ dependencies = [
  "sha2",
  "terminal_size",
  "tokio",
+ "tokio-tungstenite",
  "toml",
  "tower",
  "uuid",
