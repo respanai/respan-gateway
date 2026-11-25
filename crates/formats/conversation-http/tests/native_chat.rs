@@ -60,29 +60,6 @@ async fn mock(
 }
 
 #[tokio::test]
-async fn two_openai_choices_reach_a_unary_client() {
-    let input = json!({"model":"gpt-4o", "n":2, "messages":[{"role":"user","content":"Hi"}]});
-    let (status, body) = send(CHAT, input, |sent| {
-        assert_eq!(sent["n"], 2);
-        (
-            200,
-            "application/json",
-            json!({"id":"c", "model":"gpt-4o", "choices":[
-                {"index":0,"message":{"role":"assistant","content":"A"},"finish_reason":"stop"},
-                {"index":1,"message":{"role":"assistant","content":"B"},"finish_reason":"stop"}
-            ]})
-            .to_string(),
-        )
-    })
-    .await;
-    assert_eq!(status, 200, "{body}");
-    let reply: Value = serde_json::from_str(&body).expect("response JSON");
-    assert_eq!(reply["choices"].as_array().expect("choices array").len(), 2);
-    assert_eq!(reply["choices"][0]["message"]["content"], "A");
-    assert_eq!(reply["choices"][1]["message"]["content"], "B");
-}
-
-#[tokio::test]
 async fn two_openai_choices_reach_a_streaming_client() {
     let input = json!({"model":"gpt-4o", "n":2, "stream":true,
         "messages":[{"role":"user","content":"Hi"}]});

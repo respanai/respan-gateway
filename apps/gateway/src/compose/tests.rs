@@ -143,7 +143,7 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
-async fn several_chat_choices_are_refused_before_calling_any_provider() {
+async fn several_chat_choices_are_supported_only_on_chat_completions() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;
     let text = format!(
@@ -156,7 +156,6 @@ async fn several_chat_choices_are_refused_before_calling_any_provider() {
         ("anthropic/claude-sonnet-4-5", "2"),
         ("anthropic/claude-sonnet-4-5", "2.0"),
         ("anthropic/claude-sonnet-4-5", "2e0"),
-        ("openai/gpt-4.1-mini", "2"),
     ] {
         let body = format!(
             r#"{{"model":"{model}","messages":[{{"role":"user","content":"hi"}}],"n":{n}}}"#
@@ -189,6 +188,21 @@ async fn several_chat_choices_are_refused_before_calling_any_provider() {
             .get("n")
             .is_none()
     );
+
+    openai.answer(Answer::text("hi"));
+    let two =
+        r#"{"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"hi"}],"n":2}"#;
+    let (response, _) = serve(&gateway, post("/v1/chat/completions", two)).await;
+    let (status, _, body) = read_whole(response).await;
+    assert_eq!(status, StatusCode::OK, "{body:?}");
+    let body: serde_json::Value =
+        serde_json::from_slice(&body.expect("response body")).expect("OpenAI response");
+    let choices = body["choices"].as_array().expect("choices");
+    assert_eq!(choices.len(), 2);
+    assert_eq!(choices[0]["index"], 0);
+    assert_eq!(choices[1]["index"], 1);
+    gateway.idle().await;
+    assert_eq!(openai.requests()[0].object().expect("request JSON")["n"], 2);
 }
 
 #[tokio::test]
