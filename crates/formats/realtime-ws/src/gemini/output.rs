@@ -32,6 +32,10 @@ const CANCELLED: &[&[&str]] = &[
     &["toolCall"],
 ];
 
+/// A canonical transcript already carried by a native model-turn frame.
+#[derive(Debug)]
+struct InModelTurn;
+
 /// A provider's messages as events.
 #[derive(Debug)]
 pub(super) struct Provider {
@@ -237,6 +241,7 @@ impl Provider {
             });
         }
         let path = ["serverContent", "modelTurn", "parts"];
+        let model_turn = events.len();
         let parts = at(v, &path).and_then(Value::as_array);
         if let Some(parts) = parts.and_then(|p| p.iter().map(part).collect::<Option<Vec<_>>>()) {
             self.told = false;
@@ -244,13 +249,22 @@ impl Provider {
             events.extend(parts);
             json::remove(v, &path);
         }
-        let path = ["serverContent", "outputTranscription", "text"];
-        if let Some(said) = take(v, &path, string, text) {
+        let path = ["serverContent", "outputTranscription"];
+        if let Some(said) = at(v, &path).and_then(|v| string(&v["text"])) {
             start(&mut state.open, &mut self.ended);
-            events.push(Output::Transcript {
-                text: said,
-                native: Native::default(),
-            });
+            let native = match events.get_mut(model_turn) {
+                Some(part @ (Output::Audio { .. } | Output::Text { .. })) => {
+                    let value = json::remove(v, &path).expect("output transcription");
+                    let fields = json!({"serverContent": {"outputTranscription": value}});
+                    keep(part, fields.as_object());
+                    Native::new(InModelTurn)
+                }
+                _ => {
+                    json::remove(v, &["serverContent", "outputTranscription", "text"]);
+                    Native::default()
+                }
+            };
+            events.push(Output::Transcript { text: said, native });
         }
         let path = ["toolCall", "functionCalls"];
         let calls = at(v, &path).and_then(Value::as_array);
@@ -616,6 +630,9 @@ impl Client {
                 content("modelTurn", json!({"parts": [{"text": text}]})),
                 native,
             ),
+            Output::Transcript { native, .. } if native.get::<InModelTurn>().is_some() => {
+                return Ok(Vec::new());
+            }
             Output::Transcript { text, native } => (
                 content("outputTranscription", json!({"text": text})),
                 native,

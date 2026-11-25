@@ -466,6 +466,9 @@ impl Client {
                     }
                     .into();
                 }
+                if let Some(code) = native.get::<respan_gateway_core::ErrorCode>() {
+                    v["error"]["code"] = code.0.as_ref().into();
+                }
                 if *cause == Cause::NothingToCancel && native.fields::<Key>().is_empty() {
                     v["error"]["code"] = "response_cancel_not_active".into();
                 }

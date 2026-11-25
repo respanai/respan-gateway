@@ -460,7 +460,11 @@ fn a_stream_is_a_block_of_text_a_finish_and_usage() {
         })
         .collect();
     assert_eq!(words, [(0, "Hel"), (0, "lo"), (0, "!")]);
-    assert!(matches!(&events[0], Output::Start(s) if s.id == "r1" && s.model == "gemini-x"));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Output::Start(s) if s.id == "r1" && s.model == "gemini-x"))
+    );
     assert!(events.contains(&Output::finished(Finish::Stop)));
     assert_eq!(
         events
@@ -475,6 +479,22 @@ fn a_stream_is_a_block_of_text_a_finish_and_usage() {
 fn a_stream_that_ends_without_a_finish_was_cut() {
     let cut = decode(&[text_chunk("Hel")]);
     assert!(cut.is_err());
+}
+
+#[test]
+fn a_native_chunk_cannot_bypass_a_filter_that_edits_its_text() {
+    let mut events = decode(&[last_chunk("upstream text", "STOP")]).expect("events");
+    let text = events.iter_mut().find_map(|event| match event {
+        Output::Delta {
+            delta: Delta::Text(text),
+            ..
+        } => Some(text),
+        _ => None,
+    });
+    *text.expect("text delta") = "filtered text".into();
+    let stream = stream_of(&events).expect("stream");
+    assert!(stream.contains("filtered text"));
+    assert!(!stream.contains("upstream text"));
 }
 
 #[test]
@@ -516,7 +536,16 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
     // Each signature is the kind's, over its part's block.
     assert!(events.contains(&Output::signature(Some(1), "s")));
     assert!(events.contains(&Output::signature(Some(2), "t")));
-    assert_eq!(decode_body(&chunk), events);
+    assert_eq!(
+        decode_body(&chunk),
+        events
+            .iter()
+            .filter(
+                |e| !matches!(e, Output::Native(n) if n.get::<super::decode::Chunk>().is_some())
+            )
+            .cloned()
+            .collect::<Vec<_>>()
+    );
 
     // A Chat client has them in `extra_content`: the call's on its entry, the
     // text's on the message, whole and streamed.
@@ -535,6 +564,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         .iter()
         .try_for_each(|e| stream.encode(e, &mut frames))
         .expect("a stream");
+    stream.end(Ok(()), &mut frames).expect("end of stream");
     let text: String = frames.iter().map(|f| String::from_utf8_lossy(f)).collect();
     let deltas: Vec<Value> = text
         .split("\n\n")

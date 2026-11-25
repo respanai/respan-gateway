@@ -4,7 +4,7 @@
 use respan_gateway_core::futures::channel::mpsc;
 use respan_gateway_core::futures::stream::{self, PollNext};
 use respan_gateway_core::futures::{FutureExt, StreamExt, future};
-use respan_gateway_core::{Connection, EventStream, Fault, FaultKind, Native};
+use respan_gateway_core::{Connection, ErrorCode, EventStream, Fault, FaultKind, Native};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
@@ -245,7 +245,11 @@ impl Encoder<Output> for Told {
         let error = Output::Error {
             cause,
             message: fault.message().to_owned(),
-            native: Native::default(),
+            native: fault
+                .get::<ErrorCode>()
+                .cloned()
+                .map(Native::new)
+                .unwrap_or_default(),
         };
         let mut frames = Vec::new();
         match self.write.encode(&error, &mut frames) {
