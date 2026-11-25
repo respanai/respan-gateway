@@ -25,4 +25,3 @@ uuid.workspace = true
 
 [dev-dependencies]
 respan-gateway-http.workspace = true
-tokio = { workspace = true, features = ["macros", "rt"] }
