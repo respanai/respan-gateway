@@ -183,6 +183,30 @@ fn a_google_search_beside_another_google_tool_stays_geminis_own() {
 }
 
 #[test]
+fn a_gemini_function_beside_a_google_tool_still_reaches_another_format() {
+    let schema = json!({ "type": "object", "properties": { "city": { "type": "string" } } });
+    let weather = json!({ "name": "get_weather", "parametersJsonSchema": schema });
+    let both = json!({ "name": "both", "parameters": {}, "parametersJsonSchema": {} });
+    let v = json!({
+        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "tools": [{ "functionDeclarations": [weather, both] }, { "urlContext": {} }, { "googleSearch": {} }],
+    });
+    let input = GeminiGenerate.decode_json(&v).expect("read");
+    assert_eq!(
+        GeminiGenerate.encode_request(&input).expect("gemini")["tools"],
+        v["tools"]
+    );
+    let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
+    assert_eq!(
+        anthropic["tools"],
+        json!([
+            { "name": "get_weather", "input_schema": schema },
+            { "type": "web_search_20250305", "name": "web_search" },
+        ])
+    );
+}
+
+#[test]
 fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     let body = json!({
         "id": "msg_1", "type": "message", "role": "assistant", "model": "claude",

@@ -483,14 +483,13 @@ pub(super) fn json_schema(schema: &Value) -> Value {
     }
 }
 
-/// The function declarations of `tools` and an empty `googleSearch`, if all
-/// of it is that; else the whole `tools` stays native.
-fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
-    let mut out = Vec::new();
-    let mut provided = Vec::new();
+/// The function declarations of `tools` and its empty `googleSearch`es, and
+/// whether that is all of it.
+fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>, bool)> {
+    let mut out = (Vec::new(), Vec::new(), true);
     for tool in tools.as_array()? {
         if *tool == json!({ "googleSearch": {} }) {
-            provided.push(ProviderTool::WebSearch {
+            out.1.push(ProviderTool::WebSearch {
                 native: Native::default(),
             });
             continue;
@@ -499,35 +498,43 @@ fn declarations(tools: &Value) -> Option<(Vec<Tool>, Vec<ProviderTool>)> {
             .as_object()
             .is_some_and(|o| o.keys().all(|k| k == "functionDeclarations"));
         if !clean {
-            return None;
+            out.2 = false;
+            continue;
         }
         for d in tool["functionDeclarations"]
             .as_array()
             .into_iter()
             .flatten()
         {
-            let function = d.as_object()?;
-            let known = ["name", "description", "parameters", "parametersJsonSchema"];
-            let rest = remainder(d, &known);
-            let schema = match (
-                function.get("parameters"),
-                function.get("parametersJsonSchema"),
-            ) {
-                (Some(_), Some(_)) => return None,
-                (Some(p), None) => json_schema(p),
-                (None, Some(p)) => p.clone(),
-                (None, None) => Value::Null,
-            };
-            let mut tool = Tool::new(d["name"].as_str()?, schema);
-            tool.description = match &d["description"] {
-                Value::Null => None,
-                text => Some(text.as_str()?.to_owned()),
-            };
-            tool.native = GeminiGenerate::native(rest);
-            out.push(tool);
+            match declaration(d) {
+                Some(tool) => out.0.push(tool),
+                None => out.2 = false,
+            }
         }
     }
-    Some((out, provided))
+    Some(out)
+}
+
+/// A function declaration as the kind's tool, if the kind can say it.
+fn declaration(d: &Value) -> Option<Tool> {
+    let function = d.as_object()?;
+    let known = ["name", "description", "parameters", "parametersJsonSchema"];
+    let schema = match (
+        function.get("parameters"),
+        function.get("parametersJsonSchema"),
+    ) {
+        (Some(_), Some(_)) => return None,
+        (Some(p), None) => json_schema(p),
+        (None, Some(p)) => p.clone(),
+        (None, None) => Value::Null,
+    };
+    let mut tool = Tool::new(d["name"].as_str()?, schema);
+    tool.description = match &d["description"] {
+        Value::Null => None,
+        text => Some(text.as_str()?.to_owned()),
+    };
+    tool.native = GeminiGenerate::native(remainder(d, &known));
+    Some(tool)
 }
 
 /// The tool choice `toolConfig` says, if the kind has it all.
@@ -555,13 +562,15 @@ fn choice_of(config: &Value) -> Option<ToolChoice> {
     }
 }
 
-/// The request's tools and their choice, if the kind can say them: then they
-/// leave the request's `native`.
+/// The request's tools and their choice, those the kind can say; a `tools`
+/// the kind cannot say all of also stays whole in the request's `native`,
+/// which only this format writes.
 pub(super) fn read_tools(v: &Value, chat: &mut Input) {
-    if let Some((tools, provided)) = declarations(&v["tools"]) {
-        chat.tools = tools;
-        chat.provider_tools = provided;
-    } else if says(&v["tools"]) {
+    let mut all = false;
+    if let Some((tools, provided, every)) = declarations(&v["tools"]) {
+        (chat.tools, chat.provider_tools, all) = (tools, provided, every);
+    }
+    if !all && says(&v["tools"]) {
         let tools = v["tools"].clone();
         edit_native::<GeminiGenerate, _>(&mut chat.native, |f| f.insert("tools".into(), tools));
     }
@@ -616,9 +625,8 @@ pub(super) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
         write_search::<GeminiGenerate>(provided)?;
         tools.push(json!({ "googleSearch": {} }));
     }
-    let tools = (!tools.is_empty())
-        .then(|| tools.into())
-        .or_else(|| native("tools"));
+    // A request of this format keeps its whole list, the kind's part of it too.
+    let tools = native("tools").or_else(|| (!tools.is_empty()).then(|| tools.into()));
     set(v, "tools", tools);
     // WARN: Gemini cannot turn off parallel tool calls; the ask is dropped.
     let mode = match &chat.options.tool_choice {

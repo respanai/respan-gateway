@@ -176,10 +176,12 @@ sequences and structured output (`responseMimeType` with a schema).
 
 What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
-[reasoning](#reasoning-and-sampling) maps, and other `generationConfig` fields, tools Google runs (`googleSearch`), a `toolConfig`
+[reasoning](#reasoning-and-sampling) maps, and other `generationConfig` fields, tools Google runs (`googleSearch` but an empty one), a `toolConfig`
 beyond the choice, video parts, a part's `thoughtSignature` (Gemini 3 needs one
 on a function call in the history: written for one, the first call of each turn
-without one takes Google's documented placeholder).
+without one takes Google's documented placeholder). Function declarations
+beside such a tool are still the kind's: another format gets them, and this
+one the list as it was sent.
 Writing drops an end user's id, one tool call at a time and a schema's
 description, and refuses a request for several candidates. A system message
 after the conversation starts is a user's turn, as it is in Anthropic and
