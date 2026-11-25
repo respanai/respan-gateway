@@ -72,11 +72,10 @@ that a request of its own round-trips.
 (`temperature`, `top_p`), stop sequences, tool selection, parallel
 calls, structured-output requirements, the service tier and `reasoning`.
 What few formats have stays in their own native: `top_k` (Anthropic's and
-Gemini's), `verbosity` and a JSON schema's `strict` (OpenAI's two formats),
-and Anthropic's effort `max`.
+Gemini's), and `verbosity` and a JSON schema's `strict` (OpenAI's two formats).
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
-`Minimal`, `Low`, `Medium`, `High`, `XHigh`), a `budget_tokens` limit, and `summary`
+`Minimal`, `Low`, `Medium`, `High`, `XHigh`, `Max`), a `budget_tokens` limit, and `summary`
 (whether the thinking is returned). Vendors state either an effort or a
 budget, and the two do not convert exactly: an effort buys different
 thinking from different models. So an effort travels between formats that
@@ -84,7 +83,7 @@ have efforts, a budget between formats that have budgets, only `Off` is both,
 and a format that has only one writes the nearest of the other, by the
 budgets the gateway gives a Claude's efforts (a plugin that wants another policy sets
 the one the provider takes, in a filter). A vendor's value the kind has no
-name for (such as an effort `max`) stays native to its format.
+name for (such as a Responses summary of `detailed`) stays native to its format.
 `Content` includes text, reasoning, tool calls/results, images, audio, documents,
 and native values. A `Media` has a MIME type, URL or bytes, optional name, and
 optional native fields. Formats do not fetch URLs.

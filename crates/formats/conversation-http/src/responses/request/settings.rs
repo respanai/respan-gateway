@@ -9,7 +9,7 @@ use crate::schema::{
     parse_effort, read_search, rest_of, set, take_strict, untranslatable, write_search,
 };
 use respan_gateway_conversation::{
-    Content, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
+    Content, Effort, Input, ProviderTool, Reasoning, ResponseFormat, Tool, ToolChoice,
 };
 use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
@@ -223,11 +223,12 @@ pub(in crate::responses) fn read_reasoning(input: &mut Input) {
         let Some(Value::Object(config)) = native.get_mut("reasoning") else {
             return;
         };
-        if let Some(effort) = config
-            .get("effort")
-            .and_then(Value::as_str)
-            .and_then(parse_effort)
-        {
+        let effort = config.get("effort").and_then(Value::as_str);
+        let effort = match effort {
+            Some("max") => Some(Effort::Max),
+            effort => effort.and_then(parse_effort),
+        };
+        if let Some(effort) = effort {
             config.shift_remove("effort");
             r.effort = Some(effort);
         }

@@ -436,6 +436,7 @@ pub(crate) fn read_effort(input: &mut Input) {
         "medium" => Some(Effort::Medium),
         "high" => Some(Effort::High),
         "xhigh" => Some(Effort::XHigh),
+        "max" => Some(Effort::Max),
         _ => None,
     };
     let config = AnthropicMessages::fields(&input.native).get("output_config");
@@ -469,6 +470,7 @@ pub(crate) fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault>
         Effort::Medium => Some("medium"),
         Effort::High => Some("high"),
         Effort::XHigh => Some("xhigh"),
+        Effort::Max => Some("max"),
         _ => {
             return Err(untranslatable(
                 "a reasoning effort Anthropic has no level for",

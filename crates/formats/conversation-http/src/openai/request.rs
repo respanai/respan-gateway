@@ -14,7 +14,7 @@ use crate::schema::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use respan_gateway_conversation::{
-    Content, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
+    Content, Effort, Input, Media, MediaSource, Message, ProviderTool, ResponseFormat, Role, Tool,
     ToolChoice,
 };
 use respan_gateway_core::Fault;
@@ -509,6 +509,8 @@ pub(crate) fn write_reasoning(input: &Input) -> Result<Option<Value>, Fault> {
     // WARN: Chat has no field for a reasoning summary; the ask is dropped silently.
     Ok(
         match r.and_then(|r| r.effort.or(r.budget_tokens.map(effort_for))) {
+            // WARN: Chat has no `max`; its nearest is `xhigh`.
+            Some(Effort::Max) => Some(effort_name(Effort::XHigh)?.into()),
             Some(effort) => Some(effort_name(effort)?.into()),
             None => OpenAiChat::fields(&input.native)
                 .get("reasoning_effort")

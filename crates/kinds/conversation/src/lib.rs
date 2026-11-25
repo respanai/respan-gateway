@@ -151,6 +151,9 @@ pub enum Effort {
     /// More thinking than [`Effort::High`].
     // WARN: Gemini has none.
     XHigh,
+    /// The most thinking the model can do.
+    // WARN: Chat Completions writes its nearest, `xhigh`, and Gemini `high`.
+    Max,
 }
 
 /// A common structured-output requirement.

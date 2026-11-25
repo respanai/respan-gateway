@@ -236,6 +236,7 @@ to its own format unchanged, and is dropped by another.
 | `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}`, the least effort where refused (below) | `thinkingBudget: 0` | as Anthropic's for a Claude, else dropped |
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | as Anthropic's for a Claude, else dropped |
 | `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
+| `effort: Max` | `reasoning_effort: "xhigh"` | `reasoning.effort: "max"` | `output_config.effort: "max"` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
 | `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), on Claude 4.6+ adaptive at the nearest effort | `thinkingBudget: n` | as Anthropic's for a Claude, else dropped |
 | `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
 | `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
@@ -243,7 +244,7 @@ to its own format unchanged, and is dropped by another.
 An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one
 writes the nearest, by the budgets the gateway gives a Claude's efforts
-(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192; a budget is at most
+(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192, `max` 16384; a budget is at most
 `high`). Asked for both at once, a format writes the one it takes, the
 effort if it takes either. A Claude on Converse is written as Anthropic
 writes it, in `additionalModelRequestFields`. Claude 4.6 and later think
