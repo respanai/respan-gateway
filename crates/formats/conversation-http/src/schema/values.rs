@@ -518,6 +518,27 @@ pub(crate) fn write_search<C: Schema>(tool: &ProviderTool) -> Result<Map<String,
     Ok(C::fields(native).clone())
 }
 
+/// The end user an OpenAI request names, by `user` or else by the newer
+/// `safety_identifier`, out of the request's `native`.
+pub(crate) fn read_user<C: Schema>(v: &Value, input: &mut Input) {
+    let key = match v.get("user") {
+        Some(_) => "user",
+        None => "safety_identifier",
+    };
+    input.user = take_text::<C>(input, key);
+}
+
+/// `user` of `v` as `safety_identifier`, if the client's `original` request
+/// named its end user so.
+pub(crate) fn respell_user(original: &Value, v: &mut Map<String, Value>) {
+    if original.get("user").is_none()
+        && original.get("safety_identifier").is_some()
+        && let Some(user) = v.remove("user")
+    {
+        v.insert("safety_identifier".into(), user);
+    }
+}
+
 /// `key` of `input`'s `native`, out of it if it is a string; one of another
 /// type stays there.
 pub(crate) fn take_text<C: Schema>(input: &mut Input, key: &str) -> Option<String> {

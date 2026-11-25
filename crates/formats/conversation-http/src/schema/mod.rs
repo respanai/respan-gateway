@@ -39,10 +39,10 @@ pub(crate) use values::{
     FAILED_RESULT_PREFIX, GATEWAY_SERVER, GatewaySteps, Names, UsageFields, arguments_object,
     base64_field, check_usage, count, data_media, decode_content, decode_message, decode_tools,
     each_tool, edit_native, encode_content, encode_message, ended, fits, is_gateway_step,
-    merge_fields, merge_into, merge_missing, only, own_fields, own_shapes, read_search, remainder,
-    required_str, sealed, set, source_url, stop_json, take_strict, take_text, tidy, unless_file_id,
-    unreadable_media, unsupported_fields, untranslatable, unwritable_content, usage_extra,
-    write_search,
+    merge_fields, merge_into, merge_missing, only, own_fields, own_shapes, read_search, read_user,
+    remainder, required_str, respell_user, sealed, set, source_url, stop_json, take_strict,
+    take_text, tidy, unless_file_id, unreadable_media, unsupported_fields, untranslatable,
+    unwritable_content, usage_extra, write_search,
 };
 
 use respan_gateway_conversation::{Assembled, Content, Input, Output};

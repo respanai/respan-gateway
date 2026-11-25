@@ -60,9 +60,9 @@ mod request;
 mod tests;
 
 use crate::schema::{
-    Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, edit_native,
-    merge_details, merge_fields, merge_into, parse_effort, set, stop_json, take_native, take_text,
-    tidy, unix_now, unsupported_fields, usage_extra,
+    Asked, Names, Own, Schema, UsageFields, check_usage, count, decode_message, merge_details,
+    merge_fields, merge_into, parse_effort, read_user, respell_user, set, stop_json, take_native,
+    take_text, tidy, unix_now, unsupported_fields, usage_extra,
 };
 use respan_gateway_conversation::{
     Assembled, AssembledBlock, AssembledItem, Block, Content, Finish, Input, Output, Reasoning,
@@ -288,11 +288,8 @@ impl Schema for OpenAiChat {
                 .collect(),
             _ => Vec::new(),
         };
-        chat.user = v["user"].as_str().map(Into::into);
         chat.native = OpenAiChat::native(unsupported_fields(v, KNOWN, INERT));
-        if chat.user.is_some() {
-            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
-        }
+        read_user::<Self>(v, &mut chat);
         chat.options.service_tier = take_text::<OpenAiChat>(&mut chat, "service_tier");
         for m in v["messages"].as_array().into_iter().flatten() {
             let mut message = decode_message::<Self>(m, &ROLES)?;
@@ -488,6 +485,7 @@ impl Schema for OpenAiChat {
                 v.remove("max_completion_tokens");
             }
         }
+        respell_user(original, v);
     }
 }
 

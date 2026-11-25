@@ -47,6 +47,9 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 provider base URL includes the version, such as `https://api.openai.com/v1`.
 A Chat Completions request with `n > 1` is refused before the provider
 is called, including when the selected provider speaks another format.
+Its end user is `user`, or else the newer `safety_identifier`, in this
+format and in Responses; a call to a provider of the client's own format
+names it as the client did, and a translated one as `user`.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it

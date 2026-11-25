@@ -183,6 +183,30 @@ fn a_google_search_beside_another_google_tool_stays_geminis_own() {
 }
 
 #[test]
+fn a_safety_identifier_is_the_end_user_and_keeps_its_spelling() {
+    let v =
+        json!({ "messages": [{ "role": "user", "content": "hi" }], "safety_identifier": "u-1" });
+    let input = OpenAiChat.decode_json(&v).expect("read");
+    assert_eq!(input.user.as_deref(), Some("u-1"));
+    assert!(input.native.is_empty());
+    let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
+    assert_eq!(anthropic["metadata"], json!({ "user_id": "u-1" }));
+    let mut sent = OpenAiChat.encode_request(&input).expect("chat");
+    OpenAiChat::respell(&v, &mut sent);
+    assert_eq!(sent.get("safety_identifier"), Some(&json!("u-1")));
+    assert!(sent.get("user").is_none());
+    let v = json!({ "input": "hi", "safety_identifier": "u-2" });
+    let input = OpenAiResponses.decode_json(&v).expect("read");
+    let mut sent = OpenAiResponses.encode_request(&input).expect("responses");
+    OpenAiResponses::respell(&v, &mut sent);
+    assert_eq!(sent.get("safety_identifier"), Some(&json!("u-2")));
+    assert_eq!(
+        OpenAiChat.encode_request(&input).expect("chat")["user"],
+        "u-2"
+    );
+}
+
+#[test]
 fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     let body = json!({
         "id": "msg_1", "type": "message", "role": "assistant", "model": "claude",
