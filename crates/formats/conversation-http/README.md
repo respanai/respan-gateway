@@ -264,7 +264,9 @@ thinking too. Claude is sent no thinking it refuses: none beside a forced
 tool, and, to a budget, none beside another temperature or `top_p`, a
 `top_k`, an assistant's last turn, or a tool loop's assistant turn that does
 not open with its thinking. Opus and Sonnet 5.5, Fable and Mythos refuse
-`disabled`: it is the least effort there. Opus and Sonnet 5.5, and Fable and
+`disabled`: it is the least effort there. Opus 4.7, Sonnet and Haiku 5, Fable
+and Mythos, and later refuse a `top_k`, a `top_p` and a temperature but 1: a
+client of another format sends them none. Opus and Sonnet 5.5, and Fable and
 Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
 `auto`.
 Gemini levels are read in either case and written in lower case.

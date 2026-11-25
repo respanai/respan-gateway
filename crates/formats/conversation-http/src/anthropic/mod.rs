@@ -63,7 +63,9 @@ use std::marker::PhantomData;
 
 use decode::AnthropicDecoder;
 use encode::EventStream;
-pub(crate) use request::{effort_name, effort_thinking, fit_thinking, write_thinking};
+pub(crate) use request::{
+    effort_name, effort_thinking, fit_sampling, fit_thinking, write_thinking,
+};
 use request::{
     ran_steps, read_effort, read_output, read_thinking, read_tools_of, signed, write_output,
     write_tools,
@@ -246,9 +248,11 @@ impl Schema for AnthropicMessages {
     type Decoding = AnthropicDecoder;
 
     /// A client of another format names its reasoning by an effort alone:
-    /// Claude thinks as its model does for it (`effort_thinking`).
+    /// Claude thinks as its model does for it (`effort_thinking`), and is
+    /// sent only the sampling it takes (`fit_sampling`).
     fn translated(_: &Input, v: &mut Map<String, Value>) {
         effort_thinking(v);
+        fit_sampling(v);
     }
 
     /// Claude is sent only the thinking its model takes (`fit_thinking`).

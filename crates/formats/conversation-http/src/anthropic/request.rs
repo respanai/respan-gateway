@@ -613,6 +613,35 @@ fn forces_tools(model: &str) -> bool {
     !refusing.iter().any(|f| at_least(model, f))
 }
 
+/// Whether Claude `model` takes a `top_k`, a `top_p` and a temperature but
+/// 1: Opus 4.7, Sonnet and Haiku 5, Fable and Mythos, and later refuse them.
+fn samples(model: &str) -> bool {
+    let refusing = [
+        ("opus", (4, 7)),
+        ("sonnet", (5, 0)),
+        ("haiku", (5, 0)),
+        ("fable", (5, 0)),
+        ("mythos", (5, 0)),
+    ];
+    !refusing.iter().any(|f| at_least(model, f))
+}
+
+/// The Claude call `v` of a client of another format without the sampling
+/// its model refuses; another model's call stays as written.
+pub(crate) fn fit_sampling(v: &mut Map<String, Value>) {
+    let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
+    let model = model.to_ascii_lowercase();
+    if !model.contains("claude") || samples(&model) {
+        return;
+    }
+    // WARN: sampling this Claude refuses is dropped.
+    v.remove("top_k");
+    v.remove("top_p");
+    if v.get("temperature").and_then(Value::as_f64) != Some(1.0) {
+        v.remove("temperature");
+    }
+}
+
 /// Whether Claude `model` takes `thinking: {type: "disabled"}`: Opus and
 /// Sonnet 5.5, Fable and Mythos, and later refuse it.
 fn disables_thinking(model: &str) -> bool {

@@ -219,6 +219,25 @@ fn sampling_beyond_temperature_reaches_each_format_that_has_it() {
 }
 
 #[test]
+fn a_newer_claude_is_sent_no_sampling_it_refuses_by_another_formats_client() {
+    let sampled = |model: &str, temperature: f64| {
+        let mut v =
+            json!({ "model": model, "temperature": temperature, "top_p": 0.9, "top_k": 40 });
+        let v = v.as_object_mut().expect("an object");
+        AnthropicMessages::translated(&respan_gateway_conversation::Input::default(), v);
+        let mut keys: Vec<_> = v.keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(sampled("claude-opus-5-5", 0.5), ["model"]);
+    assert_eq!(sampled("claude-opus-4-7", 1.0), ["model", "temperature"]);
+    assert_eq!(
+        sampled("claude-opus-4-6", 0.5),
+        ["model", "temperature", "top_k", "top_p"]
+    );
+}
+
+#[test]
 fn whether_claude_shows_its_thinking_is_the_kinds() {
     let v = json!({ "model": "claude-opus-5-5", "max_tokens": 64,
         "thinking": { "type": "adaptive", "display": "omitted" },

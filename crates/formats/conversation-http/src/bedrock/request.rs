@@ -11,7 +11,7 @@ use respan_gateway_core::Fault;
 use serde_json::{Map, Value, json};
 
 use super::{AUDIO, DOCUMENTS, IMAGES, ROLES, format_of};
-use crate::anthropic::{effort_name, effort_thinking, fit_thinking, write_thinking};
+use crate::anthropic::{effort_name, effort_thinking, fit_sampling, fit_thinking, write_thinking};
 use crate::schema::{arguments_object, claude_sampling, sealed, set, stop_json, untranslatable};
 
 /// The leading system messages as `system` blocks, and the rest, where a
@@ -348,6 +348,7 @@ fn claude_call(chat: &Input, v: &mut Map<String, Value>) -> Map<String, Value> {
     for (key, value) in sampling.clone() {
         set(v, key, value);
     }
+    fit_sampling(v);
     fit_thinking(v);
     let call: Map<String, Value> = call
         .iter()
