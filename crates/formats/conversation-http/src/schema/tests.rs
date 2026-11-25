@@ -219,6 +219,34 @@ fn sampling_beyond_temperature_reaches_each_format_that_has_it() {
 }
 
 #[test]
+fn whether_claude_shows_its_thinking_is_the_kinds() {
+    let v = json!({ "model": "claude-opus-5-5", "max_tokens": 64,
+        "thinking": { "type": "adaptive", "display": "omitted" },
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let input = AnthropicMessages.decode_json(&v).expect("read");
+    assert_eq!(
+        input.options.reasoning.as_ref().and_then(|r| r.summary),
+        Some(false)
+    );
+    assert_eq!(
+        AnthropicMessages.encode_request(&input).expect("anthropic")["thinking"],
+        v["thinking"]
+    );
+    let gemini = GeminiGenerate.encode_request(&input).expect("gemini");
+    assert_eq!(
+        gemini["generationConfig"]["thinkingConfig"]["includeThoughts"],
+        false
+    );
+    let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "generationConfig": { "thinkingConfig": { "thinkingBudget": 2048, "includeThoughts": true } } });
+    let input = GeminiGenerate.decode_json(&v).expect("read");
+    assert_eq!(
+        AnthropicMessages.encode_request(&input).expect("anthropic")["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 2048, "display": "summarized" })
+    );
+}
+
+#[test]
 fn a_safety_identifier_is_the_end_user_and_keeps_its_spelling() {
     let v =
         json!({ "messages": [{ "role": "user", "content": "hi" }], "safety_identifier": "u-1" });

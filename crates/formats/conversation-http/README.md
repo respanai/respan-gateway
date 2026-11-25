@@ -245,8 +245,8 @@ to its own format unchanged, and is dropped by another.
 | `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
 | `effort: Max` | `reasoning_effort: "xhigh"` | `reasoning.effort: "max"` | `output_config.effort: "max"` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
 | `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), on Claude 4.6+ adaptive at the nearest effort | `thinkingBudget: n` | as Anthropic's for a Claude, else dropped |
-| `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
-| `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
+| `summary: true` | (dropped) | `reasoning.summary: "auto"` | `thinking.display: "summarized"`, beside a budget or the request's own `thinking` | `includeThoughts: true` | as Anthropic's for a Claude |
+| `summary: false` | (nothing) | (no summary) | `thinking.display: "omitted"`, likewise | `includeThoughts: false` | as Anthropic's for a Claude |
 
 An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one

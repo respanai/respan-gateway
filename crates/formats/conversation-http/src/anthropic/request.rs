@@ -514,6 +514,21 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
 /// The kind's reasoning of `thinking`, if it is exactly an enabled budget or
 /// disabled: then it leaves the request's `native`.
 pub(crate) fn read_thinking(input: &mut Input) {
+    // Whether the thinking is shown is the kind's, whatever else `thinking` says.
+    let mut shown = None;
+    edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
+        let Some(Value::Object(thinking)) = native.get_mut("thinking") else {
+            return;
+        };
+        shown = match thinking.get("display").and_then(Value::as_str) {
+            Some("summarized") => Some(true),
+            Some("omitted") => Some(false),
+            _ => None,
+        };
+        if shown.is_some() {
+            thinking.shift_remove("display");
+        }
+    });
     input.options.reasoning =
         take_native::<AnthropicMessages, _>(&mut input.native, "thinking", |t| {
             let only_keys = |keys: &[&str]| {
@@ -528,6 +543,13 @@ pub(crate) fn read_thinking(input: &mut Input) {
                 _ => None,
             }
         });
+    if let Some(shown) = shown {
+        let reasoning = input
+            .options
+            .reasoning
+            .get_or_insert_with(Reasoning::default);
+        reasoning.summary = Some(shown);
+    }
 }
 
 /// How a Claude model thinks.
@@ -725,7 +747,11 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     // nearest effort on Claude 4.6 and later, thinking adaptively for a budget.
     let nearest = match (&thinks, thinking["type"].as_str()) {
         (Thinks::Adaptively, Some("enabled")) => {
-            v.insert("thinking".into(), json!({ "type": "adaptive" }));
+            let mut adaptive = json!({ "type": "adaptive" });
+            if let Some(display) = thinking.get("display") {
+                adaptive["display"] = display.clone();
+            }
+            v.insert("thinking".into(), adaptive);
             Some(effort_for(thinking["budget_tokens"].as_u64().unwrap_or(0)))
         }
         (Thinks::Adaptively, Some("disabled")) if !disables_thinking(&model) => {
@@ -751,9 +777,9 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     }
 }
 
-/// The request's `thinking`: the kind's reasoning, else the request's own.
-/// Anthropic thinks to a token budget here, its effort is `output_config`'s
-/// ([`write_output`]), and it returns its thinking whenever it thinks; what
+/// The request's `thinking`: the kind's reasoning, else the request's own,
+/// its `display` whether the thinking is shown. Anthropic thinks to a token
+/// budget here, and its effort is `output_config`'s ([`write_output`]); what
 /// a model refuses of it [`fit_thinking`] fits.
 pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
     let own = || {
@@ -761,14 +787,19 @@ pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
             .get("thinking")
             .cloned()
     };
-    // WARN: an ask to withhold the thinking is dropped.
     let Some(r) = &input.options.reasoning else {
         return own();
     };
-    match (r.effort, r.budget_tokens) {
-        (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
+    let mut thinking = match (r.effort, r.budget_tokens) {
+        (Some(Effort::Off), _) => return Some(json!({ "type": "disabled" })),
         // WARN: a budget under Anthropic's least, 1024, is raised to it.
-        (_, Some(budget)) => Some(json!({ "type": "enabled", "budget_tokens": budget.max(1024) })),
-        (_, None) => own(),
+        (_, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget.max(1024) }),
+        (_, None) => own()?,
+    };
+    // WARN: whether thinking that only an effort asks for is shown is dropped.
+    if let (Some(shown), Some(t)) = (r.summary, thinking.as_object_mut()) {
+        let display = if shown { "summarized" } else { "omitted" };
+        t.insert("display".into(), display.into());
     }
+    Some(thinking)
 }
