@@ -413,52 +413,43 @@ impl Chunks {
         }
     }
 
-    fn finish_choice(&mut self, finish: &Finish, out: &mut BytesMut) -> Result<(), Fault> {
-        let reason = FINISH.reason(finish)?;
-        let mut delta = json!({});
-        if let Some(signature) = self.signature.take() {
-            sign(&mut delta, &signature);
-        }
-        self.chunk(
-            out,
-            json!([{ "index": 0, "delta": delta, "finish_reason": reason }]),
-            None,
-        );
-        Ok(())
-    }
-
     fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
         if let Some((_, call)) = self.opening.take() {
             self.delta(out, json!({ "tool_calls": [call] }));
         }
-        if let Err(f) = end {
-            // What the provider finished before it broke off is kept.
-            if let Some(finish) = self.finish.take() {
-                self.begin(out);
-                self.finish_choice(&finish, out)?;
+        if end.is_ok() {
+            self.begin(out);
+            let open: Vec<u32> = self
+                .blocks
+                .iter()
+                .filter(|s| !s.ended)
+                .map(|s| s.block)
+                .collect();
+            for block in open {
+                self.close(block, out)?;
             }
-            let body = match f
-                .get::<respan_gateway_http::raw::RawReply>()
-                .map(|r| r.0.body())
-            {
-                Some(raw) => String::from_utf8_lossy(raw).into_owned(),
-                None => OpenAiChat::error_body(f).to_string(),
-            };
-            out.extend_from_slice(event(None, body).as_bytes());
+        }
+        if let Some(finish) = self
+            .finish
+            .take()
+            .or_else(|| end.is_ok().then_some(Finish::Stop))
+        {
+            self.begin(out);
+            let reason = FINISH.reason(&finish)?;
+            let mut delta = json!({});
+            if let Some(signature) = self.signature.take() {
+                sign(&mut delta, &signature);
+            }
+            self.chunk(
+                out,
+                json!([{ "index": 0, "delta": delta, "finish_reason": reason }]),
+                None,
+            );
+        }
+        if let Err(fault) = end {
+            crate::schema::write_error::<OpenAiChat>(None, fault, out);
             return Ok(());
         }
-        self.begin(out);
-        let open: Vec<u32> = self
-            .blocks
-            .iter()
-            .filter(|s| !s.ended)
-            .map(|s| s.block)
-            .collect();
-        for block in open {
-            self.close(block, out)?;
-        }
-        let finish = self.finish.take().unwrap_or(Finish::Stop);
-        self.finish_choice(&finish, out)?;
         if self.show_usage && !self.usage.is_empty() {
             self.chunk(
                 out,

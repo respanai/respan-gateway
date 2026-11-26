@@ -252,17 +252,14 @@ impl Provider {
         let path = ["serverContent", "outputTranscription"];
         if let Some(said) = at(v, &path).and_then(|v| string(&v["text"])) {
             start(&mut state.open, &mut self.ended);
-            let native = match events.get_mut(model_turn) {
-                Some(part @ (Output::Audio { .. } | Output::Text { .. })) => {
-                    let value = json::remove(v, &path).expect("output transcription");
-                    let fields = json!({"serverContent": {"outputTranscription": value}});
-                    keep(part, fields.as_object());
-                    Native::new(InModelTurn)
-                }
-                _ => {
-                    json::remove(v, &["serverContent", "outputTranscription", "text"]);
-                    Native::default()
-                }
+            let native = if let Some(part) = events.get_mut(model_turn) {
+                let value = json::remove(v, &path);
+                let fields = json!({"serverContent": {"outputTranscription": value}});
+                keep(part, fields.as_object());
+                Native::new(InModelTurn)
+            } else {
+                json::remove(v, &["serverContent", "outputTranscription", "text"]);
+                Native::default()
             };
             events.push(Output::Transcript { text: said, native });
         }

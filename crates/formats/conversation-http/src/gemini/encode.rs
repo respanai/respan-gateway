@@ -5,11 +5,12 @@ use crate::schema::{
     own_fields, unwritable_content,
 };
 use respan_gateway_conversation::{Block, Delta, Finish, Output, Start, Usage};
-use respan_gateway_core::{Fault, Native};
+use respan_gateway_core::Fault;
 use respan_gateway_http::Encoder;
 use respan_gateway_http::bytes::{Bytes, BytesMut};
 use respan_gateway_sse::{event, event_data};
 use serde_json::{Map, Value, json};
+use std::sync::Arc;
 
 use super::decode::Chunk;
 use super::request::is_synthetic;
@@ -211,15 +212,9 @@ pub(super) struct EventStream {
 /// A native frame whose canonical events are still being delivered.
 #[derive(Debug)]
 struct PendingChunk {
-    native: Native,
+    chunk: Arc<Chunk>,
     seen: usize,
     translated: BytesMut,
-}
-
-impl PendingChunk {
-    fn chunk(&self) -> &Chunk {
-        self.native.get::<Chunk>().expect("a Gemini chunk")
-    }
 }
 
 impl EventStream {
@@ -236,11 +231,7 @@ impl EventStream {
             v.extend(own_fields::<GeminiGenerate>(self.start.as_ref()));
         }
         let mut candidate = Map::new();
-        if !parts.is_empty() || last.is_none() {
-            candidate.insert("content".into(), json!({ "role": "model", "parts": parts }));
-        } else {
-            candidate.insert("content".into(), json!({ "role": "model", "parts": [] }));
-        }
+        candidate.insert("content".into(), json!({ "role": "model", "parts": parts }));
         candidate.insert("index".into(), 0.into());
         let mut blocked = false;
         if let Some(finish) = last {
@@ -362,22 +353,18 @@ impl EventStream {
         if self.steps.leaves_out(reply) {
             return Ok(());
         }
-        let native = match reply {
-            Output::Native(native) if native.get::<Chunk>().is_some() => Some(native),
-            _ => None,
-        };
         if let Some(mut pending) = self.chunk.take() {
-            if pending.chunk().events.get(pending.seen) == Some(reply) {
+            if pending.chunk.events.get(pending.seen) == Some(reply) {
                 self.write(reply, &mut pending.translated)?;
                 pending.seen += 1;
-                if pending.seen == pending.chunk().events.len() {
+                if pending.seen == pending.chunk.events.len() {
                     self.native_finish |= pending
-                        .chunk()
+                        .chunk
                         .events
                         .iter()
-                        .any(|event| matches!(event, Output::Finish(_)));
-                    let frame = event(None, &pending.chunk().response);
-                    self.gate.pass(reply, frame.as_bytes(), out);
+                        .any(|e| matches!(e, Output::Finish(_)));
+                    self.gate
+                        .pass(reply, event(None, &pending.chunk.response).as_bytes(), out);
                 } else {
                     self.gate.pass(reply, &[], out);
                     self.chunk = Some(pending);
@@ -386,23 +373,20 @@ impl EventStream {
             }
             self.gate.pass(reply, &pending.translated, out);
         }
-        if let Some(native) = native {
-            let chunk = native.get::<Chunk>().expect("a Gemini chunk");
-            if chunk.events.is_empty() {
-                self.gate
-                    .pass(reply, event(None, &chunk.response).as_bytes(), out);
-            } else {
+        let mut made = BytesMut::new();
+        match Chunk::of(reply) {
+            Some(chunk) if !chunk.events.is_empty() => {
                 self.chunk = Some(PendingChunk {
-                    native: native.clone(),
+                    chunk: chunk.clone(),
                     seen: 0,
                     translated: BytesMut::new(),
                 });
+                return Ok(());
             }
-        } else {
-            let mut made = BytesMut::new();
-            self.write(reply, &mut made)?;
-            self.gate.pass(reply, &made, out);
+            Some(chunk) => made.extend_from_slice(event(None, &chunk.response).as_bytes()),
+            None => self.write(reply, &mut made)?,
         }
+        self.gate.pass(reply, &made, out);
         Ok(())
     }
 
@@ -417,7 +401,13 @@ impl EventStream {
                 out.extend_from_slice(&pending.translated);
             }
         }
-        self.write_end(end, out)
+        if !self.native_finish && (end.is_ok() || self.finish.is_some()) {
+            self.finish(out)?;
+        }
+        if let Err(fault) = end {
+            crate::schema::write_error::<GeminiGenerate>(None, fault, out);
+        }
+        Ok(())
     }
 }
 
@@ -477,28 +467,6 @@ impl EventStream {
             // Another format's: only a client of that format could read it.
             Output::BlockFields { .. } | Output::BlockNative { .. } | Output::Native(_) => {}
             _ => return Err(unwritable_content()),
-        }
-        Ok(())
-    }
-
-    fn write_end(&mut self, end: &Result<(), Fault>, out: &mut BytesMut) -> Result<(), Fault> {
-        if let Err(f) = end {
-            // What the provider finished before it broke off is kept.
-            if self.finish.is_some() && !self.native_finish {
-                self.finish(out)?;
-            }
-            let body = match f
-                .get::<respan_gateway_http::raw::RawReply>()
-                .map(|r| r.0.body())
-            {
-                Some(raw) => String::from_utf8_lossy(raw).into_owned(),
-                None => GeminiGenerate::error_body(f).to_string(),
-            };
-            out.extend_from_slice(event(None, &body).as_bytes());
-            return Ok(());
-        }
-        if !self.native_finish {
-            self.finish(out)?;
         }
         Ok(())
     }

@@ -540,9 +540,7 @@ fn a_function_call_is_a_tool_block_and_stop_with_it_is_a_tool_use() {
         decode_body(&chunk),
         events
             .iter()
-            .filter(
-                |e| !matches!(e, Output::Native(n) if n.get::<super::decode::Chunk>().is_some())
-            )
+            .filter(|e| super::decode::Chunk::of(e).is_none())
             .cloned()
             .collect::<Vec<_>>()
     );
