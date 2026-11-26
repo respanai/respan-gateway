@@ -555,5 +555,5 @@ fn a_response_is_read_by_its_media_type() {
     let events = answer("application/json", body.to_string().into_bytes()).expect("a body");
     assert!(events.contains(&Output::text(0, "hi")));
     let refused = answer("application/json", b"{\"message\":\"no\"}".to_vec());
-    assert!(refused.is_err_and(|f| f.message().contains("success is not a response")));
+    assert!(refused.is_err_and(|f| f.message().contains("JSON that is not a response")));
 }
