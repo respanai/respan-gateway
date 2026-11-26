@@ -155,13 +155,34 @@ impl Models {
             let first = rule.to.first().and_then(|c| c.model_for(Some(&rule.name)));
             let kind = kind_of(first.as_deref().unwrap_or(&rule.name));
             let to: Vec<String> = rule.to.iter().map(ToString::to_string).collect();
-            json!({
+            let mut card = json!({
                 "id": rule.name,
                 "object": "model",
                 "owned_by": "routes",
                 "kind": kind,
                 "route": { "pick": rule.pick.name(), "to": to },
-            })
+            });
+            let mut input_modalities = None;
+            for target in &rule.to {
+                let model = target
+                    .model_for(Some(&rule.name))
+                    .and_then(|id| self.routes.catalog().get(&target.provider, &id));
+                // Clients may reach any target. An unknown card provides no
+                // evidence that a modality works across the whole route.
+                let target_modalities = model
+                    .as_ref()
+                    .map(|model| model.input_modalities.as_slice())
+                    .unwrap_or_default();
+                input_modalities
+                    .get_or_insert_with(|| target_modalities.to_vec())
+                    .retain(|modality| target_modalities.contains(modality));
+            }
+            if let Some(modalities) = input_modalities
+                && !modalities.is_empty()
+            {
+                card["input_modalities"] = json!(modalities);
+            }
+            card
         })
     }
 
@@ -409,6 +430,51 @@ pub async fn get_gemini(State(models): State<Arc<Models>>, Path(model): Path<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_plugin_routing::{Candidate, Rule};
+    use respan_gateway_sdk::Modality::{Audio, Image};
+
+    #[test]
+    fn a_route_lists_only_input_modalities_shared_by_all_targets() {
+        let routes = Routes::new().rule(Rule::new(
+            "vision",
+            vec![
+                Candidate::parse("primary/model"),
+                Candidate::parse("backup/model"),
+            ],
+        ));
+        let models = Models::new(&[], Arc::new(routes));
+        let set = |provider, input_modalities| {
+            let mut model = Model::new("model");
+            model.input_modalities = input_modalities;
+            models.routes.catalog().set(provider, [model].into_iter());
+        };
+
+        set("primary", vec![Image, Audio]);
+        assert!(
+            models
+                .routes()
+                .next()
+                .unwrap()
+                .get("input_modalities")
+                .is_none()
+        );
+
+        set("backup", vec![Image]);
+        assert_eq!(
+            models.routes().next().unwrap()["input_modalities"],
+            json!(["image"])
+        );
+
+        set("backup", vec![]);
+        assert!(
+            models
+                .routes()
+                .next()
+                .unwrap()
+                .get("input_modalities")
+                .is_none()
+        );
+    }
 
     #[test]
     fn a_models_kind_is_read_from_its_name() {
