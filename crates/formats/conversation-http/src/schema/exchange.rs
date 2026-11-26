@@ -57,6 +57,12 @@ pub(crate) fn post<C: Schema>(
     // The client's request, if of this format: its spec's headers and query
     // parameters go on, and it spells what the format spells two ways.
     let own = own_request::<C>(original);
+    if own.is_none()
+        && let Some(n) =
+            input.and_then(|input| crate::openai::OpenAiChat::fields(&input.native).get("n"))
+    {
+        crate::openai::check_choice_count(n)?;
+    }
     if let Some(own) = own {
         for name in C::CARRIED {
             for value in own.headers().get_all(*name) {

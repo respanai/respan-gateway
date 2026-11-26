@@ -143,7 +143,7 @@ async fn a_vendor_routes_its_models_with_its_key() {
 }
 
 #[tokio::test]
-async fn several_chat_choices_are_refused_before_calling_any_provider() {
+async fn several_chat_choices_are_supported_only_on_chat_completions() {
     let openai = FakeOpenAi::start().await;
     let anthropic = FakeAnthropic::start().await;
     let text = format!(
@@ -156,7 +156,6 @@ async fn several_chat_choices_are_refused_before_calling_any_provider() {
         ("anthropic/claude-sonnet-4-5", "2"),
         ("anthropic/claude-sonnet-4-5", "2.0"),
         ("anthropic/claude-sonnet-4-5", "2e0"),
-        ("openai/gpt-4.1-mini", "2"),
     ] {
         let body = format!(
             r#"{{"model":"{model}","messages":[{{"role":"user","content":"hi"}}],"n":{n}}}"#
@@ -189,6 +188,36 @@ async fn several_chat_choices_are_refused_before_calling_any_provider() {
             .get("n")
             .is_none()
     );
+
+    for stream in [false, true] {
+        openai.answer(Answer::text("hi"));
+        let request = serde_json::json!({"model":"openai/gpt-4.1-mini","messages":[{"role":"user","content":"hi"}],"n":2,"stream":stream});
+        let (response, _) =
+            serve(&gateway, post("/v1/chat/completions", request.to_string())).await;
+        let (status, _, body) = read_whole(response).await;
+        assert_eq!(status, StatusCode::OK, "{body:?}");
+        let body = body.expect("response body");
+        let text = std::str::from_utf8(&body).expect("UTF-8");
+        let events: Vec<serde_json::Value> = if stream {
+            assert!(text.contains("data: [DONE]"));
+            text.lines()
+                .filter_map(|line| line.strip_prefix("data: "))
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect()
+        } else {
+            vec![serde_json::from_str(text).expect("OpenAI response")]
+        };
+        let indices: std::collections::BTreeSet<_> = events
+            .iter()
+            .flat_map(|event| event["choices"].as_array().into_iter().flatten())
+            .filter_map(|choice| choice["index"].as_u64())
+            .collect();
+        assert_eq!(indices, [0, 1].into());
+    }
+    gateway.idle().await;
+    for request in openai.requests() {
+        assert_eq!(request.object().expect("request JSON")["n"], 2);
+    }
 }
 
 #[tokio::test]
