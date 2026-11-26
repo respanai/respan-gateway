@@ -21,7 +21,7 @@ use crate::auth;
 use crate::compose::Upstream;
 use crate::formats::{first_of_each_kind, kind};
 use crate::requests::rfc3339;
-use respan_gateway_plugin_routing::Routes;
+use respan_gateway_plugin_routing::{Ask, By, Routes};
 use respan_gateway_vendors::{Model, VendorProvider};
 
 /// How long a provider may take to list its models.
@@ -177,8 +177,19 @@ impl Models {
                     .get_or_insert_with(|| target_modalities.to_vec())
                     .retain(|modality| target_modalities.contains(modality));
             }
+            // The list is shared by clients. A conditional or unusable rule
+            // may be bypassed in favor of a different model.
             if let Some(modalities) = input_modalities
                 && !modalities.is_empty()
+                && rule.clients.is_empty()
+                && rule.kinds.is_empty()
+                && self.routes.plan(&Ask {
+                    kind,
+                    format: "openai-chat",
+                    model: Some(&rule.name),
+                    client: None,
+                    tools: true,
+                }).is_some_and(|plan| matches!(plan.by, By::Rule(selected) if Arc::ptr_eq(&selected, rule)))
             {
                 card["input_modalities"] = json!(modalities);
             }
@@ -435,13 +446,16 @@ mod tests {
 
     #[test]
     fn a_route_lists_only_input_modalities_shared_by_all_targets() {
-        let routes = Routes::new().rule(Rule::new(
-            "vision",
-            vec![
-                Candidate::parse("primary/model"),
-                Candidate::parse("backup/model"),
-            ],
-        ));
+        let routes = Routes::new()
+            .provider("primary", vec![chat_format("primary")])
+            .provider("backup", vec![chat_format("backup")])
+            .rule(Rule::new(
+                "vision",
+                vec![
+                    Candidate::parse("primary/model"),
+                    Candidate::parse("backup/model"),
+                ],
+            ));
         let models = Models::new(&[], Arc::new(routes));
         let set = |provider, input_modalities| {
             let mut model = Model::new("model");
@@ -474,6 +488,53 @@ mod tests {
                 .get("input_modalities")
                 .is_none()
         );
+    }
+
+    fn chat_format(provider: &str) -> respan_gateway_plugin_routing::Speaks {
+        respan_gateway_plugin_routing::Speaks {
+            format: "openai-chat".to_owned(),
+            kind: "chat",
+            internal: provider.to_owned(),
+        }
+    }
+
+    #[test]
+    fn the_shared_catalog_omits_image_input_when_a_route_can_be_bypassed() {
+        use respan_gateway_sdk::Modality::Image;
+
+        for restricted in [true, false] {
+            let mut vision = Rule::new("vision", vec![Candidate::parse("image/model")]);
+            let mut routes = Routes::new().provider("text", vec![chat_format("text")]);
+            if restricted {
+                vision.clients = vec!["allowed".to_owned()];
+                routes = routes.provider("image", vec![chat_format("image")]);
+            }
+            let routes = Arc::new(
+                routes
+                    .rule(vision)
+                    .rule(Rule::new("*", vec![Candidate::parse("text/model")])),
+            );
+            let mut model = Model::new("model");
+            model.reads(Image);
+            routes.catalog().set("image", [model].into_iter());
+            let ask = Ask {
+                kind: "chat",
+                format: "openai-chat",
+                model: Some("vision"),
+                client: Some("another"),
+                tools: true,
+            };
+            assert_eq!(routes.plan(&ask).unwrap().to[0].provider, "text");
+            let models = Models::new(&[], routes);
+            assert!(
+                models
+                    .routes()
+                    .next()
+                    .unwrap()
+                    .get("input_modalities")
+                    .is_none()
+            );
+        }
     }
 
     #[test]
