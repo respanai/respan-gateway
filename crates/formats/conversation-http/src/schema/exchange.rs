@@ -299,7 +299,15 @@ fn unary_reply<C: Schema>(schema: C, status: StatusCode, raw: Bytes) -> Result<V
     }
     Err(match failure_json(&raw).filter(says_error) {
         Some(v) => said_error(status, raw, &v),
-        None => Fault::upstream("the provider's success is not a response of its format"),
+        None if v.is_none() => Fault::upstream(format!(
+            "the provider answered {} with a body that is not JSON",
+            status.as_u16()
+        )),
+        None => Fault::upstream(format!(
+            "the provider answered {} with JSON that is not a response of the {} format",
+            status.as_u16(),
+            C::NAME
+        )),
     })
 }
 
