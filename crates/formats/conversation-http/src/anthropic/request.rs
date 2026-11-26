@@ -6,7 +6,7 @@
 use crate::schema::{
     EFFORT_BUDGETS, GATEWAY_SERVER, arguments_object, base64_field, decode_content, decode_tools,
     each_tool, edit_native, effort_for, encode_content, merge_missing, only, read_search,
-    remainder, required_str, rest_of, set, take_native, untranslatable, write_search,
+    remainder, required_str, rest_of, set, take_native, take_strict, untranslatable, write_search,
 };
 use crate::schema::{Own, Schema};
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -47,6 +47,7 @@ fn anthropic_tool(tool: &Value) -> Option<Tool> {
     kind.description = description;
     let rest = rest_of(tool, &["type", "name", "description", "input_schema"]);
     kind.native = AnthropicMessages::native(rest);
+    take_strict::<AnthropicMessages>(&mut kind);
     Some(kind)
 }
 
@@ -90,6 +91,9 @@ pub(crate) fn write_tools(chat: &Input, v: &mut Map<String, Value>) -> Result<()
             false => json!({ "type": "object" }),
         };
         tool.insert("input_schema".into(), schema);
+        if t.strict == Some(true) {
+            tool.insert("strict".into(), true.into());
+        }
         tool.extend(AnthropicMessages::fields(&t.native).clone());
         Value::Object(tool)
     };
@@ -417,6 +421,7 @@ pub(crate) fn read_output(v: &Value, input: &mut Input) {
         name: "response".into(),
         description: None,
         schema: spec["schema"].clone(),
+        strict: None,
     });
     edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
         if let Some(Value::Object(config)) = native.get_mut("output_config") {
@@ -436,6 +441,7 @@ pub(crate) fn read_effort(input: &mut Input) {
         "medium" => Some(Effort::Medium),
         "high" => Some(Effort::High),
         "xhigh" => Some(Effort::XHigh),
+        "max" => Some(Effort::Max),
         _ => None,
     };
     let config = AnthropicMessages::fields(&input.native).get("output_config");
@@ -469,6 +475,7 @@ pub(crate) fn effort_name(effort: Effort) -> Result<Option<&'static str>, Fault>
         Effort::Medium => Some("medium"),
         Effort::High => Some("high"),
         Effort::XHigh => Some("xhigh"),
+        Effort::Max => Some("max"),
         _ => {
             return Err(untranslatable(
                 "a reasoning effort Anthropic has no level for",
@@ -507,6 +514,21 @@ pub(crate) fn write_output(input: &Input, out: &mut Map<String, Value>) -> Resul
 /// The kind's reasoning of `thinking`, if it is exactly an enabled budget or
 /// disabled: then it leaves the request's `native`.
 pub(crate) fn read_thinking(input: &mut Input) {
+    // Whether the thinking is shown is the kind's, whatever else `thinking` says.
+    let mut shown = None;
+    edit_native::<AnthropicMessages, _>(&mut input.native, |native| {
+        let Some(Value::Object(thinking)) = native.get_mut("thinking") else {
+            return;
+        };
+        shown = match thinking.get("display").and_then(Value::as_str) {
+            Some("summarized") => Some(true),
+            Some("omitted") => Some(false),
+            _ => None,
+        };
+        if shown.is_some() {
+            thinking.shift_remove("display");
+        }
+    });
     input.options.reasoning =
         take_native::<AnthropicMessages, _>(&mut input.native, "thinking", |t| {
             let only_keys = |keys: &[&str]| {
@@ -521,6 +543,13 @@ pub(crate) fn read_thinking(input: &mut Input) {
                 _ => None,
             }
         });
+    if let Some(shown) = shown {
+        let reasoning = input
+            .options
+            .reasoning
+            .get_or_insert_with(Reasoning::default);
+        reasoning.summary = Some(shown);
+    }
 }
 
 /// How a Claude model thinks.
@@ -582,6 +611,35 @@ fn forces_tools(model: &str) -> bool {
         ("mythos", (5, 1)),
     ];
     !refusing.iter().any(|f| at_least(model, f))
+}
+
+/// Whether Claude `model` takes a `top_k`, a `top_p` and a temperature but
+/// 1: Opus 4.7, Sonnet and Haiku 5, Fable and Mythos, and later refuse them.
+fn samples(model: &str) -> bool {
+    let refusing = [
+        ("opus", (4, 7)),
+        ("sonnet", (5, 0)),
+        ("haiku", (5, 0)),
+        ("fable", (5, 0)),
+        ("mythos", (5, 0)),
+    ];
+    !refusing.iter().any(|f| at_least(model, f))
+}
+
+/// The Claude call `v` of a client of another format without the sampling
+/// its model refuses; another model's call stays as written.
+pub(crate) fn fit_sampling(v: &mut Map<String, Value>) {
+    let model = v.get("model").and_then(Value::as_str).unwrap_or_default();
+    let model = model.to_ascii_lowercase();
+    if !model.contains("claude") || samples(&model) {
+        return;
+    }
+    // WARN: sampling this Claude refuses is dropped.
+    v.remove("top_k");
+    v.remove("top_p");
+    if v.get("temperature").and_then(Value::as_f64) != Some(1.0) {
+        v.remove("temperature");
+    }
 }
 
 /// Whether Claude `model` takes `thinking: {type: "disabled"}`: Opus and
@@ -718,7 +776,11 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     // nearest effort on Claude 4.6 and later, thinking adaptively for a budget.
     let nearest = match (&thinks, thinking["type"].as_str()) {
         (Thinks::Adaptively, Some("enabled")) => {
-            v.insert("thinking".into(), json!({ "type": "adaptive" }));
+            let mut adaptive = json!({ "type": "adaptive" });
+            if let Some(display) = thinking.get("display") {
+                adaptive["display"] = display.clone();
+            }
+            v.insert("thinking".into(), adaptive);
             Some(effort_for(thinking["budget_tokens"].as_u64().unwrap_or(0)))
         }
         (Thinks::Adaptively, Some("disabled")) if !disables_thinking(&model) => {
@@ -744,9 +806,9 @@ pub(crate) fn fit_thinking(v: &mut Map<String, Value>) {
     }
 }
 
-/// The request's `thinking`: the kind's reasoning, else the request's own.
-/// Anthropic thinks to a token budget here, its effort is `output_config`'s
-/// ([`write_output`]), and it returns its thinking whenever it thinks; what
+/// The request's `thinking`: the kind's reasoning, else the request's own,
+/// its `display` whether the thinking is shown. Anthropic thinks to a token
+/// budget here, and its effort is `output_config`'s ([`write_output`]); what
 /// a model refuses of it [`fit_thinking`] fits.
 pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
     let own = || {
@@ -754,14 +816,19 @@ pub(crate) fn write_thinking(input: &Input) -> Option<Value> {
             .get("thinking")
             .cloned()
     };
-    // WARN: an ask to withhold the thinking is dropped.
     let Some(r) = &input.options.reasoning else {
         return own();
     };
-    match (r.effort, r.budget_tokens) {
-        (Some(Effort::Off), _) => Some(json!({ "type": "disabled" })),
+    let mut thinking = match (r.effort, r.budget_tokens) {
+        (Some(Effort::Off), _) => return Some(json!({ "type": "disabled" })),
         // WARN: a budget under Anthropic's least, 1024, is raised to it.
-        (_, Some(budget)) => Some(json!({ "type": "enabled", "budget_tokens": budget.max(1024) })),
-        (_, None) => own(),
+        (_, Some(budget)) => json!({ "type": "enabled", "budget_tokens": budget.max(1024) }),
+        (_, None) => own()?,
+    };
+    // WARN: whether thinking that only an effort asks for is shown is dropped.
+    if let (Some(shown), Some(t)) = (r.summary, thinking.as_object_mut()) {
+        let display = if shown { "summarized" } else { "omitted" };
+        t.insert("display".into(), display.into());
     }
+    Some(thinking)
 }

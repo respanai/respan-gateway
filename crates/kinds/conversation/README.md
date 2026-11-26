@@ -69,14 +69,16 @@ again from its value, and a response from its events: a format's promise is
 that a request of its own round-trips.
 
 `Input.options: GenerationOptions` groups the output token limit, sampling
-(`temperature`, `top_p`), stop sequences, tool selection, parallel
-calls, structured-output requirements, the service tier and `reasoning`.
-What few formats have stays in their own native: `top_k` (Anthropic's and
-Gemini's), `verbosity` and a JSON schema's `strict` (OpenAI's two formats),
-and Anthropic's effort `max`.
+(`temperature`, `top_p`, `top_k`, `seed`, and presence and frequency
+penalties), stop sequences, tool selection, parallel calls,
+structured-output requirements, the service tier and `reasoning`. A format
+without one of them drops it. What few formats have stays in their own
+native, such as `verbosity` (OpenAI's two formats). A JSON schema's
+`strict` is said by OpenAI's two formats and dropped by the others, which
+hold the answer to the schema.
 
 `Reasoning` says how hard the model thinks: a named `Effort` (`Off`,
-`Minimal`, `Low`, `Medium`, `High`, `XHigh`), a `budget_tokens` limit, and `summary`
+`Minimal`, `Low`, `Medium`, `High`, `XHigh`, `Max`), a `budget_tokens` limit, and `summary`
 (whether the thinking is returned). Vendors state either an effort or a
 budget, and the two do not convert exactly: an effort buys different
 thinking from different models. So an effort travels between formats that
@@ -84,7 +86,7 @@ have efforts, a budget between formats that have budgets, only `Off` is both,
 and a format that has only one writes the nearest of the other, by the
 budgets the gateway gives a Claude's efforts (a plugin that wants another policy sets
 the one the provider takes, in a filter). A vendor's value the kind has no
-name for (such as an effort `max`) stays native to its format.
+name for (such as a Responses summary of `detailed`) stays native to its format.
 `Content` includes text, reasoning, tool calls/results, images, audio, documents,
 and native values. A `Media` has a MIME type, URL or bytes, optional name, and
 optional native fields. Formats do not fetch URLs.

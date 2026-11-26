@@ -518,14 +518,35 @@ pub(crate) fn write_search<C: Schema>(tool: &ProviderTool) -> Result<Map<String,
     Ok(C::fields(native).clone())
 }
 
+/// The end user an OpenAI request names, by `user` or else by the newer
+/// `safety_identifier`, out of the request's `native`.
+pub(crate) fn read_user<C: Schema>(v: &Value, input: &mut Input) {
+    let key = match v.get("user") {
+        Some(_) => "user",
+        None => "safety_identifier",
+    };
+    input.user = take_text::<C>(input, key);
+}
+
+/// `user` of `v` as `safety_identifier`, if the client's `original` request
+/// named its end user so.
+pub(crate) fn respell_user(original: &Value, v: &mut Map<String, Value>) {
+    if original.get("user").is_none()
+        && original.get("safety_identifier").is_some()
+        && let Some(user) = v.remove("user")
+    {
+        v.insert("safety_identifier".into(), user);
+    }
+}
+
 /// `key` of `input`'s `native`, out of it if it is a string; one of another
 /// type stays there.
 pub(crate) fn take_text<C: Schema>(input: &mut Input, key: &str) -> Option<String> {
     take_native::<C, _>(&mut input.native, key, |v| v.as_str().map(str::to_owned))
 }
 
-/// Moves `tool`'s boolean `strict`, which OpenAI's formats say the same way,
-/// out of its `native`; one that is no boolean stays there.
+/// Moves `tool`'s boolean `strict`, which OpenAI's formats and Anthropic say
+/// the same way, out of its `native`; one that is no boolean stays there.
 pub(crate) fn take_strict<C: Schema>(tool: &mut Tool) {
     if let Some(strict) = take_native::<C, _>(&mut tool.native, "strict", Value::as_bool) {
         tool.strict = Some(strict);
@@ -640,7 +661,7 @@ pub(crate) fn set(v: &mut Map<String, Value>, key: &str, value: Option<Value>) {
     };
 }
 
-/// An effort as vendors name it: `none` (thinking off) to `xhigh`, refused
+/// An effort as vendors name it: `none` (thinking off) to `max`, refused
 /// for one this format has no name for.
 pub(crate) fn effort_name(effort: Effort) -> Result<&'static str, Fault> {
     Ok(match effort {
@@ -650,6 +671,7 @@ pub(crate) fn effort_name(effort: Effort) -> Result<&'static str, Fault> {
         Effort::Medium => "medium",
         Effort::High => "high",
         Effort::XHigh => "xhigh",
+        Effort::Max => "max",
         _ => return Err(untranslatable("a reasoning effort with no name")),
     })
 }

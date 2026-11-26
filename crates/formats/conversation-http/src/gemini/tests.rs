@@ -237,7 +237,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
         "safetySettings": [{ "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" }],
         "tools": [{ "codeExecution": {} }],
         "toolConfig": { "functionCallingConfig": { "mode": "VALIDATED" } },
-        "generationConfig": { "seed": 3, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
+        "generationConfig": { "responseLogprobs": true, "thinkingConfig": { "thinkingBudget": -1 }, "temperature": 1 },
     });
     let chat = GeminiGenerate.decode_json(&body).expect("read");
     let native = GeminiGenerate::fields(&chat.native);
@@ -246,7 +246,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
     }
     assert_eq!(
         native["generationConfig"],
-        json!({ "seed": 3, "thinkingConfig": { "thinkingBudget": -1 } })
+        json!({ "responseLogprobs": true, "thinkingConfig": { "thinkingBudget": -1 } })
     );
     assert_eq!(chat.options.temperature, Some(1.0));
     assert!(matches!(chat.messages[0].content[1], Content::Native(..)));
@@ -255,7 +255,7 @@ fn what_the_kind_has_no_form_for_stays_native_and_goes_back() {
     assert_eq!(back["tools"], body["tools"]);
     assert_eq!(back["toolConfig"], body["toolConfig"]);
     assert_eq!(back["contents"], body["contents"]);
-    assert_eq!(back["generationConfig"]["seed"], 3);
+    assert_eq!(back["generationConfig"]["responseLogprobs"], true);
     assert_eq!(back["generationConfig"]["temperature"], 1.0);
 }
 
@@ -366,6 +366,7 @@ fn structured_output_is_a_mime_type_and_a_schema() {
             name: "response".into(),
             description: None,
             schema: schema.clone(),
+            strict: None,
         })
     );
     let back = written(body, |_| {}).expect("a request");

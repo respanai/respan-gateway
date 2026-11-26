@@ -1134,11 +1134,11 @@ fn tool_results_and_calls_are_written_as_openai_messages() {
 fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
     let body = json!({ "model": "m", "messages": [
         { "role": "user", "name": "alice", "content": "hi" },
-    ], "tools": [{ "type": "function", "function": { "name": "f" } }], "seed": 7 });
+    ], "tools": [{ "type": "function", "function": { "name": "f" } }], "logit_bias": { "50256": -100 } });
     let chat = OpenAiChat.decode_json(&body).expect("read");
     assert_eq!(
-        OpenAiChat::fields(&chat.native).get("seed"),
-        Some(&json!(7))
+        OpenAiChat::fields(&chat.native).get("logit_bias"),
+        Some(&json!({ "50256": -100 }))
     );
     // A function tool is the kind's.
     assert_eq!(chat.tools, [Tool::new("f", Value::Null)]);
@@ -1147,9 +1147,9 @@ fn what_a_conversation_cannot_hold_is_kept_or_dropped() {
         OpenAiChat::fields(&chat.messages[0].native).get("name"),
         Some(&json!("alice"))
     );
-    // Another format drops its `seed`; OpenAI keeps it.
+    // Another format drops its `logit_bias`; OpenAI keeps it.
     let sent = AnthropicMessages.encode_request(&chat).map(Value::from);
-    assert!(sent.expect("written").get("seed").is_none());
+    assert!(sent.expect("written").get("logit_bias").is_none());
     assert_eq!(written(body.clone(), |_| {}).ok(), Some(body));
 }
 

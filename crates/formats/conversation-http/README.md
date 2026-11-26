@@ -47,6 +47,9 @@ query parameters too (`Schema::CARRIED`, such as `anthropic-beta` and
 provider base URL includes the version, such as `https://api.openai.com/v1`.
 A Chat Completions request with `n > 1` is refused before the provider
 is called, including when the selected provider speaks another format.
+Its end user is `user`, or else the newer `safety_identifier`, in this
+format and in Responses; a call to a provider of the client's own format
+names it as the client did, and a translated one as `user`.
 
 `OpenAiChat`, named `openai-chat`, is the spec and nothing else: it reads
 OpenAI's fields, and keeps what else a provider sends native, where it
@@ -130,9 +133,11 @@ them), `store: false`, `include`, `truncation`, the rest of `reasoning`
 (a summary but `auto`), `metadata`, built-in tools (web search, file search, computer use,
 code interpreter, MCP) and the items they make (but the gateway's own calls,
 [below](#calls-the-gateway-ran)), refusals, and annotations. A
-relay in this format sends them back. A function tool's `strict` is the kind's:
-a tool that does not say it keeps the Responses default, and a tool another
-format sent is written with `strict: false`. Stop sequences have no form in a
+relay in this format sends them back. A function tool's `strict` is the kind's,
+as Chat Completions and Anthropic say it too: a tool that does not say it
+keeps the Responses default, and a tool another format sent is written with
+`strict: false`. So is a JSON schema's `strict`, which Chat Completions says
+too. Stop sequences have no form in a
 request, and log probabilities are not carried. A failed tool result, which
 neither Responses nor Chat Completions can flag, is written as its output led
 by `Error: `. The module docs say it all.
@@ -171,8 +176,8 @@ object is its text as JSON; an object written stays one, other text goes under
 results of one turn are one content. Tool declarations take `parameters`
 (OpenAPI types in upper case) or `parametersJsonSchema`, and are written as the
 latter; `toolConfig` is the tool choice (`ANY` with one allowed name is a named
-tool); `generationConfig` gives the output limit, `temperature`, `topP`, stop
-sequences and structured output (`responseMimeType` with a schema).
+tool); `generationConfig` gives the output limit, `temperature`, `topP`, `topK`,
+`seed`, the penalties, stop sequences and structured output (`responseMimeType` with a schema).
 
 What the kind has no form for stays native and is dropped in another format:
 `safetySettings`, `cachedContent`, a `thinkingConfig` beyond what
@@ -226,8 +231,10 @@ tools and keeps them in its history uses Responses or Anthropic Messages.
 ## Reasoning and sampling
 
 `Input.options.reasoning` is the kind's; each format reads and
-writes it as below. `top_k` is Anthropic's and Gemini's own, and dropped
-elsewhere. A value the kind has no form for (an unknown effort, a
+writes it as below. `top_k` is Anthropic's, Gemini's and, for a Claude, Converse's
+(in `additionalModelRequestFields`); `seed` and the presence and frequency
+penalties are Chat's and Gemini's (a penalty of 0, as SDKs send by default,
+is none). A format without one drops it. A value the kind has no form for (an unknown effort, a
 `summary` of `detailed`, adaptive or dynamic thinking) stays native, goes back
 to its own format unchanged, and is dropped by another.
 
@@ -236,14 +243,15 @@ to its own format unchanged, and is dropped by another.
 | `effort: Off` | `reasoning_effort: "none"` | `reasoning.effort: "none"` | `thinking: {type: "disabled"}`, the least effort where refused (below) | `thinkingBudget: 0` | as Anthropic's for a Claude, else dropped |
 | `effort: Minimal/Low/Medium/High` | `reasoning_effort` | `reasoning.effort` | `output_config.effort` (`low` for `Minimal`) | `thinkingLevel` | as Anthropic's for a Claude, else dropped |
 | `effort: XHigh` | `reasoning_effort: "xhigh"` | `reasoning.effort` | `output_config.effort` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
+| `effort: Max` | `reasoning_effort: "xhigh"` | `reasoning.effort: "max"` | `output_config.effort: "max"` | `thinkingLevel: "high"` | as Anthropic's for a Claude, else dropped |
 | `budget_tokens: n` | the nearest effort (below) | the nearest effort | `thinking: {type: "enabled", budget_tokens: n}` (at least 1024), on Claude 4.6+ adaptive at the nearest effort | `thinkingBudget: n` | as Anthropic's for a Claude, else dropped |
-| `summary: true` | (dropped) | `reasoning.summary: "auto"` | (thinking is returned) | `includeThoughts: true` | (thinking is returned) |
-| `summary: false` | (nothing) | (no summary) | (dropped) | `includeThoughts: false` | (dropped) |
+| `summary: true` | (dropped) | `reasoning.summary: "auto"` | `thinking.display: "summarized"`, beside a budget or the request's own `thinking` | `includeThoughts: true` | as Anthropic's for a Claude |
+| `summary: false` | (nothing) | (no summary) | `thinking.display: "omitted"`, likewise | `includeThoughts: false` | as Anthropic's for a Claude |
 
 An effort and a budget do not convert exactly (see the
 [kind](../../kinds/conversation/README.md)): a format that has only one
 writes the nearest, by the budgets the gateway gives a Claude's efforts
-(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192; a budget is at most
+(`low` 1024, `medium` 2048, `high` 4096, `xhigh` 8192, `max` 16384; a budget is at most
 `high`). Asked for both at once, a format writes the one it takes, the
 effort if it takes either. A Claude on Converse is written as Anthropic
 writes it, in `additionalModelRequestFields`. Claude 4.6 and later think
@@ -256,7 +264,9 @@ thinking too. Claude is sent no thinking it refuses: none beside a forced
 tool, and, to a budget, none beside another temperature or `top_p`, a
 `top_k`, an assistant's last turn, or a tool loop's assistant turn that does
 not open with its thinking. Opus and Sonnet 5.5, Fable and Mythos refuse
-`disabled`: it is the least effort there. Opus and Sonnet 5.5, and Fable and
+`disabled`: it is the least effort there. Opus 4.7, Sonnet and Haiku 5, Fable
+and Mythos, and later refuse a `top_k`, a `top_p` and a temperature but 1: a
+client of another format sends them none. Opus and Sonnet 5.5, and Fable and
 Mythos 5.1 and later, refuse to force a tool: their forced tool choice is
 `auto`.
 Gemini levels are read in either case and written in lower case.

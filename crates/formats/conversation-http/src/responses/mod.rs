@@ -211,6 +211,10 @@ impl Schema for OpenAiResponses {
         }
     }
 
+    fn respell(original: &Value, v: &mut Map<String, Value>) {
+        crate::schema::respell_user(original, v);
+    }
+
     fn decoder(&self) -> ResponsesDecoder {
         ResponsesDecoder::default()
     }
@@ -224,11 +228,8 @@ impl Schema for OpenAiResponses {
         chat.options.max_output_tokens = v["max_output_tokens"].as_u64();
         chat.options.temperature = v["temperature"].as_f64();
         chat.options.top_p = v["top_p"].as_f64();
-        chat.user = v["user"].as_str().map(Into::into);
         chat.native = OpenAiResponses::native(unsupported_fields(v, KNOWN, DEFAULTS));
-        if chat.user.is_some() {
-            edit_native::<Self, _>(&mut chat.native, |f| f.shift_remove("user"));
-        }
+        crate::schema::read_user::<Self>(v, &mut chat);
         // Its leading system message goes back as `instructions` alone.
         if crate::schema::says(&v["instructions"]) {
             let instructions = request::INSTRUCTIONS.into();

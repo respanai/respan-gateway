@@ -164,18 +164,12 @@ fn a_request_reads_as_the_kind_and_writes_as_it_was() {
     assert_eq!(chat.tools[0].name, "f");
     assert_eq!(
         OpenAiResponses::fields(&chat.native),
-        json!({ "text": { "format": { "strict": true } }, "instructions": true })
-            .as_object()
-            .expect("fields"),
-        "everything is the kind's, but its schema's strict and that it had instructions"
+        json!({ "instructions": true }).as_object().expect("fields"),
+        "everything is the kind's, but that it had instructions"
     );
     assert_eq!(round_trip(&v), v);
     let sent = OpenAiChat.encode_request(&chat).expect("written");
-    assert!(
-        sent["response_format"]["json_schema"]
-            .get("strict")
-            .is_none()
-    );
+    assert_eq!(sent["response_format"]["json_schema"]["strict"], true);
 }
 
 #[test]
@@ -1053,16 +1047,17 @@ fn a_foreign_value_is_dropped_beside_what_it_can_write() {
 
 #[test]
 fn every_named_effort_is_the_kinds_and_written_as_it_came() {
-    for name in ["none", "minimal", "low", "medium", "high", "xhigh"] {
+    for name in ["none", "minimal", "low", "medium", "high", "xhigh", "max"] {
         let v = json!({ "model": "m", "input": [{ "role": "user", "content": "hi" }],
             "reasoning": { "effort": name } });
         let chat = decode_request(&v);
         assert!(chat.native.is_empty(), "{name}");
         assert_eq!(round_trip(&v), v, "{name}");
         let sent = OpenAiChat.encode_request(&chat).map(Value::from);
+        let nearest = if name == "max" { "xhigh" } else { name };
         assert_eq!(
             sent.ok().map(|v| v["reasoning_effort"].clone()),
-            Some(json!(name))
+            Some(json!(nearest))
         );
     }
 }

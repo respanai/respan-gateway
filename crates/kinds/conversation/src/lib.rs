@@ -79,6 +79,19 @@ pub struct GenerationOptions {
     pub temperature: Option<f64>,
     /// Nucleus sampling cutoff.
     pub top_p: Option<f64>,
+    /// Sampling from only the `top_k` likeliest tokens.
+    // WARN: Chat Completions and Responses have none, and Converse has one
+    // only for a Claude.
+    pub top_k: Option<u64>,
+    /// A seed, for samples that repeat.
+    // WARN: Anthropic, Responses and Converse have none.
+    pub seed: Option<i64>,
+    /// A penalty on each token already in the answer.
+    // WARN: Anthropic, Responses and Converse have none.
+    pub presence_penalty: Option<f64>,
+    /// A penalty on each token by how often it is already in the answer.
+    // WARN: Anthropic, Responses and Converse have none.
+    pub frequency_penalty: Option<f64>,
     /// How hard the model thinks before it answers.
     pub reasoning: Option<Reasoning>,
     /// Stop sequences.
@@ -151,6 +164,9 @@ pub enum Effort {
     /// More thinking than [`Effort::High`].
     // WARN: Gemini has none.
     XHigh,
+    /// The most thinking the model can do.
+    // WARN: Chat Completions writes its nearest, `xhigh`, and Gemini `high`.
+    Max,
 }
 
 /// A common structured-output requirement.
@@ -169,6 +185,10 @@ pub enum ResponseFormat {
         description: Option<String>,
         /// JSON Schema definition.
         schema: Value,
+        /// Whether the answer must hold to the schema exactly.
+        // WARN: only OpenAI's two formats say it; Anthropic, Gemini and
+        // Converse hold the answer to the schema, and drop it.
+        strict: Option<bool>,
     },
 }
 

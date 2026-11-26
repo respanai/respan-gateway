@@ -1071,18 +1071,26 @@ fn every_output_effort_is_the_kinds_and_reaches_openai() {
             Some(json!(name))
         );
     }
-    // `max` is Anthropic's own: written back, dropped by OpenAI.
+    // `max` reaches Responses as it is, and Chat, which has none, as `xhigh`.
     let v = json!({ "model": "m", "max_tokens": 64, "output_config": { "effort": "max" },
         "messages": [{ "role": "user", "content": "hi" }] });
     let chat = AnthropicMessages.decode_json(&v).expect("read");
-    assert!(chat.options.reasoning.is_none());
+    assert!(chat.native.is_empty());
     let back = AnthropicMessages.encode_request(&chat).map(Value::from);
     assert_eq!(
         back.ok().map(|v| v["output_config"].clone()),
         Some(json!({ "effort": "max" }))
     );
     let sent = OpenAiChat.encode_request(&chat).map(Value::from);
-    assert!(sent.is_ok_and(|v| v.get("reasoning_effort").is_none()));
+    assert_eq!(
+        sent.ok().map(|v| v["reasoning_effort"].clone()),
+        Some(json!("xhigh"))
+    );
+    let responses = crate::responses::OpenAiResponses.encode_request(&chat);
+    assert_eq!(
+        responses.ok().map(|v| Value::from(v)["reasoning"].clone()),
+        Some(json!({ "effort": "max" }))
+    );
 }
 
 #[test]

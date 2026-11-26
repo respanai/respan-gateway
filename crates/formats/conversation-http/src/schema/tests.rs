@@ -183,6 +183,113 @@ fn a_google_search_beside_another_google_tool_stays_geminis_own() {
 }
 
 #[test]
+fn sampling_beyond_temperature_reaches_each_format_that_has_it() {
+    let v = json!({
+        "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "generationConfig": { "topK": 40, "seed": 7, "presencePenalty": 0.5, "frequencyPenalty": 0.25 },
+    });
+    let input = GeminiGenerate.decode_json(&v).expect("read");
+    assert!(input.native.is_empty());
+    assert_eq!(
+        GeminiGenerate.encode_request(&input).expect("gemini")["generationConfig"],
+        v["generationConfig"]
+    );
+    let chat = OpenAiChat.encode_request(&input).expect("chat");
+    assert_eq!(
+        (
+            &chat["seed"],
+            &chat["presence_penalty"],
+            &chat["frequency_penalty"]
+        ),
+        (&json!(7), &json!(0.5), &json!(0.25))
+    );
+    assert!(chat.get("top_k").is_none());
+    let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
+    assert_eq!(anthropic["top_k"], 40);
+    assert!(anthropic.get("seed").is_none());
+    let input = OpenAiChat
+        .decode_json(&json!({ "messages": [{ "role": "user", "content": "hi" }],
+            "seed": 3, "presence_penalty": 0, "frequency_penalty": 0.1 }))
+        .expect("read");
+    let gemini = GeminiGenerate.encode_request(&input).expect("gemini");
+    assert_eq!(
+        gemini["generationConfig"],
+        json!({ "seed": 3, "frequencyPenalty": 0.1 })
+    );
+}
+
+#[test]
+fn a_newer_claude_is_sent_no_sampling_it_refuses_by_another_formats_client() {
+    let sampled = |model: &str, temperature: f64| {
+        let mut v =
+            json!({ "model": model, "temperature": temperature, "top_p": 0.9, "top_k": 40 });
+        let v = v.as_object_mut().expect("an object");
+        AnthropicMessages::translated(&respan_gateway_conversation::Input::default(), v);
+        let mut keys: Vec<_> = v.keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(sampled("claude-opus-5-5", 0.5), ["model"]);
+    assert_eq!(sampled("claude-opus-4-7", 1.0), ["model", "temperature"]);
+    assert_eq!(
+        sampled("claude-opus-4-6", 0.5),
+        ["model", "temperature", "top_k", "top_p"]
+    );
+}
+
+#[test]
+fn whether_claude_shows_its_thinking_is_the_kinds() {
+    let v = json!({ "model": "claude-opus-5-5", "max_tokens": 64,
+        "thinking": { "type": "adaptive", "display": "omitted" },
+        "messages": [{ "role": "user", "content": "hi" }] });
+    let input = AnthropicMessages.decode_json(&v).expect("read");
+    assert_eq!(
+        input.options.reasoning.as_ref().and_then(|r| r.summary),
+        Some(false)
+    );
+    assert_eq!(
+        AnthropicMessages.encode_request(&input).expect("anthropic")["thinking"],
+        v["thinking"]
+    );
+    let gemini = GeminiGenerate.encode_request(&input).expect("gemini");
+    assert_eq!(
+        gemini["generationConfig"]["thinkingConfig"]["includeThoughts"],
+        false
+    );
+    let v = json!({ "contents": [{ "role": "user", "parts": [{ "text": "hi" }] }],
+        "generationConfig": { "thinkingConfig": { "thinkingBudget": 2048, "includeThoughts": true } } });
+    let input = GeminiGenerate.decode_json(&v).expect("read");
+    assert_eq!(
+        AnthropicMessages.encode_request(&input).expect("anthropic")["thinking"],
+        json!({ "type": "enabled", "budget_tokens": 2048, "display": "summarized" })
+    );
+}
+
+#[test]
+fn a_safety_identifier_is_the_end_user_and_keeps_its_spelling() {
+    let v =
+        json!({ "messages": [{ "role": "user", "content": "hi" }], "safety_identifier": "u-1" });
+    let input = OpenAiChat.decode_json(&v).expect("read");
+    assert_eq!(input.user.as_deref(), Some("u-1"));
+    assert!(input.native.is_empty());
+    let anthropic = AnthropicMessages.encode_request(&input).expect("anthropic");
+    assert_eq!(anthropic["metadata"], json!({ "user_id": "u-1" }));
+    let mut sent = OpenAiChat.encode_request(&input).expect("chat");
+    OpenAiChat::respell(&v, &mut sent);
+    assert_eq!(sent.get("safety_identifier"), Some(&json!("u-1")));
+    assert!(sent.get("user").is_none());
+    let v = json!({ "input": "hi", "safety_identifier": "u-2" });
+    let input = OpenAiResponses.decode_json(&v).expect("read");
+    let mut sent = OpenAiResponses.encode_request(&input).expect("responses");
+    OpenAiResponses::respell(&v, &mut sent);
+    assert_eq!(sent.get("safety_identifier"), Some(&json!("u-2")));
+    assert_eq!(
+        OpenAiChat.encode_request(&input).expect("chat")["user"],
+        "u-2"
+    );
+}
+
+#[test]
 fn claudes_paused_search_reaches_a_chat_client_as_an_incomplete_answer() {
     let body = json!({
         "id": "msg_1", "type": "message", "role": "assistant", "model": "claude",
@@ -230,6 +337,32 @@ fn a_strict_tool_is_only_strict_where_a_format_can_say_it() {
     assert!(!serde_json::Value::from(sent).to_string().contains("strict"));
     let sent = OpenAiResponses.encode_request(&chat).expect("responses");
     assert_eq!(sent["tools"][0]["strict"], true);
+}
+
+#[test]
+fn a_strict_tool_and_schema_keep_their_promise_across_formats() {
+    let chat = strict_tool_request(json!(true));
+    let anthropic = AnthropicMessages.encode_request(&chat).expect("anthropic");
+    assert_eq!(anthropic["tools"][0]["strict"], true);
+    let back = AnthropicMessages
+        .decode_json(&anthropic.into())
+        .expect("read");
+    assert_eq!(back.tools[0].strict, Some(true));
+    assert!(back.tools[0].native.is_empty());
+    let schema = json!({ "type": "object" });
+    let v = json!({ "messages": [{ "role": "user", "content": "x" }], "response_format": {
+        "type": "json_schema", "json_schema": { "name": "r", "schema": schema, "strict": true } } });
+    let chat = OpenAiChat.decode_json(&v).expect("read");
+    assert!(chat.native.is_empty());
+    let responses = OpenAiResponses.encode_request(&chat).expect("responses");
+    assert_eq!(
+        responses["text"]["format"],
+        json!({ "type": "json_schema", "name": "r", "schema": schema, "strict": true })
+    );
+    assert_eq!(
+        OpenAiChat.encode_request(&chat).expect("chat")["response_format"],
+        v["response_format"]
+    );
 }
 
 #[test]
