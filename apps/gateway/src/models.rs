@@ -21,7 +21,7 @@ use crate::auth;
 use crate::compose::Upstream;
 use crate::formats::{first_of_each_kind, kind};
 use crate::requests::rfc3339;
-use respan_gateway_plugin_routing::Routes;
+use respan_gateway_plugin_routing::{Ask, By, Routes};
 use respan_gateway_vendors::{Model, VendorProvider};
 
 /// How long a provider may take to list its models.
@@ -155,13 +155,45 @@ impl Models {
             let first = rule.to.first().and_then(|c| c.model_for(Some(&rule.name)));
             let kind = kind_of(first.as_deref().unwrap_or(&rule.name));
             let to: Vec<String> = rule.to.iter().map(ToString::to_string).collect();
-            json!({
+            let mut card = json!({
                 "id": rule.name,
                 "object": "model",
                 "owned_by": "routes",
                 "kind": kind,
                 "route": { "pick": rule.pick.name(), "to": to },
-            })
+            });
+            let mut input_modalities = None;
+            for target in &rule.to {
+                let model = target
+                    .model_for(Some(&rule.name))
+                    .and_then(|id| self.routes.catalog().get(&target.provider, &id));
+                // Clients may reach any target. An unknown card provides no
+                // evidence that a modality works across the whole route.
+                let target_modalities = model
+                    .as_ref()
+                    .map(|model| model.input_modalities.as_slice())
+                    .unwrap_or_default();
+                input_modalities
+                    .get_or_insert_with(|| target_modalities.to_vec())
+                    .retain(|modality| target_modalities.contains(modality));
+            }
+            // Chat clients read these fields independently of the catalog kind.
+            // Advertise only when Chat Completions selects this exact rule.
+            if let Some(modalities) = input_modalities
+                && !modalities.is_empty()
+                && rule.clients.is_empty()
+                && rule.kinds.is_empty()
+                && self.routes.plan(&Ask {
+                    kind: kind::CHAT,
+                    format: "openai-chat",
+                    model: Some(&rule.name),
+                    client: None,
+                    tools: true,
+                }).is_some_and(|plan| matches!(plan.by, By::Rule(selected) if Arc::ptr_eq(&selected, rule)))
+            {
+                card["input_modalities"] = json!(modalities);
+            }
+            card
         })
     }
 
@@ -409,6 +441,161 @@ pub async fn get_gemini(State(models): State<Arc<Models>>, Path(model): Path<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use respan_gateway_plugin_routing::{Candidate, Rule};
+    use respan_gateway_sdk::Modality::{Audio, Image};
+
+    #[test]
+    fn a_route_lists_only_input_modalities_shared_by_all_targets() {
+        let routes = Routes::new()
+            .provider("primary", vec![chat_format("primary")])
+            .provider("backup", vec![chat_format("backup")])
+            .rule(Rule::new(
+                "vision",
+                vec![
+                    Candidate::parse("primary/model"),
+                    Candidate::parse("backup/model"),
+                ],
+            ));
+        let models = Models::new(&[], Arc::new(routes));
+        let set = |provider, input_modalities| {
+            let mut model = Model::new("model");
+            model.input_modalities = input_modalities;
+            models.routes.catalog().set(provider, [model].into_iter());
+        };
+
+        set("primary", vec![Image, Audio]);
+        assert!(
+            models
+                .routes()
+                .next()
+                .unwrap()
+                .get("input_modalities")
+                .is_none()
+        );
+
+        set("backup", vec![Image]);
+        assert_eq!(
+            models.routes().next().unwrap()["input_modalities"],
+            json!(["image"])
+        );
+
+        set("backup", vec![]);
+        assert!(
+            models
+                .routes()
+                .next()
+                .unwrap()
+                .get("input_modalities")
+                .is_none()
+        );
+    }
+
+    fn chat_format(provider: &str) -> respan_gateway_plugin_routing::Speaks {
+        respan_gateway_plugin_routing::Speaks {
+            format: "openai-chat".to_owned(),
+            kind: "chat",
+            internal: provider.to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_image_named_chat_model_lists_its_image_input() {
+        use respan_gateway_sdk::Modality::Image;
+
+        let id = "example-flash-image";
+        let routes = Arc::new(
+            Routes::new()
+                .provider("chat", vec![chat_format("chat-only")])
+                .rule(Rule::new(id, vec![Candidate::parse("chat/{model}")])),
+        );
+        let mut model = Model::new(id);
+        model.reads(Image);
+        routes.catalog().set("chat", [model].into_iter());
+        let models = Models::new(&[], routes);
+        let card = models.routes().next().unwrap();
+        assert_eq!(card["kind"], "image");
+        assert_eq!(card["input_modalities"], json!(["image"]));
+    }
+
+    #[test]
+    fn the_shared_catalog_omits_image_input_when_only_the_images_api_uses_the_rule() {
+        use respan_gateway_sdk::Modality::Image;
+
+        let id = "native-image";
+        let routes = Arc::new(
+            Routes::new()
+                .provider(
+                    "native",
+                    vec![respan_gateway_plugin_routing::Speaks {
+                        format: "openai-images".to_owned(),
+                        kind: kind::IMAGE,
+                        internal: "native-images".to_owned(),
+                    }],
+                )
+                .provider("text", vec![chat_format("text-chat")])
+                .rule(Rule::new(id, vec![Candidate::parse("native/{model}")])),
+        );
+        let mut model = Model::new(id);
+        model.reads(Image);
+        routes.catalog().set("native", [model].into_iter());
+        assert_eq!(
+            routes
+                .route(kind::IMAGE, "openai-images", Some(id))
+                .unwrap()
+                .provider,
+            "native",
+        );
+        assert_eq!(
+            routes
+                .route(kind::CHAT, "openai-chat", Some(id))
+                .unwrap()
+                .provider,
+            "text",
+        );
+        let models = Models::new(&[], routes);
+        let card = models.routes().next().unwrap();
+        assert_eq!(card["kind"], "image");
+        assert!(card.get("input_modalities").is_none());
+    }
+
+    #[test]
+    fn the_shared_catalog_omits_image_input_when_a_route_can_be_bypassed() {
+        use respan_gateway_sdk::Modality::Image;
+
+        for restricted in [true, false] {
+            let mut vision = Rule::new("vision", vec![Candidate::parse("image/model")]);
+            let mut routes = Routes::new().provider("text", vec![chat_format("text")]);
+            if restricted {
+                vision.clients = vec!["allowed".to_owned()];
+                routes = routes.provider("image", vec![chat_format("image")]);
+            }
+            let routes = Arc::new(
+                routes
+                    .rule(vision)
+                    .rule(Rule::new("*", vec![Candidate::parse("text/model")])),
+            );
+            let mut model = Model::new("model");
+            model.reads(Image);
+            routes.catalog().set("image", [model].into_iter());
+            let ask = Ask {
+                kind: "chat",
+                format: "openai-chat",
+                model: Some("vision"),
+                client: Some("another"),
+                tools: true,
+            };
+            assert_eq!(routes.plan(&ask).unwrap().to[0].provider, "text");
+            let models = Models::new(&[], routes);
+            assert!(
+                models
+                    .routes()
+                    .next()
+                    .unwrap()
+                    .get("input_modalities")
+                    .is_none()
+            );
+        }
+    }
 
     #[test]
     fn a_models_kind_is_read_from_its_name() {
