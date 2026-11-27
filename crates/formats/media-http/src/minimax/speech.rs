@@ -191,7 +191,7 @@ fn hex_bytes(hex: &str) -> Option<Vec<u8>> {
 /// The fault of an error MiniMax said in a success, its
 /// `base_resp.status_code` `code`: a 400 for a parameter it refused, 401 for
 /// a key, 402 for a balance, 429 for a limit, else a 502.
-fn said_error(code: i64, v: &Value) -> Fault {
+pub(super) fn said_error(code: i64, v: &Value) -> Fault {
     let mut answer = http::Response::new(Bytes::from(
         json!({ "code": code.to_string(), "message": v["base_resp"]["status_msg"] }).to_string(),
     ));
