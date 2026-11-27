@@ -177,19 +177,23 @@ impl Models {
                     .get_or_insert_with(|| target_modalities.to_vec())
                     .retain(|modality| target_modalities.contains(modality));
             }
-            // The list is shared by clients. A conditional or unusable rule
-            // may be bypassed in favor of a different model.
-            if let Some(modalities) = input_modalities
-                && !modalities.is_empty()
-                && rule.clients.is_empty()
-                && rule.kinds.is_empty()
-                && self.routes.plan(&Ask {
-                    kind,
+            // The shared list cannot promise modalities for a bypassable rule.
+            // An image-named model may also serve Chat Completions. Check that
+            // protocol's kind in addition to the catalog category.
+            let reachable = |request_kind| {
+                self.routes.plan(&Ask {
+                    kind: request_kind,
                     format: "openai-chat",
                     model: Some(&rule.name),
                     client: None,
                     tools: true,
                 }).is_some_and(|plan| matches!(plan.by, By::Rule(selected) if Arc::ptr_eq(&selected, rule)))
+            };
+            if let Some(modalities) = input_modalities
+                && !modalities.is_empty()
+                && rule.clients.is_empty()
+                && rule.kinds.is_empty()
+                && (reachable(kind) || (kind != kind::CHAT && reachable(kind::CHAT)))
             {
                 card["input_modalities"] = json!(modalities);
             }
@@ -496,6 +500,25 @@ mod tests {
             kind: "chat",
             internal: provider.to_owned(),
         }
+    }
+
+    #[test]
+    fn an_image_named_chat_model_lists_its_image_input() {
+        use respan_gateway_sdk::Modality::Image;
+
+        let id = "example-flash-image";
+        let routes = Arc::new(
+            Routes::new()
+                .provider("chat", vec![chat_format("chat-only")])
+                .rule(Rule::new(id, vec![Candidate::parse("chat/{model}")])),
+        );
+        let mut model = Model::new(id);
+        model.reads(Image);
+        routes.catalog().set("chat", [model].into_iter());
+        let models = Models::new(&[], routes);
+        let card = models.routes().next().unwrap();
+        assert_eq!(card["kind"], "image");
+        assert_eq!(card["input_modalities"], json!(["image"]));
     }
 
     #[test]
