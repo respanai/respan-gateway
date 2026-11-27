@@ -565,3 +565,13 @@ fn a_close_after_go_away_is_the_session_limit() {
     assert_eq!(fault.code(), "session_limit");
     assert_eq!(fault.get::<CloseCode>().copied(), Some(CloseCode(1001)));
 }
+
+#[test]
+fn audio_of_no_rate_is_16k_audio() {
+    let audio = json!({"realtimeInput": {"audio": {"mimeType": "audio/pcm", "data": "AAEC"}}});
+    let events = inputs(&[serde_json::from_str(SETUP).expect("JSON"), audio]).expect("read");
+    let Input::Audio { audio, .. } = &events[1] else {
+        panic!("{:?}", events[1])
+    };
+    assert_eq!(audio.format, AudioFormat::pcm16(16_000));
+}
