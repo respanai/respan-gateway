@@ -143,7 +143,7 @@ fn retired(config: &Config) -> Result<(), Fault> {
         ),
         (
             config.mcp.is_some(),
-            "mcp is now tools: `[tools.github]` is `[tools.github]`, with the same fields",
+            "mcp is now tools: `[mcp.github]` is `[tools.github]`, with the same fields",
         ),
         (
             config.prices.is_some(),
@@ -159,5 +159,22 @@ fn retired(config: &Config) -> Result<(), Fault> {
     match moved.into_iter().find(|(set, _)| *set) {
         Some((_, how)) => Err(Fault::config(how)),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_retired_mcp_server_is_told_its_tools_section() {
+        let text = "[mcp.github]\nurl = \"http://a.test/mcp\"\n";
+        let config = Config::parse(text).unwrap_or_else(|e| panic!("{e}"));
+        let refused = retired(&config).expect_err("refused");
+        let said = refused.message();
+        assert!(
+            said.contains("`[mcp.github]` is `[tools.github]`"),
+            "{said}"
+        );
     }
 }
