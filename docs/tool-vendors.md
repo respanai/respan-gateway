@@ -208,7 +208,8 @@ Each is billed in credits; `advanced` depths cost more.
   markdown.
 - `run_agent` is `POST https://agent.tinyfish.ai/v1/automation/run`, a
   browser agent carrying out a goal on a site and waiting for it: slow,
-  and billed in credits.
+  and billed in credits. Such a run cannot be cancelled, so it is waited
+  for a minute beyond its `max_duration_seconds`, or 10 minutes without one.
 
 `base_url` moves only the agent's host.
 

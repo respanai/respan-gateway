@@ -5,11 +5,14 @@
 //! key in `X-API-Key`. The base URL is the agent's; search and fetch are on
 //! hosts of their own, called by absolute URL.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use respan_gateway_tool_vendor_kit::args::{
     object, optional_bool, optional_date, optional_enum, optional_int, optional_str,
     optional_str_list, pretty, required_str,
 };
+use respan_gateway_tool_vendor_kit::reqwest::Method;
 use respan_gateway_tool_vendor_kit::{
     Api, KeyIn, ToolError, ToolOutput, ToolSpec, ToolVendor, Tools,
 };
@@ -113,7 +116,11 @@ impl Tools for TinyFishTools {
             }
             "run_agent" => {
                 let body = run_body(args)?;
-                let response = api.post_json("/v1/automation/run", &body).await?;
+                let request = api
+                    .request(Method::POST, "/v1/automation/run")
+                    .json(&body)
+                    .timeout(run_wait(&body));
+                let response = api.json(request).await?;
                 let output = ToolOutput::from(render_run(&response)?);
                 Ok(match steps(&response) {
                     Some(n) => output.with_usage("steps", n),
@@ -182,6 +189,22 @@ fn fetch_body(args: &Map<String, Value>) -> Result<Value, ToolError> {
         body.insert("links".into(), v.into());
     }
     Ok(Value::Object(body))
+}
+
+/// How long a run is waited for when it sets no `max_duration_seconds`, as
+/// TinyFish then sets no limit of its own.
+const RUN_WAIT: Duration = Duration::from_secs(10 * 60);
+
+/// How long the run of `body` is waited for: a minute beyond its
+/// `max_duration_seconds`, else [`RUN_WAIT`], and never less than the kit
+/// client's 120 seconds. A run of `/v1/automation/run` cannot be cancelled,
+/// so one given up on still goes on, and is billed.
+fn run_wait(body: &Value) -> Duration {
+    let limit = body.pointer("/agent_config/max_duration_seconds");
+    match limit.and_then(Value::as_u64) {
+        Some(seconds) => Duration::from_secs(seconds.saturating_add(60).max(120)),
+        None => RUN_WAIT,
+    }
 }
 
 /// `POST /v1/automation/run`'s body from the tool's arguments.
@@ -466,5 +489,18 @@ mod tests {
                 "The run failed: Out of credits (BILLING_FAILURE)"
             ))
         );
+    }
+
+    #[test]
+    fn a_run_is_waited_for_as_long_as_it_may_take() {
+        let wait = |more: Value| {
+            let mut v = json!({"url": "https://a.b", "goal": "find prices"});
+            v.as_object_mut().expect("object").extend(args(more));
+            run_wait(&run_body(&args(v)).expect("valid"))
+        };
+        let minutes = |n: u64| Duration::from_secs(n * 60);
+        assert_eq!(wait(json!({"max_duration_seconds": 300})), minutes(6));
+        assert_eq!(wait(json!({"max_duration_seconds": 10})), minutes(2));
+        assert_eq!(wait(json!({})), minutes(10));
     }
 }
