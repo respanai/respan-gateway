@@ -283,10 +283,13 @@ impl ConverseDecoder {
 
 impl respan_gateway_http::Decoder<Output> for ConverseDecoder {
     fn decode(&mut self, raw: Bytes, out: &mut Vec<Output>) -> Result<(), Fault> {
-        for message in self.parser.push(raw)? {
-            self.message(&message, out)?;
+        // The whole messages before a bad one are read before its fault.
+        let mut messages = Vec::new();
+        let parsed = self.parser.push_into(raw, &mut messages);
+        for message in &messages {
+            self.message(message, out)?;
         }
-        Ok(())
+        parsed
     }
 
     fn end(&mut self, end: Result<(), Fault>, _out: &mut Vec<Output>) -> Result<(), Fault> {
