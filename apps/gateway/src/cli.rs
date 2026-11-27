@@ -277,13 +277,18 @@ where
     let config_beats_port = overrides.listen.is_none()
         && config.as_ref().is_ok_and(|c| c.listen.is_some())
         && std::env::var("PORT").is_ok_and(|p| !p.is_empty());
-    let config = match config
+    let mut config = match config
         .map_err(|e| e.to_string())
         .and_then(|c| overrides.apply(c))
     {
         Ok(config) => config,
         Err(e) => return fail(&e),
     };
+    // Neither reads the providers' lists in the background: `check` calls no
+    // provider but with `--online`, and `models` lists them once itself.
+    if check {
+        config.plugins.routing.listings = Some(false);
+    }
     let log = config.log;
     let source = config.source().to_string();
     let reload_source = config.source().clone();
@@ -552,4 +557,31 @@ fn fail(message: &str) -> u8 {
         crate::logging::paint("error:", "1;31", true)
     );
     FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockllm::FakeOpenAi;
+
+    /// `check` calls no provider; only `check --online` does. On threads of
+    /// their own, as the binary's, where a listing starts at once.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_calls_no_provider() {
+        let fake = FakeOpenAi::start().await;
+        let config = format!(
+            "[providers.a]\nvendor = \"openai\"\nkey = \"sk-test\"\nbase_url = \"{}\"\n",
+            fake.base_url()
+        );
+        let path = std::env::temp_dir().join(format!("respan-check-{}.toml", std::process::id()));
+        std::fs::write(&path, config).unwrap_or_else(|e| panic!("{e}"));
+        let path = path.to_string_lossy().into_owned();
+        let checked = run(["respan-gateway", "--config", &path, "check"]).await;
+        // What a background listing would have sent by now.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(checked, SUCCESS);
+        let called: Vec<_> = fake.requests().into_iter().map(|r| r.path).collect();
+        assert!(called.is_empty(), "check called {called:?}");
+    }
 }
