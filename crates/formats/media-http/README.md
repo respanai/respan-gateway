@@ -33,13 +33,15 @@ version, as OpenAI's SDKs take it: `https://api.openai.com/v1`,
 - An edit goes to `/images/edits` as a form of its images' bytes, or in JSON
   if one, or the mask, is a URL. An image a client names by file id cannot be
   relayed and is refused. The mask is `openai-images`' native field
-  (`mask: {"image_url"}`, a data URL of a form's file): another format drops
-  it.
+  (`mask: {"image_url"}`, a data URL of a form's file): `bedrock-images`
+  sends it to the services that take one, `dashscope-images` refuses it, and
+  another format drops it.
 - An answer's image is of its `output_format`, else of the type its bytes
   say, else PNG.
 - An image request's `quality`, `output_format` and `user`, and an answer's
   `created`, `revised_prompt` and streamed partial images, are
-  `openai-images`' native fields: another format drops them.
+  `openai-images`' native fields: another format drops them, but for those
+  it takes as its own, as `bedrock-images` does `output_format`.
 - A file's type is its part's, unless that says none or
   `application/octet-stream`, which OpenAI refuses for images; then its
   name's, then its first bytes'.
