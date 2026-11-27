@@ -509,10 +509,12 @@ impl Servers {
             }
             cursor = page["nextCursor"].as_str().map(str::to_owned);
             if cursor.is_none() {
-                break;
+                return Ok(tools);
             }
         }
-        Ok(tools)
+        Err(Fault::new(format!(
+            "tool server '{server}' still has more tools after {PAGES} pages"
+        )))
     }
 
     /// The server's session: kept, else started.
@@ -676,6 +678,71 @@ fn render(result: &Value) -> Outcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State as AxumState;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use axum::{Json, Router, routing::post};
+    use std::sync::atomic::AtomicUsize;
+
+    async fn list_page(
+        AxumState(pages): AxumState<Arc<AtomicUsize>>,
+        Json(rpc): Json<Value>,
+    ) -> impl IntoResponse {
+        let result = match rpc["method"].as_str() {
+            Some("initialize") => json!({ "protocolVersion": PROTOCOL, "capabilities": {} }),
+            Some("notifications/initialized") => return StatusCode::ACCEPTED.into_response(),
+            Some("tools/list") => {
+                let total = pages.load(Ordering::Relaxed);
+                let page = rpc["params"]["cursor"]
+                    .as_str()
+                    .map(|cursor| cursor.parse::<usize>().unwrap_or_else(|e| panic!("{e}")))
+                    .unwrap_or(1);
+                let mut result =
+                    json!({ "tools": [{ "name": format!("catalog{total}_page{page}") }] });
+                if page < total {
+                    result["nextCursor"] = json!((page + 1).to_string());
+                }
+                result
+            }
+            _ => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        Json(json!({ "jsonrpc": "2.0", "id": rpc["id"], "result": result })).into_response()
+    }
+
+    #[tokio::test]
+    async fn an_incomplete_tool_list_never_replaces_a_complete_one() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+        let addr = listener.local_addr().unwrap_or_else(|e| panic!("{e}"));
+        let pages = Arc::new(AtomicUsize::new(PAGES));
+        let router = Router::new()
+            .route("/mcp", post(list_page))
+            .with_state(pages.clone());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await });
+        let config = format!(
+            "[tools]\nfixture = {{ url = \"http://{addr}/mcp\" }}\n\
+             [plugins.tool_loop]\ntool_list_ttl = \"1ns\"\n"
+        );
+        let app = || {
+            let config = crate::Config::parse(&config).unwrap_or_else(|e| panic!("{e}"));
+            crate::App::new(config).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let check = app();
+        let complete = format!("fixture__catalog{PAGES}_page{PAGES}");
+        let (report, reachable) = check.probe().await;
+        assert!(reachable && report.contains(&complete), "{report}");
+
+        pages.store(PAGES + 1, Ordering::Relaxed);
+        let (report, _) = check.probe().await;
+        assert!(report.contains(&complete), "{report}");
+        let partial = format!("fixture__catalog{}_", PAGES + 1);
+        assert!(!report.contains(&partial), "{report}");
+        let (report, _) = app().probe().await;
+        assert!(!report.contains(&partial), "{report}");
+        assert!(report.contains("none: no server listed a tool"), "{report}");
+        server.abort();
+    }
 
     #[test]
     fn a_tool_is_named_for_the_model_after_its_server() {

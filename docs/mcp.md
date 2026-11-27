@@ -96,6 +96,9 @@ allow = ["github__search_*"]            # Offer only what you would let any clie
 max_steps = 8
 ```
 
+The tool loop reads up to eight pages per server. If a server has more
+pages, the gateway keeps using its last complete list, if it has one.
+
 A tool's description and output are untrusted input to the model. Offer
 only tools from servers you trust, and use `deny` to keep destructive ones
 out. A client can opt one request out with `x-respan-tool-loop: off`.
