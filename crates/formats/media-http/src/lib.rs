@@ -5,6 +5,8 @@
 //!   serve them, one format per kind.
 //! - [`gemini`]: Gemini Omni's videos, image and embedding models, as the Gemini
 //!   API serves them, of the video, image and embedding kinds.
+//! - [`cohere`]: rerank, as Cohere's API has it and Jina's, vLLM's and
+//!   other servers' after it.
 //! - [`bedrock`]: Amazon Bedrock's embedding and Stability AI image models,
 //!   on InvokeModel.
 //! - [`minimax`]: MiniMax's video generation and speech synthesis, on its
@@ -27,6 +29,7 @@ use respan_gateway_http::native::Json;
 use serde_json::{Map, Value};
 
 pub mod bedrock;
+pub mod cohere;
 pub mod dashscope;
 mod edge;
 pub mod empiriolabs;
@@ -87,6 +90,7 @@ pub trait Natives: Sized + 'static {
 }
 impl Natives for openai::OpenAiImages {}
 impl Natives for openai::OpenAiEmbeddings {}
+impl Natives for cohere::CohereRerank {}
 impl Natives for openai::OpenAiSpeech {}
 impl Natives for openai::OpenAiTranscriptions {}
 impl Natives for openai::OpenAiVideos {}
