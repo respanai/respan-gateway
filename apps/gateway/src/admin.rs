@@ -411,17 +411,19 @@ async fn mcp_tools(
             return auth::error(StatusCode::GATEWAY_TIMEOUT, "upstream_error", &why);
         }
     };
-    let offers = |used: &Option<(Vec<String>, ToolFilter)>, tool: &str| {
-        used.as_ref().is_some_and(|(servers, filter)| {
-            servers.contains(&name) && filter.offers(&format!("{name}__{tool}"))
-        })
+    // Each filters the name it gives the tool: the loop's is fit for a chat
+    // API (`gh__delete_repo` for `delete.repo`), the aggregate's is as it is.
+    let offers = |used: &Option<(Vec<String>, ToolFilter)>, offered: &str| {
+        used.as_ref()
+            .is_some_and(|(servers, filter)| servers.contains(&name) && filter.offers(offered))
     };
     let tools: Vec<Value> = (tools.iter())
         .map(|t| {
             let mut tool = crate::mcp_tools::tool_json(t);
             let named = t["name"].as_str().unwrap_or_default();
-            tool["tool_loop"] = offers(&admin.tool_loop, named).into();
-            tool["aggregate"] = offers(&admin.aggregate, named).into();
+            let model_name = crate::tool_loop::model_name(&name, named);
+            tool["tool_loop"] = offers(&admin.tool_loop, &model_name).into();
+            tool["aggregate"] = offers(&admin.aggregate, &format!("{name}__{named}")).into();
             tool
         })
         .collect();
@@ -891,5 +893,51 @@ mod tests {
         assert_eq!(status, StatusCode::NO_CONTENT);
         let (_, listed) = send(&app, Method::GET, "/ui/api/mcp", "").await;
         assert_eq!(enabled(&listed), json!(true));
+    }
+
+    #[tokio::test]
+    async fn a_dotted_tool_is_offered_as_the_loop_names_it() {
+        use axum::response::IntoResponse;
+        // An MCP server whose tools' names hold a '.'.
+        async fn mcp(body: axum::body::Bytes) -> axum::response::Response {
+            let asked: Value = serde_json::from_slice(&body).unwrap_or_default();
+            let result = match asked["method"].as_str() {
+                Some("initialize") => json!({ "protocolVersion": "2025-06-18",
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "fake", "version": "1" } }),
+                Some("tools/list") => json!({ "tools": [
+                    { "name": "delete.repo", "inputSchema": { "type": "object" } },
+                    { "name": "read.file", "inputSchema": { "type": "object" } },
+                ] }),
+                _ => return StatusCode::ACCEPTED.into_response(),
+            };
+            let answer = json!({ "jsonrpc": "2.0", "id": asked["id"], "result": result });
+            axum::Json(answer).into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+        let at = listener.local_addr().unwrap_or_else(|e| panic!("{e}"));
+        let server = Router::new().route(
+            "/mcp",
+            axum::routing::post(mcp).delete(|| async { StatusCode::OK }),
+        );
+        tokio::spawn(async move { axum::serve(listener, server).await });
+        // The loop names them `gh__delete_repo` and `gh__read_file`.
+        let text = format!(
+            "[tools.gh]\nurl = \"http://{at}/mcp\"\n\
+             [plugins.tool_loop]\nservers = [\"gh\"]\ndeny = [\"gh__delete_*\"]\n"
+        );
+        let config = Config::parse(&text).unwrap_or_else(|e| panic!("{e}"));
+        let app = App::new(config).unwrap_or_else(|e| panic!("{e}"));
+        let (status, listed) = send(&app, Method::GET, "/ui/api/mcp/gh/tools", "").await;
+        assert_eq!(status, StatusCode::OK, "{listed}");
+        let offered = |tool: &str| {
+            let mut tools = listed["tools"].as_array().into_iter().flatten();
+            let found = tools.find(|t| t["name"] == tool);
+            found.map(|t| t["tool_loop"].clone())
+        };
+        assert_eq!(offered("read.file"), Some(json!(true)), "{listed}");
+        assert_eq!(offered("delete.repo"), Some(json!(false)), "{listed}");
     }
 }

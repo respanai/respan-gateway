@@ -630,7 +630,7 @@ pub(crate) fn message(json: Value) -> Result<Message, Fault> {
 
 /// The name a tool has for the model: the server and the tool, fit for every
 /// chat API (letters, digits, `_` and `-`, at most 64).
-fn model_name(server: &str, tool: &str) -> String {
+pub(crate) fn model_name(server: &str, tool: &str) -> String {
     let fit = |c: char| match c.is_ascii_alphanumeric() || c == '-' {
         true => c,
         false => '_',
