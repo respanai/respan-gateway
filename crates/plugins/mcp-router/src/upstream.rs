@@ -178,8 +178,12 @@ impl Run {
         let (first, rest) = match tried.await {
             Ok(started) => started,
             Err(fault) => {
-                session.forget(server, &opened).await;
+                // A failure that is no lost session, such as a proxy's 504,
+                // keeps it: the next call goes on in it.
                 let unrun = unrun(&fault);
+                if unrun {
+                    session.forget(server, &opened).await;
+                }
                 return Err((fault, unrun));
             }
         };
@@ -517,5 +521,100 @@ mod tests {
     #[tokio::test]
     async fn templates_keep_empty_continuation_cursors() {
         pages("resources/templates/list", "resourceTemplates").await;
+    }
+
+    /// A call the server failed, as a proxy's 504, is no sign it lost the
+    /// session: the next call goes on in it, not in a new one.
+    #[tokio::test]
+    async fn a_failed_call_keeps_the_servers_session() {
+        let log = Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = log.clone();
+        let send = connect(
+            move |request: http::Request<Body>| {
+                let seen = seen.clone();
+                async move {
+                    let session = request.headers().get(SESSION).cloned();
+                    let body = BodyExt::collect(request.into_body())
+                        .await
+                        .expect("request body")
+                        .to_bytes();
+                    let asked: Value = serde_json::from_slice(&body).expect("JSON request");
+                    let method = asked["method"].as_str().unwrap_or_default().to_owned();
+                    let (opened, called) = {
+                        let mut seen = seen.lock().expect("log");
+                        seen.push(method.clone());
+                        let count = |m: &str| seen.iter().filter(|s| *s == m).count();
+                        (count("initialize"), count("tools/call"))
+                    };
+                    let (status, body) = match method.as_str() {
+                        "initialize" => {
+                            let result = json!({ "protocolVersion": PROTOCOL,
+                                "capabilities": {"tools": {}},
+                                "serverInfo": {"name": "s", "version": "1"} });
+                            (
+                                StatusCode::OK,
+                                json!({"jsonrpc": "2.0", "id": asked["id"], "result": result}),
+                            )
+                        }
+                        "notifications/initialized" => (StatusCode::ACCEPTED, Value::Null),
+                        _ if called == 1 => {
+                            (StatusCode::GATEWAY_TIMEOUT, json!({"error": "timed out"}))
+                        }
+                        _ => {
+                            assert!(session.is_some(), "a call outside the session");
+                            let result = json!({"content": [{"type": "text", "text": "ok"}]});
+                            (
+                                StatusCode::OK,
+                                json!({"jsonrpc": "2.0", "id": asked["id"], "result": result}),
+                            )
+                        }
+                    };
+                    let response = http::Response::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .header(SESSION, format!("upstream-{opened}"));
+                    let body = match body {
+                        Value::Null => Body::default(),
+                        body => Body::full(body.to_string()),
+                    };
+                    Ok((response.body(body).expect("response"), None))
+                }
+            },
+            4096,
+        );
+        let gateway = Gateway::new()
+            .client::<Input, Output, ClientIo>(StreamableHttp::default())
+            .expect("client")
+            .provider(Provider::new("s", StreamableHttp::default(), send))
+            .expect("provider")
+            .plugin(crate::McpRouter::new(
+                vec!["s".into()],
+                ToolFilter::default(),
+            ));
+        let initialize = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": PROTOCOL, "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"}} });
+        let (_, session) = request(&gateway, None, initialize).await;
+        let call = |id: u32| {
+            let params = json!({"name": "s__t", "arguments": {}});
+            json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": params})
+        };
+        // The first call fails, and its error is the client's answer.
+        let failed = http::Request::builder()
+            .method(Method::POST)
+            .uri("/mcp")
+            .header("content-type", "application/json")
+            .header("accept", "application/json")
+            .header(SESSION, session.as_deref().expect("a session"))
+            .body(Body::full(call(2).to_string()))
+            .expect("request");
+        let (response, done) = handle(&gateway, failed, 4096).await;
+        let (_, end) = tokio::join!(BodyExt::collect(response.into_body()), done);
+        end.expect("delivery");
+        let (second, _) = request(&gateway, session.as_deref(), call(3)).await;
+        assert_eq!(second["content"][0]["text"], "ok");
+        let log = log.lock().expect("log").clone();
+        let opened = log.iter().filter(|m| *m == "initialize").count();
+        assert_eq!(opened, 1, "the session was opened again: {log:?}");
     }
 }
