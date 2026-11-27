@@ -177,23 +177,19 @@ impl Models {
                     .get_or_insert_with(|| target_modalities.to_vec())
                     .retain(|modality| target_modalities.contains(modality));
             }
-            // The shared list cannot promise modalities for a bypassable rule.
-            // An image-named model may also serve Chat Completions. Check that
-            // protocol's kind in addition to the catalog category.
-            let reachable = |request_kind| {
-                self.routes.plan(&Ask {
-                    kind: request_kind,
+            // Chat clients read these fields independently of the catalog kind.
+            // Advertise only when Chat Completions selects this exact rule.
+            if let Some(modalities) = input_modalities
+                && !modalities.is_empty()
+                && rule.clients.is_empty()
+                && rule.kinds.is_empty()
+                && self.routes.plan(&Ask {
+                    kind: kind::CHAT,
                     format: "openai-chat",
                     model: Some(&rule.name),
                     client: None,
                     tools: true,
                 }).is_some_and(|plan| matches!(plan.by, By::Rule(selected) if Arc::ptr_eq(&selected, rule)))
-            };
-            if let Some(modalities) = input_modalities
-                && !modalities.is_empty()
-                && rule.clients.is_empty()
-                && rule.kinds.is_empty()
-                && (reachable(kind) || (kind != kind::CHAT && reachable(kind::CHAT)))
             {
                 card["input_modalities"] = json!(modalities);
             }
@@ -519,6 +515,47 @@ mod tests {
         let card = models.routes().next().unwrap();
         assert_eq!(card["kind"], "image");
         assert_eq!(card["input_modalities"], json!(["image"]));
+    }
+
+    #[test]
+    fn the_shared_catalog_omits_image_input_when_only_the_images_api_uses_the_rule() {
+        use respan_gateway_sdk::Modality::Image;
+
+        let id = "native-image";
+        let routes = Arc::new(
+            Routes::new()
+                .provider(
+                    "native",
+                    vec![respan_gateway_plugin_routing::Speaks {
+                        format: "openai-images".to_owned(),
+                        kind: kind::IMAGE,
+                        internal: "native-images".to_owned(),
+                    }],
+                )
+                .provider("text", vec![chat_format("text-chat")])
+                .rule(Rule::new(id, vec![Candidate::parse("native/{model}")])),
+        );
+        let mut model = Model::new(id);
+        model.reads(Image);
+        routes.catalog().set("native", [model].into_iter());
+        assert_eq!(
+            routes
+                .route(kind::IMAGE, "openai-images", Some(id))
+                .unwrap()
+                .provider,
+            "native",
+        );
+        assert_eq!(
+            routes
+                .route(kind::CHAT, "openai-chat", Some(id))
+                .unwrap()
+                .provider,
+            "text",
+        );
+        let models = Models::new(&[], routes);
+        let card = models.routes().next().unwrap();
+        assert_eq!(card["kind"], "image");
+        assert!(card.get("input_modalities").is_none());
     }
 
     #[test]
