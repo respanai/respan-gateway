@@ -21,7 +21,8 @@ Register it after the plugins that choose a call's model, such as the router,
 so it reads the model sent. A `Price` is US dollars per million input and
 output tokens, and cached input at its own rate if given. Every kind's usage
 is read: chat, images, transcriptions, speech, embeddings, realtime and
-decisions; seconds of audio are not priced.
+decisions; seconds of audio, as a transcription or a live session reports
+them, are priced at its `per_second`, and not at all without one.
 
 `on_usage(edge, f)` gives `f` each usage report of a request's or a call's
 outputs, of every kind (tokens, or seconds of audio), as they pass: the
