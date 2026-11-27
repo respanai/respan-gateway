@@ -327,6 +327,8 @@ models on `POST /models/{model}:batchEmbedContents`, its key in
   fetch (`fileData`) with its type, which may be a family's wildcard such as
   `image/*`; a URL of no type at all is refused, 400, before the call. An
   item's native fields, such as `taskType`, go in its request.
+- An answer must hold one vector for each request; another count is a
+  provider fault.
 - Usage is `usageMetadata`'s `promptTokenCount`, which Gemini reports for
   some models only (not `gemini-embedding-001`); its OpenAI-compatible
   endpoint reports none. `promptTokenDetails` are the input tokens of each
@@ -353,6 +355,8 @@ only, its key a Bedrock API key as a bearer token.
 - Titan Text (`amazon.titan-embed-text-*`) and Titan Multimodal's texts
   (`amazon.titan-embed-image-v1`) embed one text per call, so a request of
   several is refused, 400; v2 and Multimodal take `dimensions`.
+- An answer must hold one vector for each text; another count is a
+  provider fault.
 - Usage is the input tokens Bedrock counts: Titan's `inputTextTokenCount`,
   else the `x-amzn-bedrock-input-token-count` header.
 - Token ids, parts and a `dimensions` the model takes none of are refused,
