@@ -8,7 +8,8 @@ use crate::config::ClientKey;
 use crate::init::Chosen;
 use crate::logging::{Color, Level, LogFormat};
 use crate::{App, Config, ProxyVendor, Source, VERSION};
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::parser::ValueSource;
+use clap::{ArgGroup, CommandFactory, FromArgMatches, Parser, Subcommand};
 use serde_json::{Map, json};
 
 /// An LLM gateway: one endpoint for OpenAI, Anthropic, Gemini and more,
@@ -208,13 +209,19 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let cli = match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
+    let parsed = Cli::command()
+        .try_get_matches_from(args)
+        .and_then(|matches| Ok((Cli::from_arg_matches(&matches)?, matches)));
+    let (cli, matches) = match parsed {
+        Ok(parsed) => parsed,
         Err(e) => {
             let _ = e.print();
             return u8::try_from(e.exit_code()).unwrap_or(FAILURE);
         }
     };
+    // A `RESPAN_CONFIG` in the environment, as a .env for `serve` may set, is
+    // no `--config` given to `proxy`.
+    let config_given = matches.value_source("config") == Some(ValueSource::CommandLine);
     cli.color.apply();
     let command = cli.command.unwrap_or(Command::Serve);
     let models = matches!(command, Command::Models);
@@ -232,7 +239,7 @@ where
             check,
             ..
         } => {
-            if cli.config.is_some() {
+            if config_given {
                 return fail(
                     "proxy cannot be used with --config; proxy builds its own configuration",
                 );
@@ -552,4 +559,23 @@ fn fail(message: &str) -> u8 {
         crate::logging::paint("error:", "1;31", true)
     );
     FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `--config` given to `proxy` is refused wherever it is written; one in
+    /// the environment (`RESPAN_CONFIG`) is not, as the binary run with one
+    /// shows.
+    #[tokio::test]
+    async fn proxy_refuses_a_config_given_on_the_command_line() {
+        let proxy = ["respan-gateway", "proxy", "--anthropic", "--check"];
+        let after = proxy.into_iter().chain(["--config", "gateway.toml"]);
+        assert_eq!(run(after).await, FAILURE);
+        let before = ["respan-gateway", "-c", "gateway.toml"]
+            .into_iter()
+            .chain(proxy.into_iter().skip(1));
+        assert_eq!(run(before).await, FAILURE);
+    }
 }
