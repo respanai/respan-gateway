@@ -107,6 +107,21 @@ impl OpenAiDecoder {
         at.and_then(|at| u32::try_from(at).ok())
     }
 
+    /// End the open call of `key` if it is another call than `id`: a vendor
+    /// may start each call at the same `index`, telling them apart by id
+    /// alone. A call's later entries name no id, so they go to the new one.
+    fn end_call_of_other_id(&mut self, key: &Key, id: &str, out: &mut Vec<Output>) {
+        let Some(block) = self.open_block(key) else {
+            return;
+        };
+        if let Some(open) = self.blocks.get_mut(block as usize)
+            && open.call_id.as_deref().is_some_and(|open_id| open_id != id)
+        {
+            open.open = false;
+            out.push(Output::block_end(block));
+        }
+    }
+
     /// The number of the tool call `call` is of: its `index`, else, for a
     /// vendor that sends none, the open call it continues (it names no id,
     /// or the open call's own) or a new one.
@@ -261,6 +276,9 @@ impl OpenAiDecoder {
         }
         for call in calls.into_iter().flatten() {
             let key = Key::Call(self.call_index(&call));
+            if let Some((id, _)) = &call.start {
+                self.end_call_of_other_id(&key, id, out);
+            }
             let block = match (call.start, self.open_block(&key)) {
                 (Some((id, name)), None) => {
                     let next = u32::try_from(self.blocks.len()).unwrap_or(u32::MAX);
