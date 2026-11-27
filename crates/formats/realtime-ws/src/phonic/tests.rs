@@ -360,3 +360,29 @@ fn a_tools_call_ends_the_response_it_is_made_in() {
     // Its own client is told what Phonic said, and nothing made up.
     assert_eq!(heard(&events).expect("written"), server);
 }
+
+#[test]
+fn an_answer_of_json_text_is_a_tool_result_and_goes_back_as_text() {
+    let mut client = input::Client::new(Asked::new(Mutex::new(DEFAULT_FORMAT)));
+    let said = [
+        json!({"type": "tool_call_output", "tool_call_id": "c1", "output": "{\"ok\":true}"}),
+        json!({"type": "tool_call_output", "tool_call_id": "c2", "output": "42"}),
+    ];
+    let events = read(&said, |raw, out| client.read(raw, out));
+    let outputs: Vec<_> = (events.iter())
+        .map(|e| match e {
+            Input::ToolResult(result) => result.output.as_str(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(outputs, [r#"{"ok":true}"#, "42"]);
+    // Another format's provider is given them; Phonic, the text it was sent.
+    assert!(
+        events
+            .iter()
+            .all(|e| crate::foreign::admit::<crate::openai::Key>("openai-realtime", e).is_some())
+    );
+    let mut opened = vec![session(|_| {})];
+    opened.extend(events);
+    assert_eq!(sent(None, &opened).expect("written")[1..], said);
+}
